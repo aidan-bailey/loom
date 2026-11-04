@@ -30,7 +30,7 @@ A gated job (`gateBuildSweep`, interval 30 minutes) dispatched from the model's 
 ### 4.2 Where
 
 - **Eligible sessions:** status `Ready` or `Paused`, in a workspace the daemon has loaded. Never `Running`, `Loading`, `Prompting`, `Deleting`, `Recoverable`, or a workspace terminal (it runs in the main checkout, not a loom worktree).
-- **Target dir:** `<worktree>/target` only, and only when it holds `CACHEDIR.TAG` (cargo writes it). A `CARGO_TARGET_DIR` elsewhere is never touched. Symlinks are never followed.
+- **Target dir:** `<worktree>/target` only, and only when it holds `CACHEDIR.TAG` or `.rustc_info.json`. (Amended 2026-11-04: cargo writes the tag only into a target dir it creates, so worktrees whose agents wrote notes into `target/` before the first build went unswept.) A `CARGO_TARGET_DIR` elsewhere is never touched. Symlinks are never followed.
 - **Profile dirs:** every directory under the target dir, up to six levels deep, that holds both `deps/` and `.fingerprint/`. This covers `debug/`, `release/`, `<triple>/<profile>/`, and the nested target dirs tools create (`target/semver-checks/…`). The walk never descends into `deps/`, `build/`, `incremental/` or `.fingerprint/`.
 
 ### 4.3 What
@@ -89,7 +89,7 @@ No persisted record changes, so `CurrentSchemaVersion` stays.
   - The threshold at its edge.
   - Hard links: an uplifted name is deleted with its deps copy, and a link held outside the profile dir skips the file.
   - Profile-dir discovery: a triple dir and a nested tool target dir are found; symlinks are not followed.
-  - `CACHEDIR.TAG` required.
+  - `CACHEDIR.TAG` or `.rustc_info.json` required.
 - **Production geometry:** one test builds a two-binary crate with real cargo, changes it, rebuilds, sweeps with a zero threshold after aging the old binary, and checks that the old binary is gone, the current one stays, and `cargo test` still passes. It skips when `cargo` is absent, as in the Nix sandbox.
 - **Mountinfo parser:** a table of real lines covering `noatime`, `relatime`, neither flag, nested mounts with the longest prefix winning, and escaped spaces.
 - **Lock:** the test holds the `flock` and sees the target dir skipped as `building`; once released, it is swept.

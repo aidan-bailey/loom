@@ -1,6 +1,8 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -87,7 +89,7 @@ func TestMaybeBuildSweep_NoIdleSessionArmsNothing(t *testing.T) {
 func TestBuildSweepJob_ReadsTheThresholdFromTheGlobalConfig(t *testing.T) {
 	targets := []buildsweep.Target{{Title: "s", Worktree: t.TempDir()}}
 	job := func(opts buildsweep.Options) buildSweepResult {
-		return buildSweepJob(buildsweep.Default(), targets, opts)().(buildSweepResult)
+		return buildSweepJob(buildsweep.Default(), targets, opts, 0)().(buildSweepResult)
 	}
 
 	assert.ErrorIs(t, job(buildsweep.Options{}).err, errBuildSweepOff)
@@ -153,4 +155,145 @@ func TestSweepBuilds_WithoutAThresholdFails(t *testing.T) {
 	m.SweepBuilds(buildsweep.Options{DryRun: true}, 7)
 
 	assert.ErrorIs(t, replyOf(t, m).Err, errBuildSweepOff)
+}
+
+// withGlobalConfig writes body as the isolated global config.json and
+// restores what was there when the test ends; it returns the file's path.
+func withGlobalConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir, err := config.GetConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, config.ConfigFileName)
+	prev, readErr := os.ReadFile(path)
+	t.Cleanup(func() {
+		if readErr != nil {
+			_ = os.Remove(path)
+			return
+		}
+		_ = os.WriteFile(path, prev, 0o644)
+	})
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	return path
+}
+
+func modelChanged(events []Event) *ModelChanged {
+	for _, ev := range events {
+		if mc, ok := ev.(ModelChanged); ok {
+			return &mc
+		}
+	}
+	return nil
+}
+
+func TestConfigureBuildSweep_SetsOnlyThatFieldOfTheGlobalConfig(t *testing.T) {
+	path := withGlobalConfig(t, `{"default_program": "aider", "branch_prefix": "x/"}`)
+	m := NewForTest(Options{})
+	m.Sync()
+
+	require.NoError(t, m.ConfigureBuildSweep(12))
+
+	cfg, err := config.ReadConfigFrom(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Equal(t, 12, cfg.GetBuildSweepAfterHours())
+	assert.Equal(t, "aider", cfg.DefaultProgram, "the other fields are kept")
+	assert.Equal(t, "x/", cfg.BranchPrefix)
+	assert.Equal(t, BuildSweepView{AfterHours: 12}, m.BuildSweep())
+	mc := modelChanged(m.Sync().Events)
+	require.NotNil(t, mc, "the change republishes")
+	assert.Equal(t, 12, mc.View.BuildSweep.AfterHours)
+}
+
+func TestConfigureBuildSweep_RefusesAnUnreadableGlobalConfig(t *testing.T) {
+	path := withGlobalConfig(t, "{not json")
+	m := NewForTest(Options{})
+
+	assert.ErrorContains(t, m.ConfigureBuildSweep(12), "parse")
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{not json", string(data), "left byte for byte")
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), "corrupt", "nothing quarantined")
+	}
+	assert.Zero(t, m.BuildSweep().AfterHours)
+}
+
+func TestConfigureBuildSweep_RefusesAThresholdOutOfRange(t *testing.T) {
+	path := withGlobalConfig(t, `{"build_sweep_after_hours": 6}`)
+	m := NewForTest(Options{})
+	for _, bad := range []int{-1, config.MaxBuildSweepAfterHours + 1} {
+		assert.Error(t, m.ConfigureBuildSweep(bad), bad)
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, `{"build_sweep_after_hours": 6}`, string(data))
+}
+
+// TestConfigureBuildSweep_TheWorkspaceSavingThatFileFollows: a served
+// workspace whose config is the global file takes the value in memory, so
+// its next SaveSettings, from a copy made before the change, keeps it;
+// another workspace's config is left alone.
+func TestConfigureBuildSweep_TheWorkspaceSavingThatFileFollows(t *testing.T) {
+	global, a := storedWorkspace(t, ""), storedWorkspace(t, "a")
+	t.Setenv(config.EnvHome, global.ctx.ConfigDir)
+	t.Setenv(config.EnvGlobalDir, global.ctx.ConfigDir)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(global, a)
+	stale := global.cfg.Snapshot()
+
+	require.NoError(t, m.ConfigureBuildSweep(12))
+	assert.Equal(t, 12, global.cfg.Snapshot().BuildSweepAfterHours)
+	assert.Zero(t, a.cfg.Snapshot().BuildSweepAfterHours)
+
+	stale.DefaultProgram = "aider"
+	require.NoError(t, m.SaveSettings(m.wsIDOf(global), stale))
+	cfg, err := config.ReadConfigFrom(global.ctx.ConfigDir)
+	require.NoError(t, err)
+	assert.Equal(t, "aider", cfg.DefaultProgram, "fixture: the save landed")
+	assert.Equal(t, 12, cfg.GetBuildSweepAfterHours(), "the old copy didn't write the old threshold back")
+}
+
+func TestBuildSweepJob_ItsReadUpdatesTheView(t *testing.T) {
+	withGlobalConfig(t, `{"build_sweep_after_hours": 6}`)
+	m := NewForTest(Options{})
+	job := buildSweepJob(buildsweep.Default(), nil, buildsweep.Options{DryRun: true}, m.buildSweepGen)
+
+	m.Deliver(job())
+
+	assert.Equal(t, 6, m.BuildSweep().AfterHours)
+}
+
+func TestBuildSweepJob_AReadBeforeAConfigureIsDropped(t *testing.T) {
+	withGlobalConfig(t, `{"build_sweep_after_hours": 6}`)
+	m := NewForTest(Options{})
+	job := buildSweepJob(buildsweep.Default(), nil, buildsweep.Options{DryRun: true}, m.buildSweepGen)
+	res := job() // read 6
+
+	require.NoError(t, m.ConfigureBuildSweep(12))
+	m.Deliver(res)
+
+	assert.Equal(t, 12, m.BuildSweep().AfterHours)
+}
+
+func TestBuildSweepJob_AnUnreadableGlobalConfigFailsTheSweep(t *testing.T) {
+	path := withGlobalConfig(t, "{not json")
+	res := buildSweepJob(buildsweep.Default(), nil, buildsweep.Options{DryRun: true}, 0)().(buildSweepResult)
+
+	assert.ErrorContains(t, res.err, "can't be read")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{not json", string(data), "not quarantined")
+	assert.Equal(t, 12, buildSweepJob(buildsweep.Default(), nil, buildsweep.Options{DryRun: true, AfterHours: 12}, 0)().(buildSweepResult).report.AfterHours, "a request's threshold still sweeps")
+}
+
+func TestInitBuildSweep_ReadsTheGlobalThreshold(t *testing.T) {
+	withGlobalConfig(t, `{"build_sweep_after_hours": 24}`)
+	m := NewForTest(Options{})
+
+	m.initBuildSweep()
+
+	assert.Equal(t, 24, m.BuildSweep().AfterHours)
 }

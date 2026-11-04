@@ -49,8 +49,20 @@ type GitWorktree struct {
 	// Base commit hash for the worktree
 	baseCommitSHA string
 	// isExistingBranch is true if the branch existed before the session was created.
-	// When true, the branch will not be deleted on cleanup.
+	// When true, the branch will not be deleted on cleanup. Guarded by
+	// refMu: a new session's Setup sets it on the start's goroutine while
+	// Instance.Snapshot reads it from another.
 	isExistingBranch bool
+	// forNewSession marks a worktree built for a session being created
+	// (NewGitWorktreeFromSpec) whose first Setup has not run yet. That Setup
+	// treats a branch it finds already there as pre-existing; a later Setup
+	// of the same worktree is a rebuild over the session's own branch.
+	// Guarded by refMu.
+	forNewSession bool
+	// trashed is where Cleanup moved the tree, for a background job to
+	// delete (see worktree_trash.go); "" until it moves one. Guarded by
+	// refMu.
+	trashed string
 	// branchCreated records that this GitWorktree's own Setup created the
 	// branch (guarded by refMu). Only such a branch may be deleted when
 	// the session then fails to start: Setup also checks out a branch
@@ -223,12 +235,13 @@ func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname st
 	}
 
 	return &GitWorktree{
-		repoPath:     repoPath,
-		sessionName:  spec.SessionName,
-		branchName:   branchName,
-		worktreePath: worktreePath,
-		configDir:    configDir,
-		runner:       r,
+		repoPath:      repoPath,
+		sessionName:   spec.SessionName,
+		branchName:    branchName,
+		worktreePath:  worktreePath,
+		forNewSession: true,
+		configDir:     configDir,
+		runner:        r,
 	}, branchName, nil
 }
 
@@ -262,7 +275,28 @@ func NewGitWorktreeFromBranchWithRunner(repoPath string, branchName string, sess
 
 // IsExistingBranch returns whether this worktree uses a pre-existing branch
 func (g *GitWorktree) IsExistingBranch() bool {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
 	return g.isExistingBranch
+}
+
+// takeNewSessionSetup reports whether this is the first Setup of a worktree
+// built for a new session, and clears the mark so a later Setup reads as a
+// rebuild.
+func (g *GitWorktree) takeNewSessionSetup() bool {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
+	first := g.forNewSession
+	g.forNewSession = false
+	return first
+}
+
+// markExistingBranch records that the branch was there before this session,
+// so Cleanup keeps it.
+func (g *GitWorktree) markExistingBranch() {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
+	g.isExistingBranch = true
 }
 
 // GetWorktreePath returns the path to the worktree

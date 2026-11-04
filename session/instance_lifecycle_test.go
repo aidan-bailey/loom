@@ -53,6 +53,7 @@ func newTestStartedInstance(t *testing.T) *Instance {
 
 	inst := &Instance{
 		Title:               "kill-test",
+		Path:                t.TempDir(), // a workspace terminal's repository
 		Status:              Running,
 		IsWorkspaceTerminal: true, // skip worktree cleanup path
 	}
@@ -293,6 +294,9 @@ func TestInstance_KillDropsLeftoverStash(t *testing.T) {
 func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 	inst := newTestPausableInstance(t)
 
+	// The shell runs in the worktree, as ui.TerminalPane starts it, and
+	// tmux lists it there: a shell started elsewhere is not the record's.
+	terminal := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title)) + "\t" + inst.getGitWorktree().GetWorktreePath() + "\n"
 	var killedSessions []string
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
@@ -302,7 +306,7 @@ func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 			}
 			return nil
 		},
-		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte(terminal), nil },
 	})
 
 	require.NoError(t, inst.Pause(nil))
@@ -319,6 +323,9 @@ func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 func TestInstance_KillClosesTerminalPaneSession(t *testing.T) {
 	inst := newTestStartedInstance(t)
 
+	// A workspace terminal's shell runs in its repository, as
+	// ui.TerminalPane starts it, and tmux lists it there.
+	terminal := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title)) + "\t" + inst.Path + "\n"
 	var killedSessions []string
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
@@ -328,7 +335,7 @@ func TestInstance_KillClosesTerminalPaneSession(t *testing.T) {
 			}
 			return nil
 		},
-		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte(terminal), nil },
 	})
 
 	require.NoError(t, inst.Kill())

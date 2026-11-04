@@ -743,3 +743,36 @@ func TestClaudeTmpArchiveDir_LoadsFromConfigJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "claude_tmp_archive_dir", "an unset setting is omitted")
 }
+
+func TestReadConfigFrom_MissingIsTheDefaults(t *testing.T) {
+	cfg, err := ReadConfigFrom(t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, DefaultConfig().BranchPrefix, cfg.BranchPrefix)
+}
+
+func TestReadConfigFrom_ReadsTheFile(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(`{"branch_prefix": "x/", "build_sweep_after_hours": 12}`), 0o644))
+	cfg, err := ReadConfigFrom(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "x/", cfg.BranchPrefix)
+	assert.Equal(t, 12, cfg.GetBuildSweepAfterHours())
+	assert.Equal(t, DefaultConfig().DefaultProgram, cfg.DefaultProgram, "a partial file backfills the defaults")
+}
+
+// TestReadConfigFrom_ACorruptFileIsAnErrorAndStays: a caller that writes
+// the file back must not start from defaults, and the file is not
+// quarantined (LoadConfigFrom's way).
+func TestReadConfigFrom_ACorruptFileIsAnErrorAndStays(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+	_, err := ReadConfigFrom(dir)
+	assert.ErrorContains(t, err, "parse")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "nothing quarantined")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{not json", string(data))
+}

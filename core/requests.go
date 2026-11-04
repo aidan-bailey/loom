@@ -84,6 +84,8 @@ func (m *Model) deliverTracked(t tracked) {
 		r.Turns = res.page
 	case diffResult:
 		r.Diff = res.patch
+	case mockupResult:
+		r.Mockup = res.page
 	case buildSweepResult:
 		r.Sweep = res.report
 	}
@@ -96,6 +98,8 @@ func outcome(result any) (err, notice error) {
 	case OpFailed:
 		return r.Err, nil
 	case KillResult:
+		return nil, r.Notice
+	case PauseResult:
 		return nil, r.Notice
 	case ResumeResult:
 		return nil, r.Notice
@@ -112,6 +116,8 @@ func outcome(result any) (err, notice error) {
 	case turnsResult:
 		return r.err, nil
 	case diffResult:
+		return r.err, nil
+	case mockupResult:
 		return r.err, nil
 	case buildSweepResult:
 		return r.err, nil
@@ -142,18 +148,19 @@ func (m *Model) refuse(req ReqID, id InstanceID, err error) {
 type requestOp string
 
 const (
-	opKill      requestOp = "kill"
-	opPause     requestOp = "pause"
-	opPush      requestOp = "push"
-	opResume    requestOp = "resume"
-	opRestart   requestOp = "restart"
-	opRecover   requestOp = "recover"
-	opMergeInto requestOp = "merge into"
-	opMergeFrom requestOp = "merge from"
-	opSend      requestOp = "send a prompt to"
-	opReadTurns requestOp = "read the conversation of"
-	opReadDiff  requestOp = "read the diff of"
-	opAnswer    requestOp = "answer"
+	opKill       requestOp = "kill"
+	opPause      requestOp = "pause"
+	opPush       requestOp = "push"
+	opResume     requestOp = "resume"
+	opRestart    requestOp = "restart"
+	opRecover    requestOp = "recover"
+	opMergeInto  requestOp = "merge into"
+	opMergeFrom  requestOp = "merge from"
+	opSend       requestOp = "send a prompt to"
+	opReadTurns  requestOp = "read the conversation of"
+	opReadDiff   requestOp = "read the diff of"
+	opReadMockup requestOp = "read the mockup of"
+	opAnswer     requestOp = "answer"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and
@@ -230,6 +237,11 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case !session.IsClaudeProgram(inst.Program()):
 			why = "the session does not run Claude"
 		}
+	case opReadMockup:
+		// A companion can outlive any status of its session.
+		if inst.IsWorkspaceTerminal {
+			why = "not allowed on a workspace terminal"
+		}
 	case opReadDiff:
 		switch {
 		case inst.IsWorkspaceTerminal:
@@ -296,8 +308,8 @@ func (m *Model) Kill(id InstanceID, req ReqID) {
 
 // Pause pauses the session id: it moves to Loading at once (a refused
 // transition is logged and the pause runs anyway, as the TUI's path always
-// did), then the job stashes, kills the session and removes the worktree
-// (pauseInst). pauseInst is called before the transition, as the TUI's
+// did), then the job stops the agent and keeps its worktree (pauseInst,
+// Instance.Pause). pauseInst is called before the transition, as the TUI's
 // path does, so a failed pause reverts to the status the session had, not
 // to Loading. Refused for a workspace terminal and a busy session
 // (precondition).

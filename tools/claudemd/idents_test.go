@@ -56,6 +56,12 @@ func TestIdents_Symbols(t *testing.T) {
 	assert.Contains(t, readme, "pkg/README.md:1: OnlyInDocs: not found in any source file (Markdown excluded)", "a doc can't confirm a symbol")
 	assert.Contains(t, readme, "pkg/README.md:1: pkg.Elsewhere: found, but not in a pkg package dir: check where the rule says it lives")
 	assert.Empty(t, findings(t, base("pkg/CLAUDE.md", "```\n`GoneSymbol`\n```\n")), "fenced blocks are not read")
+	web := with(base("pkg/README.md", "`ConfirmSheet` `setAppBadge` `sc-chrome` `shellTitle`\n"),
+		"pkg/static/js/sheets.mjs", "export function ConfirmSheet() {}\n",
+		"pkg/static/sw.js", "self.registration.setAppBadge(1);\n",
+		"pkg/static/app.css", ".sc-chrome { position: sticky; }\n",
+		"pkg/static/index.html", "<title id=\"shellTitle\">x</title>\n")
+	assert.Empty(t, findings(t, web), "the web app's modules, scripts, styles and pages are source")
 }
 
 // TestIdents_AllowList uses synthetic names, so a fixture can't read as a

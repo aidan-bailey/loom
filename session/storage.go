@@ -8,7 +8,9 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,8 +100,9 @@ type Storage struct {
 	// Tea executes concurrently with each other and with Update — so two
 	// saves, or a save racing a delete, can otherwise interleave their
 	// read-modify-write of the backing store and corrupt s.unrecovered.
-	// Held across the underlying state I/O; that I/O is fast (in-memory
-	// state plus one AtomicWriteFile) and never re-enters Storage.
+	// Held across the underlying state I/O (a write's fsyncs, a load's
+	// reconcile), which never re-enters Storage; what the daemon's loop
+	// reads on every wake comes from view instead.
 	mu sync.Mutex
 
 	state     config.InstanceStorage
@@ -130,6 +133,34 @@ type Storage struct {
 	// Storage loads first, so undecodable records (and loadErr) are known
 	// before anything is written.
 	loaded bool
+
+	// view is what WritesRefused and PreservedTitles answer, published
+	// (publishLocked) under mu after every change to loadErr, unrecovered
+	// or undecodable, and read without it. The daemon's loop asks both on
+	// every wake (core's wsViewOf), and mu is held across a write's fsyncs
+	// and a load's reconcile, which would freeze every client meanwhile.
+	view atomic.Pointer[storageView]
+}
+
+// storageView is a published answer of WritesRefused and PreservedTitles.
+type storageView struct {
+	refused   bool
+	preserved []string
+}
+
+// publishLocked publishes what WritesRefused and PreservedTitles answer
+// now. Caller holds s.mu.
+func (s *Storage) publishLocked() {
+	titles := make([]string, 0, len(s.unrecovered)+len(s.undecodable))
+	for _, d := range s.unrecovered {
+		titles = append(titles, d.Title)
+	}
+	for _, rec := range s.undecodable {
+		if rec.title != "" {
+			titles = append(titles, rec.title)
+		}
+	}
+	s.view.Store(&storageView{refused: s.loadErr != nil, preserved: titles})
 }
 
 // undecodableRecord is one record MigrateAll rejected: raw is written back
@@ -203,6 +234,33 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 	return s.writeLocked(data)
 }
 
+// SaveInstance writes instance's record alone: it replaces the stored
+// record with its identity (isRecord) or appends one, and leaves every other
+// record on disk as it is. For a save made from a job, seconds after its
+// request: a save of the workspace's list as it stood at the request drops
+// every session created or recovered meanwhile.
+func (s *Storage) SaveInstance(instance *Instance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.loadForWriteLocked()
+	if err != nil {
+		return err
+	}
+	snap := instance.ToInstanceData()
+	replaced := false
+	for i, d := range data {
+		if isRecord(d, snap.Title, snap.CreatedAt) {
+			data[i] = snap
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		data = append(data, snap)
+	}
+	return s.writeLocked(data)
+}
+
 // LoadAndReconcile loads instance data from disk and reconciles each instance
 // against the live tmux/worktree state. A single failing instance is logged and
 // skipped rather than aborting the whole load. This is
@@ -240,6 +298,7 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 		}
 		instances = append(instances, inst)
 	}
+	s.publishLocked()
 	return instances, nil
 }
 
@@ -264,30 +323,25 @@ func (s *Storage) UnrecoveredTitles() []string {
 // subagent hooks sweep — must spare these, or a preserved record keeps
 // its JSON but loses its still-running agent (e.g. a newer loom's session
 // after a downgrade, or a record whose reconcile failed transiently).
+//
+// It reads the published view (publishLocked), never waiting on a write.
 func (s *Storage) PreservedTitles() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	titles := make([]string, 0, len(s.unrecovered)+len(s.undecodable))
-	for _, d := range s.unrecovered {
-		titles = append(titles, d.Title)
+	v := s.view.Load()
+	if v == nil {
+		return []string{}
 	}
-	for _, rec := range s.undecodable {
-		if rec.title != "" {
-			titles = append(titles, rec.title)
-		}
-	}
-	return titles
+	return slices.Clone(v.preserved)
 }
 
 // WritesRefused reports whether the write latch is engaged: the last load
 // could not decode the payload as a whole, so every write returns
 // ErrStorageLoadFailed until a later load succeeds. Callers check it before
 // creating anything new, which could never be persisted — keeping a latched
-// Storage's list to exactly what it loaded (nothing).
+// Storage's list to exactly what it loaded (nothing). It reads the
+// published view (publishLocked), never waiting on a write.
 func (s *Storage) WritesRefused() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.loadErr != nil
+	v := s.view.Load()
+	return v != nil && v.refused
 }
 
 // UndecodableCount returns how many persisted records the last successful
@@ -299,10 +353,13 @@ func (s *Storage) UndecodableCount() int {
 	return len(s.undecodable)
 }
 
-// DeleteInstance removes an instance from storage.
+// DeleteInstance removes the record of the instance titled title and
+// created at createdAt from storage. A record is its title and creation
+// time: two records can share a title (each on its own branch), and
+// deleting by title alone dropped both.
 // Operates on raw InstanceData so it does not construct live Instance objects
 // (which would open tmux attach PTYs for every remaining running instance).
-func (s *Storage) DeleteInstance(title string) error {
+func (s *Storage) DeleteInstance(title string, createdAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := s.loadForWriteLocked()
@@ -313,7 +370,7 @@ func (s *Storage) DeleteInstance(title string) error {
 	found := false
 	filtered := make([]InstanceData, 0, len(data))
 	for _, d := range data {
-		if d.Title == title {
+		if isRecord(d, title, createdAt) {
 			found = true
 			continue
 		}
@@ -326,7 +383,7 @@ func (s *Storage) DeleteInstance(title string) error {
 
 	// Also drop any matching entry from the in-memory unrecovered cache so
 	// a follow-up SaveInstances does not resurrect the just-deleted record.
-	s.dropUnrecovered(title)
+	s.dropUnrecovered(title, createdAt)
 
 	return s.writeLocked(filtered)
 }
@@ -393,6 +450,7 @@ func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 	data, skipped, err := MigrateAll(s.state.GetInstances())
 	if err != nil {
 		s.loadErr = err
+		s.publishLocked()
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
 	}
 	s.loadErr = nil
@@ -400,6 +458,7 @@ func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 	for _, raw := range skipped {
 		s.undecodable = append(s.undecodable, newUndecodableRecord(raw))
 	}
+	s.publishLocked()
 	return data, nil
 }
 
@@ -415,6 +474,7 @@ func (s *Storage) DeleteAllInstances() error {
 	s.undecodable = nil
 	s.loadErr = nil
 	s.loaded = false
+	s.publishLocked()
 	return s.state.DeleteAllInstances()
 }
 
@@ -445,20 +505,28 @@ func (s *Storage) PreservedWorktreePaths() map[string]bool {
 	return out
 }
 
-// dropUnrecovered removes any entry from the unrecovered cache whose
-// Title matches the given title. Used by DeleteInstance so a
-// user-initiated delete is not silently undone on the next save.
+// isRecord reports whether d is the record of the instance titled title
+// and created at createdAt. Equal, not ==: a time read back from JSON has
+// no monotonic reading.
+func isRecord(d InstanceData, title string, createdAt time.Time) bool {
+	return d.Title == title && d.CreatedAt.Equal(createdAt)
+}
+
+// dropUnrecovered removes the entry for the instance titled title and
+// created at createdAt from the unrecovered cache. Used by DeleteInstance
+// so a user-initiated delete is not silently undone on the next save.
 // The caller must hold s.mu (DeleteInstance does).
-func (s *Storage) dropUnrecovered(title string) {
+func (s *Storage) dropUnrecovered(title string, createdAt time.Time) {
 	if len(s.unrecovered) == 0 {
 		return
 	}
 	filtered := s.unrecovered[:0]
 	for _, d := range s.unrecovered {
-		if d.Title == title {
+		if isRecord(d, title, createdAt) {
 			continue
 		}
 		filtered = append(filtered, d)
 	}
 	s.unrecovered = filtered
+	s.publishLocked()
 }

@@ -184,7 +184,7 @@ func TestRefusal_AMergeWhoseSourceTurnedBusyIsShown(t *testing.T) {
 // carries the same error, which the TUI must not show a second time.
 func TestRefusal_AJobsFailureIsShownOnce(t *testing.T) {
 	m := homeWithAppState(t)
-	addReadyInstance(t, m) // never started: the kill's job fails (no worktree)
+	addUnkillableInstance(t, m, "a") // the kill's job fails: its branch is checked out
 	_, _ = runKillSelectedNoConfirm(m)
 	res := requestJob(t, m)()
 	require.NotNil(t, res, "the kill's job returned a result")

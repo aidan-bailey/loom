@@ -31,7 +31,7 @@ func newSweepCmd() *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			loomErrors(c)
 			if after < 0 {
-				return errors.New("--after takes a number of hours above 0")
+				return errors.New("--after takes a number of hours, 0 or more (0 uses build_sweep_after_hours)")
 			}
 			return withDaemon(c, func(d *client) error {
 				d.SweepBuilds(buildsweep.Options{DryRun: dryRun, AfterHours: after}, sessionReq)

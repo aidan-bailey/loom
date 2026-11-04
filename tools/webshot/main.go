@@ -37,14 +37,17 @@ import (
 type screen struct{ name, hash string }
 
 // screens are the routes webshot knows, in the order it renders them. The
-// session screens are of session 1 (working, with a PR, agents and a diff)
-// and session 2 (waiting on a permission).
+// session screens are of session 1 (working, with a PR, agents and a diff),
+// session 2 (waiting on a permission) and session 7 (your turn, with a
+// fresh brainstorm mockup).
 var screens = []screen{
 	{"fleet", ""},
 	{"session", "#s/1"},
 	{"waiting", "#s/2"},
 	{"turns", "#s/1/turns"},
 	{"diff", "#s/1/diff"},
+	{"mockup", "#s/7/mockup"},
+	{"mockup-full", "#s/7/mockup/full"},
 	{"new", "#new"},
 	{"settings", "#settings"},
 }

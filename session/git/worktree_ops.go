@@ -34,6 +34,22 @@ func isWorktreeAbsentErr(err error) bool {
 		strings.Contains(msg, "No such file or directory")
 }
 
+// LeftoverDirError is what Cleanup returns, when nothing else failed, for a
+// directory at the worktree path that git refused to remove because it is
+// no valid worktree of the repository (its registration pruned, or its
+// `.git` gone). Cleanup left it on disk, since it may hold the only copy of
+// work, and still pruned and deleted the branch.
+type LeftoverDirError struct {
+	Path string
+	Err  error
+}
+
+func (e *LeftoverDirError) Error() string {
+	return fmt.Sprintf("%s is not a git worktree any more, so it was left on disk: %v", e.Path, e.Err)
+}
+
+func (e *LeftoverDirError) Unwrap() error { return e.Err }
+
 // isBranchAbsentErr reports whether a `git branch -D` failure was
 // simply "branch doesn't exist" — expected during cleanup.
 func isBranchAbsentErr(err error) bool {
@@ -91,7 +107,7 @@ func RemoveTitleSidecar(worktreePath string) {
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
 	t0 := time.Now()
-	log.For("git").Debug("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.isExistingBranch)
+	log.For("git").Debug("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.IsExistingBranch())
 	defer func() {
 		args := []any{"branch", g.branchName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
@@ -112,12 +128,20 @@ func (g *GitWorktree) Setup() (err error) {
 
 	// If this worktree uses a pre-existing branch, always set up from that branch
 	// (it may exist locally or only on the remote).
+	newSession := g.takeNewSessionSetup()
 	switch {
-	case g.isExistingBranch:
+	case g.IsExistingBranch():
 		err = g.setupFromExistingBranch()
 	default:
 		// Check if branch exists using git CLI (much faster than go-git PlainOpen)
 		if _, refErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName)); refErr == nil {
+			// A new session finding its branch already there reuses one an
+			// earlier session left behind (a discard keeps the branch), whose
+			// commits were never this session's: its kill must keep it. A
+			// rebuild finds the session's own branch, which stays its own.
+			if newSession {
+				g.markExistingBranch()
+			}
 			err = g.setupFromExistingBranch()
 		} else {
 			err = g.setupNewWorktree()
@@ -460,9 +484,11 @@ func (g *GitWorktree) setupNewWorktree() error {
 	return nil
 }
 
-// Cleanup removes the worktree and associated branch
+// Cleanup removes the worktree and associated branch. A tree it can vouch
+// for is moved into the trash rather than deleted (Trashed names where),
+// for its caller to have deleted in the background (RemoveTrash).
 func (g *GitWorktree) Cleanup() error {
-	return g.cleanup(!g.isExistingBranch)
+	return g.cleanup(!g.IsExistingBranch(), true)
 }
 
 // CleanupFailedStart undoes a Setup whose session then failed to start: it
@@ -471,12 +497,13 @@ func (g *GitWorktree) Cleanup() error {
 // existed — one left behind by an earlier session with the same title,
 // whose commits may be unmerged — and that one is kept.
 func (g *GitWorktree) CleanupFailedStart() error {
-	return g.cleanup(!g.isExistingBranch && g.createdBranch())
+	return g.cleanup(!g.IsExistingBranch() && g.createdBranch(), false)
 }
 
-// cleanup removes the worktree, prunes, drops the title sidecar and, when
-// deleteBranch is set, deletes the branch.
-func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
+// cleanup removes the worktree (moving it into the trash when toTrash and
+// moveToTrash vouches for it), prunes, deletes the branch when deleteBranch
+// is set, and drops the title sidecar.
+func (g *GitWorktree) cleanup(deleteBranch, toTrash bool) (err error) {
 	t0 := time.Now()
 	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath, "delete_branch", deleteBranch)
 	defer func() {
@@ -487,7 +514,20 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		log.For("git").Debug("worktree.cleanup.end", args...)
 	}()
 
+	// The repository is gone: there is no registration to prune and no
+	// branch to delete, and the tree, if still on disk, may hold the only
+	// copy of the work. Leave it and say so, so the kill can finish.
+	if g.RepoGone() {
+		removeTitleSidecar(g.worktreePath)
+		if _, err := os.Lstat(g.worktreePath); err == nil {
+			return &LeftoverDirError{Path: g.worktreePath, Err: fmt.Errorf("its repository %s is gone", g.repoPath)}
+		}
+		return nil
+	}
+
 	var errs []error
+	var leftover error
+	removed := false
 
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
@@ -497,13 +537,37 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		if err := RefuseLocked(g.repoPath, g.worktreePath, g.runner); err != nil {
 			return err
 		}
-		// Remove the worktree using git command
-		if _, err := g.removeWorktree(); err != nil {
-			errs = append(errs, err)
+		// Move it aside for a background delete, or remove it with git. A
+		// moved tree's registration is left for the prune below.
+		if !toTrash || !g.moveToTrash() {
+			if _, err := g.removeWorktree(); err != nil {
+				if isUntrackedTreeErr(err) {
+					// git does not track it as a worktree and will not
+					// delete it; neither does loom, since it may hold the
+					// only copy of work. The rest of the cleanup goes on,
+					// and the caller reports the directory
+					// (LeftoverDirError).
+					leftover = err
+				} else {
+					errs = append(errs, err)
+				}
+			} else {
+				removed = true
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		// Only append error if it's not a "not exists" error
 		errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
+	}
+
+	// Prune before the branch delete: a tree gone from disk (deleted by
+	// hand, or half-removed) stays registered until a prune, and git refuses
+	// `branch -D` for a branch "used by worktree" while it is. A remove that
+	// succeeded dropped the registration itself.
+	if !removed {
+		if err := g.Prune(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	// Delete the branch using git CLI, unless the caller keeps it
@@ -516,11 +580,6 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		}
 	}
 
-	// Prune the worktree to clean up any remaining references
-	if err := g.Prune(); err != nil {
-		errs = append(errs, err)
-	}
-
 	// Drop the title sidecar so it doesn't linger beside a now-removed
 	// worktree (best-effort; never blocks cleanup).
 	removeTitleSidecar(g.worktreePath)
@@ -528,8 +587,30 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	if len(errs) > 0 {
 		return g.combineErrors(errs)
 	}
+	if leftover != nil {
+		return &LeftoverDirError{Path: g.worktreePath, Err: leftover}
+	}
 
 	return nil
+}
+
+// RepoGone reports whether the worktree's repository is positively gone:
+// its path does not exist. Any other stat failure is no answer, and reads
+// false.
+func (g *GitWorktree) RepoGone() bool {
+	_, err := os.Stat(g.repoPath)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// isUntrackedTreeErr reports whether a `git worktree remove` failure says
+// the directory is no valid worktree of the repository: never registered or
+// pruned ("is not a working tree"), or registered but failing git's
+// validation (its `.git` gone or pointing elsewhere). git deletes nothing
+// in either case.
+func isUntrackedTreeErr(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "is not a working tree") ||
+		strings.Contains(msg, "validation failed, cannot remove working tree")
 }
 
 // Remove removes the worktree but keeps the branch. A lock loom respects

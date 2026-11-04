@@ -215,3 +215,12 @@ func TestConfig_SchedulerIsRaceSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestValidateBuildSweepAfterHours(t *testing.T) {
+	for _, ok := range []int{0, 1, 12, MaxBuildSweepAfterHours} {
+		assert.NoError(t, ValidateBuildSweepAfterHours(ok), ok)
+	}
+	for _, bad := range []int{-1, MaxBuildSweepAfterHours + 1} {
+		assert.Error(t, ValidateBuildSweepAfterHours(bad), bad)
+	}
+}

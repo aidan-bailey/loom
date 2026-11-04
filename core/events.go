@@ -7,6 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/mockup"
 	"github.com/aidan-bailey/loom/session/transcript"
 )
 
@@ -167,9 +168,10 @@ type AccountsChanged struct {
 }
 
 // ModelChanged carries the model's own state (the default account's
-// remote-control auth and the workspace registry) whenever it changed, and
-// on the first Sync. The TUI does nothing with it; a replica answers those
-// queries from it.
+// remote-control auth, the workspace registry, the web settings and the
+// build sweep's setting) whenever it changed, and on the first Sync. A
+// replica answers those queries from it; the TUI refreshes an open
+// settings overlay's Build Sweep row.
 type ModelChanged struct {
 	View ModelView
 }
@@ -207,10 +209,10 @@ func (ViewsChanged) coreEvent() {}
 // concerns (for Create the new one, for Recover the adopted one). Err is
 // the failure. Notice is what a success must still show (a stash it could
 // not drop). Issue is FetchIssue's result, Turns ReadTurns' page, Diff
-// ReadDiff's patch and Sweep SweepBuilds' report. Job is SubmitJob's new job
-// (0 for every other request), whose Notice is the owner warning. The notices the TUI
-// shows for an operation are emitted as usual; the Reply is for the
-// requester that waits on it.
+// ReadDiff's patch, Mockup ReadMockup's page and Sweep SweepBuilds'
+// report. Job is SubmitJob's new job (0 for every other request), whose
+// Notice is the owner warning. The notices the TUI shows for an operation
+// are emitted as usual; the Reply is for the requester that waits on it.
 type Reply struct {
 	Req    ReqID
 	ID     InstanceID
@@ -219,6 +221,7 @@ type Reply struct {
 	Issue  github.Issue
 	Turns  transcript.Page
 	Diff   git.Patch
+	Mockup mockup.Page
 	Sweep  buildsweep.Report
 	Job    sched.JobID
 }

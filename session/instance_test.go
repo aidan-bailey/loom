@@ -23,3 +23,33 @@ func TestStatusAge_StampsOnTransition(t *testing.T) {
 	require.NoError(t, inst.TransitionTo(Loading))
 	assert.GreaterOrEqual(t, inst.StatusAge(), before)
 }
+
+func TestInstance_ATurnStartsOnRunningButNotAfterAPrompt(t *testing.T) {
+	inst := &Instance{Title: "turn", Status: Paused}
+	assert.True(t, inst.TurnStart().IsZero(), "no turn seen in this process")
+
+	require.NoError(t, inst.TransitionTo(Running))
+	first := inst.TurnStart()
+	require.False(t, first.IsZero())
+
+	require.NoError(t, inst.TransitionTo(Prompting))
+	require.NoError(t, inst.TransitionTo(Running))
+	assert.Equal(t, first, inst.TurnStart(), "a prompt inside a turn doesn't split it")
+
+	require.NoError(t, inst.TransitionTo(Ready))
+	time.Sleep(time.Millisecond)
+	require.NoError(t, inst.TransitionTo(Running))
+	assert.True(t, inst.TurnStart().After(first), "a reply starts a new turn")
+}
+
+func TestInstance_KeepsTheMockupItIsGiven(t *testing.T) {
+	inst := &Instance{Title: "mockup", Status: Running}
+	at := time.Now()
+	inst.SetMockup("layout.html", at)
+	screen, changed := inst.Mockup()
+	assert.Equal(t, "layout.html", screen)
+	assert.Equal(t, at, changed)
+	inst.SetMockup("", time.Time{})
+	screen, _ = inst.Mockup()
+	assert.Empty(t, screen)
+}

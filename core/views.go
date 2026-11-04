@@ -106,6 +106,10 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		v.RemoteSession = entry.RemoteSession
 	}
 	v.LastMessage, v.HasLastMessage = inst.LastMessage()
+	if screen, changed := inst.Mockup(); screen != "" {
+		start := inst.TurnStart()
+		v.Mockup = MockupView{Screen: screen, Changed: changed, Fresh: !start.IsZero() && !changed.Before(start)}
+	}
 	if d := inst.GetDiffStats(); d != nil {
 		v.Diff, v.HasDiff = *d, true
 	}

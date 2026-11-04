@@ -47,6 +47,35 @@ func TestSessionLiveness_AnsweredProbeIsDead(t *testing.T) {
 	assert.False(t, ts.DoesSessionExist(), "boolean probe must keep its meaning for existing callers")
 }
 
+// TestSessionLiveness_TmuxThatNeverRanIsUnknown: a probe whose tmux never
+// ran, or never finished on its own, got no answer either. A fork that
+// fails (EAGAIN once a runaway build hits the process limit, EMFILE), a
+// tmux missing from PATH, or a probe killed by a signal it did not send
+// itself used to read as Dead, and Pause then archived a live agent's
+// scratchpad and marked it Paused, while the tick paused the whole fleet.
+// tmux exiting with a status of its own ("can't find session") stays Dead.
+func TestSessionLiveness_TmuxThatNeverRanIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func() error
+		want Liveness
+	}{
+		{"fork/exec failed", func() error { return exec.Command("/nonexistent/loom-test-tmux").Run() }, LivenessUnknown},
+		{"not on PATH", func() error { return exec.Command("loom-test-no-such-tmux").Run() }, LivenessUnknown},
+		{"killed by a signal", func() error { return exec.Command("sh", "-c", "kill -KILL $$").Run() }, LivenessUnknown},
+		{"tmux answered no", func() error { return exec.Command("sh", "-c", "exit 1").Run() }, LivenessDead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTmuxSession("probe", "prog", NewMockPtyFactory(t), cmd_test.MockCmdExec{
+				RunFunc:    func(*exec.Cmd) error { return tc.run() },
+				OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+			})
+
+			assert.Equal(t, tc.want, ts.SessionLiveness())
+		})
+	}
+}
+
 // TestSessionLiveness_SuccessIsAlive is the happy path.
 func TestSessionLiveness_SuccessIsAlive(t *testing.T) {
 	ts := newTmuxSession("probe", "prog", NewMockPtyFactory(t), cmd_test.MockCmdExec{

@@ -17,5 +17,5 @@ Extra Claude accounts: each is a `CLAUDE_CONFIG_DIR` under `<globalDir>/accounts
 
 ## Pointers
 
-- [`../cmd/CLAUDE.md`](../cmd/CLAUDE.md) — `loom account`'s guards.
+- [`../internal/cli/CLAUDE.md`](../internal/cli/CLAUDE.md) — `loom account`'s guards.
 - [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — where this package sits.

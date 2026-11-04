@@ -10,9 +10,9 @@ Two processes writing one workspace's sessions overwrite each other: `Storage.Sa
 
 | File | Holds |
 |---|---|
-| `lock.go` | the lock, `Record`, `ReadRecord`, `acquire`, `liveHolder` |
+| `lock.go` | the lock, `Record`, `ReadRecord`, `acquire`, `liveHolder`, `TakeLock` |
 | `paths.go` | `SocketPath`, `ModSocketPath`, `privateDir`, `maxSocketPath` |
-| `serve.go` | `Serve`, `Options`, `stopModel`, `Stop`, `StopPID`, `servesLoom`, `TmuxServer` |
+| `serve.go` | `Serve`, `Options`, `stopModel`, `startWeb`, `modWatch`, `Stop`, `StopPID`, `servesLoom`, `TmuxServer` |
 | `connect.go` | `Connect`, `spawn`, `LogPath`, `CrashLogPath` |
 | `proc_unix.go`, `proc_windows.go` | `recordPath`, `terminate`, process probes per platform |
 
@@ -90,7 +90,7 @@ Startup always spawns. A rejoin spawns only after a crash or on `ctrl+r`, and is
 
 The same build is used, with its tmux server pinned (`tmux.UseServer(peer.Tmux)`). A newer daemon is refused (`newerDaemonError`: "the loom daemon is X, newer than this loom (Y): upgrade loom, or run `loom serve stop`"). It matches `app.ErrDaemonNewer`, so a rejoining TUI exits instead of retrying, and `main.go` says "loom: the loom daemon was replaced by a newer loom (X); run loom again". An older one is replaced once, announced on stderr at startup and on the banner on a rejoin ("replacing the loom daemon (…) with this build…"): `daemon.StopPID` of the daemon dialed (`dialDaemon` returns the pid from `Connect`'s record), then a connect that spawns this build. Unless `replaceGuard` refuses: from a `loom_*` or `claudesquad_*` tmux session on the daemon's own tmux server (compared cleaned, then through symlinks, `tmux.SameServer`), or on any server when the daemon named none, unless `LOOM_GLOBAL_DIR` is set; a session it can't name there counts as loom's. A loomdev sandbox still replaces its own daemon, whose server is the sandbox's.
 
-**Commands that write `state.json` themselves** hold the lock while they do (`TakeLock`, `lock.go`). It answers `ErrRunning` at once for a live daemon, listening or still booting, refuses a loom from before the daemon or another command holding it, and waits out a client's `ReadRecord` probe for up to `takeLockWait`; its record names the process with no socket, so a daemon started meanwhile stands down and a client waits. `workspace migrate` takes it through `cmd.StateWriteGuard` (`holdForStateWrite`, which `main.go` sets, since `cmd` cannot import this package) and refuses while the daemon runs. `loom reset` takes it only when no daemon runs; while one does, reset is the daemon's `Reset` request (`internal/cli`'s `Reset`). The other subcommands (`workspace`, `account`) are clients: `main.go` sets `cli.Join` to `joinCLI`, the TUI's startup join, so they spawn the daemon when none runs, the newer build wins, and `replaceGuard` applies.
+**Commands that write `state.json` themselves** hold the lock while they do (`TakeLock`, `lock.go`). It answers `ErrRunning` at once for a live daemon, listening or still booting, refuses a loom from before the daemon or another command holding it, and waits out a client's `ReadRecord` probe for up to `takeLockWait`; its record names the process with no socket, so a daemon started meanwhile stands down and a client waits. `workspace migrate` takes it through `cmd.StateWriteGuard` (`holdForStateWrite`, which `main.go` sets, since `cmd` cannot import this package) and refuses while the daemon runs. `loom reset` takes it only when no daemon runs; while one does, reset is the daemon's `Reset` request (`internal/cli`'s `Reset`). The other subcommands (`workspace`, `account`, `session`, `web`, `sweep`) are clients: `main.go` sets `cli.Join` to `joinCLI`, the TUI's startup join, so they spawn the daemon when none runs, the newer build wins, and `replaceGuard` applies.
 
 ## Lifetime and environment
 
@@ -98,7 +98,7 @@ The first `loom` that finds no daemon spawns one, detached, and it outlives ever
 
 The daemon keeps the environment of the `loom` that spawned it, so a TUI started later from another terminal or SSH session changes nothing the model reads from its environment: the tmux server (pinned, and kept from the last daemon while that server runs), the credential override and `$CLAUDE_CONFIG_DIR` its warnings read, Claude's temp root, `LOOM_PANE_RENDERER` for the model's tick, and the `update-environment` variables every agent gets at `new-session` (`SSH_AUTH_SOCK`, `DISPLAY`, …). The rest of an agent's environment (`ANTHROPIC_*`, the default account's `CLAUDE_CONFIG_DIR`, `PATH`) is the tmux server's global environment, the daemon's only when the daemon started that server. What a TUI starts itself keeps the TUI's environment: the terminal pane's shells, a relative or `~` `ctx:new_instance` path, and a login from the Accounts screen. To pick up a new environment, `loom serve stop`, then start loom from it (and, on a tmux server the daemon did not start, change that server's environment too).
 
-The other CLI subcommands take no lock: `loom account` and `loom workspace add` write registries the daemon rereads (`accounts.json` when its stat changes, the workspace registry on `ReloadRegistry`). loomdev sandboxes have their own global dir, so their own daemon.
+The other CLI subcommands take no lock: they are the daemon's clients, and the daemon writes the registries on their requests (`Register`, `AddAccount`, …), so it serves the change at once. loomdev sandboxes have their own global dir, so their own daemon.
 
 ## Runtime files
 

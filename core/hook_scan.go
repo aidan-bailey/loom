@@ -23,6 +23,9 @@ type hookScanResult struct {
 	instance *session.Instance
 	result   session.HookScanResult
 	err      error
+	// mockup is the look for the brainstorm companion a scan that read a
+	// hand-back event made (handsBack); nil when it made none.
+	mockup *mockupLook
 }
 
 // hookScanResults carries a scan of every tracked instance back to the
@@ -33,17 +36,20 @@ type hookScanResults struct {
 
 // hookScanJob builds one scan covering every instance that wants one.
 // Requests are built here, on the model's goroutine, because they read the
-// tracker; the returned Job only touches the filesystem. Returns nil when
-// there is nothing to scan.
+// tracker; the returned Job only touches the filesystem. An instance whose
+// scan reads an event that hands the turn back (handsBack) also gets a look
+// for its brainstorm companion, in the same job, so the screen and the
+// status land in one delivery. Returns nil when there is nothing to scan.
 func hookScanJob(active []*session.Instance) Job {
 	type job struct {
-		inst *session.Instance
-		req  session.HookScanRequest
+		inst     *session.Instance
+		req      session.HookScanRequest
+		worktree string
 	}
 	var jobs []job
 	for _, inst := range active {
 		if req, ok := inst.NextHookScan(); ok {
-			jobs = append(jobs, job{inst: inst, req: req})
+			jobs = append(jobs, job{inst: inst, req: req, worktree: inst.GetWorktreePath()})
 		}
 	}
 	if len(jobs) == 0 {
@@ -54,7 +60,11 @@ func hookScanJob(active []*session.Instance) Job {
 		results := make([]hookScanResult, 0, len(jobs))
 		for _, j := range jobs {
 			res, err := session.ScanHooks(j.req, now)
-			results = append(results, hookScanResult{instance: j.inst, result: res, err: err})
+			r := hookScanResult{instance: j.inst, result: res, err: err}
+			if err == nil && handsBack(res.Events) {
+				r.mockup = lookForMockup(j.worktree)
+			}
+			results = append(results, r)
 		}
 		return hookScanResults{results: results}
 	}
@@ -95,8 +105,9 @@ func (m *Model) HookTick() {
 // hookFace is what a hook scan can change of an instance: what its view
 // shows (its status and Claude's, the wait reason and the tool summary
 // behind it, the last message, the subagent rows) and the conversation the
-// model saves. detail is Claude's observation's tool summary: a second
-// permission request for one tool changes it and nothing else.
+// model saves, and the brainstorm companion's screen. detail is Claude's
+// observation's tool summary: a second permission request for one tool
+// changes it and nothing else.
 type hookFace struct {
 	status, claude   session.Status
 	why, wait        string
@@ -106,6 +117,8 @@ type hookFace struct {
 	lastMsg          string
 	hasLastMsg       bool
 	subagents        []subagent.View
+	mockup           string
+	mockupChanged    time.Time
 }
 
 // hookFaceOf reads inst's hookFace.
@@ -115,6 +128,7 @@ func hookFaceOf(inst *session.Instance) hookFace {
 	f.detail = inst.ClaudeWaitDetail()
 	f.conv, f.transcript = inst.ClaudeSession()
 	f.lastMsg, f.hasLastMsg = inst.LastMessage()
+	f.mockup, f.mockupChanged = inst.Mockup()
 	return f
 }
 
@@ -143,6 +157,9 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 			r.instance.ForgetSubagentsWithoutHooks()
 		} else {
 			r.instance.ApplyHookScan(r.result)
+			if r.mockup != nil {
+				applyMockup(r.instance, r.mockup)
+			}
 		}
 		after := hookFaceOf(r.instance)
 		if after.conv != before.conv || after.transcript != before.transcript {

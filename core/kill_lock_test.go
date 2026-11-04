@@ -106,7 +106,7 @@ func TestKill_LockedWorktreeKeepsTheRowAndShowsTheRemedy(t *testing.T) {
 			assert.Contains(t, string(out), "u/locked", "and so is its branch")
 			// DeleteInstance reports ErrInstanceNotFound for a record the
 			// kill already removed.
-			require.NoError(t, ws.Storage().DeleteInstance("locked"), "the record was not deleted from storage")
+			require.NoError(t, ws.Storage().DeleteInstance("locked", inst.CreatedAt), "the record was not deleted from storage")
 		})
 	}
 }
@@ -157,6 +157,7 @@ func TestKill_DiscardsARecoverableOrphanWhoseTmuxSessionIsGone(t *testing.T) {
 			placeholder := ws.byTitle("x")
 			require.NotNil(t, placeholder)
 			require.Equal(t, session.Recoverable, placeholder.GetStatus())
+			require.True(t, placeholder.Started(), "a placeholder is started, so its discard cleans up rather than only dropping the row")
 			require.Error(t, tmux.Command(context.Background(), "has-session",
 				"-t", tmux.SessionTarget(tmux.ToLoomTmuxName("x"))).Run(), "fixture: no tmux session for the orphan")
 

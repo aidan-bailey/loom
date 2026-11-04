@@ -4,11 +4,14 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"testing"
 
+	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,10 +146,12 @@ func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 // terminalKills puts inst on a mock tmux session that records the
 // kill-session of its terminal pane's shell (loom_term_<title>), counting
 // them in *kills and noting in *worktreeThere whether wtPath existed when
-// the last one ran. No tmux server is contacted.
+// the last one ran. Its listing shows the shell started in wtPath, as
+// ui.TerminalPane starts it. No tmux server is contacted.
 func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *int, worktreeThere *bool) {
 	t.Helper()
-	target := tmux.SessionTarget(tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title)))
+	name := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title))
+	target := tmux.SessionTarget(name)
 	rec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
 			if slices.Contains(c.Args, "kill-session") && slices.Contains(c.Args, target) {
@@ -156,7 +161,7 @@ func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *i
 			}
 			return nil
 		},
-		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(name + "\t" + wtPath + "\n"), nil },
 	}
 	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(inst.Title, "claude", fakePtyFactory{t: t}, rec))
 }
@@ -185,9 +190,21 @@ func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.
 		assert.Zero(t, calls, "the terminal shell must not be ended for a refused kill")
 	}
 
-	t.Run("no worktree", func(t *testing.T) {
-		// Never started: GetGitWorktree fails.
-		refused(t, newInst(t, "unstarted"), "has not been started")
+	t.Run("never started", func(t *testing.T) {
+		// Nothing of its own runs, so its kill removes it and ends no shell.
+		inst := newInst(t, "unstarted")
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		ws.add(inst)
+		m.SetWorkspacesForTest(ws)
+		calls, there := 0, false
+		terminalKills(t, inst, inst.GetWorktreePath(), &calls, &there)
+		pre, job := m.killInst(ws, inst)
+		pre()
+
+		_, ok := job().(KillResult)
+		require.True(t, ok, "the kill proceeds")
+		assert.Zero(t, calls, "no terminal shell is ended")
 	})
 
 	t.Run("branch checked out in the repository", func(t *testing.T) {
@@ -236,4 +253,88 @@ func TestSendPrompt_FailureNamesTheSession(t *testing.T) {
 	n, ok := events[0].(Notice)
 	require.True(t, ok, "a notice")
 	assert.ErrorContains(t, n.Err, "prompt not sent to x: ")
+}
+
+// TestKill_DeletesTheMovedTreeInTheBackground: Instance.Kill's Cleanup
+// moves the worktree into the trash rather than deleting it, so the kill
+// finishes without waiting on a large tree; the completion queues the
+// delete as a background job.
+func TestKill_DeletesTheMovedTreeInTheBackground(t *testing.T) {
+	repo := gitRepo(t)
+	inst := pausedWorktreeInst(t, repo, "big", "big-branch")
+	wtPath := inst.GetWorktreePath()
+	calls, there := 0, false
+	terminalKills(t, inst, wtPath, &calls, &there)
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	pre, job := m.killInst(ws, inst)
+	pre()
+
+	res, ok := job().(KillResult)
+	require.True(t, ok, "the kill proceeds")
+	require.NotEmpty(t, res.Trash, "the tree was moved")
+	require.DirExists(t, res.Trash, "and is not deleted before the kill finishes")
+	assert.NoDirExists(t, wtPath)
+
+	m.Deliver(res)
+	for _, j := range m.Drain().Jobs {
+		m.Deliver(j())
+	}
+
+	assert.NoDirExists(t, res.Trash, "a background job deletes it")
+}
+
+// TestReconcileOrphans_PurgesTheWorktreeTrash: a tree a stopped daemon's
+// background delete never reached stays in the trash, which nothing else
+// would delete. Each load queues a purge.
+func TestReconcileOrphans_PurgesTheWorktreeTrash(t *testing.T) {
+	cfgDir := t.TempDir()
+	root, err := git.TrashDir(cfgDir)
+	require.NoError(t, err)
+	left := filepath.Join(root, "x_18be000000000001.18be000000000002")
+	require.NoError(t, os.MkdirAll(left, 0o755))
+	ws := storedWorkspace(t, "a")
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+
+	m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
+	for _, j := range m.Drain().Jobs {
+		m.Deliver(j())
+	}
+
+	assert.NoDirExists(t, left)
+
+	m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
+	assert.Empty(t, m.Drain().Jobs, "an empty trash queues no job")
+}
+
+// TestKill_ASessionWhoseRepositoryIsGoneIsRemoved: with the session's
+// repository deleted, the checked-out-branch check failed on every D, so
+// the row could only go by `loom reset` or a hand edit of state.json. The
+// kill now finishes: the record and row go, and the worktree, which may
+// hold the only copy of the work, is left on disk and named in a notice.
+func TestKill_ASessionWhoseRepositoryIsGoneIsRemoved(t *testing.T) {
+	repo := gitRepo(t)
+	inst := pausedWorktreeInst(t, repo, "orphaned", "orphaned-branch")
+	wtPath := inst.GetWorktreePath()
+	calls, there := 0, false
+	terminalKills(t, inst, wtPath, &calls, &there)
+	require.NoError(t, os.RemoveAll(repo))
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	pre, job := m.killInst(ws, inst)
+	pre()
+
+	res, ok := job().(KillResult)
+	require.True(t, ok, "the kill finishes")
+	require.Error(t, res.Notice)
+	assert.Contains(t, res.Notice.Error(), wtPath)
+	assert.DirExists(t, wtPath, "the worktree is left on disk")
+
+	m.Deliver(res)
+	assert.NotContains(t, ws.instances(), inst, "the row is gone")
 }

@@ -42,6 +42,26 @@ func homeWithAppState(t *testing.T) *home {
 	return h
 }
 
+// addUnkillableInstance attaches a Paused instance titled title whose
+// kill job fails before it touches anything: its branch is the one its
+// repository has checked out ("is currently checked out"). For tests of
+// how a failed kill is reported.
+func addUnkillableInstance(t *testing.T, h *home, title string) *session.Instance {
+	t.Helper()
+	repo := t.TempDir()
+	out, err := exec.Command("git", "-C", repo, "init", "-q", "-b", "main").CombinedOutput()
+	require.NoError(t, err, string(out))
+	inst, err := session.FromInstanceData(session.InstanceData{
+		Title: title, Status: session.Paused, Program: "claude",
+		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "main", SessionName: title},
+	}, t.TempDir())
+	require.NoError(t, err)
+	h.ws().AddForTest(inst)
+	selectIn(h, h.list, inst)
+	h.syncViews()
+	return inst
+}
+
 // addReadyInstance attaches a Running instance so preconditions-gated
 // intents (push/kill/stash/attach/quick_input) have a valid
 // selection. A mock TmuxSession is installed with a cmdExec that

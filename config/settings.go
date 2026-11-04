@@ -1,6 +1,9 @@
 package config
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+)
 
 // Settings is config.json's content: every persisted field, with the
 // getters that read them. A plain value: the model hands copies of it
@@ -202,6 +205,18 @@ func (s Settings) GetTheme() string { return s.Theme }
 // GetBuildSweepAfterHours returns BuildSweepAfterHours, with a negative
 // value read as 0: the build sweep off.
 func (s Settings) GetBuildSweepAfterHours() int { return max(s.BuildSweepAfterHours, 0) }
+
+// MaxBuildSweepAfterHours is the largest build sweep threshold: a year.
+const MaxBuildSweepAfterHours = 8760
+
+// ValidateBuildSweepAfterHours refuses a build sweep threshold outside 0
+// (off) to MaxBuildSweepAfterHours.
+func ValidateBuildSweepAfterHours(hours int) error {
+	if hours < 0 || hours > MaxBuildSweepAfterHours {
+		return fmt.Errorf("the build sweep threshold must be 0 (off) to %d hours, not %d", MaxBuildSweepAfterHours, hours)
+	}
+	return nil
+}
 
 // GetScheduler returns a deep copy of the scheduler block, or the zero value
 // when there is none: every field then takes the host's default

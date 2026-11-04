@@ -647,9 +647,29 @@ func (s *Session) SessionLiveness() Liveness {
 				"session", s.sanitizedName, "timeout_ms", livenessProbeTimeout.Milliseconds())
 			return LivenessUnknown
 		}
+		if tmuxNeverAnswered(err) {
+			log.For("tmux").Warn("liveness.probe_no_answer", "session", s.sanitizedName, "err", err.Error())
+			return LivenessUnknown
+		}
 		return LivenessDead
 	}
 	return LivenessAlive
+}
+
+// tmuxNeverAnswered reports whether err, from running a tmux command, says
+// tmux never ran or never finished on its own: a lookup or fork/exec that
+// failed (tmux missing from PATH, EAGAIN at the process limit, EMFILE) or
+// a process killed by a signal. Such a failure says nothing about the
+// session, and under the load that causes it, it reaches every probe at
+// once. Only tmux exiting with a status of its own is an answer.
+func tmuxNeverAnswered(err error) bool {
+	var execErr *exec.Error
+	var pathErr *os.PathError
+	if errors.As(err, &execErr) || errors.As(err, &pathErr) {
+		return true
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == -1
 }
 
 // StartDir lists the server's sessions and returns the directory this
@@ -659,19 +679,32 @@ func (s *Session) SessionLiveness() Liveness {
 // included. A session's name is unique per server, not per workspace, so the
 // directory is what says whose session holds the name.
 func (s *Session) StartDir() (dir string, found bool, err error) {
+	dirs, err := s.StartDirs()
+	if err != nil {
+		return "", false, err
+	}
+	dir, found = dirs[s.sanitizedName]
+	return dir, found, nil
+}
+
+// StartDirs lists the sessions on s's server in one `tmux ls`: each one's
+// start directory, by session name. A caller that must place several
+// sessions (an agent's and its terminal pane's shell) reads them all from
+// one listing. err is the listing's failure, no server running included.
+func (s *Session) StartDirs() (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
 	out, err := s.cmdExec.Output(Command(ctx, "ls", "-F", "#{session_name}\t#{session_path}"))
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
+	dirs := map[string]string{}
 	for _, line := range strings.Split(string(out), "\n") {
-		name, d, _ := strings.Cut(line, "\t")
-		if name == s.sanitizedName {
-			return d, true, nil
+		if n, d, ok := strings.Cut(line, "\t"); ok {
+			dirs[n] = d
 		}
 	}
-	return "", false, nil
+	return dirs, nil
 }
 
 // DoesSessionExist reports whether the session is known to be alive on

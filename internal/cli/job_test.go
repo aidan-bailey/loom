@@ -974,28 +974,24 @@ func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
 	}
 }
 
-// The paragraph both context files give an agent tells it how to submit work
-// and which flags claim resources. A flag renamed on the commands but not
-// there would send agents to a command that refuses it, so every flag the
-// paragraph names must exist on both `submit` and `run`. The closing sentence
-// no longer promises that builds and tests run directly, which the paragraph
-// contradicts (spec §8).
+// The paragraph both context files give an agent (in the tail they share)
+// tells it how to submit work and which flags claim resources. A flag renamed
+// on the commands but not there would send agents to a command that refuses
+// it, so every flag the paragraph names must exist on both `submit` and
+// `run`. Neither file promises that builds and tests run directly, which the
+// paragraph contradicts (spec §8).
 func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, session.WriteLoomContextFiles(dir))
 	flagName := regexp.MustCompile(`--[a-z]+`)
 
-	for name, closing := range map[string]string{
-		"claude-loom-context.md":           "Everything else — editing files, committing, diffing, and viewing history within your branch — works exactly as normal.",
-		"claude-loom-context-workspace.md": "Editing files, committing, and viewing diffs/history all work exactly as normal.",
-	} {
+	for _, name := range []string{"claude-loom-context.md", "claude-loom-context-workspace.md"} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err)
 		text := string(b)
 		start := strings.Index(text, "**Heavy work goes through loom's work queue.**")
 		require.GreaterOrEqual(t, start, 0, "%s carries the paragraph", name)
 		para, _, _ := strings.Cut(text[start:], "\n")
-		assert.True(t, strings.HasSuffix(strings.TrimSpace(text), closing), "%s ends with %q", name, closing)
 		assert.NotContains(t, text, "running builds and tests", name)
 
 		assert.Contains(t, para, `loom job submit -d "<what>" -- <cmd>`, name)

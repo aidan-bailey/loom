@@ -788,8 +788,8 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 // resumes when the Reply lands (scriptReplied), or at once with the error
 // when the TUI refuses the call itself. Three rules carry the methods'
 // behaviour from when they called the instance directly, and the keys':
-//   - pause refuses a Paused session, as Instance.Pause did; the model
-//     admits one, as the s key does.
+//   - pause refuses a Paused session, as Instance.Pause did and the
+//     model's precondition does.
 //   - resume on a Recoverable session recovers it, as r does
 //     (runResumeOrRecover); the model's Resume refuses one.
 //   - send_prompt holds input to the session until its Reply, as the

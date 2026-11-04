@@ -117,6 +117,9 @@ func (r *replica) Registry() core.RegistryView       { return r.model.Clone().Re
 // Web is the web settings and devices, as last published in the model view.
 func (r *replica) Web() core.WebView { return r.model.Clone().Web }
 
+// BuildSweep is the build sweep's setting, from the published model view.
+func (r *replica) BuildSweep() core.BuildSweepView { return r.model.BuildSweep }
+
 // Views is the served workspace id's instance views; nil for one not
 // served, as the model answers.
 func (r *replica) Views(id core.WorkspaceID) []core.InstanceView {

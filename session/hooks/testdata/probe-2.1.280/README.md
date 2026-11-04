@@ -17,7 +17,7 @@ Nothing else was edited.
 | Startup | `…9911178` | `SessionStart` `startup`, session `8c634184` |
 | Plain turn | `…9925884`–`…9927419` | `UserPromptSubmit`, `Stop` ("PONG") |
 | Permission prompt | `…9971083`–`…9993148` | `PermissionRequest` (Bash, no `agent_id`); `Notification` `permission_prompt` 6.0s later; approved; `Stop` ("DONE") |
-| Internal helper | `…9998115` | `SubagentStop` with no matching start (one of Claude's helpers) |
+| Internal helpers | `…9998115`, `…0026249`, `…0047716`, `…0145221`, `…0149008` | `SubagentStop` with no matching start (Claude's helpers), the second inside the background subagent's run |
 | Background subagent with a prompt | `…0013312`–`…0040900` | `SubagentStart`; parent `Stop` while it runs (`background_tasks` lists it as a running `subagent`); the subagent's `PermissionRequest` (with `agent_id`); `Notification`; approved; `SubagentStop`; a `UserPromptSubmit` whose prompt is a `<task-notification>`; final `Stop` |
 | `/clear` | `…0077106`–`…0077137` | `SessionEnd` `clear`, then `SessionStart` `clear` with new session `487f460e` |
 | Turn, then `/exit` | `…0104851`–`…0108611` | `UserPromptSubmit`, `Stop`, `SessionEnd` `prompt_input_exit` |

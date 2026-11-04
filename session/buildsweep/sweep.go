@@ -82,11 +82,14 @@ func (s Sweeper) sweep(t Target, after time.Duration, dryRun bool, mounts []moun
 		return r
 	}
 	wt, err := filepath.EvalSymlinks(t.Worktree)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return skip(SkipNoTarget, "no worktree") // paused before pause kept the tree
+	case err != nil:
 		return skip(SkipError, err.Error())
 	}
 	target := filepath.Join(wt, "target")
-	if !isDir(target) || !isRegular(filepath.Join(target, "CACHEDIR.TAG")) {
+	if !isCargoTarget(target) {
 		return skip(SkipNoTarget, "no cargo target dir")
 	}
 	if !supported {
@@ -276,6 +279,14 @@ func removeAll(paths []string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// isCargoTarget reports whether target is a dir cargo builds into. Cargo
+// tags a target dir it creates with CACHEDIR.TAG, but one that already
+// existed (an agent's notes written there first) gets no tag, only the
+// .rustc_info.json cargo writes into it on every build.
+func isCargoTarget(target string) bool {
+	return isDir(target) && (isRegular(filepath.Join(target, "CACHEDIR.TAG")) || isRegular(filepath.Join(target, ".rustc_info.json")))
 }
 
 func isDir(p string) bool {

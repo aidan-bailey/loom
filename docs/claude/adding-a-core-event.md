@@ -9,7 +9,7 @@
 ## Decide the kind
 
 - **A state event** carries a published view whole (`WorkspacesChanged`, `ModelChanged`, `AccountsChanged`, `GitHubChanged`, `QueueChanged`, `ViewsChanged`). Only the newest matters: the server coalesces it, the replica keeps it, and `Sync` hands out one per kind in the model's publish order. The model publishes it by diffing in `syncEvents` (`core/views.go`) or `publishState` (`core/state_publish.go`), never by hand.
-- **An event naming a request** carries `Req` (`Started`, `Recovered`, `Notice`, `Reply`). The server routes it so only the requester sees its own ID.
+- **An event naming a request** carries `Req` (`Started`, `Recovered`, `Notice`, `Reply`, `Answered`). The server routes it so only the requester sees its own ID.
 - **Any other event** is delivered once, in order, to every client, and never dropped or coalesced.
 
 ## Checklist
@@ -21,8 +21,8 @@
    - add its key to `coalesceKey` (`core/rpc/server.go`) and keep it in `replica.apply` (`core/rpc/replica.go`). *Enforced* both ways by `TestCoalesceKeys_MatchTheReplicasStateEvents`, which compares the key with `replica.apply` only;
    - give the replica's `state` struct a flag for it and hand it out from `replica.events`, in the model's publish order. *Silent:* the client keeps the state and never hands it to the TUI;
    - publish it from the diff in `syncEvents`/`publishState`, in its place in the publish order. *Silent* if a field the diff doesn't compare changes;
-   - add it to `Model.Snapshot` (`core/state_publish.go`), which is all a client that connects later gets. *Silent:* `TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone` checks only the number of events, and a late joiner never learns the state until it next changes.
-5. **An event naming a request:** stamp `Req` in `emit` (`core/model.go`) while a cause is ambient, list it in `routed` and give it its case in `forConn` (`core/rpc/route.go`): to the requester alone, or to every client with `Req` set only for the requester. *Enforced:* `TestForConn_CoversEveryEventNamingARequest`; the stamping in `emit` is *silent* unless a `TestCause_…` case (`core/cause_test.go`) covers it.
+   - add it to `Model.Snapshot` (`core/state_publish.go`), which is all a client that connects later gets. *Silent:* `TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone` checks only today's events (their number and types), and a late joiner never learns the state until it next changes.
+5. **An event naming a request:** stamp `Req` in `emit` (`core/model.go`) while a cause is ambient (or set it where the event is built, as `Answered` is in `core/mod.go`), list it in `routed` and give it its case in `forConn` (`core/rpc/route.go`): to the requester alone, or to every client with `Req` set only for the requester. *Enforced:* `TestForConn_CoversEveryEventNamingARequest`; the stamping in `emit` is *silent* unless a `TestCause_…` case (`core/cause_test.go`) covers it.
 6. **The TUI's applier:** a case in `applyCoreEvent` (`app/core_glue.go`). *Silent:* an unknown event is ignored. See the trap below for the test.
 7. **Rewrite the protocol reference:** `go test ./core/rpc -run TestProtocolReference -update`. *Enforced:* `TestProtocolReference`.
 8. **No `rpc.Protocol` bump** for a new event: an older peer logs and drops an event it doesn't know (`client.unknown_event`). Renaming or removing one, or changing a field's meaning, needs the bump.

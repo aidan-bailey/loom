@@ -97,6 +97,13 @@ type Model struct {
 	// daemon run (deliverBuildSweep). Loop-goroutine only.
 	buildSweepWarned map[string]bool
 
+	// buildSweepHours is the global config's build sweep threshold as the
+	// model last read or wrote it (BuildSweep). buildSweepGen counts
+	// ConfigureBuildSweep's writes: a sweep job made before one carries an
+	// older generation, and its read is dropped. Loop-goroutine only.
+	buildSweepHours int
+	buildSweepGen   uint64
+
 	// queue is the work queue (core/queue.go): the jobs sessions submitted
 	// with `loom job`, their admission against the host's caps and their
 	// persistence under the global config dir. Built by newModel, loaded by
@@ -499,6 +506,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverTracked(msg)
 	case resetResult:
 		m.deliverReset(msg)
+	case mockupResult:
+		m.deliverMockup(msg)
 	case issueResult, turnsResult, diffResult:
 		// Only its Reply carries it (deliverTracked).
 	default:

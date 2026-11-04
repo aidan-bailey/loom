@@ -72,6 +72,23 @@ func running(t *testing.T, title string) *session.Instance {
 	return inst
 }
 
+// unkillable is a fixture instance whose kill the model admits and whose
+// job then fails before it touches anything: a Paused session on the
+// branch its repository has checked out.
+func unkillable(t *testing.T, title string) *session.Instance {
+	t.Helper()
+	repo := t.TempDir()
+	out, err := exec.Command("git", "-C", repo, "init", "-q", "-b", "main").CombinedOutput()
+	require.NoError(t, err, string(out))
+	inst, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         title, Status: session.Paused, Program: "claude",
+		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "main", SessionName: title},
+	}, t.TempDir())
+	require.NoError(t, err)
+	return inst
+}
+
 // pair serves loop to a client over a pipe (not synchronous: what
 // production gets), both stopped when the test ends.
 func pair(t *testing.T, loop *core.Loop) *Client {
@@ -162,6 +179,8 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, webDir)
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, core.WebFile), []byte(webFixture), 0o600))
 	model.InitWebForTest()
+	t.Setenv(config.EnvHome, webDir)
+	require.NoError(t, model.ConfigureBuildSweep(12))
 	loop := core.StartForTest(model)
 	// A repository reached through a symlink and from a subdirectory: the
 	// replica finds its snapshot by any spelling, as the model does.
@@ -205,6 +224,8 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	same("RCAuth", func(k core.Core) []any { return []any{k.RCAuth()} })
 	require.Len(t, loop.Web().Devices, 2, "fixture: the devices are in the view")
 	same("Web", func(k core.Core) []any { return []any{k.Web()} })
+	require.Equal(t, 12, loop.BuildSweep().AfterHours, "fixture: the threshold is in the view")
+	same("BuildSweep", func(k core.Core) []any { return []any{k.BuildSweep()} })
 	same("AccountNames", func(k core.Core) []any { return []any{k.AccountNames()} })
 	same("AccountsLoaded", func(k core.Core) []any { return []any{k.AccountsLoaded()} })
 	same("HasExtraAccounts", func(k core.Core) []any { return []any{k.HasExtraAccounts()} })
@@ -828,4 +849,16 @@ func TestQueueRequests_ThroughTheClient(t *testing.T) {
 	}
 	j, _ = job(2)
 	assert.Equal(t, sched.Queued, j.State, "the refused requests changed nothing")
+}
+
+// TestConfigureBuildSweep_ReachesTheModelOverTheWire: the request's
+// ModelChanged reaches the replica before its reply, and its refusal
+// crosses as an error.
+func TestConfigureBuildSweep_ReachesTheModelOverTheWire(t *testing.T) {
+	t.Setenv(config.EnvHome, t.TempDir())
+	c := pair(t, core.StartForTest(core.NewForTest(core.Options{})))
+
+	require.NoError(t, c.ConfigureBuildSweep(12))
+	assert.Equal(t, 12, c.BuildSweep().AfterHours)
+	assert.ErrorContains(t, c.ConfigureBuildSweep(-1), "0 (off)")
 }

@@ -20,7 +20,7 @@ import (
 // to a focus-only action (or a focus key to a grid-safe one) gets the
 // default key's gating, not its action's. Fixing that properly means
 // per-mode keymaps in the engine (deferred; see the plan's "required
-// background" notes). n/N are absent because they are intercepted
+// background" notes). n/N/I are absent because they are intercepted
 // above the gate: they drop to focus mode first, then dispatch.
 var overviewKeyAllowed = map[string]bool{
 	"j": true, "k": true, "up": true, "down": true,

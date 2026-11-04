@@ -54,7 +54,7 @@ func TestDeleteInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	s, err := NewStorage(mock, "")
 	assert.NoError(t, err)
 
-	err = s.DeleteInstance("Target")
+	err = s.DeleteInstance("Target", time.Time{})
 	assert.NoError(t, err)
 
 	assert.Len(t, mock.saved, 1)
@@ -62,6 +62,62 @@ func TestDeleteInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(mock.saved[0], &remaining))
 	assert.Len(t, remaining, 1)
 	assert.Equal(t, "", remaining[0].Title)
+}
+
+// TestDeleteInstance_DeletesOnlyTheRecordItNames: two records can share a
+// title (a branch picked, or a prefix edited, gives the second its own
+// branch). Deleting one by title dropped both, and the survivor came back
+// only at its workspace's next save, so a daemon stopped first lost it. A
+// record is its title and creation time.
+func TestDeleteInstance_DeletesOnlyTheRecordItNames(t *testing.T) {
+	mock := &trackingMockStorage{
+		data: json.RawMessage(`[
+			{"title":"foo","created_at":"2026-11-01T10:00:00Z","status":3,"program":"claude","worktree":{"repo_path":"/tmp/a","worktree_path":"/tmp/wt-a","branch_name":"u/foo"}},
+			{"title":"foo","created_at":"2026-11-02T10:00:00Z","status":3,"program":"claude","worktree":{"repo_path":"/tmp/a","worktree_path":"/tmp/wt-b","branch_name":"v/foo"}}
+		]`),
+	}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteInstance("foo", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)))
+
+	require.Len(t, mock.saved, 1)
+	var remaining []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[0], &remaining))
+	require.Len(t, remaining, 1)
+	assert.Equal(t, "v/foo", remaining[0].Worktree.BranchName, "the other record stays")
+}
+
+// TestSaveInstance_WritesOnlyItsOwnRecord: a pause or resume saves from its
+// job, seconds after the request, and a save of the workspace's list as it
+// stood then dropped every session created or recovered meanwhile. Saving
+// one record replaces that record (by identity) and leaves every other on
+// disk as it is, or appends it when it is not there yet.
+func TestSaveInstance_WritesOnlyItsOwnRecord(t *testing.T) {
+	mock := &trackingMockStorage{
+		data: json.RawMessage(`[
+			{"title":"a","created_at":"2026-11-01T10:00:00Z","status":0,"program":"claude","worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-a","branch_name":"u/a"}},
+			{"title":"b","created_at":"2026-11-02T10:00:00Z","status":0,"program":"claude","worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-b","branch_name":"u/b"}}
+		]`),
+	}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	a := &Instance{Title: "a", CreatedAt: time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC), Status: Paused, program: "claude"}
+	a.setStarted(true)
+	c := &Instance{Title: "c", CreatedAt: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC), Status: Running, program: "claude"}
+	c.setStarted(true)
+
+	require.NoError(t, s.SaveInstance(a))
+	require.NoError(t, s.SaveInstance(c))
+
+	var saved []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &saved))
+	require.Len(t, saved, 3)
+	assert.Equal(t, "a", saved[0].Title)
+	assert.Equal(t, Paused, saved[0].Status, "its own record is replaced in place")
+	assert.Equal(t, "b", saved[1].Title, "a record it does not name stays")
+	assert.Equal(t, "u/b", saved[1].Worktree.BranchName)
+	assert.Equal(t, "c", saved[2].Title, "a record not there yet is appended")
 }
 
 // TestDeleteInstance_NotFound preserves the existing error path: removing a
@@ -72,7 +128,7 @@ func TestDeleteInstance_NotFound(t *testing.T) {
 	}
 	s, err := NewStorage(mock, "")
 	assert.NoError(t, err)
-	err = s.DeleteInstance("NoSuchInstance")
+	err = s.DeleteInstance("NoSuchInstance", time.Time{})
 	assert.Error(t, err)
 	assert.Empty(t, mock.saved)
 }
@@ -364,7 +420,7 @@ func TestStorage_UndecodableRecord_SurvivesDelete(t *testing.T) {
 	_, err := s.LoadAndReconcile(noopExec())
 	require.NoError(t, err)
 
-	require.NoError(t, s.DeleteInstance("alive"))
+	require.NoError(t, s.DeleteInstance("alive", time.Time{}))
 	assertFutureRecordPreserved(t, mock)
 
 	var persisted []json.RawMessage
@@ -464,7 +520,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		s, err := NewStorage(mock, "")
 		require.NoError(t, err)
 
-		err = s.DeleteInstance("fresh")
+		err = s.DeleteInstance("fresh", time.Time{})
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
 		assert.Empty(t, mock.saved)
@@ -530,6 +586,7 @@ func TestStorage_PreservedTitles(t *testing.T) {
 	// test above): forcing one through LoadAndReconcile needs an empty
 	// title, which would make the assertion ambiguous.
 	s.unrecovered = []InstanceData{{Title: "flaky"}}
+	s.publishLocked() // as every change to the cache does
 
 	assert.ElementsMatch(t, []string{"flaky", "future"}, s.PreservedTitles(),
 		"untitled and unreadable titles are skipped; the loaded record is the live list's to claim")

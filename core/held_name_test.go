@@ -11,6 +11,7 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -201,6 +202,51 @@ func starvedTmux(killed *[]string) cmd_test.MockCmdExec {
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, errors.New("signal: killed") },
 	}
+}
+
+// TestKill_AFailedKillKeepsTheRowAndTheRecord: a kill that Instance.Kill
+// refused or could not finish (here: tmux never said whose session holds
+// the name, so nothing was changed) fails the op. It used to be reported
+// done: the row vanished, the record was deleted from storage, the error
+// reached only serve.log, and the CLI printed "Killed" over a worktree and
+// branch still on disk. The row now reverts and the error is shown, and
+// since a save made while the kill ran left the Deleting record out, the
+// revert saves it back.
+func TestKill_AFailedKillKeepsTheRowAndTheRecord(t *testing.T) {
+	repo := gitRepo(t)
+	inst := pausedWorktreeInst(t, repo, "api", "b/api")
+	var killed []string
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("api", "claude", fakePtyFactory{t: t}, starvedTmux(&killed)))
+	wt, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	ws := storedWorkspace(t, "a")
+	ws.add(inst)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+	require.NoError(t, m.saveWS(ws))
+
+	pre, job := m.killInst(ws, inst)
+	pre()
+	require.NoError(t, m.saveWS(ws), "another request's save while the kill runs")
+	require.NotContains(t, string(ws.state.(*config.State).GetInstances()), `"api"`, "precondition: that save left the Deleting record out")
+	res := job()
+
+	failed, ok := res.(OpFailed)
+	require.True(t, ok, "a failed kill fails the op, got %T", res)
+	assert.Equal(t, session.Paused, failed.Previous)
+	assert.Contains(t, failed.Err.Error(), "nothing was changed")
+
+	m.Deliver(res)
+	events := m.Drain().Events
+	assert.True(t, slices.ContainsFunc(events, func(e Event) bool {
+		n, ok := e.(Notice)
+		return ok && n.Err != nil && errors.Is(n.Err, failed.Err)
+	}), "the error is shown")
+	assert.Contains(t, ws.instances(), inst, "the row stays")
+	assert.Equal(t, session.Paused, inst.GetStatus(), "reverted to what it was")
+	assert.Empty(t, killed, "no session closed")
+	assert.DirExists(t, wt.GetWorktreePath(), "the worktree is untouched")
+	require.NoError(t, ws.Storage().DeleteInstance("api", inst.CreatedAt), "the record is on disk")
 }
 
 // When tmux does not answer whose the session under a record's name is, a

@@ -21,7 +21,7 @@ import (
 // to the moment it is served, so ages and countdowns read the same on every
 // run.
 //
-//go:embed fixture/*.json
+//go:embed fixture/*.json fixture/*.html
 var fixtureFiles embed.FS
 
 // cannedBuild is the build the canned loom reports and fills into
@@ -68,7 +68,13 @@ func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// apiRoutes maps each GET route the screens read on load to its fixture.
+// mockupCSP is the policy the web layer serves a mockup under
+// (internal/web/mockup.go's mockupCSP, which TestWebshotFixture_IsTheJSONTheLayerServes
+// holds this copy to), so a screenshot shows the frame a phone would.
+const mockupCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src data: https:; font-src data: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+
+// apiRoutes maps each GET route the screens read on load to its fixture: a
+// JSON one with its relative times filled, or the mockup's page as it is.
 var apiRoutes = []struct {
 	pattern *regexp.Regexp
 	fixture string
@@ -76,6 +82,7 @@ var apiRoutes = []struct {
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/message$`), "message.json"},
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/turns$`), "turns.json"},
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json"},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html"},
 	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json"},
 }
 
@@ -83,6 +90,17 @@ func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		for _, rt := range apiRoutes {
 			if rt.pattern.MatchString(r.URL.Path) {
+				if strings.HasSuffix(rt.fixture, ".html") {
+					page, err := fixtureFiles.ReadFile("fixture/" + rt.fixture)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Header().Set("Content-Security-Policy", mockupCSP)
+					_, _ = w.Write(page)
+					return
+				}
 				body, err := c.fixture(rt.fixture)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)

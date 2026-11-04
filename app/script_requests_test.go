@@ -331,11 +331,8 @@ func TestScriptKill_AJobFailureIsShownAndRaised(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ctx = cancelledCtx()
 	m.errBox.SetSize(400, 1)
-	// Never started: the kill's job can't get its worktree.
-	inst, err := session.NewInstance(session.InstanceOptions{Title: "fresh", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
-	m.ws().AddForTest(inst)
-	selectIn(m, m.list, inst)
+	// Its branch is the repository's checked-out one: the kill's job fails.
+	addUnkillableInstance(t, m, "fresh")
 	withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():kill() end)`)
 
 	cmd, ok := m.dispatchScript("Z")
@@ -347,13 +344,13 @@ func TestScriptKill_AJobFailureIsShownAndRaised(t *testing.T) {
 	require.Len(t, results, 1)
 	resume := deliver(t, m, results[0])
 
-	assert.Contains(t, m.errBox.String(), "cannot get git worktree", "the model's notice")
+	assert.Contains(t, m.errBox.String(), "is currently checked out", "the model's notice")
 	assert.NotContains(t, m.errBox.String(), "kill:")
 	done := pumpRequests(t, m, resume)
 	require.Len(t, done, 1)
 	require.Error(t, done[0].err)
-	assert.Contains(t, done[0].err.Error(), "kill: cannot get git worktree")
-	assert.Contains(t, m.errBox.String(), "kill: cannot get git worktree", "then the script's raise")
+	assert.Contains(t, done[0].err.Error(), "kill: instance fresh is currently checked out")
+	assert.Contains(t, m.errBox.String(), "kill: instance fresh is currently checked out", "then the script's raise")
 	assert.NotNil(t, m.list.GetInstanceByTitle("fresh"), "the row stays")
 }
 

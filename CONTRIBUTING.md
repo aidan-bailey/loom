@@ -36,7 +36,7 @@ go test -tags e2e ./e2e/...
 
 ### Dev loop
 
-Run your build through the dev sandbox rather than directly — especially from inside loom, where a bare `./loom` is refused:
+Run your build through the dev sandbox rather than directly — especially from inside loom, where a bare `./loom` joins the user's daemon, or is refused when it would replace it:
 
 ```bash
 go run ./tools/loomdev up                 # create + build a sandbox named after your branch
@@ -65,8 +65,8 @@ These wipe real state, and both refuse to run inside a loom-managed tmux session
 # Format (CI enforces it). Never plain `gofmt -w .`: it rewrites vendor/
 gofmt -w $(git ls-files '*.go' | grep -v '^vendor/')
 
-# Lint, as CI runs it (the version is pinned in .github/workflows/lint.yml)
-golangci-lint run --timeout=3m --fast
+# Lint, as CI runs it (the version is pinned in .github/workflows/lint.yml; CI reports only new issues)
+golangci-lint run --timeout=3m --fast --new-from-rev=origin/main
 
 # Where your golangci-lint is v2, which can't read this repo's v1 config, run vet instead
 CGO_ENABLED=0 go vet ./...

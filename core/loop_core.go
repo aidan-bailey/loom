@@ -103,6 +103,9 @@ func (l *Loop) ReadTurns(id InstanceID, query transcript.Query, req ReqID) {
 	l.do(func(m *Model) { m.ReadTurns(id, query, req) })
 }
 func (l *Loop) ReadDiff(id InstanceID, req ReqID) { l.do(func(m *Model) { m.ReadDiff(id, req) }) }
+func (l *Loop) ReadMockup(id InstanceID, req ReqID) {
+	l.do(func(m *Model) { m.ReadMockup(id, req) })
+}
 func (l *Loop) SweepBuilds(opts buildsweep.Options, req ReqID) {
 	l.do(func(m *Model) { m.SweepBuilds(opts, req) })
 }
@@ -180,6 +183,14 @@ func (l *Loop) SetDefaultAccount(name string) error {
 
 // Web runs Model.Web on the loop.
 func (l *Loop) Web() WebView { return get(l, (*Model).Web) }
+
+// BuildSweep runs Model.BuildSweep on the loop.
+func (l *Loop) BuildSweep() BuildSweepView { return get(l, (*Model).BuildSweep) }
+
+// ConfigureBuildSweep runs Model.ConfigureBuildSweep on the loop.
+func (l *Loop) ConfigureBuildSweep(afterHours int) error {
+	return get(l, func(m *Model) error { return m.ConfigureBuildSweep(afterHours) })
+}
 
 // ConfigureWeb runs Model.ConfigureWeb on the loop.
 func (l *Loop) ConfigureWeb(listen, origin string) error {

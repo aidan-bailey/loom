@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -152,4 +154,87 @@ func TestSettingsChangedElsewhere_DefaultsDraftsToTheNewProgram(t *testing.T) {
 	saveFromAnotherTUI(t, m, func(s *config.Settings) { s.DefaultProgram = "aider" })
 	_ = m.drainCore()
 	assert.Equal(t, "aider", m.program)
+}
+
+// openSettingsForTest opens the settings overlay as runOpenSettings does,
+// with the Build Sweep row's value, and resets the global threshold when
+// the test ends.
+func openSettingsForTest(t *testing.T, m *home) *overlay.SettingsOverlay {
+	t.Helper()
+	t.Cleanup(func() { _ = loopOf(m).ConfigureBuildSweep(0) })
+	so := settingsOverlayForTest(m)
+	so.SetBuildSweep(m.core.BuildSweep().AfterHours)
+	m.setOverlay(so, overlaySettings)
+	m.state = stateSettings
+	return so
+}
+
+// editBuildSweep types value into the Build Sweep row.
+func editBuildSweep(m *home, value string) {
+	press := func(msg tea.KeyPressMsg) { handleStateSettingsKey(m, msg) }
+	for i := 0; i < 20; i++ {
+		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
+	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Build Sweep
+	press(tea.KeyPressMsg{Code: tea.KeyEnter})
+	for i := 0; i < 16; i++ {
+		press(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range value {
+		press(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	press(tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
+// TestSettingsBuildSweep_SetsTheGlobalThreshold: the row writes the global
+// config.json, not the focused workspace's, and shows the new value.
+func TestSettingsBuildSweep_SetsTheGlobalThreshold(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+
+	editBuildSweep(m, "12")
+
+	assert.Equal(t, 12, m.core.BuildSweep().AfterHours)
+	dir, err := config.GetConfigDir()
+	require.NoError(t, err)
+	cfg, err := config.ReadConfigFrom(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 12, cfg.GetBuildSweepAfterHours(), "the global config.json")
+	assert.Zero(t, m.settings().BuildSweepAfterHours, "not the workspace's settings")
+	assert.Contains(t, so.Render(), "12h (all workspaces)")
+}
+
+func TestSettingsBuildSweep_ShowsARefusal(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	dir, err := config.GetConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, config.ConfigFileName)
+	prev, readErr := os.ReadFile(path)
+	t.Cleanup(func() {
+		if readErr != nil {
+			_ = os.Remove(path)
+		} else {
+			_ = os.WriteFile(path, prev, 0o644)
+		}
+	})
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+	openSettingsForTest(t, m)
+
+	editBuildSweep(m, "12")
+
+	assert.Contains(t, m.errBox.String(), "configure build sweep")
+	assert.Zero(t, m.core.BuildSweep().AfterHours)
+}
+
+// TestSettingsBuildSweep_AChangeElsewhereRefreshesTheRow: another client's
+// change reaches an open overlay with its ModelChanged.
+func TestSettingsBuildSweep_AChangeElsewhereRefreshesTheRow(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+
+	require.NoError(t, loopOf(m).ConfigureBuildSweep(24))
+	_ = m.drainCore()
+
+	assert.Contains(t, so.Render(), "24h (all workspaces)")
 }

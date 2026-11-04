@@ -55,7 +55,7 @@ nix run .
 
 1. Launch `loom` from a git repository
 2. Press `n` to create a new session
-3. Type a name and press `Enter`
+3. Type a name and press `Enter`, then `Enter` again in the **Session Launch Options** modal
 4. The agent starts in an isolated worktree — watch its output in the **Agent** pane
 5. Press `d` to toggle the **Diff** overlay to see what the agent has changed
 6. Press `Ctrl+A` to attach to the agent pane and interact directly
@@ -75,7 +75,7 @@ Loom has four view modes:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  [ Global ]  [ my-project ]  [ other-repo ]    ← Workspace Tabs    │
+│  [ webapp ]  [ my-project ]  [ other-repo ]    ← Workspace Tabs    │
 ├────────────────────┬────────────────────────────────────────────────┤
 │                    │  fix-auth · user/fix-auth · +42/-15 ← Title    │
 │   SESSION RAIL     ├────────────────────────────────────────────────┤
@@ -197,7 +197,7 @@ Context-sensitive — shows only the actions available for the current state. Ke
 
 ### Workspace Tab Bar
 
-Visible only when multiple workspaces are active. Switch between workspace tabs with `{` and `}` (or `l` and `;`). Toggle which workspaces are visible with `W`.
+Visible whenever workspaces are open as tabs; the global workspace, and a single workspace opened without tabs, show none. Switch between workspace tabs with `{` and `}` (or `l` and `;`). Toggle which workspaces are visible with `W`.
 
 ### Native Terminal Behavior
 
@@ -250,7 +250,7 @@ A session moves through these states:
 ### What Happens at Each Stage
 
 **Ready → Loading → Running** (on creation):
-1. Git worktree created at `~/.loom/worktrees/{name}_{timestamp}`
+1. Git worktree created at `worktrees/{branch}_{timestamp}` in the workspace's loom folder (`<repo>/.loom/`, or `~/.loom/` for the global workspace)
 2. New branch created: `{branch_prefix}{session_title}` (default prefix: `username/`). The prefix can be changed for this one session in the Session Launch Options modal.
 3. Base branch resolved (`base_branch`, or auto-detected) and its commit SHA recorded — this is both where the worktree starts and the baseline for diffs
 4. Tmux session launched running the configured program
@@ -270,10 +270,12 @@ A session an older loom paused (it removed the worktree on pause) is resumed by 
 
 **Running/Paused → Killed** (on kill, `D`):
 1. Tmux session destroyed
-2. Worktree removed
-3. Branch deleted (unless it was a pre-existing branch you selected at creation)
+2. Worktree removed (moved into `worktree-trash/` beside `worktrees/` and deleted in the background, so the kill does not wait on a large tree)
+3. Branch deleted (unless it existed before the session: one you selected at creation, or one an earlier session of the same title left behind)
 4. Instance removed from storage
 5. Claude's temp dir is archived (a paused session's archive simply stays)
+
+A directory git no longer tracks as a worktree, or one whose repository is gone, is left on disk and named in a notice, since it may hold the only copy of the work.
 
 There is one more state that appears only after a crash or lost state
 file: **Recoverable** (`⟲`) — a worktree found on disk that Loom isn't
@@ -282,12 +284,12 @@ tracking. It sits inertly in the list until you recover (`r`) or discard
 
 ### Workspace Terminals
 
-When you launch Loom inside a registered workspace, a special instance is pinned at the top of the instance list — the **Workspace Terminal**. Unlike regular sessions, it runs directly in the root of the repository without creating a git worktree:
+When a registered workspace is open, a special instance is pinned at the top of the instance list — the **Workspace Terminal**. Unlike regular sessions, it runs directly in the root of the repository without creating a git worktree:
 
 - **No worktree** — the agent operates on your main checkout, so changes are immediately visible to other tools working in that directory.
 - **Cannot be paused or killed** — the workspace terminal is a permanent fixture while the workspace exists. `s` and `D` are no-ops when it is selected.
 - **Diff stats** reflect the workspace's uncommitted changes against HEAD, not a cumulative diff against a base commit.
-- **Auto-recreated** — if its tmux session is missing at startup (e.g. after a reboot), Loom recreates it in place.
+- **Auto-recreated** — if its tmux session is missing when the workspace is first opened after the daemon starts (e.g. after a reboot), Loom recreates it in place.
 - **Resume with `r` when it shows Paused** — a terminal whose relaunch failed (tmux could not start a session, say) or whose agent kept exiting is left Paused. `r` relaunches it in the repository, resuming its conversation; it refuses, changing nothing, when another session holds the terminal's tmux name. `R` (restart with options) stays off for it: its launch follows the workspace's config.
 
 Use the workspace terminal for work that needs unrestricted access to the root checkout (ad-hoc shell commands, editors, or an agent you want full repo visibility for). Create standard sessions with `n` / `N` for anything that should stay isolated in a worktree.
@@ -322,16 +324,23 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
+| `f` | File explorer: fuzzy-find a file in the selected session's worktree and open it in `$VISUAL`/`$EDITOR` (else `vi`) |
+| `PgUp` / `PgDn` (or `Ctrl+U` / `Ctrl+D`), `Home` / `End` | Scroll the active pane (the diff when shown, else the agent pane or the inline-attached terminal) by a page / to the top or bottom |
+| `Shift+↑` / `Shift+↓` | Scroll the active pane by a line |
+| `Alt+PgUp` / `Alt+PgDn` | Scroll the terminal pane by a page |
+| `K` / `J`, `g` / `G` | Page the session list up/down; jump to its top/bottom |
+| `Esc` | Close the diff overlay, or leave scroll-back |
 | `Enter` | Open the session workbench for the selected session |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
 | `w` | Open the work view: the host's job queue (see [The Work Queue](#the-work-queue)) |
-| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |
+| `S` | Open settings (edit the workspace's config.json: Default Program, Branch Prefix, Base Branch, Profiles, Claude Preferences, Theme; Build Sweep, which applies to all workspaces; Accounts) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
 | `Ctrl+R` | While the daemon is away: join a daemon now, starting one (see [The Loom Daemon](#the-loom-daemon)). Otherwise unbound |
 | `q` | Quit |
+| `Ctrl+C` | Quit at once, without saving the open tabs (works even when a script rebinds every other key) |
 
 ### Overview Mode (after pressing `Tab`)
 
@@ -340,16 +349,16 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Walk the attention-sorted card grid |
-| `Enter` / `Esc` | Return to focus mode on the selected session, switching to its workspace tab |
-| `Tab` | Return to focus mode |
+| `Enter` | Return to focus mode on the selected session, switching to its workspace tab |
+| `Esc` / `Tab` | Return to focus mode where you left it |
 | `w` | Open the work view; `w` or `Esc` there returns to the overview |
 | `z` | Collapse/expand the active workspace group |
 | `]` / `[` | Move the cursor to the next/previous agent waiting for input, in any open workspace |
-| `n` / `N` | Drop to focus mode, then open the create flow |
+| `n` / `N` / `I` | Drop to focus mode, then open the create flow |
 
 ### Session Workbench (after pressing `Enter` on a selected session)
 
-Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. `]`/`[` move the panel to a waiting agent in the same workspace, and return to focus mode for one in another workspace. The Review tab passes most of those keys through, with these exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, `]`/`[` move between comments instead of jumping to a waiting agent, and `s` toggles the comment sidebar instead of stash-and-pause (in a code review, `n`/`N` jump between changes instead of creating instances). In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. `]`/`[` move the panel to a waiting agent in the same workspace, and return to focus mode for one in another workspace. The Review tab passes most of those keys through, with these exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, `]`/`[` move between comments instead of jumping to a waiting agent, and `s` toggles the comment sidebar instead of pausing (in a code review, `n`/`N` jump between changes instead of creating instances). In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
 
 | Key | Action |
 |-----|--------|
@@ -392,24 +401,35 @@ The work view covers the whole host, across every workspace. Mouse input is drop
 | Key | Action |
 |-----|--------|
 | *Type characters* | Enter session name (max 32 chars) |
-| `Enter` | Submit name and start session |
+| `Enter` | Submit the name: `n` opens the Session Launch Options modal, `N` the prompt overlay |
 | `Backspace` | Delete last character |
 | `Ctrl+C` / `Esc` | Cancel |
 
 ### Prompt Overlay (after pressing `N` and entering a name)
 
-The overlay has four focus areas. Press `Tab` to cycle between them:
+The overlay has up to four focus areas. Press `Tab` to cycle between them:
 
-1. **Profile Picker** — `←` / `→` to select a profile (if configured)
-2. **Prompt Text Area** — Type your instructions for the agent
-3. **Branch Picker** — Type to filter branches, `↑` / `↓` (or `k` / `j`) to select
-4. **Submit** — `Enter` to start
+1. **Profile Picker** — `←` / `→` to select a profile (shown when more than one profile is configured)
+2. **Prompt Text Area** — Type your instructions for the agent (`Enter` starts a new line)
+3. **Branch Picker** — Type to filter branches, `↑` / `↓` to select; `Enter` moves to Submit
+4. **Submit** — `Enter` to continue to the Session Launch Options modal
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Cycle between focus areas |
-| `Enter` | Submit prompt and start session |
-| `Ctrl+C` | Cancel |
+| `Tab` / `Shift+Tab` | Cycle between focus areas |
+| `Enter` (on Submit) | Submit the prompt and open the Session Launch Options modal |
+| `Ctrl+C` / `Esc` | Cancel |
+
+### Session Launch Options (before every new session starts)
+
+Rows: Remote Control, Permission Mode, Model, 1M Context, Headroom Proxy, Effort, Cache TTL (1h), Branch Prefix, and Account (once a second Claude account exists), pre-filled from the workspace's config.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k`, `↓` / `j` | Move between rows |
+| `Space` | Toggle, cycle or edit the row under the cursor |
+| `Enter` | Start the session with these options |
+| `Esc` / `q` | Cancel |
 
 ### Inline Attach (after pressing `Ctrl+A` or `Ctrl+T`)
 
@@ -440,7 +460,7 @@ The overlay has four focus areas. Press `Tab` to cycle between them:
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Navigate |
-| `Space` | Toggle workspace active/inactive |
+| `Space` / `Enter` | Toggle workspace active/inactive; on the Global row, close every tab and switch to the global workspace |
 | `Esc` / `q` | Apply changes |
 
 ---
@@ -450,10 +470,10 @@ The overlay has four focus areas. Press `Tab` to cycle between them:
 ### Create a Simple Session
 
 ```
-n → type "fix-auth-bug" → Enter
+n → type "fix-auth-bug" → Enter → Enter (Session Launch Options)
 ```
 
-A new session starts immediately with the default program in a fresh worktree.
+The session starts with the default program in a fresh worktree.
 
 ### Create a Session with Prompt and Branch
 
@@ -462,7 +482,7 @@ N → type "add-validation" → Enter
   → [select profile with ←/→]
   → type prompt: "Add input validation to the /api/users endpoint"
   → Tab to branch picker → type "feat" to filter → select branch
-  → Enter to submit
+  → Enter to submit → Enter (Session Launch Options)
 ```
 
 The agent starts with your prompt pre-loaded. If you selected an existing branch, the worktree is created from that branch instead of HEAD.
@@ -566,7 +586,8 @@ starts)…`.
   - Offline, the keys that only talk to tmux or stay in loom still work:
     moving the selection, tabs, the overview and workbench views, attach
     (`i`, `Ctrl+A`, `Ctrl+T`, `Alt+A`, `Alt+T`), quick input to the
-    terminal (`t`), the diff overlay (`d`), scrolling, help and `q`. Every
+    terminal (`t`), the diff overlay (`d`), the file explorer (`f`), the
+    rail and terminal-pane layout keys, scrolling, help and `q`. Every
     other key (`n`, `N`, `I`, `D`, `r`, `R`, `p`, `s`, `m`, `a`, `W`, `S`
     among them) shows `the loom daemon is stopped: n needs it` and does
     nothing. This goes by the key, not by what it is bound to: a key your
@@ -645,32 +666,36 @@ push and merge, and get a notification when a session starts waiting on
 you or finishes. It is off until you enable it, listens on loopback only,
 and answers only phones you have paired.
 
-- **The header.** Every screen opens under a pinned header. Its first row
-  says whether the phone is live (`LIVE`, `CONNECTING`, `RESTARTING`, or
-  `OFFLINE` with when it last heard from loom), which machine it shows
-  (`loom@<host>`), and how many sessions need you (●), are your turn (◆)
-  and are working (◐) in the workspaces it shows. Tap a count to open that
-  group's next session, and again for the one after. The second row is the
-  screen's own: the way back, its title, its actions.
-- **The fleet.** Tiles count the sessions that **need you** (with the
-  oldest wait), are **your turn** (with how many ended since this phone
-  last opened them) and are **working** (with their running subagents); a
-  tap jumps to the group. Below them, each account's plan usage: the
-  5-hour and 7-day windows, how much is used and when each resets, dimmed
-  once the sample is old. Sessions are listed by group: **Needs you**
-  (longest wait first, with the reason and, for a permission request, the
-  command, file or address), **Your turn** (marked NEW when the turn ended
-  after this phone last opened the session), **Working**, and **Paused**
-  (folded away). The workspace chips are the workspaces open as tabs in
-  loom, in tab order, plus any with a session that isn't paused (all of
-  them while no tab is open); the phone remembers the chip. A session
-  leads with why it waits, then tiles for its changes, its pull request
-  (which opens on GitHub) and its account's usage, its last message as
-  Claude formatted it, its subagents by name, the actions, and a reply box.
+- **The header and the status row.** Every screen sits between a pinned
+  header and a pinned footer. The header is the screen's own row (the way
+  back, its title, its actions) and, on a session, its tabs. The footer is
+  the status row: whether the phone is live (`LIVE`, `CONNECTING`,
+  `RESTARTING`, or `OFFLINE` with when it last heard from loom), which
+  machine it shows (`loom@<host>`), and how many sessions need you (●), are
+  your turn (◆) and are working (◐) in the workspaces it shows. Tap a count
+  to open that group's next session, and again for the one after. The
+  footer hides while the reply box has focus.
+- **The fleet.** Sessions are listed by group: **Needs you** (longest wait
+  first, with the reason and, for a permission request, the command, file
+  or address), **Your turn** (marked NEW when the turn ended after this
+  phone last opened the session), **Working**, and **Paused** (folded
+  away). Each Claude session's row shows its account's plan usage beside
+  its age (the 5-hour share, or the weekly one for an account without a
+  5-hour limit), amber from 80%; the counts are in the status row. The
+  workspace chips are the workspaces open as tabs in loom, in tab order,
+  plus any with a session that isn't paused (all of them while no tab is
+  open); the phone remembers the chip. A session leads with why it waits,
+  then tiles for its changes, its pull request (which opens on GitHub) and
+  its account's usage (both windows, and when each resets), its last
+  message as Claude formatted it, its subagents by name, the actions, and
+  a reply box.
 - **The conversation and the changes.** A session's screen has tabs under
   its title: **session**, **conversation** on a Claude session (also
   **conversation ›** beside its last message) and **changes** while the
-  session runs (also the **Changes** tile), with its line counts. The
+  session runs (also the **Changes** tile), with its line counts, and
+  **mockup** while the brainstorming skill's visual companion runs in the
+  session's worktree (marked when its screen changed in the latest turn):
+  the page the companion shows, sandboxed, with a full-screen view. The
   conversation is its recent turns: each prompt (yours, a background
   task's, or a subagent's report), Claude's replies as it formatted them,
   and its tool calls as one-line steps folded under a count (tap to open;
@@ -692,11 +717,16 @@ and answers only phones you have paired.
   with a reply you use often; Send sends it. They start as `yes`,
   `continue`, `/compact` and `/clear`; edit them in Settings, one a line,
   at most 12. Every paired phone shares the list.
-- **Approvals and the full chat.** Loom answers no permission prompt
-  itself. **Open in Claude** links to the session's Remote Control page on
-  claude.ai, where you approve and read the whole conversation; it shows
-  only while Remote Control is connected for that session, and otherwise
-  the card says Remote Control is off for it.
+- **Questions and permission prompts.** Loom answers none itself. The
+  dialogs a waiting session's Claude holds open through the loom mod are
+  listed in its needs-you box, and you answer each there: a question's
+  options, Other, a note, or Chat about this; a permission's Allow, one of
+  its suggested rules (one that persists asks first), or Deny with an
+  optional message. One already answered in Claude is refused, with the
+  reason. **Open in Claude**, below them, links to the session's Remote
+  Control page on claude.ai, where you read the whole conversation; it
+  shows only while Remote Control is connected for that session, and
+  otherwise the card says Remote Control is off for it.
 - **Actions.** Kill, push and merge ask first, and the sheet names what
   happens (kill ends the tmux session, force-removes the worktree and
   discards its uncommitted changes, so push first to keep them, and deletes
@@ -711,7 +741,8 @@ and answers only phones you have paired.
   requires the tap, iOS 16.4 or later, and only for an app installed to the
   Home Screen); the phone can take minutes to finish. Each device
   chooses *waiting*, *finished* or both, and can pause them for an hour. A
-  notification is tagged by session, so a session shows at most one; the
+  notification is tagged by session, so a session shows at most one, and
+  opens it (on its mockup tab while that is new and no dialog is open); the
   Home Screen badge counts the sessions that need you, and the app keeps
   it in step with the stream. Loom cannot clear a notification that went
   stale: tapping it shows the current state. If a push service stops
@@ -955,10 +986,10 @@ and it prints what it overrode. User-scope MCP servers
 (`claude mcp add --scope user`) live in each account's own `.claude.json`
 and are not shared.
 
-`loom account add`/`list`/`sync`, and a bare `login`, refuse when run from
+`loom account add`/`list`/`sync`, and `login default`, refuse when run from
 a shell whose own environment already points at an account's config dir
 (inside an account's own agent pane, say) — run them from an ordinary
-shell instead; `loom account login <name>` for a specific account is
+shell instead; `loom account login <name>` for an extra account is
 unaffected.
 
 Account selection needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
@@ -1005,16 +1036,20 @@ Registering and unregistering take effect in a running loom. `loom workspace rem
 ### Usage
 
 ```
-loom [flags]
+loom [flags] [directory]
 loom [command]
 ```
+
+`loom <directory>` opens the git repository at that path: its workspace when it is registered, otherwise the global workspace, with a prompt to register it.
 
 ### Flags
 
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--program <prog>` | `-p` | Program this loom's new sessions run (e.g. `aider --model gpt-4`); other open looms keep their own |
-| `--workspace <name>` | `-w` | Select workspace by name (bypasses auto-detection) |
+| `--workspace <name>` | `-w` | Start on this registered workspace |
+| `--no-scripts` | | Skip loading `~/.loom/scripts` (the embedded default keymap still loads), to recover from a broken user script |
+| `--version` | | Print the version, as `version` does |
 | `--log-level <level>` | | `debug`, `info`, `warn` or `error`; accepted by every subcommand and wins over `LOOM_LOG_LEVEL` |
 
 ### Commands
@@ -1028,7 +1063,7 @@ loom [command]
 | `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**, with any uncommitted work in them (paused sessions' included). Stops before removing worktrees if the tmux cleanup fails. While the daemon runs it makes the reset, waits for it and refuses while a session of the workspace is loading or being killed; with none running it works directly. |
 | `workspace` | Manage workspaces (see below); a client of the daemon, which it starts when none runs |
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
-| `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
+| `session` | Create, list, message, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
@@ -1044,7 +1079,7 @@ loom [command]
 | `workspace use <name>` | Set the default workspace |
 | `workspace rename <old> <new>` | Rename a workspace; open looms keep its tab under the new name |
 | `workspace status [name]` | Show instance counts as the daemon serves them (defaults to CWD workspace) |
-| `workspace migrate` | Move global instances to their matching workspace directories (refused while the daemon runs) |
+| `workspace migrate [--dry-run] [--backup=false]` | Move global instances to their matching workspace directories (refused while the daemon runs). `--dry-run` prints the plan and changes nothing; each `state.json` it overwrites is first copied to `state.json.bak` unless `--backup=false` |
 
 ### Account Subcommands
 
@@ -1130,7 +1165,7 @@ loom web pair --name iPhone
 
 ## Configuration
 
-Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.loom/config.json`).
+Configuration is stored in `~/.loom/config.json` for the global workspace, and in `<repo>/.loom/config.json` for a registered one. A workspace's file stands alone: nothing is merged in from the global one, and a missing file or field takes the built-in default. Two settings, `claude_tmp_archive_dir` and `build_sweep_after_hours`, are read from the global file only.
 
 ### Options
 
@@ -1142,8 +1177,16 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
+| `claude_permission_mode` | string | `"default"` | `--permission-mode` for new Claude sessions: `default` (passes none, leaving it to Claude), `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk` or `bypassPermissions` |
+| `claude_model` | string | `"default"` | `--model` alias for new Claude sessions: `default` (passes none), `sonnet`, `opus`, `fable` or `haiku` |
+| `claude_1m_context` | bool | `false` | Append `[1m]` (long context) to the model alias, for the aliases that take it (`sonnet`, `opus`, `fable`) |
+| `claude_effort` | string | `"default"` | `--effort` for new Claude sessions: `default` (passes none), `low`, `medium`, `high`, `xhigh` or `max` |
+| `cache_ttl_1h` | bool | `false` | Launch Claude sessions with `ENABLE_PROMPT_CACHING_1H=1` (a one-hour prompt cache) |
+| `headroom_proxy` | bool | `false` | Point Claude sessions' `ANTHROPIC_BASE_URL` at a Headroom proxy on `http://127.0.0.1:8787`, which you run yourself; turning it on turns `claude_remote_control` off, and the reverse |
+| `claude_loom_context` | bool | `true` | Give Claude sessions loom's context prompt (`--append-system-prompt-file`), which tells the agent about its worktree and `loom session` |
+| `claude_subagent_tracking` | bool | `true` | Show the subagents and teammates a Claude session runs (see [Subagent Tracking](#subagent-tracking)) |
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
-| `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off). See [Build Sweep](#build-sweep) |
+| `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off, at most `8760`, a year). Set it in Settings (`S`) → Build Sweep. See [Build Sweep](#build-sweep) |
 | `scheduler` | object | host defaults | The work queue's caps and default claim (global `config.json` only). See [Scheduler Caps](#scheduler-caps) |
 
 ### Example config.json
@@ -1246,13 +1289,14 @@ Claude Code keeps each session's conversation in `~/.claude/projects/<the sessio
 
 ### Build Sweep
 
-Cargo builds into each session's own `<worktree>/target/` and never deletes a test binary it has replaced: a new feature set, profile or flag writes a new copy under a new hash. Over a few days of agents running `cargo test` that reaches tens of gigabytes per session. With `build_sweep_after_hours` set in the global `~/.loom/config.json`, the daemon deletes those copies once they have gone unused that long:
+Cargo builds into each session's own `<worktree>/target/` and never deletes a test binary it has replaced: a new feature set, profile or flag writes a new copy under a new hash. Over a few days of agents running `cargo test` that reaches tens of gigabytes per session. Set a threshold in Settings (`S`) → Build Sweep, a whole number of hours from 0 (off) to 8760 (a year), and the daemon deletes those copies once they have gone unused that long. The row sets one threshold for every workspace, whichever is focused; it is `build_sweep_after_hours` in the global `~/.loom/config.json`, which you can also edit by hand:
 
 ```json
 { "build_sweep_after_hours": 12 }
 ```
 
 - **Which sessions:** only sessions whose agent is idle (Ready) or paused. The main checkout and workspace terminals are never swept.
+- **Which dir:** only the worktree's own `target/`, once cargo has built into it. A `CARGO_TARGET_DIR` elsewhere is never touched, and other files you keep in `target/` stay.
 - **What goes:** executables in a cargo profile dir's `deps/` and `examples/` (`<name>-<16 hex digits>`, no extension), with the hard links cargo makes to them under their plain names. Libraries, proc-macros, build scripts and the incremental cache stay. Cargo rebuilds anything deleted the next time it's needed.
 - **"Unused" means the file's last access time,** so the disk must record access times. Linux only. A disk mounted `noatime` is skipped. One mounted `relatime` records an access at most once a day, so it is swept only with a threshold of 24 hours or more. For hour thresholds, mount it `strictatime,lazytime`: every access is recorded, and `lazytime` writes the timestamps out in batches. A skipped disk shows a notice once each time the daemon starts.
 - **Never mid-build:** a session is skipped while cargo holds its target dir's locks, or while any of your `cargo` processes runs inside the worktree. That second check covers `cargo test`, which drops its locks before it runs the tests.
@@ -1360,25 +1404,25 @@ Workspaces provide per-repository isolation. Each workspace gets its own config,
   worktrees/
 
 ~/projects/my-app/.loom/     ← Workspace-scoped
-  config.json                        ← Overrides global config
+  config.json                        ← This workspace's config (used instead of the global one)
   state.json                         ← This workspace's sessions
   worktrees/
 ```
 
-### Auto-Detection
+### Choosing the Workspace at Startup
 
-When you run `loom` from a directory:
-1. The registry is checked for a workspace matching the current path
-2. If found, that workspace's config directory is used
-3. If not found, the global `~/.loom/` directory is used
+The TUI does not pick a workspace from the current directory:
+1. `loom <directory>` opens the workspace registered for that path (beside the tabs you had open when you last quit), or the global workspace with a prompt to register the directory
+2. `loom --workspace <name>` (`-w`) opens that workspace by name, beside those tabs
+3. Plain `loom` reopens those tabs; with none saved and workspaces registered, the startup picker appears; otherwise it opens the global `~/.loom/` workspace (and then must be run inside a git repository when no workspace is registered)
 
-Use `--workspace <name>` to explicitly select a workspace regardless of your current directory.
+The `loom session` and `loom workspace status` commands do go by the current directory: they act on the workspace whose repository holds it unless you pass a name.
 
 ### Workspace Picker
 
-On launch, if workspaces are registered, a picker appears to select which workspace to use. Press `Esc` to use the global default.
+On launch, if workspaces are registered and no saved tabs are reopened, a picker appears to select which workspace to use. Press `Esc` to use the global default.
 
-During a session, press `W` to toggle which workspaces are visible as tabs. Use `[` and `]` to switch between active tabs.
+During a session, press `W` to toggle which workspaces are visible as tabs. Use `{` and `}` (or `l` and `;`) to switch between active tabs.
 
 ### Migration
 

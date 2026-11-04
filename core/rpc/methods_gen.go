@@ -340,6 +340,16 @@ type ReadDiffParams struct {
 type ReadDiffResult struct {
 }
 
+// ReadMockupParams are ReadMockup's parameters on the wire.
+type ReadMockupParams struct {
+	ID  core.InstanceID `json:"id"`
+	Req core.ReqID      `json:"req"`
+}
+
+// ReadMockupResult is ReadMockup's result on the wire; an error travels in the reply.
+type ReadMockupResult struct {
+}
+
 // SweepBuildsParams are SweepBuilds's parameters on the wire.
 type SweepBuildsParams struct {
 	Opts buildsweep.Options `json:"opts"`
@@ -348,6 +358,24 @@ type SweepBuildsParams struct {
 
 // SweepBuildsResult is SweepBuilds's result on the wire; an error travels in the reply.
 type SweepBuildsResult struct {
+}
+
+// BuildSweepParams are BuildSweep's parameters on the wire.
+type BuildSweepParams struct {
+}
+
+// BuildSweepResult is BuildSweep's result on the wire; an error travels in the reply.
+type BuildSweepResult struct {
+	Value core.BuildSweepView `json:"value"`
+}
+
+// ConfigureBuildSweepParams are ConfigureBuildSweep's parameters on the wire.
+type ConfigureBuildSweepParams struct {
+	AfterHours int `json:"afterHours"`
+}
+
+// ConfigureBuildSweepResult is ConfigureBuildSweep's result on the wire; an error travels in the reply.
+type ConfigureBuildSweepResult struct {
 }
 
 // SetSelectedParams are SetSelected's parameters on the wire.
@@ -762,7 +790,10 @@ var methods = []methodInfo{
 	{Name: "FetchIssue", Kind: kindRequest, Params: FetchIssueParams{}, Result: FetchIssueResult{}},
 	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
+	{Name: "ReadMockup", Kind: kindRequest, Params: ReadMockupParams{}, Result: ReadMockupResult{}},
 	{Name: "SweepBuilds", Kind: kindRequest, Params: SweepBuildsParams{}, Result: SweepBuildsResult{}},
+	{Name: "BuildSweep", Kind: kindLocal, Params: BuildSweepParams{}, Result: BuildSweepResult{}},
+	{Name: "ConfigureBuildSweep", Kind: kindRequest, Params: ConfigureBuildSweepParams{}, Result: ConfigureBuildSweepResult{}},
 	{Name: "SetSelected", Kind: kindCast, Params: SetSelectedParams{}, Result: SetSelectedResult{}},
 	{Name: "MarkOutput", Kind: kindCast, Params: MarkOutputParams{}, Result: MarkOutputResult{}},
 	{Name: "PaneOutput", Kind: kindCast, Params: PaneOutputParams{}, Result: PaneOutputResult{}},
@@ -1076,6 +1107,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadDiff(p.ID, p.Req)
 		return ReadDiffResult{}, nil, true
+	case "ReadMockup":
+		var p ReadMockupParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadMockup(p.ID, p.Req)
+		return ReadMockupResult{}, nil, true
 	case "SweepBuilds":
 		var p SweepBuildsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1086,6 +1127,19 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.SweepBuilds(p.Opts, p.Req)
 		return SweepBuildsResult{}, nil, true
+	case "BuildSweep":
+		var p BuildSweepParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return BuildSweepResult{Value: b.BuildSweep()}, nil, true
+	case "ConfigureBuildSweep":
+		var p ConfigureBuildSweepParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.ConfigureBuildSweep(p.AfterHours)
+		return ConfigureBuildSweepResult{}, err, true
 	case "SetSelected":
 		var p SetSelectedParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1576,10 +1630,29 @@ func (c *Client) ReadDiff(id core.InstanceID, req core.ReqID) {
 	c.noteRefused(c.requestNoErr("ReadDiff", ReadDiffParams{ID: id, Req: req}, &r), req)
 }
 
+// ReadMockup is core.Core's ReadMockup (request).
+func (c *Client) ReadMockup(id core.InstanceID, req core.ReqID) {
+	var r ReadMockupResult
+	c.noteRefused(c.requestNoErr("ReadMockup", ReadMockupParams{ID: id, Req: req}, &r), req)
+}
+
 // SweepBuilds is core.Core's SweepBuilds (request).
 func (c *Client) SweepBuilds(opts buildsweep.Options, req core.ReqID) {
 	var r SweepBuildsResult
 	c.noteRefused(c.requestNoErr("SweepBuilds", SweepBuildsParams{Opts: opts, Req: req}, &r), req)
+}
+
+// BuildSweep is core.Core's BuildSweep (local).
+func (c *Client) BuildSweep() core.BuildSweepView {
+	var v0 core.BuildSweepView
+	c.local(func(r *replica) { v0 = r.BuildSweep() })
+	return v0
+}
+
+// ConfigureBuildSweep is core.Core's ConfigureBuildSweep (request).
+func (c *Client) ConfigureBuildSweep(afterHours int) error {
+	var r ConfigureBuildSweepResult
+	return c.request("ConfigureBuildSweep", ConfigureBuildSweepParams{AfterHours: afterHours}, &r)
 }
 
 // SetSelected is core.Core's SetSelected (cast).
