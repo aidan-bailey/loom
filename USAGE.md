@@ -635,21 +635,20 @@ and answers only phones you have paired.
   and are working (◐) in the workspaces it shows. Tap a count to open that
   group's next session, and again for the one after. The second row is the
   screen's own: the way back, its title, its actions.
-- **The fleet.** Tiles count the sessions that **need you** (with the
-  oldest wait), are **your turn** (with how many ended since this phone
-  last opened them) and are **working** (with their running subagents); a
-  tap jumps to the group. Below them, each account's plan usage: the
-  5-hour and 7-day windows, how much is used and when each resets, dimmed
-  once the sample is old. Sessions are listed by group: **Needs you**
-  (longest wait first, with the reason and, for a permission request, the
-  command, file or address), **Your turn** (marked NEW when the turn ended
-  after this phone last opened the session), **Working**, and **Paused**
-  (folded away). The workspace chips are the workspaces open as tabs in
-  loom, in tab order, plus any with a session that isn't paused (all of
-  them while no tab is open); the phone remembers the chip. A session
-  leads with why it waits, then tiles for its changes, its pull request
-  (which opens on GitHub) and its account's usage, its last message as
-  Claude formatted it, its subagents by name, the actions, and a reply box.
+- **The fleet.** Sessions are listed by group: **Needs you** (longest wait
+  first, with the reason and, for a permission request, the command, file
+  or address), **Your turn** (marked NEW when the turn ended after this
+  phone last opened the session), **Working**, and **Paused** (folded
+  away). Each Claude session's row shows its account's plan usage beside
+  its age (the 5-hour share, or the weekly one for an account without a
+  5-hour limit), amber from 80%; the counts are in the status row. The
+  workspace chips are the workspaces open as tabs in loom, in tab order,
+  plus any with a session that isn't paused (all of them while no tab is
+  open); the phone remembers the chip. A session leads with why it waits,
+  then tiles for its changes, its pull request (which opens on GitHub) and
+  its account's usage (both windows, and when each resets), its last
+  message as Claude formatted it, its subagents by name, the actions, and
+  a reply box.
 - **The conversation and the changes.** A session's screen has tabs under
   its title: **session**, **conversation** on a Claude session (also
   **conversation ›** beside its last message) and **changes** while the
@@ -1187,6 +1186,7 @@ Cargo builds into each session's own `<worktree>/target/` and never deletes a te
 ```
 
 - **Which sessions:** only sessions whose agent is idle (Ready) or paused. The main checkout and workspace terminals are never swept.
+- **Which dir:** only the worktree's own `target/`, once cargo has built into it. A `CARGO_TARGET_DIR` elsewhere is never touched, and other files you keep in `target/` stay.
 - **What goes:** executables in a cargo profile dir's `deps/` and `examples/` (`<name>-<16 hex digits>`, no extension), with the hard links cargo makes to them under their plain names. Libraries, proc-macros, build scripts and the incremental cache stay. Cargo rebuilds anything deleted the next time it's needed.
 - **"Unused" means the file's last access time,** so the disk must record access times. Linux only. A disk mounted `noatime` is skipped. One mounted `relatime` records an access at most once a day, so it is swept only with a threshold of 24 hours or more. For hour thresholds, mount it `strictatime,lazytime`: every access is recorded, and `lazytime` writes the timestamps out in batches. A skipped disk shows a notice once each time the daemon starts.
 - **Never mid-build:** a session is skipped while cargo holds its target dir's locks, or while any of your `cargo` processes runs inside the worktree. That second check covers `cargo test`, which drops its locks before it runs the tests.

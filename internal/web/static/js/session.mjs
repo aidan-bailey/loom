@@ -7,7 +7,7 @@ import { ConfirmSheet } from "./sheets.mjs";
 import { allSessions, ago, markSeen, sessionOf } from "./fleet.mjs";
 import { ContextRow, FLEET_BACK, SessionTabs } from "./chrome.mjs";
 import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
-import { usageFor, shareText, isStale } from "./usage.mjs";
+import { usageFor, shareText, isStale, resetPassed, resetText, shownWindow } from "./usage.mjs";
 import { Markdown } from "./markdown.mjs";
 import { ReplyBox, useRun } from "./reply.mjs";
 import { Asks } from "./asks.mjs";
@@ -69,8 +69,9 @@ export function SubLine({ s, snap, now }) {
 
 // Tiles are the session's facts as boxes: its changes (a link to the changes
 // screen when diff is set), its pull request (a link to it on GitHub when the
-// daemon has its URL) and its account's usage. A tile whose data is missing
-// is left out, and the row reflows.
+// daemon has its URL) and its account's usage (the shown window's share and
+// reset, then the other window's). A tile whose data is missing is left out,
+// and the row reflows.
 function Tiles({ s, snap, now, diff }) {
   const tiles = [];
   const d = s.diff || {};
@@ -100,13 +101,17 @@ function Tiles({ s, snap, now, diff }) {
     );
   }
   const u = usageFor(snap, s.account);
-  const w = u && (u.five_hour || u.seven_day);
-  if (w) {
+  const sw = shownWindow(u);
+  if (sw) {
     const old = isStale(u.at, snap.usage_stale_after_s, now);
+    const reset = (w) => (resetPassed(w, now) ? "" : resetText(w.resets_at, now));
+    const first = [sw.label, reset(sw.w)].filter(Boolean).join(" · ");
+    const second = sw.other ? [sw.otherLabel + " " + shareText(sw.other, now), reset(sw.other)].filter(Boolean).join(" · ") : "";
     tiles.push(html`<div key="account" class=${"sc-box sc-tile" + (old ? " sc-stale" : "")}>
-      <span class="sc-legend">Account</span>
-      <span class="sc-tile-fig">${shareText(w, now)}</span>
-      <span class="sc-tile-sub">${u.account} ${u.five_hour ? "5h" : "7d"}</span>
+      <span class="sc-legend">${u.account}</span>
+      <span class="sc-tile-fig">${shareText(sw.w, now)}</span>
+      <span class="sc-tile-sub">${first}</span>
+      ${second ? html`<span class="sc-tile-sub">${second}</span>` : null}
     </div>`);
   }
   return tiles.length > 0 ? html`<div class="sc-tiles">${tiles}</div>` : null;

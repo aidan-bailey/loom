@@ -316,35 +316,13 @@ input.text {
 }
 .sc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .sc-tile .sc-legend { letter-spacing: 0.06em; text-transform: uppercase; }
-.sc-tile-n { display: block; font-size: 32px; font-weight: 700; line-height: 1; }
 .sc-tile-fig { display: flex; align-items: center; gap: 4px; font-size: 17px; font-weight: 700; line-height: 1.2; color: var(--title); white-space: nowrap; }
 .sc-tile-sub { display: block; margin-top: 4px; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-tile-needs_you { border-color: var(--attention-border); }
-.sc-tile-needs_you .sc-legend,
-.sc-tile-needs_you .sc-tile-n { color: var(--attention); }
-.sc-tile-your_turn .sc-tile-n { color: var(--accent); }
-.sc-zero { border-color: var(--rule); }
-.sc-zero .sc-legend,
-.sc-zero .sc-glyph,
-.sc-zero .sc-tile-n { color: var(--dim); }
+.sc-tile-sub + .sc-tile-sub { margin-top: 0; }
+.sc-stale .sc-tile-fig { color: var(--dim); }
 .sc-glyph { color: var(--dim); }
 .sc-glyph-needs_you { color: var(--attention); }
 .sc-glyph-your_turn { color: var(--accent); }
-
-/* Usage: a box per account, a row per window, an 8-cell bar. A stale sample
-   is dimmed by colour, which keeps its text readable. */
-.sc-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 8px; margin-top: 18px; }
-.sc-usage-box { padding: 12px 10px 6px; font-size: 11px; line-height: 1.35; }
-.sc-usage-box .sc-legend { color: var(--fg); }
-.sc-win { display: flex; align-items: baseline; gap: 6px; }
-.sc-win-pct { font-size: 16px; font-weight: 700; color: var(--title); }
-.sc-win-reset { flex: 1; text-align: right; }
-.sc-bar { font-size: 10px; }
-.sc-bar-on { color: var(--accent); }
-.sc-bar-off { color: var(--faint); }
-.sc-stale .sc-win-pct,
-.sc-stale .sc-tile-fig,
-.sc-stale .sc-bar-on { color: var(--dim); }
 
 /* Chips: a 44px button around a small bordered label. */
 .sc-chips,
@@ -464,6 +442,8 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-row-top { display: flex; gap: 8px; align-items: baseline; }
 .sc-row-title { flex: 1; min-width: 0; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-age { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.sc-use { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.sc-use.sc-hot { color: var(--attention); }
 .sc-new { color: var(--bg); background: var(--accent); font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 2px; }
 .sc-row-line,
 .sc-meta { display: flex; flex-wrap: wrap; gap: 0 12px; padding-left: 16px; font-size: 12px; }

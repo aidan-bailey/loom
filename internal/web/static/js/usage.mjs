@@ -1,6 +1,6 @@
 // Subscription usage as the daemon sends it (the snapshot's `usage` and the
 // `usage` event): helpers that pick a session's entry and format a window.
-// The fleet draws the boxes and the session screen its tile.
+// The fleet's rows and the session screen's Account tile read them.
 
 const HOUR = 3600000;
 
@@ -53,4 +53,32 @@ export function isStale(at, staleAfterS, now) {
 // planName is a plan with a capital first letter: "max" is "Max".
 export function planName(plan) {
   return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : "";
+}
+
+// HOT_PCT is the share at which a fleet row's figure turns amber.
+export const HOT_PCT = 80;
+
+// shownWindow is the window a session's share shows, with its label: the 5h
+// one, or the 7d one when the account has no 5h; and the other window, if
+// any. null for no entry or an entry with neither.
+export function shownWindow(u) {
+  if (!u) return null;
+  if (u.five_hour) return { w: u.five_hour, label: "5h", other: u.seven_day || null, otherLabel: "7d" };
+  if (u.seven_day) return { w: u.seven_day, label: "7d", other: null, otherLabel: "" };
+  return null;
+}
+
+// rowShare is what a fleet row shows of its account's usage: {text, hot}, or
+// null. Only a Claude session has one: another program records no account,
+// and usageFor would read its "" as the default account's. hot is a share at
+// HOT_PCT or more of a window that has not reset, from a sample that is not
+// stale.
+export function rowShare(snap, s, now) {
+  if (!s.claude) return null;
+  const u = usageFor(snap, s.account);
+  const sw = shownWindow(u);
+  if (!sw) return null;
+  const stale = isStale(u.at, snap.usage_stale_after_s, now);
+  const hot = !stale && !resetPassed(sw.w, now) && (Number(sw.w.pct) || 0) >= HOT_PCT;
+  return { text: shareText(sw.w, now), hot };
 }

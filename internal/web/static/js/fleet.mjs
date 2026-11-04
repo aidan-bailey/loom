@@ -3,7 +3,7 @@ import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { pref } from "./store.mjs";
 import { glyphOf, GearIcon } from "./skin.mjs";
 import { ContextRow } from "./chrome.mjs";
-import { cells, resetPassed, resetText, isStale, planName, shareText } from "./usage.mjs";
+import { rowShare } from "./usage.mjs";
 
 export const GROUPS = [
   { key: "needs_you", title: "Needs you" },
@@ -140,10 +140,10 @@ function PrMark({ pr }) {
   return null;
 }
 
-// Row is one session: its glyph, title and age; why it waits, or what it said
-// last; and what it holds (its label where the group's title doesn't say it,
-// running agents, changes, PR, workspace).
-function Row({ s, chip, fresh }) {
+// Row is one session: its glyph, title, its account's share and age; why it
+// waits, or what it said last; and what it holds (its label where the group's
+// title doesn't say it, running agents, changes, PR, workspace).
+function Row({ s, chip, fresh, share }) {
   const waiting = s.group === "needs_you";
   const reason = waiting && s.wait ? s.wait.reason : "";
   const detail = waiting && s.wait ? s.wait.detail : "";
@@ -162,6 +162,7 @@ function Row({ s, chip, fresh }) {
         <span class=${"sc-glyph sc-glyph-" + s.group} aria-hidden="true">${glyphOf(s.group)}</span>
         <span class="sc-row-title">${s.title}</span>
         ${fresh ? html`<span class="sc-new">NEW</span>` : null}
+        ${share ? html`<span class=${"sc-use" + (share.hot ? " sc-hot" : "")}>${share.text}</span>` : null}
         <span class="sc-age">${ago(s.since)}</span>
       </div>
       ${reason || (waiting && chip)
@@ -177,66 +178,11 @@ function Row({ s, chip, fresh }) {
   `;
 }
 
-// scrollToGroup brings a group's heading into view; the route stays.
-function scrollToGroup(key) {
-  const el = document.getElementById("g-" + key);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-// Tile is a count tile: a button that scrolls to its group, or a plain box at
-// 0, which has nowhere to go.
-function Tile({ group, title, count, sub }) {
-  const cls = "sc-box sc-tile sc-tile-" + group + (count === 0 ? " sc-zero" : "");
-  const inner = html`
-    <span class="sc-legend"><span class=${"sc-glyph sc-glyph-" + group} aria-hidden="true">${glyphOf(group)}</span> ${title}</span>
-    <span class="sc-tile-n">${count}</span>
-    ${sub ? html`<span class="sc-tile-sub">${sub}</span>` : null}
-  `;
-  if (count === 0) return html`<div class=${cls}>${inner}</div>`;
-  return html`<button class=${cls} type="button" onClick=${() => scrollToGroup(group)}>${inner}</button>`;
-}
-
-function Bar({ w, now }) {
-  const on = resetPassed(w, now) ? 0 : cells(w.pct);
-  return html`<span class="sc-bar" aria-hidden="true"><span class="sc-bar-on">${"█".repeat(on)}</span><span class="sc-bar-off">${"░".repeat(8 - on)}</span></span>`;
-}
-
-function Window({ label, w, now }) {
-  if (!w) return null;
-  return html`
-    <div class="sc-win">
-      <span class="sc-dim">${label}</span>
-      <span class="sc-win-pct">${shareText(w, now)}</span>
-      <${Bar} w=${w} now=${now} />
-      <span class="sc-win-reset sc-dim">${resetPassed(w, now) ? "" : resetText(w.resets_at, now)}</span>
-    </div>
-  `;
-}
-
-// UsageBoxes is a box per account with plan limits, its name and plan in the
-// border and a row per window; a sample past the daemon's bound is dimmed and
-// shows its age.
-function UsageBoxes({ usage, staleAfter, now }) {
-  if (!usage || usage.length === 0) return null;
-  return html`
-    <section class="sc-usage" aria-label="Subscription usage">
-      ${usage.map((u) => {
-        const old = isStale(u.at, staleAfter, now);
-        return html`<div key=${u.account} class=${"sc-box sc-usage-box" + (old ? " sc-stale" : "")}>
-          <span class="sc-legend">${u.account}${u.plan ? html`<span class="sc-dim"> · ${planName(u.plan)}</span>` : null}${old ? html`<span class="sc-dim"> · ${ago(u.at, now)}</span>` : null}</span>
-          <${Window} label="5h" w=${u.five_hour} now=${now} />
-          <${Window} label="7d" w=${u.seven_day} now=${now} />
-        </div>`;
-      })}
-    </section>
-  `;
-}
-
 export function Fleet({ snap }) {
   const [filter, setFilter] = useState(() => pref("filter") || "");
   const [, setTick] = useState(0);
 
-  // Ages, the NEW marks and the usage's staleness move with the clock, not
+  // Ages, the NEW marks and the shares' staleness move with the clock, not
   // only with the stream.
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 30000);
@@ -258,9 +204,6 @@ export function Fleet({ snap }) {
   const seen = readSeen();
   const now = Date.now();
   const listed = GROUPS.reduce((n, g) => n + groups[g.key].length, 0);
-  const oldest = groups.needs_you.length > 0 ? ago(groups.needs_you[0].since, now) : "";
-  const fresh = groups.your_turn.filter((s) => hasNewTurn(s, seen)).length;
-  const agents = groups.working.reduce((n, s) => n + runningAgents(s), 0);
   const chipOf = (s) => (active === "" && workspaces.length > 1 ? names.get(String(s.workspace)) || "" : "");
 
   function pick(id) {
@@ -268,16 +211,10 @@ export function Fleet({ snap }) {
     pref("filter", id);
   }
 
-  const rows = (list) => list.map((s) => html`<${Row} key=${s.id} s=${s} chip=${chipOf(s)} fresh=${hasNewTurn(s, seen)} />`);
+  const rows = (list) => list.map((s) => html`<${Row} key=${s.id} s=${s} chip=${chipOf(s)} fresh=${hasNewTurn(s, seen)} share=${rowShare(snap, s, now)} />`);
 
   return html`
     <section class="sc-screen sc-fleet">
-      <nav class="sc-tiles" aria-label="Sessions by state">
-        <${Tile} group="needs_you" title="Needs you" count=${groups.needs_you.length} sub=${oldest ? "oldest " + oldest : ""} />
-        <${Tile} group="your_turn" title="Your turn" count=${groups.your_turn.length} sub=${fresh > 0 ? fresh + " new" : ""} />
-        <${Tile} group="working" title="Working" count=${groups.working.length} sub=${agents > 0 ? plural(agents, "agent") : ""} />
-      </nav>
-      <${UsageBoxes} usage=${snap.usage} staleAfter=${snap.usage_stale_after_s} now=${now} />
       ${workspaces.length > 1
         ? html`<nav class="sc-chips" aria-label="Workspaces">
             <button class=${"sc-chip-btn" + (active === "" ? " sc-on" : "")} type="button" aria-pressed=${active === ""} onClick=${() => pick("")}><span>all</span></button>
@@ -295,7 +232,7 @@ export function Fleet({ snap }) {
       ${listed === 0 ? html`<p class="sc-dim sc-empty">No sessions${active ? " in this workspace" : ""}.</p>` : null}
       ${GROUPS.filter((g) => g.key !== "paused" && groups[g.key].length > 0).map(
         (g) => html`<section key=${g.key} class="sc-group">
-          <h2 id=${"g-" + g.key} class=${"sc-group-title sc-t-" + g.key}>${g.title} ${groups[g.key].length}</h2>
+          <h2 class=${"sc-group-title sc-t-" + g.key}>${g.title} ${groups[g.key].length}</h2>
           ${rows(groups[g.key])}
         </section>`,
       )}
