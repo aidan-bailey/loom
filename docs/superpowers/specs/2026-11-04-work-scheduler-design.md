@@ -103,6 +103,7 @@ The peak restarts from zero when a daemon adopts a job. The view shows peak memo
 
 - A queued job is `cancelled` at once.
 - For a running job, the model records the request, confirms the lock is held (so the pid is still the shim's), and sends SIGTERM to the job's process group. If a later check 10 s or more after that still finds the lock held, the group gets SIGKILL. The job settles as `cancelled` either way (§5.4).
+- A SIGTERM that reaches the shim before its command starts can be missed: Go delivers signals asynchronously, so the shim can't check for one reliably. The command then starts, and the 10 s SIGKILL ends it. The shim makes no best-effort check for this case (the owner, 2026-11-04).
 
 Cancelling a finished job is refused, saying it has finished.
 
