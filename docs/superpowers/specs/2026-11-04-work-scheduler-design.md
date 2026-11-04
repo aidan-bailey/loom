@@ -143,7 +143,7 @@ Log: /home/aidanb/.loom/jobs/14/output.log (2431 lines). Last 20 lines:
   - `could not start: <error>`
 - **Tail:** the last `--tail` lines of `output.log` (default 20, at most 200, 0 for none), capped at the last 4,000 bytes.
 - **No mod:** where `Send` would refuse a CLI message for want of a mod (another program than Claude, a launch without a live mod), or the owner isn't running, the notice is recorded on the job as undelivered, with the reason, and shown in the view. It is never pasted into the pane, because a paste could answer an open dialog.
-- **When notify is set:** `submit` sets it unless `--no-notify` is given; `run` clears it. `NotifyJob` sets it on a job that hasn't ended (§6.3).
+- **When notify is set:** `submit` sets it unless `--no-notify` is given; `run` clears it. `NotifyJob` sets it on a job that hasn't ended and isn't being cancelled (§6.3), so an interrupted follower can't turn a notice back on after a pause, kill or reset cancelled the job (§5.7).
 
 ### 5.9 Persistence and retention
 
@@ -328,7 +328,7 @@ All of these fail closed: nothing is guessed, and each says why.
 | No live mod when a notice is due | Recorded on the job as undelivered, with the reason; never pasted |
 | Cancelling a finished job | Refused: it has finished |
 | Moving a job to the front that isn't queued | Refused: it isn't waiting |
-| `NotifyJob` on a job with no owner, or one that has ended | Refused, saying which |
+| `NotifyJob` on a job with no owner, one that has ended, or one being cancelled | Refused, saying which |
 
 ## 12. Testing
 
