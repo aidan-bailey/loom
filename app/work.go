@@ -1,11 +1,7 @@
 package app
 
 import (
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
 	"runtime"
 	"slices"
 	"time"
@@ -22,17 +18,6 @@ import (
 // workGOOS is the OS the TUI runs on; a test sets it to see the Windows
 // refusal.
 var workGOOS = runtime.GOOS
-
-// workTailLines is how many of a log's last lines the tail keeps.
-const workTailLines = 16
-
-// workTailBytes is how much of a log's end the tail reads.
-const workTailBytes = 64 << 10
-
-// workPagerBytes is how much of a log's end the pager reads: a longer log
-// shows its last part, and says so. The queue keeps no cap on a log's size,
-// and the TUI must not read a gigabyte into memory.
-const workPagerBytes = 4 << 20
 
 // workScriptKeys are the keys of the work view that go to the script engine:
 // w leaves the view, q quits and ? shows the help. A user can rebind them.
@@ -80,23 +65,6 @@ type workPager struct {
 	err     string
 	// stat is the log's size and mtime as the last read found them.
 	stat logStat
-}
-
-// logStat is a log file's size and mtime (UnixNano) at a read. A zero one
-// (known false) matches nothing: the file was absent or unreadable.
-type logStat struct {
-	known bool
-	size  int64
-	mtime int64
-}
-
-// statLog is path's logStat; zero when it cannot be stat'd.
-func statLog(path string) logStat {
-	st, err := os.Stat(path)
-	if err != nil {
-		return logStat{}
-	}
-	return logStat{known: true, size: st.Size(), mtime: st.ModTime().UnixNano()}
 }
 
 // workSig is what a log read was made for: the job shown, its state and
@@ -309,179 +277,6 @@ func (m *home) handleWorkPagerKey(key string) {
 	p.top = min(max(p.top, 0), maxTop)
 }
 
-// workLogMsg is a log read's result: a job's tail, or all the pager can
-// show of it.
-type workLogMsg struct {
-	id   sched.JobID
-	full bool
-	// seq orders the reads: see workState.seq.
-	seq uint64
-	// stat is the log's size and mtime when the read began, and unchanged
-	// says they matched the ones the caller already holds, so nothing was
-	// read and lines is empty.
-	stat      logStat
-	unchanged bool
-	lines     []string
-	omitted   bool
-	err       string
-}
-
-// workLogRead issues the read of job's log for the tail or the pager,
-// numbering it (workState.seq) and handing the Cmd the stat of what the
-// view already holds for that log, if any.
-func (m *home) workLogRead(job core.JobView, full bool) tea.Cmd {
-	m.work.seq++
-	var prev logStat
-	if full {
-		if p := m.work.pager; p != nil && p.id == job.ID && p.loaded && p.err == "" {
-			prev = p.stat
-		}
-	} else if m.work.tail.ID == job.ID && m.work.tail.Err == "" {
-		prev = m.work.tailStat
-	}
-	return workLogCmd(job.ID, job.LogPath, full, m.work.seq, prev)
-}
-
-// workLogCmd reads the end of the log at path for job id, unless the log's
-// size and mtime are prev's: then the view already has what a read would
-// find. Everything it reads is passed in: the Cmd runs off the Update
-// goroutine. The stat comes before the read, so a log that grows between
-// them is read again next time.
-func workLogCmd(id sched.JobID, path string, full bool, seq uint64, prev logStat) tea.Cmd {
-	limit := int64(workTailBytes)
-	if full {
-		limit = workPagerBytes
-	}
-	return func() tea.Msg {
-		msg := workLogMsg{id: id, full: full, seq: seq, stat: statLog(path)}
-		if prev.known && msg.stat == prev {
-			msg.unchanged = true
-			return msg
-		}
-		data, partial, err := readLogEnd(path, limit)
-		if err != nil {
-			msg.err = err.Error()
-			return msg
-		}
-		lines := ui.LogLines(data, partial)
-		if !full && len(lines) > workTailLines {
-			lines = lines[len(lines)-workTailLines:]
-		}
-		msg.lines, msg.omitted = lines, partial
-		return msg
-	}
-}
-
-// readLogEnd reads the last limit bytes of the file at path; partial says
-// the file's start was left out. A file that does not exist is an empty log
-// (a queued job has none yet), not an error.
-func readLogEnd(path string, limit int64) (data []byte, partial bool, err error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, false, err
-	}
-	start := int64(0)
-	if st.Size() > limit {
-		start, partial = st.Size()-limit, true
-	}
-	data = make([]byte, st.Size()-start)
-	n, err := f.ReadAt(data, start)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, false, err
-	}
-	return data[:n], partial, nil
-}
-
-// applyWorkLog takes a log read's result. One older than the last read
-// issued is dropped: a newer read is in flight or landed. A tail read lands only for the
-// job selected now, and a pager read only for the job the pager shows, so
-// a read that was overtaken by a key press shows under no other job. The
-// pager keeps its place unless it was at the end, where it follows.
-func (m *home) applyWorkLog(msg workLogMsg) {
-	if msg.seq < m.work.seq {
-		return
-	}
-	if !msg.full {
-		sel, ok := m.workSelected()
-		if m.work.pager != nil || !ok || sel.ID != msg.id {
-			return
-		}
-		if msg.unchanged && m.work.tail.ID == msg.id {
-			return
-		}
-		m.work.tail = ui.WorkTail{ID: msg.id, Lines: msg.lines, Err: msg.err}
-		m.work.tailStat = logStat{}
-		if msg.err == "" {
-			m.work.tailStat = msg.stat
-		}
-		return
-	}
-	p := m.work.pager
-	if p == nil || p.id != msg.id {
-		return
-	}
-	if msg.unchanged && p.loaded {
-		return
-	}
-	p.err = msg.err
-	p.stat = logStat{}
-	if msg.err != "" {
-		return
-	}
-	body := ui.WorkPagerBody(m.workHeight())
-	atEnd := !p.loaded || p.top >= max(0, len(p.lines)-body)
-	oldTop := p.top
-	p.lines, p.omitted, p.loaded, p.stat = msg.lines, msg.omitted, true, msg.stat
-	maxTop := max(0, len(p.lines)-body)
-	if atEnd {
-		p.top = maxTop
-	} else {
-		p.top = min(oldTop, maxTop)
-	}
-}
-
-// workDrained is Update's step after the model's events were applied
-// (drainCore): it reads the log of the job the view shows when that job, its
-// state or its sampled usage differ from what the last read was for. The
-// queue changes only through QueueChanged, so this is the read on
-// QueueChanged; a key that moves the selection or opens the pager changes
-// the signature too.
-func (m *home) workDrained() tea.Cmd {
-	if m.viewMode != viewWork {
-		return nil
-	}
-	job, ok := m.workShown()
-	if !ok {
-		m.work.sig = workSig{}
-		return nil
-	}
-	sig := workSig{id: job.ID, state: job.State, rss: job.RSSKB, cpu: job.CPU, pager: m.work.pager != nil}
-	if sig == m.work.sig {
-		return nil
-	}
-	m.work.sig = sig
-	return m.workLogRead(job, sig.pager)
-}
-
-// workTick is the health tick's read: a running job's log grows between
-// samples, so it is read again. A queued job has no log and a finished
-// job's has stopped growing.
-func (m *home) workTick() tea.Cmd {
-	job, ok := m.workShown()
-	if !ok || job.State != sched.Running {
-		return nil
-	}
-	return m.workLogRead(job, m.work.pager != nil)
-}
-
 // workModelKeys are the work view's keys that need the model. Offline they
 // are refused with the info line the offline gate uses: the gate lets t and
 // e through, being TUI-only keys in the focus layout.
@@ -495,118 +290,6 @@ func (m *home) workOfflineRefused(key string) bool {
 	}
 	m.errBox.SetInfo(fmt.Sprintf("the loom daemon is %s: %s needs it", m.link.state.word(), key))
 	return true
-}
-
-// pendingWork is a request of the work view waiting for its Reply. form is
-// the caps form that sent a SetSchedulerCaps, whose Reply it answers; nil
-// for the other requests.
-type pendingWork struct {
-	form *overlay.WorkCapsOverlay
-}
-
-// workReplied routes a work view request's Reply. The model's answer to a
-// caps save goes to the form that sent it while that form is still the one
-// open: a refusal into the form, an acceptance closing it. An answer for a
-// form that has since closed, or been replaced, and every other Reply's
-// error goes to the error line.
-func (m *home) workReplied(p *pendingWork, r core.Reply) tea.Cmd {
-	if o := p.form; o != nil && o == m.workCapsOverlay() {
-		if r.Err != nil {
-			o.SetError(r.Err.Error())
-			return nil
-		}
-		m.dismissOverlay()
-		m.state = stateDefault
-		return nil
-	}
-	if r.Err != nil {
-		return m.handleError(r.Err)
-	}
-	return nil
-}
-
-// openWorkCaps opens the caps form over the view, on the scheduler block as
-// the model last published it. Before the daemon has reported its queue
-// there is no host to edit caps for.
-func (m *home) openWorkCaps() {
-	q := m.queue
-	if !ui.WorkReported(q) {
-		m.errBox.SetInfo("the daemon has not reported its work queue yet")
-		return
-	}
-	host := overlay.WorkCapsHost{Name: q.Host.Name, Cores: q.Host.Cores, RAMBytes: q.Host.RAMBytes}
-	o := overlay.NewWorkCapsOverlay(host, workDefaults(q.Host), capsValues(q.Settings), q.Paused)
-	o.SetSize(int(float32(m.lastWidth)*ui.OverlayWidthPercent), int(float32(m.lastHeight)*ui.OverlayHeightPercent))
-	m.setOverlay(o, overlayWorkCaps)
-	m.state = stateWorkCaps
-}
-
-// handleStateWorkCapsKey drives the caps form. Esc closes it; Enter sends
-// its values as SetSchedulerCaps and holds the form until the Reply
-// (workReplied), which carries the model's refusal back into it.
-func handleStateWorkCapsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	o := m.workCapsOverlay()
-	if o == nil {
-		return m, nil
-	}
-	closed, submit := o.HandleKeyPress(msg)
-	switch {
-	case closed:
-		m.dismissOverlay()
-		m.state = stateDefault
-	case submit:
-		o.SetSaving(true)
-		m.core.SetSchedulerCaps(schedulerSettings(o.Values()), m.newReq(pendingReq{work: &pendingWork{form: o}}))
-	}
-	return m, nil
-}
-
-// workDefaults is the host's default for each field of the form, from the
-// same function the model resolves its caps with. A host whose RAM could
-// not be read has no memory default (the model refuses a block that does
-// not set one), so those two fields stay 0 and the others keep theirs.
-func workDefaults(h sched.Host) overlay.WorkCapsValues {
-	p, err := sched.Resolve(config.SchedulerSettings{}, h)
-	noMemory := err != nil
-	if noMemory {
-		p, err = sched.Resolve(config.SchedulerSettings{MemoryGB: 1}, h)
-		if err != nil {
-			return overlay.WorkCapsValues{}
-		}
-	}
-	v := overlay.WorkCapsValues{
-		CPUs:          p.Caps.CPUs,
-		MemoryGB:      p.Caps.MemoryGB,
-		IOJobs:        p.Caps.IOJobs,
-		ClaimCPUs:     p.DefaultClaim.CPUs,
-		ClaimMemoryGB: p.DefaultClaim.MemoryGB,
-		StarveMinutes: int(p.StarveAfter / time.Minute),
-		KeepFinished:  p.KeepFinished,
-	}
-	if noMemory {
-		v.MemoryGB, v.ClaimMemoryGB = 0, 0
-	}
-	return v
-}
-
-// capsValues is the scheduler block as the form's numbers: 0 for a field the
-// block leaves on the default.
-func capsValues(s config.SchedulerSettings) overlay.WorkCapsValues {
-	v := overlay.WorkCapsValues{CPUs: s.CPUs, MemoryGB: s.MemoryGB, IOJobs: s.IOJobs, StarveMinutes: s.StarveAfterMinutes, KeepFinished: s.KeepFinished}
-	if s.DefaultClaim != nil {
-		v.ClaimCPUs, v.ClaimMemoryGB = s.DefaultClaim.CPUs, s.DefaultClaim.MemoryGB
-	}
-	return v
-}
-
-// schedulerSettings is the scheduler block the form's numbers make. A form
-// that edited no claim field leaves the block without a default claim.
-func schedulerSettings(v overlay.WorkCapsValues) config.SchedulerSettings {
-	s := config.SchedulerSettings{CPUs: v.CPUs, MemoryGB: v.MemoryGB, IOJobs: v.IOJobs, StarveAfterMinutes: v.StarveMinutes, KeepFinished: v.KeepFinished}
-	if v.ClaimCPUs != 0 || v.ClaimMemoryGB != 0 {
-		s.DefaultClaim = &config.ClaimSettings{CPUs: v.ClaimCPUs, MemoryGB: v.ClaimMemoryGB}
-	}
-	return s
 }
 
 // askCancelWorkJob is x: a confirm for cancelling the selected job. The job
