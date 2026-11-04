@@ -403,7 +403,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&noScriptsFlag, "no-scripts", false,
 		"Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.")
 	rootCmd.Flags().StringVarP(&workspaceFlag, "workspace", "w", "",
-		"Select workspace by name (bypasses auto-detection)")
+		"Open the named workspace (instead of the saved tabs or the startup picker)")
 	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "",
 		"Override log level for the Structured logger (debug|info|warn|error). "+
 			"Takes precedence over LOOM_LOG_LEVEL.")
