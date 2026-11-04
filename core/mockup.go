@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -77,7 +78,9 @@ type mockupResult struct {
 // ReadMockup reads the page session id's brainstorm companion serves now
 // (mockup.Find, then mockup.Fetch) in a job, records what it found on the
 // instance, and answers with the Reply's Mockup; with no companion, or a
-// page Fetch refuses, the Reply's Err says why.
+// page Fetch refuses, the Reply's Err says why. A companion found with
+// nothing listening on its port (killed, its files left behind) is recorded
+// as none.
 func (m *Model) ReadMockup(id InstanceID, req ReqID) {
 	inst, _, ok := m.admit(opReadMockup, id, req)
 	if !ok {
@@ -99,6 +102,9 @@ func readMockupJob(inst *session.Instance, worktree string) Job {
 		}
 		html, err := mockup.Fetch(context.Background(), look.c.Port)
 		if err != nil {
+			if errors.Is(err, mockup.ErrNotRunning) {
+				res.look = &mockupLook{}
+			}
 			res.err = fmt.Errorf("%s %s: %w", opReadMockup, title, err)
 			return res
 		}

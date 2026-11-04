@@ -6,7 +6,11 @@
 // The companion (superpowers' skills/brainstorming/scripts/server.cjs) keeps
 // a session dir per run at <worktree>/.superpowers/brainstorm/<id>/, with
 // its screens in content/ and, while it runs, state/server-info naming its
-// port; on shutdown it deletes server-info and writes state/server-stopped.
+// port and state/server.pid (start-server.sh). Its own shutdown (its owner
+// gone, or idle) deletes server-info and writes state/server-stopped;
+// stop-server.sh kills it, which skips that, and deletes server.pid. A
+// companion killed any other way leaves both files, and Fetch finds
+// nothing listening (ErrNotRunning).
 package mockup
 
 import (
@@ -17,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +40,10 @@ const marker = "window.brainstorm"
 // fetchTimeout bounds a Fetch; a var so a test can shorten it.
 var fetchTimeout = 5 * time.Second
 
+// ErrNotRunning is Fetch's failure when nothing listens on the port: the
+// companion was killed and left its server-info behind.
+var ErrNotRunning = errors.New("the brainstorm companion is not running")
+
 // Companion is a running companion found in a worktree.
 type Companion struct {
 	Port int
@@ -52,8 +61,9 @@ type Page struct {
 }
 
 // Find looks in <worktree>/.superpowers/brainstorm/*/ for the session dir
-// whose state/server-info is newest and has no state/server-stopped beside
-// it, and returns its port and its newest screen. ok is false on any doubt:
+// whose state/server-info is newest, with state/server.pid beside it and no
+// state/server-stopped, and returns its port and its newest screen. ok is
+// false on any doubt:
 // no such dir, a server-info that doesn't parse or names no port, no
 // screen, or a newest screen that is the skill's waiting screen
 // (waiting*.html, "Continuing in terminal…"). err is set only for an I/O
@@ -83,6 +93,9 @@ func Find(worktree string) (c Companion, ok bool, err error) {
 		}
 		if _, err := os.Stat(filepath.Join(state, "server-stopped")); err == nil {
 			continue
+		}
+		if _, err := os.Stat(filepath.Join(state, "server.pid")); err != nil {
+			continue // stopped by stop-server.sh
 		}
 		if best == "" || info.ModTime().After(bestAt) {
 			best, bestAt = d.Name(), info.ModTime()
@@ -161,6 +174,10 @@ func Fetch(ctx context.Context, port int) (string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		var op *net.OpError
+		if errors.As(err, &op) && op.Op == "dial" {
+			return "", fmt.Errorf("nothing listens on port %d: %w", port, ErrNotRunning)
+		}
 		return "", fmt.Errorf("the companion on port %d does not answer: %w", port, err)
 	}
 	defer func() { _ = resp.Body.Close() }()

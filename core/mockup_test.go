@@ -28,6 +28,7 @@ func companionIn(t *testing.T, tree string, port int, screen string, at time.Tim
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "state"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "content"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server-info"), []byte(fmt.Sprintf(`{"port":%d}`, port)), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server.pid"), []byte("4242\n"), 0o644))
 	p := filepath.Join(dir, "content", screen)
 	require.NoError(t, os.WriteFile(p, []byte("<h2>x</h2>"), 0o644))
 	require.NoError(t, os.Chtimes(p, at, at))
@@ -215,4 +216,29 @@ func TestReadMockup_AnswersWhyThePageWasRefused(t *testing.T) {
 	require.Error(t, rs[0].Err)
 	assert.Equal(t, fmt.Sprintf("read the mockup of brainstorm: port %d is not the brainstorm companion", port), rs[0].Err.Error())
 	assert.Equal(t, "layout.html", m.viewOf(inst).Mockup.Screen, "the companion was found; only its page was refused")
+}
+
+// TestReadMockup_ACompanionThatIsGoneClearsTheView: a companion killed
+// without its shutdown leaves its files, so Find still names it; nothing
+// listening on its port proves it gone.
+func TestReadMockup_ACompanionThatIsGoneClearsTheView(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	inst, _ := worktreeInst(t, "brainstorm")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+	srv.Close()
+	companionIn(t, inst.GetWorktreePath(), port, "layout.html", time.Now())
+	inst.SetMockup("layout.html", time.Now())
+
+	m.ReadMockup(m.idOf(inst), 7)
+	rs := replies(run(m, m.Drain()))
+	require.Len(t, rs, 1)
+	require.ErrorIs(t, rs[0].Err, mockup.ErrNotRunning)
+	assert.Empty(t, m.viewOf(inst).Mockup.Screen)
 }

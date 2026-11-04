@@ -35,7 +35,10 @@ What the companion does, read from superpowers 5.1.0
   `{"type":"server-started","port":52599,"host":"127.0.0.1","url":…,"screen_dir":…,"state_dir":…}`.
   On shutdown (owner process gone, or 30 minutes with no request) the server
   deletes `server-info` and writes `state/server-stopped`. A killed server
-  leaves `server-info` behind.
+  leaves `server-info` behind, and the skill's own `stop-server.sh` kills
+  it (SIGTERM, which `server.cjs` doesn't handle): it leaves `server-info`
+  too, and deletes `state/server.pid`, which `start-server.sh` writes in
+  both its modes. (Found running the real companion during the build.)
 - `GET /` serves the newest `content/*.html` by mtime: a full document as
   is, a fragment wrapped in `frame-template.html`. Either way it injects
   `helper.js` as an inline `<script>`, which defines `window.brainstorm`,
@@ -104,7 +107,11 @@ type Companion struct {
 func Find(worktree string) (c Companion, ok bool, err error)
 ```
 
-- "Newest session dir" is the one whose `server-info` has the latest mtime.
+- "Newest session dir" is the one whose `server-info` has the latest mtime,
+  among those with a `server.pid` and no `server-stopped`.
+- A dial that finds nothing listening is `ErrNotRunning`, on which
+  `ReadMockup` records no companion, so a killed companion's tab goes when
+  it is opened.
 - `ok` is false, with nothing guessed, when: there is no
   `.superpowers/brainstorm`; no session dir has a live `server-info`; the
   newest `server-info` doesn't parse, or its port is outside 1–65535;

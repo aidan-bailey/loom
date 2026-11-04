@@ -21,9 +21,9 @@ import (
 const companionPage = `<!DOCTYPE html><html><body><h2>Which layout?</h2><script>window.brainstorm = {send: 0};</script></body></html>`
 
 // brainstormDir makes <tree>/.superpowers/brainstorm/<name> with a
-// server-info naming port (none when port is 0) changed at at, a
-// server-stopped when stopped, and the screens, each a second newer than the
-// one before.
+// server-info naming port and a server.pid (neither when port is 0), the
+// server-info changed at at, a server-stopped when stopped, and the
+// screens, each a second newer than the one before.
 func brainstormDir(t *testing.T, tree, name string, port int, stopped bool, at time.Time, screens ...string) {
 	t.Helper()
 	dir := filepath.Join(tree, ".superpowers", "brainstorm", name)
@@ -33,6 +33,7 @@ func brainstormDir(t *testing.T, tree, name string, port int, stopped bool, at t
 		info := filepath.Join(dir, "state", "server-info")
 		require.NoError(t, os.WriteFile(info, []byte(fmt.Sprintf(`{"type":"server-started","port":%d,"host":"127.0.0.1"}`+"\n", port)), 0o644))
 		require.NoError(t, os.Chtimes(info, at, at))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server.pid"), []byte("4242\n"), 0o644))
 	}
 	if stopped {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server-stopped"), []byte("{}\n"), 0o644))
@@ -72,6 +73,10 @@ func TestFind_NoMockup(t *testing.T) {
 		{"no brainstorm dir", func(t *testing.T, tree string) {}},
 		{"only a stopped companion", func(t *testing.T, tree string) { brainstormDir(t, tree, "1", 50001, true, at, "a.html") }},
 		{"no server-info", func(t *testing.T, tree string) { brainstormDir(t, tree, "1", 0, false, at, "a.html") }},
+		{"stopped by stop-server.sh: no server.pid", func(t *testing.T, tree string) {
+			brainstormDir(t, tree, "1", 50001, false, at, "a.html")
+			require.NoError(t, os.Remove(filepath.Join(tree, ".superpowers", "brainstorm", "1", "state", "server.pid")))
+		}},
 		{"a garbled server-info", func(t *testing.T, tree string) {
 			brainstormDir(t, tree, "1", 50001, false, at, "a.html")
 			require.NoError(t, os.WriteFile(info(tree), []byte("{port"), 0o644))
@@ -172,6 +177,6 @@ func TestFetch_NothingListeningIsAnError(t *testing.T) {
 	require.NoError(t, err)
 	srv.Close()
 	_, err = Fetch(context.Background(), closed)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not answer")
+	require.ErrorIs(t, err, ErrNotRunning)
+	assert.Equal(t, fmt.Sprintf("nothing listens on port %d: the brainstorm companion is not running", closed), err.Error())
 }

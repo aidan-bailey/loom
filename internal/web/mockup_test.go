@@ -34,6 +34,7 @@ func withCompanion(t *testing.T, tree string) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "state"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "content"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server-info"), []byte(fmt.Sprintf(`{"port":%d}`, port)), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "state", "server.pid"), []byte("4242\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "content", "layout.html"), []byte("<h2>x</h2>"), 0o644))
 }
 
