@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 )
 
@@ -74,6 +75,12 @@ const (
 	// mod) and never pasted. The phone shows a refusal as it is, so each reads
 	// in words that name no `loom` command (emptyReason, webNoModReason).
 	OriginWeb Origin = "web"
+	// OriginJob is a work-queue job's end (core/queue_notice.go): no "From"
+	// line and not the person's words. Like a CLI message it goes only
+	// through a live mod, but only the model sends it (Send refuses it): where
+	// a CLI message is refused, a job's notice is recorded on its job as
+	// undelivered, and it is never pasted (withoutMod).
+	OriginJob Origin = "job"
 )
 
 // Message is a message for a session's Claude, delivered through the loom mod
@@ -88,8 +95,9 @@ type Message struct {
 }
 
 // needsMod reports whether a message of origin o goes only through a live
-// mod: a CLI message and a web one are refused where a script's is pasted.
-func (o Origin) needsMod() bool { return o == OriginCLI || o == OriginWeb }
+// mod: a CLI message and a web one are refused where a script's is pasted, a
+// job's notice recorded as undelivered.
+func (o Origin) needsMod() bool { return o == OriginCLI || o == OriginWeb || o == OriginJob }
 
 // emptyReason is why an empty message of origin o is refused. A web refusal
 // reads for the phone, which shows it as it is.
@@ -137,7 +145,8 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	case strings.TrimSpace(msg.Text) == "" && msg.Origin.needsMod():
 		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, msg.Origin.emptyReason()))
 		return
-	case !msg.Origin.needsMod() && msg.Origin != OriginScript:
+	case (!msg.Origin.needsMod() && msg.Origin != OriginScript) || msg.Origin == OriginJob:
+		// OriginJob is the queue's own (sendJobNotice): no client sends one.
 		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
 		return
 	case msg.Origin.needsMod() && !session.IsClaudeProgram(inst.Program()):
@@ -281,6 +290,9 @@ type modMessage struct {
 	// which Started carries, and the start's owner.
 	cause ReqID
 	owner *Workspace
+	// job is the queue job a job notice (OriginJob) reports on: its fate is
+	// recorded there (noteNotice).
+	job sched.JobID
 }
 
 // modLink is what the model knows of one instance's current launch and its
@@ -442,6 +454,11 @@ func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) 
 		m.causedBy(0, func() { m.spawn(m.track(msg.req, id, m.sendPromptInst(inst, msg.text))) })
 	case OriginFirstPrompt:
 		m.causedBy(msg.cause, func() { m.spawn(m.sendInitialPrompt(inst, msg.owner, msg.text)) })
+	case OriginJob:
+		if why == "" {
+			why = jobNoModReason(inst)
+		}
+		m.noteNotice(msg.job, sched.NoticeUndelivered, why)
 	}
 }
 
@@ -522,6 +539,10 @@ func (m *Model) endLink(inst *session.Instance, l *modLink, why string) {
 // pasted either: its sender hears why, and a first prompt finishes its start
 // as a failed paste does (logged, then Started).
 func (m *Model) undelivered(inst *session.Instance, msg *modMessage, why string) {
+	if msg.origin == OriginJob {
+		m.noteNotice(msg.job, sched.NoticeUndelivered, why)
+		return
+	}
 	if msg.origin == OriginFirstPrompt {
 		log.For("core").Warn("mod.first_prompt_undelivered", "instance", inst.Title, "why", why)
 		m.causedBy(msg.cause, func() { m.deliverPromptSent(promptSent{inst: inst, owner: msg.owner}) })
@@ -742,6 +763,10 @@ func (m *Model) modQueued(inst *session.Instance, l *modLink, id string) {
 	}
 	if msg.origin == OriginFirstPrompt {
 		m.causedBy(msg.cause, func() { m.deliverPromptSent(promptSent{inst: inst, owner: msg.owner}) })
+		return
+	}
+	if msg.origin == OriginJob {
+		m.noteNotice(msg.job, sched.NoticeSent, "")
 		return
 	}
 	m.reply(msg.req, Reply{ID: m.idOf(inst)})

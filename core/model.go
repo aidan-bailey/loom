@@ -487,6 +487,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverUsage(msg)
 	case buildSweepResult:
 		m.deliverBuildSweep(msg)
+	case jobNoticeBuilt:
+		m.deliverJobNotice(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:
