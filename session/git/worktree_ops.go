@@ -91,7 +91,7 @@ func RemoveTitleSidecar(worktreePath string) {
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
 	t0 := time.Now()
-	log.For("git").Debug("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.isExistingBranch)
+	log.For("git").Debug("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.IsExistingBranch())
 	defer func() {
 		args := []any{"branch", g.branchName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
@@ -112,12 +112,20 @@ func (g *GitWorktree) Setup() (err error) {
 
 	// If this worktree uses a pre-existing branch, always set up from that branch
 	// (it may exist locally or only on the remote).
+	newSession := g.takeNewSessionSetup()
 	switch {
-	case g.isExistingBranch:
+	case g.IsExistingBranch():
 		err = g.setupFromExistingBranch()
 	default:
 		// Check if branch exists using git CLI (much faster than go-git PlainOpen)
 		if _, refErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName)); refErr == nil {
+			// A new session finding its branch already there reuses one an
+			// earlier session left behind (a discard keeps the branch), whose
+			// commits were never this session's: its kill must keep it. A
+			// rebuild finds the session's own branch, which stays its own.
+			if newSession {
+				g.markExistingBranch()
+			}
 			err = g.setupFromExistingBranch()
 		} else {
 			err = g.setupNewWorktree()
@@ -462,7 +470,7 @@ func (g *GitWorktree) setupNewWorktree() error {
 
 // Cleanup removes the worktree and associated branch
 func (g *GitWorktree) Cleanup() error {
-	return g.cleanup(!g.isExistingBranch)
+	return g.cleanup(!g.IsExistingBranch())
 }
 
 // CleanupFailedStart undoes a Setup whose session then failed to start: it
@@ -471,11 +479,11 @@ func (g *GitWorktree) Cleanup() error {
 // existed — one left behind by an earlier session with the same title,
 // whose commits may be unmerged — and that one is kept.
 func (g *GitWorktree) CleanupFailedStart() error {
-	return g.cleanup(!g.isExistingBranch && g.createdBranch())
+	return g.cleanup(!g.IsExistingBranch() && g.createdBranch())
 }
 
-// cleanup removes the worktree, prunes, drops the title sidecar and, when
-// deleteBranch is set, deletes the branch.
+// cleanup removes the worktree, prunes, deletes the branch when deleteBranch
+// is set, and drops the title sidecar.
 func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	t0 := time.Now()
 	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath, "delete_branch", deleteBranch)
@@ -506,6 +514,13 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
 	}
 
+	// Prune before the branch delete: a tree gone from disk (deleted by
+	// hand, or half-removed) stays registered until a prune, and git refuses
+	// `branch -D` for a branch "used by worktree" while it is.
+	if err := g.Prune(); err != nil {
+		errs = append(errs, err)
+	}
+
 	// Delete the branch using git CLI, unless the caller keeps it
 	if deleteBranch {
 		if _, err := g.runGitCommand(g.repoPath, "branch", "-D", g.branchName); err != nil {
@@ -514,11 +529,6 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 				errs = append(errs, fmt.Errorf("failed to remove branch %s: %w", g.branchName, err))
 			}
 		}
-	}
-
-	// Prune the worktree to clean up any remaining references
-	if err := g.Prune(); err != nil {
-		errs = append(errs, err)
 	}
 
 	// Drop the title sidecar so it doesn't linger beside a now-removed

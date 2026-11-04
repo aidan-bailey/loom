@@ -143,6 +143,53 @@ func (r *recordingRunner) CombinedOutput(c *exec.Cmd) ([]byte, error) {
 	return c.CombinedOutput()
 }
 
+// TestSetup_ReusedBranchIsOwnedOnlyByTheSessionThatCreatedIt: a new
+// session's Setup that finds its branch already there checks out a branch
+// some earlier session left behind, so Cleanup keeps it; a rebuild of a
+// session's own tree (Resume over a removed or gutted tree, from the saved
+// record or from the same GitWorktree) finds its own branch there and must
+// leave Cleanup deleting it.
+func TestSetup_ReusedBranchIsOwnedOnlyByTheSessionThatCreatedIt(t *testing.T) {
+	t.Run("a new session reusing a branch keeps it", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		runGit(t, repoDir, "branch", "u/reused")
+		prefix := "u/"
+		gw, _, err := NewGitWorktreeFromSpec(WorktreeSpec{RepoPath: repoDir, SessionName: "reused", ConfigDir: configDir, BranchPrefix: &prefix})
+		require.NoError(t, err)
+
+		require.NoError(t, gw.Setup())
+		assert.True(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.True(t, branchExists(t, repoDir, "u/reused"))
+	})
+	t.Run("a rebuild from the saved record deletes its own branch", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		runGit(t, repoDir, "branch", "u/own")
+		gw := NewGitWorktreeFromStorage(repoDir, filepath.Join(configDir, "worktrees", "own_x"), "own", "u/own", "", false, configDir)
+
+		require.NoError(t, gw.Setup())
+		assert.False(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.False(t, branchExists(t, repoDir, "u/own"))
+	})
+	t.Run("a second Setup of a new session's worktree deletes its own branch", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		prefix := "u/"
+		gw, _, err := NewGitWorktreeFromSpec(WorktreeSpec{RepoPath: repoDir, SessionName: "again", ConfigDir: configDir, BranchPrefix: &prefix})
+		require.NoError(t, err)
+		require.NoError(t, gw.Setup())
+		require.NoError(t, os.RemoveAll(gw.GetWorktreePath()), "the tree is gone, as before a rebuild")
+
+		require.NoError(t, gw.Setup())
+		assert.False(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.False(t, branchExists(t, repoDir, "u/again"))
+	})
+}
+
 // TestSetupNewWorktree_DeletesNoBranch: a new session's Setup only creates
 // a branch after show-ref said it is absent, so a `branch -D` there could
 // only ever delete one created since — another session's.

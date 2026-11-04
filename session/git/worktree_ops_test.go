@@ -134,6 +134,21 @@ func TestCleanupWorktrees_DeletesBranch(t *testing.T) {
 		"branch %q should be deleted after cleanup", branchName)
 }
 
+// TestCleanup_DeletesTheBranchOfATreeAlreadyGoneFromDisk: a worktree
+// directory deleted by hand (or left half-removed) is still registered, and
+// git refuses `branch -D` for a branch "used by worktree" until a prune
+// drops the entry. Cleanup must prune first, or the kill fails and the
+// branch leaks.
+func TestCleanup_DeletesTheBranchOfATreeAlreadyGoneFromDisk(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	require.NoError(t, os.RemoveAll(worktreePath))
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "gone", branchName, "", false, configDir)
+
+	require.NoError(t, gw.Cleanup())
+
+	assert.False(t, branchExists(t, repoDir, branchName), "the branch is deleted")
+}
+
 // TestSetup_BranchDeletedExternallyReturnsErrBranchGone is the F10
 // regression guard. When a paused instance's branch is deleted via
 // `git branch -D` from outside the app AND no origin tracking branch

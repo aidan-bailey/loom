@@ -68,6 +68,42 @@ func TestStart_FailedStartKeepsAPreexistingBranch(t *testing.T) {
 	assert.NoDirExists(t, gw.GetWorktreePath(), "the worktree the failed start created is removed")
 }
 
+// TestKill_KeepsAPreexistingBranchTheSessionReused: a new session whose
+// title matches a branch an earlier session left behind (a discard keeps
+// the branch) checks that branch out. Killing it later removes its worktree
+// but must not delete the branch, whose commits were never this session's,
+// and the saved record must say so, or a kill after a restart deletes it.
+func TestKill_KeepsAPreexistingBranchTheSessionReused(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "reused", &fakeTmuxServer{})
+	gitIn(t, repoDir, "checkout", "-q", "-b", branch)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "earlier.txt"), []byte("unmerged work\n"), 0644))
+	gitIn(t, repoDir, "add", ".")
+	gitIn(t, repoDir, "commit", "-q", "-m", "earlier session's work")
+	gitIn(t, repoDir, "checkout", "-q", "main")
+	tip := branchTip(t, repoDir, branch)
+
+	require.NoError(t, inst.Start(true))
+	assert.True(t, inst.ToInstanceData().Worktree.IsExistingBranch, "the saved record marks the branch as not this session's")
+	wt := inst.getGitWorktree().GetWorktreePath()
+
+	require.NoError(t, inst.Kill())
+
+	assert.NoDirExists(t, wt, "the kill removes the worktree")
+	assert.Equal(t, tip, branchTip(t, repoDir, branch), "a kill must not delete a branch the session reused")
+}
+
+// TestKill_DeletesTheBranchItsStartCreated pins the other side: a branch the
+// session's own start created goes with the kill.
+func TestKill_DeletesTheBranchItsStartCreated(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "fresh", &fakeTmuxServer{})
+
+	require.NoError(t, inst.Start(true))
+	assert.False(t, inst.ToInstanceData().Worktree.IsExistingBranch)
+	require.NoError(t, inst.Kill())
+
+	assert.Empty(t, branchTip(t, repoDir, branch), "the branch the start created is deleted")
+}
+
 // TestStart_FailedStartRemovesWhatItCreated: when Start created the branch
 // itself, a failed launch removes both it and the worktree.
 func TestStart_FailedStartRemovesWhatItCreated(t *testing.T) {
