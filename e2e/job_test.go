@@ -49,7 +49,14 @@ func TestE2E_Job_SurvivesADaemonRestart(t *testing.T) {
 	require.False(t, held, "no daemon runs")
 	assert.True(t, alive(started.PID), "the job's runner outlives the daemon that started it")
 
-	// This join starts the next daemon, which adopts the job.
+	// This join starts the next daemon, which adopts the job. The job must
+	// still be running once that daemon serves: had it ended meanwhile (the
+	// stop and the boot outlasted its sleep), the daemon would settle it from
+	// its exit record and the test would pass without testing adoption.
+	out, err = job("list")
+	require.NoError(t, err, out)
+	require.True(t, alive(started.PID), "the job ended before the new daemon served, so adoption was not tested: the restart outlasted the job's sleep")
+	require.Regexp(t, `(?m)^1 +running `, out, "the new daemon serves the job as running, adopted rather than settled")
 	out, err = job("wait", "1")
 	var exit *exec.ExitError
 	require.ErrorAs(t, err, &exit, out)
