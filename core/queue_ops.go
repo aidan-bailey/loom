@@ -88,6 +88,11 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	// wrong) must never take a new job's spec, or be removed below as ours.
 	if err := sched.CreateJobDir(q.dir, id); err != nil {
 		if errors.Is(err, fs.ErrExist) {
+			// The counter only goes up: move it past the directory so the
+			// next submit takes a free ID, not this one again until a
+			// restart. Not saved here; LoadStore raises it past the
+			// directory on the next load anyway.
+			q.store.NextID = id + 1
 			return 0, "", fmt.Errorf("job %d's directory already exists, so nothing was submitted (it is left as it is): %w", id, err)
 		}
 		return 0, "", err

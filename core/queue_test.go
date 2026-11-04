@@ -479,7 +479,9 @@ func TestJobQueue_ASubmitWhoseWriteFailsIsRefusedAndTakenBack(t *testing.T) {
 
 // The job's directory is made exclusively (spec §5.9): one already there,
 // from a counter that fell behind the disk, is refused, left untouched, and
-// takes neither the spec nor a removal. The queue and its ID are unchanged.
+// takes neither the spec nor a removal. The queue's jobs are unchanged and
+// NextID moves past the directory, so the refusal is of one submit, not of
+// every later one.
 func TestJobQueue_ASubmitWhoseDirectoryAlreadyExistsIsRefusedAndLeavesItAlone(t *testing.T) {
 	m := wqModel(t)
 	planted := filepath.Join(m.queue.jobDir(1), "output.log")
@@ -491,8 +493,8 @@ func TestJobQueue_ASubmitWhoseDirectoryAlreadyExistsIsRefusedAndLeavesItAlone(t 
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
-	assert.Equal(t, before, m.queue.store, "the queue and NextID are unchanged")
-	assert.Equal(t, sched.JobID(1), m.queue.store.NextID)
+	assert.Equal(t, before.Jobs, m.queue.store.Jobs, "the queue's jobs are unchanged")
+	assert.Equal(t, sched.JobID(2), m.queue.store.NextID, "NextID moved past the directory")
 	got, rerr := os.ReadFile(planted)
 	require.NoError(t, rerr, "the planted directory survives")
 	assert.Equal(t, "an old job's output", string(got))
@@ -502,8 +504,8 @@ func TestJobQueue_ASubmitWhoseDirectoryAlreadyExistsIsRefusedAndLeavesItAlone(t 
 	assert.NoFileExists(t, filepath.Join(m.queue.dir, sched.StoreFile), "jobs.json was not written")
 	assert.Empty(t, m.Drain().Jobs, "nothing was started")
 
-	// A free ID still submits: the directory of job 1 is not touched.
-	m.queue.store.NextID = 2
+	// The refusal does not wedge the queue: the next submit takes the next
+	// ID, and the directory of job 1 is still not touched.
 	assert.Equal(t, sched.JobID(2), wqSubmit(t, m, "true"))
 	assert.FileExists(t, planted)
 }
