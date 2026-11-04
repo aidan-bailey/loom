@@ -3,6 +3,7 @@ package core
 import (
 	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
@@ -116,22 +117,33 @@ func (m *Model) publishState() []Event {
 }
 
 // queuePublication is what publishQueue last published: the queue (by
-// pointer, since a boot replaces the one the model was built with) and its
-// revision.
+// pointer, which guards a queue installed in place of the one last
+// published, as SetJobRunnerForTest or a later replacement does), its
+// revision, and the owners its jobs resolved to.
 type queuePublication struct {
-	sent bool
-	of   *queueState
-	rev  uint64
+	sent   bool
+	of     *queueState
+	rev    uint64
+	owners []jobOwner
+}
+
+// same reports whether p and o are one publication.
+func (p queuePublication) same(o queuePublication) bool {
+	return p.sent == o.sent && p.of == o.of && p.rev == o.rev && slices.Equal(p.owners, o.owners)
 }
 
 // publishQueue returns a QueueChanged when the queue is not the one last
-// published or its revision moved since, and on the first call always. The
-// revision is queueState.rev, which every change to the queue, to a job or
-// to the sampled usage bumps: a change that leaves it alone is not seen
-// until something else moves it.
+// published, its revision moved since, or the owner of a job resolves to
+// something else than it did, and on the first call always. The revision is
+// queueState.rev, which every change to the queue, to a job or to the
+// sampled usage bumps. A job's owner fields come from the model's
+// workspaces and sessions, which a rename, an unregister or a kill's
+// completion changes without touching the queue, so the owners are compared
+// too (queueOwners): any other change that leaves the revision alone is not
+// seen until something else moves it.
 func (m *Model) publishQueue() []Event {
-	p := queuePublication{sent: true, of: m.queue, rev: m.queueRev()}
-	if m.queuePub == p {
+	p := queuePublication{sent: true, of: m.queue, rev: m.queueRev(), owners: m.queueOwners()}
+	if m.queuePub.same(p) {
 		return nil
 	}
 	m.queuePub = p

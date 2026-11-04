@@ -85,6 +85,39 @@ func cloneJobViews(jobs []JobView) []JobView {
 // answers it from the last QueueChanged).
 func (m *Model) Queue() QueueView { return m.queueView() }
 
+// jobOwner is what a job's owner resolves to: the fields of its JobView that
+// come from the model's workspaces and sessions, not from the queue. All zero
+// when no served session holds the owner.
+type jobOwner struct {
+	title       string
+	workspace   string
+	workspaceID WorkspaceID
+}
+
+// jobOwnerOf resolves owner by identity (lookup) to its title, its
+// workspace's label and its workspace's ID. The view and the publisher's
+// owner signature (queueOwners) both read it, so they can't disagree.
+func (m *Model) jobOwnerOf(owner InstanceID) jobOwner {
+	inst, ws := m.lookup(owner)
+	if inst == nil {
+		return jobOwner{}
+	}
+	return jobOwner{title: inst.Title, workspace: ws.Label(), workspaceID: m.wsIDOf(ws)}
+}
+
+// queueOwners is the owner each job of the store resolves to, in store
+// order. publishQueue compares it with the last published one, since a
+// rename, an unregister or a kill's completion changes it without bumping
+// the queue's revision.
+func (m *Model) queueOwners() []jobOwner {
+	jobs := m.queue.store.Jobs
+	owners := make([]jobOwner, len(jobs))
+	for i := range jobs {
+		owners[i] = m.jobOwnerOf(InstanceID(jobs[i].Owner))
+	}
+	return owners
+}
+
 // queueRev is the revision of the queue as last changed.
 func (m *Model) queueRev() uint64 { return m.queue.rev }
 
@@ -163,9 +196,8 @@ func (m *Model) queueJobView(q *queueState, r sched.Record) JobView {
 		e := *r.Exit
 		jv.Exit = &e
 	}
-	if inst, ws := m.lookup(jv.Owner); inst != nil {
-		jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = inst.Title, ws.Label(), m.wsIDOf(ws)
-	}
+	o := m.jobOwnerOf(jv.Owner)
+	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
 	switch r.State {
 	case sched.Running:
 		u := q.usage[r.ID]
