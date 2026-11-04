@@ -510,8 +510,16 @@ func TestWorkPager_NeedsAJob(t *testing.T) {
 // of sending them.
 type workWatch struct {
 	core.Core
-	caps []config.SchedulerSettings
-	reqs []core.ReqID
+	cancels []workCancel
+	fronts  []sched.JobID
+	caps    []config.SchedulerSettings
+	reqs    []core.ReqID
+}
+
+// workCancel is a CancelJob the work view sent.
+type workCancel struct {
+	id   sched.JobID
+	from core.CancelFrom
 }
 
 // watchWork puts a workWatch between m and its model.
@@ -526,6 +534,16 @@ func watchWork(t *testing.T, m *home) *workWatch {
 
 func (w *workWatch) SetSchedulerCaps(s config.SchedulerSettings, req core.ReqID) {
 	w.caps = append(w.caps, s)
+	w.reqs = append(w.reqs, req)
+}
+
+func (w *workWatch) CancelJob(id sched.JobID, from core.CancelFrom, req core.ReqID) {
+	w.cancels = append(w.cancels, workCancel{id: id, from: from})
+	w.reqs = append(w.reqs, req)
+}
+
+func (w *workWatch) MoveJobToFront(id sched.JobID, req core.ReqID) {
+	w.fronts = append(w.fronts, id)
 	w.reqs = append(w.reqs, req)
 }
 
@@ -670,4 +688,210 @@ func TestSchedulerSettingsRoundTrip(t *testing.T) {
 		assert.Equal(t, s, schedulerSettings(capsValues(s)))
 	}
 	assert.Nil(t, schedulerSettings(overlay.WorkCapsValues{}).DefaultClaim, "a form with no claim edited leaves no claim block in config.json")
+}
+
+func TestWorkCancel_ActsOnTheJobNamedWhenTheKeyPassed(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "polyoxide tests"), queueJob(15, sched.Running, "go test"))
+	w := watchWork(t, m)
+	require.Equal(t, sched.JobID(14), selectedWork(t, m))
+
+	assert.Nil(t, pressWork(t, m, "x"))
+	require.Equal(t, stateConfirm, m.state)
+	assert.Contains(t, ansi.Strip(m.confirmation().Render()), `Cancel job 14 "polyoxide tests"?`)
+	assert.Empty(t, w.cancels, "nothing is sent before the answer")
+
+	// The queue changes under the dialog: job 14 leaves the view, and the
+	// selection moves to the job that took its row.
+	setQueue(t, m, testQueue(queueJob(15, sched.Running, "go test")))
+	require.Equal(t, sched.JobID(15), selectedWork(t, m))
+
+	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
+	require.Len(t, w.cancels, 1)
+	assert.Equal(t, sched.JobID(14), w.cancels[0].id, "the job the dialog named, not the one selected now")
+	assert.Equal(t, core.CancelFromView, w.cancels[0].from)
+	assert.NotZero(t, w.reqs[0], "the cancel carries a ReqID, so a refusal reaches the user")
+	assert.Equal(t, stateDefault, m.state)
+	assert.Equal(t, viewWork, m.viewMode)
+}
+
+func TestWorkCancel_ACancelledDialogSendsNothing(t *testing.T) {
+	for _, answer := range []string{"n", "esc"} {
+		t.Run(answer, func(t *testing.T) {
+			m := workHome(t, queueJob(14, sched.Running, "a"))
+			w := watchWork(t, m)
+			pressWork(t, m, "x")
+			require.Equal(t, stateConfirm, m.state)
+			_, _ = handleStateConfirmKey(m, keyFor(t, answer))
+			assert.Empty(t, w.cancels)
+			assert.Equal(t, stateDefault, m.state)
+		})
+	}
+}
+
+func TestWorkCancel_QueuedAndRunningJobsCanBeCancelledFinishedOnesCannot(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"), queueJob(16, sched.Queued, "b"), queueJob(12, sched.Done, "c"))
+	w := watchWork(t, m)
+
+	pressWork(t, m, "j") // job 16, queued
+	pressWork(t, m, "x")
+	require.Equal(t, stateConfirm, m.state)
+	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
+	require.Len(t, w.cancels, 1)
+	assert.Equal(t, sched.JobID(16), w.cancels[0].id)
+
+	pressWork(t, m, "j") // job 12, done
+	cmd := pressWork(t, m, "x")
+	assert.Nil(t, cmd)
+	assert.Equal(t, stateDefault, m.state, "a finished job has nothing to cancel: no dialog")
+	assert.Contains(t, m.errBox.String(), "job 12 has finished")
+	assert.Len(t, w.cancels, 1)
+}
+
+func TestWorkCancel_NothingSelectedNothingAsked(t *testing.T) {
+	m := workHome(t)
+	assert.Nil(t, pressWork(t, m, "x"))
+	assert.Equal(t, stateDefault, m.state)
+}
+
+func TestWorkFront_SendsTheSelectedQueuedJobsID(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"), queueJob(16, sched.Queued, "b"), queueJob(17, sched.Queued, "c"))
+	w := watchWork(t, m)
+
+	pressWork(t, m, "j")
+	pressWork(t, m, "j") // job 17
+	assert.Nil(t, pressWork(t, m, "t"))
+	assert.Equal(t, []sched.JobID{17}, w.fronts)
+	assert.NotZero(t, w.reqs[0])
+
+	pressWork(t, m, "k")
+	pressWork(t, m, "k") // job 14, running
+	pressWork(t, m, "t")
+	assert.Equal(t, []sched.JobID{17}, w.fronts, "a running job is not sent")
+	assert.Contains(t, m.errBox.String(), "job 14 isn't waiting")
+}
+
+func TestWorkFront_AModelRefusalReachesTheUser(t *testing.T) {
+	m := workHome(t, queueJob(16, sched.Queued, "b"))
+	w := watchWork(t, m)
+	pressWork(t, m, "t")
+	require.Len(t, w.fronts, 1)
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: errors.New("job 16 isn't waiting")})
+	assert.Contains(t, m.errBox.String(), "job 16 isn't waiting")
+}
+
+func TestWorkCancel_ARefusalReachesTheUser(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	w := watchWork(t, m)
+	pressWork(t, m, "x")
+	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
+	require.Len(t, w.cancels, 1)
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: errors.New("job 14 has finished")})
+	assert.Contains(t, m.errBox.String(), "job 14 has finished")
+}
+
+func TestWorkActions_OfflineRefusesTheKeysThatNeedTheModel(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"), queueJob(16, sched.Queued, "b"))
+	w := watchWork(t, m)
+	pressWork(t, m, "j") // job 16: t and x would both act
+	m.link.state = linkWaiting
+	for _, key := range []string{"x", "t", "o", "e"} {
+		m.errBox.Clear()
+		cmd := pressWork(t, m, key)
+		assert.Nil(t, cmd, key)
+		assert.Equal(t, stateDefault, m.state, "%q opens nothing offline", key)
+		assert.Contains(t, m.errBox.String(), "the loom daemon is stopped: "+key+" needs it", key)
+	}
+	assert.Empty(t, w.cancels)
+	assert.Empty(t, w.fronts)
+	assert.Empty(t, w.caps)
+
+	m.link.state = linkConnected
+	m.errBox.Clear()
+	pressWork(t, m, "t")
+	assert.Equal(t, []sched.JobID{16}, w.fronts, "connected, the same key acts")
+}
+
+func TestWorkView_TheStatusLineListsTheKeys(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	assert.Contains(t, ansi.Strip(m.View().Content), "w/esc back · enter log · x cancel · t to front · o open session · e caps · q quit")
+}
+
+func TestFocusSlotInstance_FocusesByIdentity(t *testing.T) {
+	m := fleetHome(t)
+	f2 := m.slots[0].list.GetInstanceByTitle("f2")
+	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	require.NotNil(t, f2)
+	require.NotNil(t, b1)
+
+	idx, ok := m.slotShowing(b1.ID)
+	assert.True(t, ok)
+	assert.Equal(t, 1, idx)
+	_, ok = m.slotShowing(core.InstanceID(9999))
+	assert.False(t, ok)
+
+	assert.False(t, m.focusSlotInstance(0, b1.ID), "the row is not in that slot: nothing changes")
+	assert.Equal(t, 0, m.focusedSlot)
+	assert.True(t, m.focusSlotInstance(0, f2.ID))
+	assert.Equal(t, f2.ID, selID(m.list))
+	assert.True(t, m.focusSlotInstance(1, b1.ID))
+	assert.Equal(t, 1, m.focusedSlot)
+	assert.Equal(t, b1.ID, selID(m.list))
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+func TestFocusSlotInstance_ClassicModeHasOneSlot(t *testing.T) {
+	m := newTestHome(t)
+	a := mustAddInstance(t, m, "a")
+	id := idOf(m, a)
+	idx, ok := m.slotShowing(id)
+	assert.True(t, ok)
+	assert.Equal(t, 0, idx)
+	assert.True(t, m.focusSlotInstance(0, id))
+	assert.Equal(t, id, selID(m.list))
+	assert.False(t, m.focusSlotInstance(0, core.InstanceID(9999)))
+}
+
+func TestWorkOpen_FocusesTheOwnersSessionInItsWorkspace(t *testing.T) {
+	m := fleetHome(t)
+	m.errBox = ui.NewErrBox()
+	m.errBox.SetSize(400, 1)
+	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: 120, Height: 40})
+	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	require.NotNil(t, b1)
+	job := queueJob(14, sched.Running, "tests")
+	job.Owner, job.OwnerTitle, job.OwnerWorkspace = b1.ID, "b1", "bpeer"
+	job.OwnerWorkspaceID = 2 // not opened: the row is found by its ID in the open slots
+	setQueue(t, m, testQueue(job))
+	m.enterWorkView()
+	require.Equal(t, viewWork, m.viewMode)
+	require.Equal(t, 0, m.focusedSlot)
+
+	pressWork(t, m, "o")
+	assert.Equal(t, viewFocus, m.viewMode, "o drops to the focus layout")
+	assert.Equal(t, 1, m.focusedSlot, "the owner's workspace is focused")
+	assert.Equal(t, b1.ID, selID(m.list), "and its session selected")
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+func TestWorkOpen_SaysWhyItCannot(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*core.JobView)
+		want   string
+	}{
+		{"no owner", func(j *core.JobView) {}, "job 14 has no owner"},
+		{"an owner that is not served (no workspace ID)", func(j *core.JobView) { j.Owner = 77 }, "job 14's session isn't served"},
+		{"an owner whose workspace the model no longer serves", func(j *core.JobView) {
+			j.Owner, j.OwnerTitle, j.OwnerWorkspace, j.OwnerWorkspaceID = 77, "g", "ghost", 77
+		}, "serves no such workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			job := queueJob(14, sched.Running, "tests")
+			tc.mutate(&job)
+			m := workHome(t, job)
+			pressWork(t, m, "o")
+			assert.Equal(t, viewWork, m.viewMode, "the view stays")
+			assert.Contains(t, m.errBox.String(), tc.want)
+		})
+	}
 }

@@ -177,6 +177,54 @@ func (m *home) focusCursorSlot() {
 	}
 }
 
+// listHas reports whether list shows the instance id.
+func listHas(list *ui.List, id core.InstanceID) bool {
+	for _, v := range list.GetInstances() {
+		if v.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// slotShowing finds the open slot whose rail shows the instance id: its
+// index in m.slots, or 0 for the classic slot while no tab is open. false
+// when no open slot shows it. A title is not unique across workspaces, so
+// the instance is found by its ID.
+func (m *home) slotShowing(id core.InstanceID) (int, bool) {
+	if len(m.slots) == 0 {
+		return 0, listHas(m.list, id)
+	}
+	for i, s := range m.slots {
+		if listHas(s.list, id) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// focusSlotInstance focuses the slot at idx (loadSlot) and selects the row
+// id in it, by identity, like focusCursorSlot does by position. It changes
+// nothing and reports false when that slot's rail does not show id.
+// Main-goroutine only.
+func (m *home) focusSlotInstance(idx int, id core.InstanceID) bool {
+	if len(m.slots) == 0 {
+		if !listHas(m.list, id) {
+			return false
+		}
+		m.list.SelectID(id)
+		return true
+	}
+	if idx < 0 || idx >= len(m.slots) || !listHas(m.slots[idx].list, id) {
+		return false
+	}
+	if idx != m.focusedSlot {
+		m.loadSlot(idx)
+	}
+	m.list.SelectID(id)
+	return true
+}
+
 // peerSectionFor summarizes one non-focused slot's instance statuses
 // into a PeerSection for refreshPeerSections (rail). Main-goroutine
 // only.

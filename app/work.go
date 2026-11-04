@@ -200,7 +200,7 @@ func (m *home) workHint() string {
 	if m.work.pager != nil {
 		return "esc back · j/k scroll · pgup/pgdn page · g/G top/bottom"
 	}
-	return "w/esc back · enter log · e caps · q quit"
+	return "w/esc back · enter log · x cancel · t to front · o open session · e caps · q quit"
 }
 
 // handleWorkKey is the work view's keys: j/k and the arrows move the
@@ -227,6 +227,12 @@ func (m *home) handleWorkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveWorkSelection(-1)
 	case "enter":
 		m.openWorkPager()
+	case "x":
+		return m, m.askCancelWorkJob()
+	case "t":
+		m.frontWorkJob()
+	case "o":
+		return m, m.focusWorkOwner()
 	case "e":
 		m.openWorkCaps()
 	default:
@@ -407,7 +413,7 @@ func (m *home) workTick() tea.Cmd {
 // workModelKeys are the work view's keys that need the model. Offline they
 // are refused with the info line the offline gate uses: the gate lets t and
 // e through, being TUI-only keys in the focus layout.
-var workModelKeys = map[string]bool{"e": true}
+var workModelKeys = map[string]bool{"x": true, "t": true, "o": true, "e": true}
 
 // workOfflineRefused refuses a key that needs the model while the TUI is
 // offline, saying so on the info line.
@@ -529,4 +535,79 @@ func schedulerSettings(v overlay.WorkCapsValues) config.SchedulerSettings {
 		s.DefaultClaim = &config.ClaimSettings{CPUs: v.ClaimCPUs, MemoryGB: v.ClaimMemoryGB}
 	}
 	return s
+}
+
+// askCancelWorkJob is x: a confirm for cancelling the selected job. The job
+// is taken now, named in the prompt by its ID, and the cancel goes to that
+// ID whatever is selected when the answer comes: the queue may change under
+// the dialog, and the model re-validates (a job that has finished by then
+// is refused). A finished job has nothing to cancel, so it asks nothing.
+func (m *home) askCancelWorkJob() tea.Cmd {
+	job, ok := m.workSelected()
+	if !ok {
+		return nil
+	}
+	if job.State.Finished() {
+		m.errBox.SetInfo(fmt.Sprintf("job %d has finished", job.ID))
+		return nil
+	}
+	id := job.ID
+	return m.confirmTask("Cancel "+ui.JobLabel(job)+"?", overlay.ConfirmationTask{Sync: func() {
+		m.core.CancelJob(id, core.CancelFromView, m.newReq(pendingReq{work: &pendingWork{}}))
+	}})
+}
+
+// frontWorkJob is t: the selected queued job goes to the front of the line.
+// Only a queued job can; the model re-validates it.
+func (m *home) frontWorkJob() {
+	job, ok := m.workSelected()
+	if !ok {
+		return
+	}
+	if job.State != sched.Queued {
+		m.errBox.SetInfo(fmt.Sprintf("job %d isn't waiting", job.ID))
+		return
+	}
+	m.core.MoveJobToFront(job.ID, m.newReq(pendingReq{work: &pendingWork{}}))
+}
+
+// focusWorkOwner is o: it leaves the view for the focus layout on the
+// selected job's owner. The row is found by the owner's InstanceID in the
+// open slots; when none shows it, the owner's workspace is opened as a tab
+// first, by the ID the job carries (openTab(job.OwnerWorkspaceID)), never
+// by the workspace's label, which is for display only. An owner the model
+// does not serve has no workspace ID (0), and the key says so.
+func (m *home) focusWorkOwner() tea.Cmd {
+	job, ok := m.workSelected()
+	if !ok {
+		return nil
+	}
+	switch {
+	case job.Owner == 0:
+		m.errBox.SetInfo(fmt.Sprintf("job %d has no owner", job.ID))
+		return nil
+	case job.OwnerWorkspaceID == 0:
+		m.errBox.SetInfo(fmt.Sprintf("job %d's session isn't served", job.ID))
+		return nil
+	}
+	var opened tea.Cmd
+	idx, found := m.slotShowing(job.Owner)
+	if !found {
+		cmd, err := m.openTab(job.OwnerWorkspaceID)
+		if err != nil {
+			return m.handleError(err)
+		}
+		opened = cmd
+		m.persistOpenList()
+		idx, found = m.slotShowing(job.Owner)
+	}
+	if !found || !m.focusSlotInstance(idx, job.Owner) {
+		m.errBox.SetInfo(fmt.Sprintf("job %d's session isn't in workspace %s", job.ID, job.OwnerWorkspace))
+		return opened
+	}
+	m.work.pager = nil
+	m.viewMode = viewFocus
+	m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
+	m.persistFocusedWorkspace()
+	return tea.Batch(opened, m.instanceChanged())
 }
