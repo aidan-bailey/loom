@@ -102,6 +102,9 @@ func (l *Loop) ReadTurns(id InstanceID, query transcript.Query, req ReqID) {
 	l.do(func(m *Model) { m.ReadTurns(id, query, req) })
 }
 func (l *Loop) ReadDiff(id InstanceID, req ReqID) { l.do(func(m *Model) { m.ReadDiff(id, req) }) }
+func (l *Loop) ReadMockup(id InstanceID, req ReqID) {
+	l.do(func(m *Model) { m.ReadMockup(id, req) })
+}
 func (l *Loop) SweepBuilds(opts buildsweep.Options, req ReqID) {
 	l.do(func(m *Model) { m.SweepBuilds(opts, req) })
 }

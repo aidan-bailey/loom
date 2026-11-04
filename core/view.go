@@ -59,6 +59,9 @@ type InstanceView struct {
 	// Asks are the dialogs the session's Claude holds open that the phone
 	// can answer (core/asks.go), oldest first; nil for none.
 	Asks []AskView
+	// Mockup is the session's brainstorm companion as the model last found
+	// it (core/mockup.go); Screen "" means none.
+	Mockup MockupView
 	// RemoteSession is the ID in the session's Remote Control link,
 	// https://claude.ai/code/<RemoteSession>. The model takes it from the
 	// roster's entry for the worktree (session.RosterEntry.RemoteSession),
@@ -83,6 +86,16 @@ type InstanceView struct {
 	// Bell is the TUI's own overlay (a bell rang in the pane since it was
 	// last focused). The model never sets it.
 	Bell bool
+}
+
+// MockupView is the screen a session's brainstorm companion serves and its
+// mtime. Fresh: the screen changed at or after the start of the session's
+// latest turn (Instance.TurnStart), so a new turn leaves it behind; never
+// fresh when this process has seen no turn start.
+type MockupView struct {
+	Screen  string
+	Changed time.Time
+	Fresh   bool
 }
 
 // Paused reports whether the view's status is Paused.
