@@ -11,19 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The real notifySignals (the other tests replace it) catches a SIGTERM sent
-// to the process, as a Bash timeout sends it, instead of letting it kill the
-// follower; the stop it returns releases the handler.
-func TestNotifySignals_CatchesSIGTERM(t *testing.T) {
-	sigs, stop := notifySignals()
-	defer stop()
+// The real notifySignals (the other tests replace it) catches each signal
+// that interrupts a follower sent to the process (a Bash timeout sends
+// SIGTERM), instead of letting it kill the follower; the stop it returns
+// releases the handler.
+func TestNotifySignals_CatchesTheInterruptSignals(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		t.Run(sig.String(), func(t *testing.T) {
+			sigs, stop := notifySignals()
+			defer stop()
 
-	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
+			require.NoError(t, syscall.Kill(syscall.Getpid(), sig))
 
-	select {
-	case got := <-sigs:
-		assert.Equal(t, syscall.SIGTERM, got)
-	case <-time.After(10 * time.Second):
-		t.Fatal("SIGTERM never reached the channel")
+			select {
+			case got := <-sigs:
+				assert.Equal(t, sig, got)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%v never reached the channel", sig)
+			}
+		})
 	}
 }
