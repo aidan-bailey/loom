@@ -88,6 +88,38 @@ func TestDeleteInstance_DeletesOnlyTheRecordItNames(t *testing.T) {
 	assert.Equal(t, "v/foo", remaining[0].Worktree.BranchName, "the other record stays")
 }
 
+// TestSaveInstance_WritesOnlyItsOwnRecord: a pause or resume saves from its
+// job, seconds after the request, and a save of the workspace's list as it
+// stood then dropped every session created or recovered meanwhile. Saving
+// one record replaces that record (by identity) and leaves every other on
+// disk as it is, or appends it when it is not there yet.
+func TestSaveInstance_WritesOnlyItsOwnRecord(t *testing.T) {
+	mock := &trackingMockStorage{
+		data: json.RawMessage(`[
+			{"title":"a","created_at":"2026-11-01T10:00:00Z","status":0,"program":"claude","worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-a","branch_name":"u/a"}},
+			{"title":"b","created_at":"2026-11-02T10:00:00Z","status":0,"program":"claude","worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-b","branch_name":"u/b"}}
+		]`),
+	}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	a := &Instance{Title: "a", CreatedAt: time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC), Status: Paused, program: "claude"}
+	a.setStarted(true)
+	c := &Instance{Title: "c", CreatedAt: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC), Status: Running, program: "claude"}
+	c.setStarted(true)
+
+	require.NoError(t, s.SaveInstance(a))
+	require.NoError(t, s.SaveInstance(c))
+
+	var saved []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &saved))
+	require.Len(t, saved, 3)
+	assert.Equal(t, "a", saved[0].Title)
+	assert.Equal(t, Paused, saved[0].Status, "its own record is replaced in place")
+	assert.Equal(t, "b", saved[1].Title, "a record it does not name stays")
+	assert.Equal(t, "u/b", saved[1].Worktree.BranchName)
+	assert.Equal(t, "c", saved[2].Title, "a record not there yet is appended")
+}
+
 // TestDeleteInstance_NotFound preserves the existing error path: removing a
 // title that isn't present returns an error and does not save.
 func TestDeleteInstance_NotFound(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
@@ -151,6 +152,47 @@ func TestPause_AFailedFinalSaveFinishesThePause(t *testing.T) {
 		n, ok := e.(Notice)
 		return ok && n.Err != nil && strings.Contains(n.Err.Error(), "no space left on device")
 	}), "the failed save is shown")
+}
+
+// TestPauseAndResume_KeepASessionCreatedWhileTheyRan: a pause's or resume's
+// job saves seconds after the request (Pause archives Claude's temp dir and
+// chats in between). It used to save the workspace's list as it stood at
+// the request, dropping from state.json a session created meanwhile, until
+// the next save; a daemon stopped first lost its record. Each saves only
+// its own record now.
+func TestPauseAndResume_KeepASessionCreatedWhileTheyRan(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		inst  func(t *testing.T) *session.Instance
+		begin func(m *Model, id InstanceID)
+	}{
+		{"pause", func(t *testing.T) *session.Instance { return startedInst(t, "a", "claude") }, func(m *Model, id InstanceID) { m.Pause(id, 1) }},
+		{"resume", func(t *testing.T) *session.Instance {
+			inst := startedInst(t, "a", "claude")
+			require.NoError(t, inst.Pause(nil))
+			return inst
+		}, func(m *Model, id InstanceID) { m.Resume(id, 1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := storedWorkspace(t, "w")
+			a := tc.inst(t)
+			ws.add(a)
+			m := NewForTest(Options{})
+			m.SetWorkspacesForTest(ws)
+			require.NoError(t, m.saveWS(ws))
+
+			tc.begin(m, m.idOf(a))
+			out := m.Drain()
+			b := startedInst(t, "b", "claude")
+			ws.add(b)
+			require.NoError(t, m.saveWS(ws), "as the new session's start saves")
+			rs := replies(run(m, out))
+			require.Len(t, rs, 1)
+			require.NoError(t, rs[0].Err, "fixture: the %s succeeds", tc.name)
+
+			assert.Contains(t, string(ws.state.(*config.State).GetInstances()), `"title":"b"`, "the session created meanwhile is still on disk")
+		})
+	}
 }
 
 // TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes: Resume moves the

@@ -203,6 +203,33 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 	return s.writeLocked(data)
 }
 
+// SaveInstance writes instance's record alone: it replaces the stored
+// record with its identity (isRecord) or appends one, and leaves every other
+// record on disk as it is. For a save made from a job, seconds after its
+// request: a save of the workspace's list as it stood at the request drops
+// every session created or recovered meanwhile.
+func (s *Storage) SaveInstance(instance *Instance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.loadForWriteLocked()
+	if err != nil {
+		return err
+	}
+	snap := instance.ToInstanceData()
+	replaced := false
+	for i, d := range data {
+		if isRecord(d, snap.Title, snap.CreatedAt) {
+			data[i] = snap
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		data = append(data, snap)
+	}
+	return s.writeLocked(data)
+}
+
 // LoadAndReconcile loads instance data from disk and reconciles each instance
 // against the live tmux/worktree state. A single failing instance is logged and
 // skipped rather than aborting the whole load. This is

@@ -144,28 +144,31 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 	return preAction, killAction
 }
 
-// saveSnapshot returns a save of ws's instances for Pause and Resume, to
-// run in their job. It snapshots the membership now, on the model's
-// goroutine, because the instance list must not be read from the job;
-// status filtering still happens at save time (Persistable), so the state
-// changes Pause and Resume make themselves are captured.
-func (m *Model) saveSnapshot(ws *Workspace) func() error {
+// saveOwn returns a save of inst's record alone, in ws's storage, for
+// Pause and Resume to run in their job. The job runs for seconds and must
+// not read the instance list, and a save of the list as it stood at the
+// request dropped every session created or recovered meanwhile; writing one
+// record (Storage.SaveInstance) leaves the others on disk as they are. A
+// status Persistable filters out is not saved.
+func (m *Model) saveOwn(ws *Workspace, inst *session.Instance) func() error {
 	storage := ws.storage
-	snapshot := append([]*session.Instance(nil), ws.insts...)
 	return func() error {
-		return storage.SaveInstances(Persistable(snapshot))
+		if len(Persistable([]*session.Instance{inst})) == 0 {
+			return nil
+		}
+		return storage.SaveInstance(inst)
 	}
 }
 
 // pauseInst returns the job pausing selected (Instance.Pause: save a
 // checkpoint, kill the session and its terminal pane's shell, archive
-// Claude's temp dir, save ws's instances through saveSnapshot), reporting a
+// Claude's temp dir, save its own record through saveOwn), reporting a
 // PauseResult, or an OpFailed reverting to the status selected has now; the
 // caller moves it to Loading. ws is the workspace holding it.
 func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
-	saveFunc := m.saveSnapshot(ws)
+	saveFunc := m.saveOwn(ws, selected)
 	return func() any {
 		if err := selected.Pause(saveFunc); err != nil {
 			// A Notice alone: the agent is stopped and the pause done.
@@ -188,7 +191,7 @@ func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 // A resume that launched the agent anew (inst.Launches moved) says so
 // (ResumeResult.Relaunched).
 func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
-	saveFunc := m.saveSnapshot(ws)
+	saveFunc := m.saveOwn(ws, inst)
 	title := inst.Title
 	owner := m.startOwner(inst, ws)
 	return func() any {
