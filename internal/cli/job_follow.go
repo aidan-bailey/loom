@@ -294,7 +294,7 @@ func (d *client) lostDaemon(id sched.JobID) error {
 // so only when the daemon took the request; otherwise it says how to follow
 // the job again. The exit code is the signal's.
 func (d *client) interrupted(id sched.JobID, sig os.Signal) error {
-	d.events() // a job that has just ended must not look running
+	d.events() // writes the daemon's pending notices before the outcome line
 	v, _ := jobOf(d.Queue(), id)
 	switch {
 	case v.State.Finished():
