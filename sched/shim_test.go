@@ -399,11 +399,21 @@ func startShimProcess(t *testing.T, dir string) (pid int, done <-chan int) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	require.NoError(t, cmd.Start())
 	code := make(chan int, 1)
+	exited := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
 		code <- cmd.ProcessState.ExitCode()
+		close(exited)
 	}()
-	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	t.Cleanup(func() {
+		// The shim's group is signalled only while the shim is unreaped:
+		// its pid is free to be another process's once Wait has returned.
+		select {
+		case <-exited:
+		default:
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	})
 	return cmd.Process.Pid, code
 }
 
@@ -428,48 +438,6 @@ func awaitLockWaiter(t *testing.T, pid int) {
 		}
 		return false
 	})
-}
-
-// A cancel that reaches the shim after it caught its signals and before it
-// starts the command has no command to reach, and would leave the job running
-// until the daemon's SIGKILL. The shim, held at run.lock, takes the signal
-// there.
-func TestRunShim_ACancelBeforeTheCommandStartsIsNotLost(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "ran")
-	dir := shimJob(t, []string{"sh", "-c", `: > "$1"`, "sh", marker})
-	release := holdRunLock(t, dir)
-	pid, done := startShimProcess(t, dir)
-	awaitLockWaiter(t, pid)
-
-	require.NoError(t, syscall.Kill(pid, syscall.SIGTERM))
-	release()
-
-	select {
-	case code := <-done:
-		assert.Equal(t, 0, code, "the shim reported, so it exits 0")
-	case <-time.After(shimLimit):
-		t.Fatal("the shim did not exit: it kept waiting for a command to cancel")
-	}
-	exit, err := ReadExit(dir)
-	require.NoError(t, err)
-	assert.Equal(t, -1, exit.Code)
-	assert.Equal(t, "SIGTERM", exit.Signal)
-	assert.NoFileExists(t, marker, "the command must not start")
-	_, err = ReadStarted(dir)
-	assert.NoError(t, err, "the shim had started the job when the cancel came")
-}
-
-func TestPendingSignal(t *testing.T) {
-	sigs := make(chan os.Signal, 1)
-	_, ok := pendingSignal(sigs)
-	assert.False(t, ok, "nothing waiting is no signal, and does not block")
-
-	sigs <- syscall.SIGHUP
-	name, ok := pendingSignal(sigs)
-	assert.True(t, ok)
-	assert.Equal(t, "SIGHUP", name)
-	_, ok = pendingSignal(sigs)
-	assert.False(t, ok, "a signal is taken once")
 }
 
 // A second shim for a job waits at run.lock behind the first, and must not

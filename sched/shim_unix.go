@@ -164,11 +164,10 @@ func RunShim(jobDir string) int {
 	// spec.Env, the hint variables it lacks and LOOM_JOB, and the command
 	// runs with exactly that.
 	env := Hints(spec.Env, max(spec.HintCPUs, 1), spec.ID)
-	if sig, ok := pendingSignal(sigs); ok {
-		// A cancel that arrived before the command did has nothing to reach:
-		// the group send found only this shim. The command does not start.
-		return shimReport(jobDir, Exit{Code: -1, Ended: time.Now(), Signal: sig})
-	}
+	// A SIGTERM that reached this shim before the command starts is not
+	// checked for: Go delivers signals asynchronously, so no read of sigs
+	// here is reliable. The command starts and the daemon's SIGKILL, 10 s
+	// after the cancel, ends it.
 	cmd, err := startCommand(spec, env)
 	if err != nil {
 		return shimReport(jobDir, Exit{Code: 127, Ended: time.Now(), Error: err.Error()})
@@ -205,19 +204,6 @@ func shimGiveUp(jobDir string, cause error) int {
 		fmt.Fprintf(os.Stderr, "loom job-shim: writing exit.json: %v\n", err)
 	}
 	return 1
-}
-
-// pendingSignal takes a signal waiting in sigs without blocking, and names it.
-func pendingSignal(sigs <-chan os.Signal) (name string, ok bool) {
-	select {
-	case s := <-sigs:
-		if sig, isSyscall := s.(syscall.Signal); isSyscall {
-			return signalName(sig), true
-		}
-		return s.String(), true
-	default:
-		return "", false
-	}
 }
 
 // startCommand starts spec's argv in its folder with env as its whole
