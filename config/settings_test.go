@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,7 +36,15 @@ func TestSettings_ConfigJSONIsUnchanged(t *testing.T) {
   "claude_model": "opus",
   "claude_effort": "high",
   "cache_ttl_1h": true,
-  "claude_1m_context": true
+  "claude_1m_context": true,
+  "scheduler": {
+    "cpus": 14,
+    "memory_gb": 24,
+    "io_jobs": 2,
+    "default_claim": {"cpus": 4, "memory_gb": 6},
+    "starve_after_minutes": 10,
+    "keep_finished": 50
+  }
 }`)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), in, 0o644))
 	cfg := LoadConfigFrom(dir)
@@ -84,4 +94,124 @@ func TestFromSettings_OwnsItsCopy(t *testing.T) {
 	cfg := FromSettings(s)
 	cfg.Mutate(func(c *Config) { c.Profiles[0].Program = "y" })
 	assert.Equal(t, "x", s.Profiles[0].Program)
+}
+
+// savedConfigKeys saves cfg into a fresh dir and returns the top-level keys
+// of the config.json it wrote.
+func savedConfigKeys(t *testing.T, cfg *Config) map[string]json.RawMessage {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, SaveConfigTo(cfg, dir))
+	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
+	require.NoError(t, err)
+	var keys map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &keys))
+	return keys
+}
+
+// TestSettings_SchedulerBlockRoundTrips: the "scheduler" block loads from a
+// config.json and saves back to the same JSON, and a config without one saves
+// none, so a user who never set it gets no new key.
+func TestSettings_SchedulerBlockRoundTrips(t *testing.T) {
+	const block = `{
+  "cpus": 14,
+  "memory_gb": 24,
+  "io_jobs": 2,
+  "default_claim": {"cpus": 4, "memory_gb": 6},
+  "starve_after_minutes": 10,
+  "keep_finished": 50
+}`
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(`{"scheduler": `+block+`}`), 0o644))
+	cfg := LoadConfigFrom(dir)
+	assert.Equal(t, SchedulerSettings{
+		CPUs:               14,
+		MemoryGB:           24,
+		IOJobs:             2,
+		DefaultClaim:       &ClaimSettings{CPUs: 4, MemoryGB: 6},
+		StarveAfterMinutes: 10,
+		KeepFinished:       50,
+	}, cfg.GetScheduler())
+	assert.JSONEq(t, block, string(savedConfigKeys(t, cfg)["scheduler"]))
+
+	absent := LoadConfigFrom(t.TempDir())
+	assert.Equal(t, SchedulerSettings{}, absent.GetScheduler(), "an absent block is the zero value: every field takes the host's default")
+	assert.NotContains(t, savedConfigKeys(t, absent), "scheduler")
+}
+
+// TestSettings_CloneCopiesTheSchedulerBlock: a clone's scheduler block and
+// its default claim are its own; an absent block and an absent default claim
+// stay absent.
+func TestSettings_CloneCopiesTheSchedulerBlock(t *testing.T) {
+	s := Settings{Scheduler: &SchedulerSettings{CPUs: 8, DefaultClaim: &ClaimSettings{CPUs: 2, MemoryGB: 3}}}
+	c := s.Clone()
+	c.Scheduler.CPUs = 1
+	c.Scheduler.DefaultClaim.CPUs = 99
+	c.Scheduler.DefaultClaim.MemoryGB = 99
+	assert.Equal(t, 8, s.Scheduler.CPUs)
+	assert.Equal(t, ClaimSettings{CPUs: 2, MemoryGB: 3}, *s.Scheduler.DefaultClaim)
+
+	assert.Nil(t, Settings{}.Clone().Scheduler, "an absent block stays absent")
+	noClaim := Settings{Scheduler: &SchedulerSettings{CPUs: 8}}.Clone()
+	assert.Nil(t, noClaim.Scheduler.DefaultClaim, "an absent default claim stays absent")
+}
+
+// TestSettings_GetSchedulerReturnsACopy: the getter hands out a block the
+// caller may change, and the zero value when there is none.
+func TestSettings_GetSchedulerReturnsACopy(t *testing.T) {
+	assert.Equal(t, SchedulerSettings{}, Settings{}.GetScheduler())
+
+	s := Settings{Scheduler: &SchedulerSettings{KeepFinished: 5, DefaultClaim: &ClaimSettings{CPUs: 2}}}
+	got := s.GetScheduler()
+	got.KeepFinished = 99
+	got.DefaultClaim.CPUs = 99
+	assert.Equal(t, 5, s.Scheduler.KeepFinished)
+	assert.Equal(t, 2, s.Scheduler.DefaultClaim.CPUs)
+}
+
+// TestConfig_SchedulerGetAndSetKeepCopies: SetScheduler keeps a copy of its
+// argument, GetScheduler hands out a copy, and a snapshot's block is its own.
+func TestConfig_SchedulerGetAndSetKeepCopies(t *testing.T) {
+	cfg := FromSettings(Settings{})
+	assert.Equal(t, SchedulerSettings{}, cfg.GetScheduler())
+
+	in := SchedulerSettings{CPUs: 6, DefaultClaim: &ClaimSettings{CPUs: 2, MemoryGB: 4}}
+	cfg.SetScheduler(in)
+	in.CPUs = 99
+	in.DefaultClaim.MemoryGB = 99
+	want := SchedulerSettings{CPUs: 6, DefaultClaim: &ClaimSettings{CPUs: 2, MemoryGB: 4}}
+	got := cfg.GetScheduler()
+	assert.Equal(t, want, got, "SetScheduler keeps a copy")
+
+	got.DefaultClaim.CPUs = 99
+	assert.Equal(t, 2, cfg.GetScheduler().DefaultClaim.CPUs, "GetScheduler hands out a copy")
+
+	snap := cfg.Snapshot()
+	snap.Scheduler.DefaultClaim.CPUs = 77
+	assert.Equal(t, want, cfg.GetScheduler(), "a snapshot's block is its own")
+}
+
+// TestConfig_SchedulerIsRaceSafe: SetScheduler and GetScheduler run under the
+// config lock and share nothing. Only a -race run can fail it.
+func TestConfig_SchedulerIsRaceSafe(t *testing.T) {
+	cfg := FromSettings(Settings{})
+	var wg sync.WaitGroup
+	for i := 1; i <= 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 1; j <= 200; j++ {
+				cfg.SetScheduler(SchedulerSettings{CPUs: i, DefaultClaim: &ClaimSettings{CPUs: 1, MemoryGB: j}})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				if got := cfg.GetScheduler(); got.DefaultClaim != nil {
+					got.DefaultClaim.CPUs++ // a copy: this races only if it is shared
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

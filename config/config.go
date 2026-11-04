@@ -199,6 +199,24 @@ func (c *Config) GetBuildSweepAfterHours() int {
 	return c.Settings.GetBuildSweepAfterHours()
 }
 
+// GetScheduler returns a deep copy of the scheduler block under the config
+// lock (Settings.GetScheduler): the model reads it at every admission pass
+// while the work view's caps form writes it.
+func (c *Config) GetScheduler() SchedulerSettings {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Settings.GetScheduler()
+}
+
+// SetScheduler stores a deep copy of s as the scheduler block, under the
+// config lock. It does not save the file; the caller does (SaveConfigTo).
+func (c *Config) SetScheduler(s SchedulerSettings) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	block := s.clone()
+	c.Settings.Scheduler = &block
+}
+
 // ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
 // expanded, or "" when it is unset. A value that is not absolute after
 // expansion is an error: the caller keeps the default location rather than

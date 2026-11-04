@@ -32,6 +32,7 @@ User configuration, written only by the model (`core.Model.SaveSettings`; the se
 - `Claude1MContext` (`*bool`, default off): appends Claude's `[1m]` long-context suffix to the launched `--model` alias, e.g. `sonnet[1m]`; a no-op for `default`, `haiku` and any alias whose `config.ClaudeModel.Supports1M` is false (`Config.Context1MEnabled()`). The composed value is single-quoted, because tmux runs the program string through a shell and `[`/`]` are zsh glob metacharacters.
 - `ClaudeSubagentTracking` (`*bool`, default on): shows the subagents and teammates loom's hooks track; every Claude launch gets the hooks regardless. Nil is enabled (`Config.SubagentTrackingEnabled()`), toggled from the Claude Preferences overlay's Track Subagents row.
 - `ClaudeLoomContext` (`LoomContextEnabled`), `HeadroomProxy` (`HeadroomProxyEnabled`), `ClaudeModel` (`Model`), `ClaudeEffort` (`Effort`) and `CacheTTL1h` (`CacheTTL1hEnabled`): the other Claude launch defaults the Session Launch Options modal starts from.
+- `Scheduler` (`scheduler`, a `*SchedulerSettings`), read from the global `config.json` only, at every admission pass: the work queue's caps (`cpus`, `memory_gb`, `io_jobs`), its default claim, the starvation wait (`starve_after_minutes`) and `keep_finished`. A 0 or absent field takes the host's default, which `sched.Resolve` applies together with the bounds; nil is the block absent. Read through `Config.GetScheduler()` and set through `Config.SetScheduler`, which copy under the lock.
 
 ## `state.json`
 

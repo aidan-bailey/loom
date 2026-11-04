@@ -108,6 +108,37 @@ type Settings struct {
 	// explicitly to false) since it's opt-in. Read it through
 	// Context1MEnabled.
 	Claude1MContext *bool `json:"claude_1m_context,omitempty"`
+	// Scheduler holds the work queue's caps and defaults (see
+	// sched.Resolve). Read from the global config.json only, at every
+	// admission pass, so a hand edit applies without a restart; a
+	// workspace's config.json never holds it. nil is the block absent: every
+	// field takes the host's default. Read it through GetScheduler.
+	Scheduler *SchedulerSettings `json:"scheduler,omitempty"`
+}
+
+// SchedulerSettings is the global config.json's "scheduler" block. A 0 or
+// absent field takes the host's default (sched.Resolve).
+type SchedulerSettings struct {
+	CPUs               int            `json:"cpus,omitempty"`
+	MemoryGB           int            `json:"memory_gb,omitempty"`
+	IOJobs             int            `json:"io_jobs,omitempty"`
+	DefaultClaim       *ClaimSettings `json:"default_claim,omitempty"`
+	StarveAfterMinutes int            `json:"starve_after_minutes,omitempty"`
+	KeepFinished       int            `json:"keep_finished,omitempty"`
+}
+
+// ClaimSettings is the default claim of a job that names none: whole cores
+// and whole GB. A 0 field takes the host's default.
+type ClaimSettings struct {
+	CPUs     int `json:"cpus,omitempty"`
+	MemoryGB int `json:"memory_gb,omitempty"`
+}
+
+// clone deep-copies s: its default claim is its own.
+func (s SchedulerSettings) clone() SchedulerSettings {
+	out := s
+	out.DefaultClaim = clonePtr(s.DefaultClaim)
+	return out
 }
 
 // Clone deep-copies s: Profiles and every pointer field are its own.
@@ -123,6 +154,10 @@ func (s Settings) Clone() Settings {
 	out.ClaudeEffort = clonePtr(s.ClaudeEffort)
 	out.CacheTTL1h = clonePtr(s.CacheTTL1h)
 	out.Claude1MContext = clonePtr(s.Claude1MContext)
+	if s.Scheduler != nil {
+		block := s.Scheduler.clone()
+		out.Scheduler = &block
+	}
 	return out
 }
 
@@ -167,6 +202,16 @@ func (s Settings) GetTheme() string { return s.Theme }
 // GetBuildSweepAfterHours returns BuildSweepAfterHours, with a negative
 // value read as 0: the build sweep off.
 func (s Settings) GetBuildSweepAfterHours() int { return max(s.BuildSweepAfterHours, 0) }
+
+// GetScheduler returns a deep copy of the scheduler block, or the zero value
+// when there is none: every field then takes the host's default
+// (sched.Resolve). Config's own GetScheduler reads it under the lock.
+func (s Settings) GetScheduler() SchedulerSettings {
+	if s.Scheduler == nil {
+		return SchedulerSettings{}
+	}
+	return s.Scheduler.clone()
+}
 
 // ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
 // expanded, or "" when it is unset. A value that is not absolute after
