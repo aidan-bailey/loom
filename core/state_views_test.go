@@ -279,17 +279,20 @@ func TestModelView_CloneKeepsEveryField(t *testing.T) {
 	loadWebInto(t, m, webJSON)
 	m.web.rev = 3
 	m.web.quickReplies = []string{"yes", "/compact"}
+	m.buildSweepHours = 12
 	v := m.modelView()
 	require.Equal(t, "b", v.Registry.LastUsed, "fixture: the view holds every field")
 	require.Len(t, v.Registry.Open, 2)
 	require.Len(t, v.Web.Devices, 2, "fixture: the view holds the devices")
 	require.EqualValues(t, 3, v.Web.Rev, "fixture: and the revision")
 	require.Equal(t, []string{"yes", "/compact"}, v.Web.QuickReplies, "fixture: and the quick replies")
+	require.Equal(t, 12, v.BuildSweep.AfterHours, "fixture: and the build sweep")
 
 	c := v.Clone()
 	assert.Equal(t, v, c)
 	assert.Equal(t, m.Registry(), c.Registry, "as the model answers")
 	assert.Equal(t, m.Web(), c.Web, "and the web view")
+	assert.Equal(t, m.BuildSweep(), c.BuildSweep, "and the build sweep")
 	assert.EqualValues(t, 3, c.Web.Rev, "the revision survives the copy")
 	c.Registry.Workspaces[0].Name = "changed"
 	assert.Equal(t, "a", v.Registry.Workspaces[0].Name, "a deep copy")

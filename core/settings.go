@@ -23,19 +23,11 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	if ws == nil || ws.cfg == nil {
 		return fmt.Errorf("save settings: workspace %d is not served", id)
 	}
+	// The build sweep's threshold is ConfigureBuildSweep's to change: a
+	// client's copy made before a change must not write the old one back.
+	s.BuildSweepAfterHours = ws.cfg.Snapshot().BuildSweepAfterHours
 	ws.cfg.ReplaceSettings(s)
-	dir := ""
-	if ws.ctx != nil {
-		dir = ws.ctx.ConfigDir
-	}
-	if dir == "" {
-		// A bare context loaded from the default dir, so save there:
-		// otherwise the change lives only in memory and silently vanishes
-		// on restart.
-		if globalDir, err := config.GetConfigDir(); err == nil {
-			dir = globalDir
-		}
-	}
+	dir := settingsDir(ws)
 	if dir != "" {
 		if err := config.SaveConfigTo(ws.cfg, dir); err != nil {
 			return fmt.Errorf("save settings: %w", err)
@@ -72,6 +64,20 @@ func (m *Model) SetHelpScreensSeen(id WorkspaceID, seen uint32) error {
 		return fmt.Errorf("save help screens: workspace %d is not served", id)
 	}
 	return ws.state.SetHelpScreensSeen(seen)
+}
+
+// settingsDir is the dir SaveSettings writes ws's config.json to: its
+// context's config dir, or the default config dir for a bare context,
+// which loaded from there (otherwise the change would live only in memory
+// and silently vanish on restart); "" when neither resolves.
+func settingsDir(ws *Workspace) string {
+	if dir := ws.configDir(); dir != "" {
+		return dir
+	}
+	if globalDir, err := config.GetConfigDir(); err == nil {
+		return globalDir
+	}
+	return ""
 }
 
 // isGlobalWS reports whether ws is the global workspace: its config dir is

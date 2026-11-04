@@ -283,6 +283,18 @@ Params: `{"opts":{"DryRun":false,"AfterHours":0},"req":0}`
 
 Result: `{}`
 
+### BuildSweep (local)
+
+Params: `{}`
+
+Result: `{"value":{"AfterHours":0}}`
+
+### ConfigureBuildSweep (request)
+
+Params: `{"afterHours":0}`
+
+Result: `{}`
+
 ### SetSelected (cast)
 
 Params: `{"id":0}`
@@ -519,7 +531,7 @@ Result: `{}`
 
 ### ModelChanged
 
-`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null}}}`
+`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null},"BuildSweep":{"AfterHours":0}}}`
 
 ### Notice
 

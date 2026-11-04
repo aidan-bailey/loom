@@ -92,6 +92,10 @@ type Core interface {
 	// Delete idle and paused sessions' unused Rust executables now, or
 	// with DryRun list them: the Reply's Sweep (buildsweep.Report).
 	SweepBuilds(opts buildsweep.Options, req ReqID)
+	// The build sweep's setting, the global config's threshold (0 for
+	// off), and the request that sets it whichever workspace asks.
+	BuildSweep() BuildSweepView // rpc:local
+	ConfigureBuildSweep(afterHours int) error
 
 	// Claude status and the tick: what the TUI's pane events tell the
 	// model, and the selected row the model's health tick favours.

@@ -155,9 +155,10 @@ type AccountsChanged struct {
 }
 
 // ModelChanged carries the model's own state (the default account's
-// remote-control auth and the workspace registry) whenever it changed, and
-// on the first Sync. The TUI does nothing with it; a replica answers those
-// queries from it.
+// remote-control auth, the workspace registry, the web settings and the
+// build sweep's setting) whenever it changed, and on the first Sync. A
+// replica answers those queries from it; the TUI refreshes an open
+// settings overlay's Build Sweep row.
 type ModelChanged struct {
 	View ModelView
 }

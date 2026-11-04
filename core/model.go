@@ -97,6 +97,13 @@ type Model struct {
 	// daemon run (deliverBuildSweep). Loop-goroutine only.
 	buildSweepWarned map[string]bool
 
+	// buildSweepHours is the global config's build sweep threshold as the
+	// model last read or wrote it (BuildSweep). buildSweepGen counts
+	// ConfigureBuildSweep's writes: a sweep job made before one carries an
+	// older generation, and its read is dropped. Loop-goroutine only.
+	buildSweepHours int
+	buildSweepGen   uint64
+
 	// dirtySessions records tmux session names that emitted output since the
 	// last health tick (event mode only). Consumed by takeDirty to gate
 	// diff-stat refreshes. Loop-goroutine only.

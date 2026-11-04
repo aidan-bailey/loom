@@ -112,3 +112,20 @@ func TestSaveSettings_SessionFlagsArePerWorkspace(t *testing.T) {
 	assert.True(t, session.LoomContextEnabled(b.ctx.ConfigDir), "another workspace's toggle is untouched")
 	assert.True(t, session.SubagentTrackingEnabled(b.ctx.ConfigDir), "another workspace's toggle is untouched")
 }
+
+// TestSaveSettings_KeepsTheBuildSweepThreshold: the threshold is
+// ConfigureBuildSweep's to change; a client's copy carrying another value
+// writes nothing of it.
+func TestSaveSettings_KeepsTheBuildSweepThreshold(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	m.SetWorkspacesForTest(ws)
+	s := ws.cfg.Snapshot()
+	s.BuildSweepAfterHours = 99
+	s.BranchPrefix = "y/"
+
+	require.NoError(t, m.SaveSettings(m.wsIDOf(ws), s))
+
+	assert.Equal(t, "y/", ws.cfg.Snapshot().BranchPrefix, "fixture: the save landed")
+	assert.Zero(t, ws.cfg.Snapshot().BuildSweepAfterHours)
+}

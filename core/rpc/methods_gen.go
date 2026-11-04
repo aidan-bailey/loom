@@ -349,6 +349,24 @@ type SweepBuildsParams struct {
 type SweepBuildsResult struct {
 }
 
+// BuildSweepParams are BuildSweep's parameters on the wire.
+type BuildSweepParams struct {
+}
+
+// BuildSweepResult is BuildSweep's result on the wire; an error travels in the reply.
+type BuildSweepResult struct {
+	Value core.BuildSweepView `json:"value"`
+}
+
+// ConfigureBuildSweepParams are ConfigureBuildSweep's parameters on the wire.
+type ConfigureBuildSweepParams struct {
+	AfterHours int `json:"afterHours"`
+}
+
+// ConfigureBuildSweepResult is ConfigureBuildSweep's result on the wire; an error travels in the reply.
+type ConfigureBuildSweepResult struct {
+}
+
 // SetSelectedParams are SetSelected's parameters on the wire.
 type SetSelectedParams struct {
 	ID core.InstanceID `json:"id"`
@@ -702,6 +720,8 @@ var methods = []methodInfo{
 	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
 	{Name: "SweepBuilds", Kind: kindRequest, Params: SweepBuildsParams{}, Result: SweepBuildsResult{}},
+	{Name: "BuildSweep", Kind: kindLocal, Params: BuildSweepParams{}, Result: BuildSweepResult{}},
+	{Name: "ConfigureBuildSweep", Kind: kindRequest, Params: ConfigureBuildSweepParams{}, Result: ConfigureBuildSweepResult{}},
 	{Name: "SetSelected", Kind: kindCast, Params: SetSelectedParams{}, Result: SetSelectedResult{}},
 	{Name: "MarkOutput", Kind: kindCast, Params: MarkOutputParams{}, Result: MarkOutputResult{}},
 	{Name: "PaneOutput", Kind: kindCast, Params: PaneOutputParams{}, Result: PaneOutputResult{}},
@@ -1019,6 +1039,19 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.SweepBuilds(p.Opts, p.Req)
 		return SweepBuildsResult{}, nil, true
+	case "BuildSweep":
+		var p BuildSweepParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return BuildSweepResult{Value: b.BuildSweep()}, nil, true
+	case "ConfigureBuildSweep":
+		var p ConfigureBuildSweepParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.ConfigureBuildSweep(p.AfterHours)
+		return ConfigureBuildSweepResult{}, err, true
 	case "SetSelected":
 		var p SetSelectedParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1457,6 +1490,19 @@ func (c *Client) ReadDiff(id core.InstanceID, req core.ReqID) {
 func (c *Client) SweepBuilds(opts buildsweep.Options, req core.ReqID) {
 	var r SweepBuildsResult
 	c.noteRefused(c.requestNoErr("SweepBuilds", SweepBuildsParams{Opts: opts, Req: req}, &r), req)
+}
+
+// BuildSweep is core.Core's BuildSweep (local).
+func (c *Client) BuildSweep() core.BuildSweepView {
+	var v0 core.BuildSweepView
+	c.local(func(r *replica) { v0 = r.BuildSweep() })
+	return v0
+}
+
+// ConfigureBuildSweep is core.Core's ConfigureBuildSweep (request).
+func (c *Client) ConfigureBuildSweep(afterHours int) error {
+	var r ConfigureBuildSweepResult
+	return c.request("ConfigureBuildSweep", ConfigureBuildSweepParams{AfterHours: afterHours}, &r)
 }
 
 // SetSelected is core.Core's SetSelected (cast).

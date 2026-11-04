@@ -212,6 +212,7 @@ func (m *Model) Boot() []Event {
 	m.modsSince = time.Now()
 	m.InitAccounts()
 	m.initWeb()
+	m.initBuildSweep()
 	if remoteControlConfigured() || m.HasExtraAccounts() {
 		m.SetRCAuth(session.DetectClaudeRemoteControlAuth(m.program, m.executor()))
 	}

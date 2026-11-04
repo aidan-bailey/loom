@@ -180,6 +180,14 @@ func (l *Loop) SetDefaultAccount(name string) error {
 // Web runs Model.Web on the loop.
 func (l *Loop) Web() WebView { return get(l, (*Model).Web) }
 
+// BuildSweep runs Model.BuildSweep on the loop.
+func (l *Loop) BuildSweep() BuildSweepView { return get(l, (*Model).BuildSweep) }
+
+// ConfigureBuildSweep runs Model.ConfigureBuildSweep on the loop.
+func (l *Loop) ConfigureBuildSweep(afterHours int) error {
+	return get(l, func(m *Model) error { return m.ConfigureBuildSweep(afterHours) })
+}
+
 // ConfigureWeb runs Model.ConfigureWeb on the loop.
 func (l *Loop) ConfigureWeb(listen, origin string) error {
 	return get(l, func(m *Model) error { return m.ConfigureWeb(listen, origin) })
