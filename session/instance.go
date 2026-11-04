@@ -1020,10 +1020,11 @@ func (i *Instance) Kill() (err error) {
 		lg.Debug("instance.kill.end", args...)
 	}()
 
-	// Snapshot handles under lock and clear the started flag up-front so a
-	// concurrent or repeated Kill bails out before touching the same
-	// resources twice. Resource cleanup (tmux Close / worktree Cleanup) is
-	// then performed without holding the lock.
+	// Snapshot the handles under lock. The checks that can refuse the kill
+	// run first, with the instance left as it is: a health probe or the mod
+	// link's tick reading it meanwhile must not see a stopped session, whose
+	// Dead would land after the refusal and pause a running agent. Resource
+	// cleanup (tmux Close / worktree Cleanup) runs without holding the lock.
 	i.mu.Lock()
 	if !i.started {
 		i.mu.Unlock()
@@ -1032,6 +1033,55 @@ func (i *Instance) Kill() (err error) {
 	tmuxSess := i.tmuxSession
 	gitWT := i.gitWorktree
 	isWorkspaceTerm := i.IsWorkspaceTerminal
+	i.mu.Unlock()
+
+	// A lock on the tree refuses the cleanup below, by which time the agent's
+	// tmux session would be closed, its stash dropped and its hooks removed.
+	// Ask first, as Pause does: a refused kill then leaves the agent running
+	// and the instance ready for a retry once the lock is gone. Cleanup keeps
+	// its own check, since a lock can appear in between.
+	if gitWT != nil && !isWorkspaceTerm {
+		if err := git.RefuseLocked(gitWT.GetRepoPath(), gitWT.GetWorktreePath(), nil); err != nil {
+			return fmt.Errorf("cannot kill: %w", err)
+		}
+	}
+
+	// The name is unique per tmux server, not per workspace: a stale record
+	// (another workspace's same-titled session held its name when reconcile
+	// paused it), or an orphan placeholder, can share it with a live
+	// session that is not its own. Closing by name would kill that session
+	// and its terminal-pane shell. Leave both running and clean up only
+	// what is this record's: its own agent cannot be running, since the one
+	// session with its name started elsewhere. When tmux does not answer,
+	// whose the session is cannot be told: refuse, changing nothing.
+	wtPath := ""
+	if gitWT != nil {
+		wtPath = gitWT.GetWorktreePath()
+	}
+	home := sessionHome(isWorkspaceTerm, i.Path, wtPath)
+	closeSessions := tmuxSess != nil
+	nameHeld := false
+	var placed recordSessions
+	if closeSessions {
+		var err error
+		placed, err = placeRecordSessions(tmuxSess, i.Title, home)
+		if err != nil {
+			return fmt.Errorf("cannot kill %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, tmuxSess.SessionName(), err)
+		}
+		if placed.agentHeld {
+			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", placed.agentDir)
+			closeSessions = false
+			nameHeld = true
+		}
+	}
+
+	// Past the checks: clear the started flag and handles, so a concurrent
+	// or repeated Kill bails out before touching the same resources twice.
+	i.mu.Lock()
+	if !i.started {
+		i.mu.Unlock()
+		return nil
+	}
 	i.started = false
 	i.tmuxSession = nil
 	i.gitWorktree = nil
@@ -1045,49 +1095,6 @@ func (i *Instance) Kill() (err error) {
 		i.tmuxSession = tmuxSess
 		i.gitWorktree = gitWT
 		i.mu.Unlock()
-	}
-
-	// A lock on the tree refuses the cleanup below, by which time the agent's
-	// tmux session would be closed, its stash dropped and its hooks removed.
-	// Ask first, as Pause does: a refused kill then leaves the agent running
-	// and the instance ready for a retry once the lock is gone. Cleanup keeps
-	// its own check, since a lock can appear in between.
-	if gitWT != nil && !isWorkspaceTerm {
-		if err := git.RefuseLocked(gitWT.GetRepoPath(), gitWT.GetWorktreePath(), nil); err != nil {
-			restore()
-			return fmt.Errorf("cannot kill: %w", err)
-		}
-	}
-
-	// The name is unique per tmux server, not per workspace: a stale record
-	// (another workspace's same-titled session held its name when reconcile
-	// paused it), or an orphan placeholder, can share it with a live
-	// session that is not its own. Closing by name would kill that session
-	// and its terminal-pane shell. Leave both running and clean up only
-	// what is this record's: its own agent cannot be running, since the one
-	// session with its name started elsewhere. When tmux does not answer,
-	// whose the session is cannot be told: refuse, changing nothing.
-	// From the snapshot: i.gitWorktree is already cleared.
-	wtPath := ""
-	if gitWT != nil {
-		wtPath = gitWT.GetWorktreePath()
-	}
-	home := sessionHome(isWorkspaceTerm, i.Path, wtPath)
-	closeSessions := tmuxSess != nil
-	nameHeld := false
-	var placed recordSessions
-	if closeSessions {
-		var err error
-		placed, err = placeRecordSessions(tmuxSess, i.Title, home)
-		if err != nil {
-			restore()
-			return fmt.Errorf("cannot kill %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, tmuxSess.SessionName(), err)
-		}
-		if placed.agentHeld {
-			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", placed.agentDir)
-			closeSessions = false
-			nameHeld = true
-		}
 	}
 
 	var errs []error
