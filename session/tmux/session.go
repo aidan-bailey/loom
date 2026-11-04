@@ -679,32 +679,32 @@ func tmuxNeverAnswered(err error) bool {
 // included. A session's name is unique per server, not per workspace, so the
 // directory is what says whose session holds the name.
 func (s *Session) StartDir() (dir string, found bool, err error) {
-	return s.startDirOf(s.sanitizedName)
+	dirs, err := s.StartDirs()
+	if err != nil {
+		return "", false, err
+	}
+	dir, found = dirs[s.sanitizedName]
+	return dir, found, nil
 }
 
-// RelatedStartDir is StartDir for another session on s's server, named
-// rawName as CloseRelatedSession names it: the terminal pane's shell, whose
-// start directory says whose it is before it is closed.
-func (s *Session) RelatedStartDir(rawName string) (dir string, found bool, err error) {
-	return s.startDirOf(ToLoomTmuxName(rawName))
-}
-
-// startDirOf lists the server's sessions and returns the start directory of
-// the one named name (see StartDir).
-func (s *Session) startDirOf(name string) (dir string, found bool, err error) {
+// StartDirs lists the sessions on s's server in one `tmux ls`: each one's
+// start directory, by session name. A caller that must place several
+// sessions (an agent's and its terminal pane's shell) reads them all from
+// one listing. err is the listing's failure, no server running included.
+func (s *Session) StartDirs() (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
 	out, err := s.cmdExec.Output(Command(ctx, "ls", "-F", "#{session_name}\t#{session_path}"))
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
+	dirs := map[string]string{}
 	for _, line := range strings.Split(string(out), "\n") {
-		n, d, _ := strings.Cut(line, "\t")
-		if n == name {
-			return d, true, nil
+		if n, d, ok := strings.Cut(line, "\t"); ok {
+			dirs[n] = d
 		}
 	}
-	return "", false, nil
+	return dirs, nil
 }
 
 // DoesSessionExist reports whether the session is known to be alive on

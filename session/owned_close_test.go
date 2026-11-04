@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session/tmux"
 
 	"github.com/stretchr/testify/assert"
@@ -108,4 +109,40 @@ func TestPause_LeavesASessionHoldingTheNameElsewhereRunning(t *testing.T) {
 
 		assert.True(t, killed(srv, "api"))
 	})
+}
+
+// TestKillAndPause_ListTmuxSessionsOnce: whose the agent's session is and
+// whose the terminal pane's shell is are both read from one `tmux ls`; a
+// listing each was a subprocess more for every kill and pause, waited on in
+// full when tmux is slow.
+func TestKillAndPause_ListTmuxSessionsOnce(t *testing.T) {
+	for _, op := range []struct {
+		name string
+		do   func(*Instance) error
+	}{
+		{"kill", func(i *Instance) error { return i.Kill() }},
+		{"pause", func(i *Instance) error { return i.Pause(nil) }},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			srv := &fakeTmuxServer{}
+			inst, _, _ := newStartFixtureOn(t, "api", srv)
+			require.NoError(t, inst.Start(true))
+			wt := inst.getGitWorktree().GetWorktreePath()
+			listings := 0
+			runner := srv.runner()
+			runner.OutputFunc = func(c *exec.Cmd) ([]byte, error) {
+				if cmd_test.TmuxSubcommand(c.Args) == "ls" {
+					listings++
+				}
+				return []byte("loom_api\t" + wt + "\nloom_term_api\t" + wt + "\n"), nil
+			}
+			inst.setTmuxSession(tmux.NewSessionWithDeps("api", "claude", srv, runner))
+
+			require.NoError(t, op.do(inst))
+
+			assert.Equal(t, 1, listings)
+			assert.True(t, killed(srv, "api"))
+			assert.True(t, killed(srv, tmux.TerminalSessionName("api")))
+		})
+	}
 }

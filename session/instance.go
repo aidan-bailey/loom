@@ -1062,14 +1062,16 @@ func (i *Instance) Kill() (err error) {
 	home := sessionHome(isWorkspaceTerm, i.Path, wtPath)
 	closeSessions := tmuxSess != nil
 	nameHeld := false
+	var placed recordSessions
 	if closeSessions {
-		held, dir, err := sessionHeldElsewhere(tmuxSess, home)
+		var err error
+		placed, err = placeRecordSessions(tmuxSess, i.Title, home)
 		if err != nil {
 			restore()
 			return fmt.Errorf("cannot kill %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, tmuxSess.SessionName(), err)
 		}
-		if held {
-			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", dir)
+		if placed.agentHeld {
+			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", placed.agentDir)
 			closeSessions = false
 			nameHeld = true
 		}
@@ -1100,7 +1102,7 @@ func (i *Instance) Kill() (err error) {
 	// name is per server too, so it is judged on its own: the record's
 	// shell goes even when another session holds the agent's name.
 	if tmuxSess != nil {
-		closeOwnTerminal(tmuxSess, i.Title, home)
+		closeOwnTerminal(tmuxSess, i.Title, placed)
 	}
 
 	// After the agent's tmux session is gone, so a SessionEnd hook firing
@@ -1332,8 +1334,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// left running and the record paused. When tmux does not answer, whose
 	// the session is cannot be told: refuse before the checkpoint, changing
 	// nothing.
-	home := sessionHome(false, i.Path, gw.GetWorktreePath())
-	held, dir, err := sessionHeldElsewhere(ts, home)
+	placed, err := placeRecordSessions(ts, i.Title, sessionHome(false, i.Path, gw.GetWorktreePath()))
 	if err != nil {
 		return fmt.Errorf("cannot pause %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, ts.SessionName(), err)
 	}
@@ -1350,8 +1351,8 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// Kill the tmux session so the agent process actually stops. Resume
 	// relaunches it with BuildRecoveryCommand, so --continue (or its
 	// equivalent) restores the conversation for agents that support it.
-	if held {
-		i.getLogger().Warn("instance.pause.session_held_elsewhere", "session", ts.SessionName(), "dir", dir)
+	if placed.agentHeld {
+		i.getLogger().Warn("instance.pause.session_held_elsewhere", "session", ts.SessionName(), "dir", placed.agentDir)
 	} else if err := ts.Close(); err != nil {
 		log.For("session").Warn("pause_close_tmux_failed", "err", err)
 		// A Close failure usually just means the session was already dead,
@@ -1371,7 +1372,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// TmuxSession. A pause stops everything the session runs, and a shell
 	// kept alive under a Paused row has no client to show it. Only the
 	// record's own shell (closeOwnTerminal).
-	closeOwnTerminal(ts, i.Title, home)
+	closeOwnTerminal(ts, i.Title, placed)
 
 	// Before the status reads Paused: the app can start a resume the moment
 	// it does, and a resume that began while this slow step was still

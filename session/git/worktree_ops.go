@@ -513,6 +513,7 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 
 	var errs []error
 	var leftover error
+	removed := false
 
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
@@ -533,6 +534,8 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 			} else {
 				errs = append(errs, err)
 			}
+		} else {
+			removed = true
 		}
 	} else if !os.IsNotExist(err) {
 		// Only append error if it's not a "not exists" error
@@ -541,9 +544,12 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 
 	// Prune before the branch delete: a tree gone from disk (deleted by
 	// hand, or half-removed) stays registered until a prune, and git refuses
-	// `branch -D` for a branch "used by worktree" while it is.
-	if err := g.Prune(); err != nil {
-		errs = append(errs, err)
+	// `branch -D` for a branch "used by worktree" while it is. A remove that
+	// succeeded dropped the registration itself.
+	if !removed {
+		if err := g.Prune(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	// Delete the branch using git CLI, unless the caller keeps it

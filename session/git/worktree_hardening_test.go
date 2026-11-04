@@ -273,3 +273,45 @@ func TestSetup_UnreadableTreeKeepsItsLock(t *testing.T) {
 
 	assert.FileExists(t, lockFile, "an unreadable tree is not known to be gone")
 }
+
+// TestCleanup_AsksGitNothingItAlreadyKnows: a kill checks the worktree's
+// lock twice (before it closes the agent, and in Cleanup, since a lock can
+// appear in between), and each check ran `git rev-parse --absolute-git-dir`
+// to find the admin dir its .git file names; and Cleanup pruned after a
+// remove that had already dropped the tree's registration. Both are
+// subprocesses a slow machine makes wait. The lock is found through the
+// .git file, and prune runs only when the remove did not.
+func TestCleanup_AsksGitNothingItAlreadyKnows(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	rec := &recordingRunner{}
+	gw := NewGitWorktreeFromStorageWithRunner(repoDir, worktreePath, "x", branchName, "", false, configDir, rec)
+
+	require.NoError(t, RefuseLocked(repoDir, worktreePath, rec))
+	require.NoError(t, gw.Cleanup())
+
+	for _, argv := range rec.args {
+		assert.False(t, slices.Contains(argv, "rev-parse"), "ran %v", argv)
+		assert.False(t, slices.Contains(argv, "prune"), "ran %v", argv)
+	}
+	assert.NoDirExists(t, worktreePath)
+	assert.False(t, branchExists(t, repoDir, branchName))
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), worktreePath, "the registration is gone")
+}
+
+// TestRefuseLocked_FindsTheLockThroughARelativeGitFile: git writes a
+// relative gitdir into a worktree's .git file under
+// worktree.useRelativePaths. The lock must still be found.
+func TestRefuseLocked_FindsTheLockThroughARelativeGitFile(t *testing.T) {
+	_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+	runGit(t, repoDir, "worktree", "lock", "--reason", "keep me", worktreePath)
+	rel, err := filepath.Rel(worktreePath, adminDir(t, worktreePath))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: "+rel+"\n"), 0o644))
+
+	err = RefuseLocked(repoDir, worktreePath, nil)
+
+	require.ErrorIs(t, err, ErrWorktreeLocked)
+	assert.Contains(t, err.Error(), "keep me")
+}

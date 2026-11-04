@@ -122,15 +122,9 @@ func unlockStaleInit(repoPath, worktreePath string, r CommandRunner) (lockState,
 		return notLocked, "", nil
 	}
 	r = defaultRunner(r)
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	defer cancel()
-	out, err := r.Output(internalexec.GitCommand(ctx, worktreePath, "rev-parse", "--absolute-git-dir"))
+	gitDir, err := worktreeGitDir(worktreePath, r)
 	if err != nil {
-		return notLocked, "", fmt.Errorf("find the git dir of %s: %w", worktreePath, err)
-	}
-	gitDir := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(gitDir) {
-		return notLocked, "", fmt.Errorf("find the git dir of %s: git answered %q", worktreePath, gitDir)
+		return notLocked, "", err
 	}
 	lockPath := filepath.Join(gitDir, "locked")
 	fi, err := os.Stat(lockPath)
@@ -156,6 +150,35 @@ func unlockStaleInit(repoPath, worktreePath string, r CommandRunner) (lockState,
 	}
 	log.For("git").Warn("git.worktree_stale_init_unlocked", "path", worktreePath, "locked_at", fi.ModTime().UTC().Format(time.RFC3339))
 	return unlocked, reason, nil
+}
+
+// worktreeGitDir returns the admin dir of worktreePath, a linked worktree:
+// the "gitdir:" its .git file names (relative to the tree when git wrote it
+// so, under worktree.useRelativePaths). A kill checks the lock twice, so
+// reading the file saves two subprocesses; a .git that names no gitdir that
+// way (a directory, another shape) is asked of git.
+func worktreeGitDir(worktreePath string, r CommandRunner) (string, error) {
+	if data, err := os.ReadFile(filepath.Join(worktreePath, ".git")); err == nil {
+		if rest, ok := strings.CutPrefix(string(data), "gitdir:"); ok {
+			if dir := strings.TrimSpace(rest); dir != "" && !strings.ContainsAny(dir, "\r\n") {
+				if !filepath.IsAbs(dir) {
+					dir = filepath.Join(worktreePath, dir)
+				}
+				return filepath.Clean(dir), nil
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	out, err := r.Output(internalexec.GitCommand(ctx, worktreePath, "rev-parse", "--absolute-git-dir"))
+	if err != nil {
+		return "", fmt.Errorf("find the git dir of %s: %w", worktreePath, err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		return "", fmt.Errorf("find the git dir of %s: git answered %q", worktreePath, gitDir)
+	}
+	return gitDir, nil
 }
 
 // RefuseLocked readies worktreePath for deletion by a caller about to run

@@ -251,26 +251,48 @@ func sessionHeldElsewhere(ts *tmux.Session, home SessionHome) (held bool, dir st
 	return held, dir, err
 }
 
+// recordSessions is whose the sessions under a record's names are: its
+// agent's, and its terminal pane's shell's, read from one listing
+// (placeRecordSessions).
+type recordSessions struct {
+	agentHeld bool   // another session holds the agent's name
+	agentDir  string // where the session under the agent's name started
+	termFound bool   // a shell runs under the terminal pane's name
+	termHeld  bool   // and it started elsewhere
+	termDir   string
+}
+
+// placeRecordSessions lists ts's server once and judges, against home, the
+// session under the record's agent name (HeldElsewhere) and the terminal
+// pane's shell of the record titled title. err when tmux did not answer: a
+// server that is not running answers that nothing is there.
+func placeRecordSessions(ts *tmux.Session, title string, home SessionHome) (recordSessions, error) {
+	dirs, err := ts.StartDirs()
+	agentDir, agentFound := dirs[ts.SessionName()]
+	agentHeld, err := heldElsewhere(ts.SessionName(), home, agentDir, agentFound, err)
+	if err != nil {
+		return recordSessions{}, err
+	}
+	termName := tmux.ToLoomTmuxName(tmux.TerminalSessionName(title))
+	termDir, termFound := dirs[termName]
+	termHeld, _ := heldElsewhere(termName, home, termDir, termFound, nil)
+	return recordSessions{agentHeld: agentHeld, agentDir: agentDir, termFound: termFound, termHeld: termHeld, termDir: termDir}, nil
+}
+
 // closeOwnTerminal closes the terminal pane's shell of the record titled
-// title, on ts's server, when it was started in home. The shell's name is
-// per server, so another workspace's session of the same title holds it as
-// well: a shell started elsewhere, or one tmux cannot place, is left
-// running. Best-effort: a shell never opened is the common case.
-func closeOwnTerminal(ts *tmux.Session, title string, home SessionHome) {
-	name := tmux.TerminalSessionName(title)
-	dir, found, err := ts.RelatedStartDir(name)
-	held, err := heldElsewhere(name, home, dir, found, err)
+// title, on ts's server, when placed found it started in the record's own
+// home. The shell's name is per server, so another workspace's session of
+// the same title holds it as well: a shell started elsewhere is left
+// running, and one tmux did not list is not there to close.
+func closeOwnTerminal(ts *tmux.Session, title string, placed recordSessions) {
 	switch {
-	case err != nil:
-		log.For("session").Warn("terminal_shell.owner_unknown", "title", title, "err", err.Error())
+	case !placed.termFound:
 		return
-	case held:
-		log.For("session").Warn("terminal_shell.held_elsewhere", "title", title, "dir", dir)
-		return
-	case !found:
+	case placed.termHeld:
+		log.For("session").Warn("terminal_shell.held_elsewhere", "title", title, "dir", placed.termDir)
 		return
 	}
-	if err := ts.CloseRelatedSession(name); err != nil {
+	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(title)); err != nil {
 		log.For("session").Debug("terminal_shell.close_failed", "title", title, "err", err)
 	}
 }
