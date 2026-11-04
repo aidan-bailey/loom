@@ -1,7 +1,10 @@
 package core
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -716,4 +720,84 @@ func TestJobQueue_AStartJobOverlapsTheLoopsEdits(t *testing.T) {
 	m.Deliver(<-done)
 
 	assert.Greater(t, wqRecord(t, m, id).PID, 1, "it started on the snapshot it was given")
+}
+
+// wqSnap is a process sample taken at at: the job's shim (pid pgid, leading
+// the group) and one child in the group, together using rss KB and cpu of CPU
+// time, and a bystander of another group that no job counts.
+func wqSnap(at time.Time, pgid int, rss int64, cpu time.Duration) *sched.Snapshot {
+	return &sched.Snapshot{Taken: at, Procs: []sched.Proc{
+		{PID: pgid, PGID: pgid, RSSKB: rss / 2, CPU: cpu / 2},
+		{PID: pgid + 1, PGID: pgid, RSSKB: rss - rss/2, CPU: cpu - cpu/2},
+		{PID: 7, PGID: 7, RSSKB: 1 << 30, CPU: time.Hour},
+	}}
+}
+
+// Usage comes from the samples a pass delivers (spec §5.4): cores are the
+// change in the group's summed CPU time over the time between two samples, a
+// sum that drops reads 0, and a failed sample (a nil snapshot) leaves the
+// last values, with the pass's lock tests still going ahead.
+func TestJobQueue_UsageFollowsTheSamplesAPassDelivers(t *testing.T) {
+	const pid = 4242
+	m := wqModel(t)
+	for id, p := range map[sched.JobID]int{1: pid, 2: pid + 100} {
+		rec := wqEnded(id, 0)
+		rec.State, rec.Exit, rec.Ended, rec.PID, rec.Notify = sched.Running, nil, time.Time{}, p, false
+		wqSeed(t, m, rec)
+	}
+	t0 := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	alive := []jobObs{{id: 1, pid: pid}}
+	steps := []struct {
+		name     string
+		snap     *sched.Snapshot
+		wantUse  jobUsage
+		wantPeak int64
+	}{
+		{"the first sample has nothing to compare with", wqSnap(t0, pid, 1000, 10*time.Second), jobUsage{RSSKB: 1000}, 1000},
+		{"3 s of CPU time over 2 s is 1.5 cores", wqSnap(t0.Add(2*time.Second), pid, 800, 13*time.Second), jobUsage{RSSKB: 800, CPU: 1.5}, 1000},
+		{"a CPU sum that drops reads 0", wqSnap(t0.Add(4*time.Second), pid, 2000, 11*time.Second), jobUsage{RSSKB: 2000}, 2000},
+		{"and the next sample compares with the dropped one", wqSnap(t0.Add(5*time.Second), pid, 1500, 12*time.Second), jobUsage{RSSKB: 1500, CPU: 1}, 2000},
+		{"a failed sample leaves the last values", nil, jobUsage{RSSKB: 1500, CPU: 1}, 2000},
+	}
+	for _, s := range steps {
+		m.Deliver(queuePassResult{at: t0, obs: alive, snap: s.snap})
+		assert.Equal(t, s.wantUse, m.queue.usage[1], s.name)
+		assert.Equal(t, s.wantPeak, wqRecord(t, m, 1).PeakRSSKB, s.name)
+	}
+
+	// A pass whose sample failed still settles a job whose shim is gone, and
+	// leaves the other job's usage as it was.
+	m.Deliver(queuePassResult{at: t0, obs: []jobObs{{id: 1, pid: pid}, {id: 2, pid: pid + 100, gone: true}}, sampleErr: errors.New("ps timed out")})
+	assert.Equal(t, sched.Lost, wqRecord(t, m, 2).State, "settled without a sample")
+	assert.Equal(t, jobUsage{RSSKB: 1500, CPU: 1}, m.queue.usage[1])
+	assert.Equal(t, int64(2000), wqRecord(t, m, 1).PeakRSSKB)
+	assert.Equal(t, sched.Running, wqRecord(t, m, 1).State)
+}
+
+// A failing ps is logged once per run of failures, and again after a sample
+// that worked.
+func TestJobQueue_AFailingSampleIsLoggedOncePerRun(t *testing.T) {
+	m := wqModel(t)
+	var buf bytes.Buffer
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prev })
+	fail := queuePassResult{sampleErr: errors.New("ps timed out")}
+	ok := queuePassResult{snap: &sched.Snapshot{Taken: time.Now()}}
+	logged := func() int { return strings.Count(buf.String(), "queue.sample_failed") }
+
+	m.Deliver(ok)
+	assert.Equal(t, 0, logged(), "a sample that worked says nothing")
+	m.Deliver(fail)
+	assert.Equal(t, 1, logged(), "the first failure is logged")
+	assert.Contains(t, buf.String(), "ps timed out")
+	m.Deliver(fail)
+	m.Deliver(fail)
+	assert.Equal(t, 1, logged(), "a repeat stays quiet")
+	m.Deliver(queuePassResult{})
+	m.Deliver(fail)
+	assert.Equal(t, 1, logged(), "a pass that took no sample ends no run")
+	m.Deliver(ok)
+	m.Deliver(fail)
+	assert.Equal(t, 2, logged(), "the first failure after a success is logged again")
 }
