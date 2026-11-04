@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aidan-bailey/loom/config"
@@ -21,6 +22,7 @@ const (
 	settingsFieldProfiles
 	settingsFieldClaudePreferences
 	settingsFieldTheme
+	settingsFieldBuildSweep
 	settingsFieldAccounts
 	settingsFieldCount
 )
@@ -39,6 +41,8 @@ func (f settingsField) label() string {
 		return "Claude Preferences"
 	case settingsFieldTheme:
 		return "Theme"
+	case settingsFieldBuildSweep:
+		return "Build Sweep"
 	case settingsFieldAccounts:
 		return "Accounts"
 	}
@@ -88,6 +92,13 @@ type SettingsOverlay struct {
 	accountRows []AccountRow
 	// accountNotice is the Accounts screen's notice (SetAccountNotice).
 	accountNotice string
+
+	// buildSweepHours is the build sweep threshold the Build Sweep row
+	// shows (SetBuildSweep), and buildSweepReq a valid edit waiting for
+	// the caller (TakeBuildSweepRequest). The threshold is global, so the
+	// row never touches cfg.
+	buildSweepHours int
+	buildSweepReq   *int
 
 	lastErr error
 }
@@ -187,6 +198,8 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.cfg.Mutate(func(c *config.Config) { c.Theme = next })
 		ui.ApplyTheme(next)
 		return false, true
+	case settingsFieldBuildSweep:
+		s.startTextEdit(settingsFieldBuildSweep, "Build Sweep: hours unused (0 = off, all workspaces)", strconv.Itoa(s.buildSweepHours))
 	case settingsFieldAccounts:
 		s.accounts = NewAccountsManager(s.accountRows)
 		s.accounts.SetNotice(s.accountNotice)
@@ -240,6 +253,18 @@ func (s *SettingsOverlay) applyTextEdit(field settingsField, value string) bool 
 	case settingsFieldBaseBranch:
 		s.cfg.Mutate(func(c *config.Config) { c.BaseBranch = strings.TrimSpace(value) })
 		return true
+	case settingsFieldBuildSweep:
+		hours, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			s.lastErr = fmt.Errorf("the build sweep threshold must be a whole number of hours, not %q", value)
+			return false
+		}
+		if err := config.ValidateBuildSweepAfterHours(hours); err != nil {
+			s.lastErr = err
+			return false
+		}
+		s.buildSweepReq = &hours
+		return false
 	}
 	return false
 }
@@ -269,6 +294,22 @@ func (s *SettingsOverlay) SetAccountNotice(msg string) {
 	if s.accounts != nil {
 		s.accounts.SetNotice(msg)
 	}
+}
+
+// SetBuildSweep supplies the threshold the Build Sweep row shows: the
+// global setting, which the caller reads from the model.
+func (s *SettingsOverlay) SetBuildSweep(hours int) { s.buildSweepHours = hours }
+
+// TakeBuildSweepRequest returns and clears the threshold a Build Sweep
+// edit asked for. Callers poll it after HandleKeyPress, like TakeError,
+// and send it to the model (Core.ConfigureBuildSweep).
+func (s *SettingsOverlay) TakeBuildSweepRequest() (int, bool) {
+	if s.buildSweepReq == nil {
+		return 0, false
+	}
+	hours := *s.buildSweepReq
+	s.buildSweepReq = nil
+	return hours, true
 }
 
 // TakeAccountRequest returns and clears the Accounts screen's pending
@@ -384,6 +425,11 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 			return v
 		}
 		return ui.DefaultThemeName
+	case settingsFieldBuildSweep:
+		if s.buildSweepHours <= 0 {
+			return "off (all workspaces)"
+		}
+		return fmt.Sprintf("%dh (all workspaces)", s.buildSweepHours)
 	case settingsFieldAccounts:
 		return fmt.Sprintf("(%d) →", max(len(s.accountRows)-1, 0))
 	}

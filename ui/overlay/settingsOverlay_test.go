@@ -137,3 +137,54 @@ func TestSettingsOverlayEscCancelsTextEdit(t *testing.T) {
 	assert.Equal(t, "aidan/", cfg.BranchPrefix)
 	assert.Equal(t, settingsBrowsing, so.mode)
 }
+
+func TestSettingsOverlay_BuildSweepRowShowsTheGlobalSetting(t *testing.T) {
+	so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	assert.Contains(t, so.Render(), "off (all workspaces)")
+	so.SetBuildSweep(12)
+	assert.Contains(t, so.Render(), "12h (all workspaces)")
+}
+
+func TestSettingsOverlay_BuildSweepEditStartsFromTheCurrentValue(t *testing.T) {
+	so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	so.SetBuildSweep(24)
+	so.cursor = int(settingsFieldBuildSweep)
+	so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, "24", so.editing.GetValue())
+}
+
+// TestSettingsOverlay_BuildSweepEditIsARequestNotAWorkspaceSetting: the
+// threshold is global, so the edit goes to the caller and the workspace's
+// settings neither change nor save.
+func TestSettingsOverlay_BuildSweepEditIsARequestNotAWorkspaceSetting(t *testing.T) {
+	for in, want := range map[string]int{" 12 ": 12, "0": 0} {
+		t.Run(in, func(t *testing.T) {
+			cfg := newTestSettingsCfg()
+			so := NewSettingsOverlay(cfg, false, "")
+			so.SetBuildSweep(6)
+
+			_, changed := submitText(t, so, settingsFieldBuildSweep, in)
+
+			assert.False(t, changed, "the workspace's settings are not saved")
+			assert.Zero(t, cfg.BuildSweepAfterHours, "nor changed")
+			assert.NoError(t, so.TakeError())
+			hours, ok := so.TakeBuildSweepRequest()
+			assert.True(t, ok)
+			assert.Equal(t, want, hours)
+			_, ok = so.TakeBuildSweepRequest()
+			assert.False(t, ok, "taken once")
+		})
+	}
+}
+
+func TestSettingsOverlay_BuildSweepRefusesABadValue(t *testing.T) {
+	for _, bad := range []string{"abc", "-1", "8761", "1.5", ""} {
+		t.Run(bad, func(t *testing.T) {
+			so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+			submitText(t, so, settingsFieldBuildSweep, bad)
+			assert.Error(t, so.TakeError())
+			_, ok := so.TakeBuildSweepRequest()
+			assert.False(t, ok)
+		})
+	}
+}
