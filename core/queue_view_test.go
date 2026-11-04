@@ -139,7 +139,14 @@ func TestQueueView_OrdersJobsAndTotals(t *testing.T) {
 	wqConfig(t, m, qvBlock)
 	wqPass(t, m)
 	wqPass(t, m)
-	m.queue.usage[2] = jobUsage{RSSKB: 999} // a finished job's stale usage
+	m.queue.usage[2] = jobUsage{RSSKB: 999, CPU: 7} // a finished job's stale usage
+	// The shims sleep, so their sampled CPU is about 0: known values make
+	// the sum worth asserting.
+	for id, cpu := range map[sched.JobID]float64{first: 1.25, second: 0.5} {
+		u := m.queue.usage[id]
+		u.CPU = cpu
+		m.queue.usage[id] = u
+	}
 	m.admitJobs()
 	m.queue.waiting[first] = "stale: it is running"
 
@@ -160,7 +167,9 @@ func TestQueueView_OrdersJobsAndTotals(t *testing.T) {
 	assert.Greater(t, run1.RSSKB, int64(0), "its sampled usage")
 	assert.Equal(t, m.queue.usage[first].RSSKB, run1.RSSKB)
 	assert.Equal(t, run1.RSSKB+run2.RSSKB, v.UsedRSSKB, "the finished job's stale usage is not counted")
-	assert.InDelta(t, run1.CPU+run2.CPU, v.UsedCPU, 1e-9)
+	assert.Equal(t, 1.25, run1.CPU)
+	assert.Equal(t, 0.5, run2.CPU)
+	assert.Equal(t, 1.75, v.UsedCPU, "the finished job's stale CPU is not counted")
 
 	excl := jobOf(t, v, 5)
 	assert.Equal(t, sched.Need{CPUs: 8, MemoryGB: 16, IOSlots: 2}, excl.Need, "an exclusive claim takes the caps as they stand")
@@ -245,7 +254,11 @@ func TestQueueView_ResolvesTheOwnerByIdentity(t *testing.T) {
 // Nothing a caller does to a returned view reaches the model's records, and
 // Clone shares nothing with its source.
 func TestQueueView_HandsOutCopies(t *testing.T) {
-	m := wqModelAt(t, qvSeed(t, qvBlock, 0, qvRecord(1, sched.Queued), qvFinished(2, sched.Failed, qvEpoch)))
+	// Job 1's claim is over the cap, so it stays queued and never starts.
+	queued := qvRecord(1, sched.Queued)
+	queued.Claim = sched.Claim{CPUs: 99, MemoryGB: 4}
+	m := wqModelAt(t, qvSeed(t, qvBlock, 0, queued, qvFinished(2, sched.Failed, qvEpoch)))
+	require.Equal(t, sched.Queued, wqRecord(t, m, 1).State, "fixture: job 1 waits")
 
 	v := m.Queue()
 	jobOf(t, v, 1).Argv[0] = "edited"
@@ -296,7 +309,7 @@ func TestPublishQueue_OnceThenOnChange(t *testing.T) {
 
 	m.queue = &queueState{dir: m.queue.dir, rev: m.queue.rev}
 	replaced := queueEvents(m.Sync().Events)
-	require.Len(t, replaced, 1, "a different queue at the same revision, as a boot installs one")
+	require.Len(t, replaced, 1, "a different queue at the same revision, as SetJobRunnerForTest or a later replacement installs one")
 	assert.Empty(t, replaced[0].View.Jobs)
 
 	m.queue.rev++
@@ -305,4 +318,92 @@ func TestPublishQueue_OnceThenOnChange(t *testing.T) {
 	assert.Equal(t, m.Queue(), snap[0].View, "as it is now, not as last published")
 	assert.Len(t, queueEvents(m.Sync().Events), 1, "and is no publish: the change still goes out at the next Sync")
 	assert.Empty(t, queueEvents(m.Sync().Events), "once")
+}
+
+// qvOwned is a booted model serving workspace "a" with a session "x", and a
+// finished job x owns, published by a first Sync. The model's queue is the
+// one Boot loaded over the global dir; the job is added to it afterwards, as
+// a submit adds one.
+func qvOwned(t *testing.T) (m *Model, ws *Workspace, owner InstanceID, job sched.JobID) {
+	t.Helper()
+	a := workspaceDef(t, "a", `[{"title":"x","status":3,"program":"claude"}]`, "true")
+	m = savedModel(t, config.WorkspaceRegistry{Workspaces: []config.Workspace{a}, OpenWorkspaces: []string{"a"}})
+	ws = served(m, a)
+	owner = m.idOf(ws.byTitle("x"))
+	require.NotZero(t, owner, "fixture: x is served")
+	rec := qvFinished(1, sched.Done, qvEpoch)
+	rec.Owner = uint64(owner)
+	wqSeed(t, m, rec)
+	m.queue.moved()
+	first := queueEvents(m.Sync().Events)
+	require.Len(t, first, 1, "fixture: the queue is published")
+	got := jobOf(t, first[0].View, rec.ID)
+	require.Equal(t, "x", got.OwnerTitle, "fixture: the owner is served")
+	require.Equal(t, "a", got.OwnerWorkspace)
+	require.Equal(t, m.wsIDOf(ws), got.OwnerWorkspaceID)
+	return m, ws, owner, rec.ID
+}
+
+// A job's owner fields come from the model's workspaces and sessions, not
+// from the queue, so a rename of the owner's workspace, the workspace's
+// unregistering and the completion of its session's kill republish the
+// queue without the queue's revision moving. The kill is its completion
+// (Deliver of the KillResult its job answers with): running the job would
+// need a session with a real tmux and worktree, and the owner fields change
+// only where the completion removes the session.
+func TestPublishQueue_FollowsTheOwnersState(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		act            func(*testing.T, *Model, *Workspace)
+		title, label   string
+		keepsWorkspace bool
+	}{
+		{"a rename of the owner's workspace", func(t *testing.T, m *Model, _ *Workspace) {
+			require.NoError(t, m.RenameWorkspace("a", "c"))
+		}, "x", "c", true},
+		{"the workspace is unregistered", func(t *testing.T, m *Model, _ *Workspace) {
+			require.NoError(t, m.Unregister("a"))
+		}, "", "", false},
+		{"the owner's kill completes", func(t *testing.T, m *Model, ws *Workspace) {
+			m.Deliver(KillResult{Instance: ws.byTitle("x")})
+		}, "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, ws, owner, job := qvOwned(t)
+			wsID := m.wsIDOf(ws)
+			rev := m.queueRev()
+
+			tc.act(t, m, ws)
+
+			require.Equal(t, rev, m.queueRev(), "the queue's revision did not move")
+			changed := queueEvents(m.Sync().Events)
+			require.Len(t, changed, 1, "republished")
+			got := jobOf(t, changed[0].View, job)
+			assert.Equal(t, owner, got.Owner, "the job still names its owner")
+			assert.Equal(t, tc.title, got.OwnerTitle)
+			assert.Equal(t, tc.label, got.OwnerWorkspace)
+			if tc.keepsWorkspace {
+				assert.Equal(t, wsID, got.OwnerWorkspaceID)
+			} else {
+				assert.Zero(t, got.OwnerWorkspaceID)
+			}
+			assert.Equal(t, m.Queue(), changed[0].View)
+			assert.Empty(t, queueEvents(m.Sync().Events), "and once")
+		})
+	}
+}
+
+// The other side: a Sync after which no job's owner resolves differently, and
+// no revision moved, publishes no QueueChanged, with an owner served and with
+// one that is not.
+func TestPublishQueue_NothingChangedPublishesNothing(t *testing.T) {
+	m, _, _, _ := qvOwned(t)
+	orphan := qvFinished(2, sched.Done, qvEpoch)
+	orphan.Owner = 12345
+	wqSeed(t, m, orphan)
+	m.queue.moved()
+	require.Len(t, queueEvents(m.Sync().Events), 1, "fixture: published with the second job")
+
+	assert.Empty(t, queueEvents(m.Sync().Events))
+	assert.Empty(t, queueEvents(m.Sync().Events))
 }

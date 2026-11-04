@@ -180,8 +180,8 @@ func TestCancelJob_MapsItsSourceAndRefuses(t *testing.T) {
 	} {
 		m.CancelJob(tc.id, tc.from, 20)
 		r := requestReply(t, m, 20)
-		assert.ErrorIs(t, r.Err, ErrRefused, tc.name)
 		require.Error(t, r.Err, tc.name)
+		assert.ErrorIs(t, r.Err, ErrRefused, tc.name)
 		assert.Contains(t, r.Err.Error(), tc.want, tc.name)
 	}
 	running := jobOf(t, m.Queue(), 5)
