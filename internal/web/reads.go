@@ -169,19 +169,25 @@ func (l *Layer) readSession(w http.ResponseWriter, r *http.Request, a *actionLog
 }
 
 // read makes the read request send names and waits for its Reply, then
-// stops tracking the request (reqs.drop). It answers a failure itself (the
-// model's refusal with its status, 504 when the model did not answer
-// within replyWait) and otherwise returns the Reply with true.
+// stops tracking the request (reqs.drop). It answers a failure itself, as
+// JSON (refuse), and otherwise returns the Reply with true.
 func (l *Layer) read(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID)) (core.Reply, bool) {
+	return l.readAnswering(w, r, a, send, l.refuse)
+}
+
+// readAnswering is read with its failures answered by fail: the model's
+// refusal with its status, 504 when the model did not answer within
+// replyWait.
+func (l *Layer) readAnswering(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID), fail func(http.ResponseWriter, actionLog, int, string)) (core.Reply, bool) {
 	req := l.reqs.next()
 	defer l.reqs.drop(req)
 	send(req)
 	reply, _, done := l.reqs.wait(r.Context(), req, a.device)
 	switch {
 	case !done:
-		l.refuse(w, a, http.StatusGatewayTimeout, "loom did not answer in time")
+		fail(w, a, http.StatusGatewayTimeout, "loom did not answer in time")
 	case reply.Err != nil:
-		l.refuse(w, a, modelStatus(reply.Err), reply.Err.Error())
+		fail(w, a, modelStatus(reply.Err), reply.Err.Error())
 	default:
 		return reply, true
 	}
