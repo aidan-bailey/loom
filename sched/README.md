@@ -72,7 +72,7 @@ A shim that cannot run the job writes an `exit.json` with code 127 and the reaso
 
 **Asking about a job.** `Probe` is a non-blocking `flock` test of `run.lock`, released at once: held means the shim lives, free means it is gone, and no `run.lock` yet also reads free, since no shim has taken it. `SignalGroup(pgid, sig)` is `kill(-pgid, sig)`; it refuses a pgid of 1 or below and the caller's own group, and answers `ESRCH` for a group that is gone. Neither proves that a group is still the job's: the caller does, with the lock held, or with a `Sample` showing members in the group and no process holding the shim's pid.
 
-**Usage.** `Sample` runs `ps -A -o pid=,pgid=,rss=,time=` once. `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), and fails the whole sample on a line it cannot read. `Snapshot.Group(pgid)` sums a group's memory and CPU time, counts its members, and says whether any process has the group's id as its pid. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or `sysctl hw.memsize` with a 5 s limit); a RAM it cannot read stays 0.
+**Usage.** `Sample` runs `ps -A -o pid=,pgid=,rss=,time=` once. `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), and fails the whole sample on a line it cannot read. `Snapshot.Group(pgid)` sums a group's memory and CPU time, counts its members, and says whether any process has the group's id as its pid. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or the sysctl `hw.memsize` through `unix.SysctlUint64`); a RAM it cannot read stays 0.
 
 **Windows.** The stubs answer `ErrUnsupported`: sessions, process groups and `flock` have no counterpart here.
 
