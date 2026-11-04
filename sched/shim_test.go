@@ -402,8 +402,8 @@ func startShimProcess(t *testing.T, dir string) (pid int, done <-chan int) {
 	exited := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
+		close(exited) // before the code, so whoever has the code sees exited closed
 		code <- cmd.ProcessState.ExitCode()
-		close(exited)
 	}()
 	t.Cleanup(func() {
 		// The shim's group is signalled only while the shim is unreaped:
@@ -418,8 +418,7 @@ func startShimProcess(t *testing.T, dir string) (pid int, done <-chan int) {
 }
 
 // awaitLockWaiter waits until pid is blocked on a file lock, which Linux
-// lists in /proc/locks as an "->" line naming the waiter. A shim blocked
-// there has caught its signals, so one sent now waits for it in the channel.
+// lists in /proc/locks as an "->" line naming the waiter.
 func awaitLockWaiter(t *testing.T, pid int) {
 	t.Helper()
 	if _, err := os.ReadFile("/proc/locks"); err != nil {

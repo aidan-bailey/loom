@@ -65,7 +65,7 @@ The process half of the package: it starts a job's runner, tests whether the run
 2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, so the command and its children inherit both;
 3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock, and writes `started.json`;
 4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the parallelism hints (`Hints`), found on that environment's `PATH`;
-5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; a SIGTERM that arrives before the command starts can be missed, since Go delivers signals asynchronously, so the command starts anyway and the daemon's SIGKILL escalation, 10 s after the cancel, ends it and the job settles as cancelled;
+5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; a SIGTERM that arrives before the command starts is not checked for, since Go delivers signals asynchronously and no check is reliable; the command starts anyway and the daemon's SIGKILL escalation, 10 s after the cancel, ends it and the job settles as cancelled;
 6. writes `exit.json` (a signal ends a job with code -1 and the name `unix.SignalName` gives it, a command that cannot be executed with code 127 and the error) and returns, which releases the lock.
 
 A shim that cannot run the job writes an `exit.json` with code 127 and the reason, and returns 1. A shim that finds `started.json` already there is a duplicate for a job that has run: it returns 1 and writes nothing. It prints to its stderr, which is `output.log`.

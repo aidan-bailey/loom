@@ -167,7 +167,7 @@ func RunShim(jobDir string) int {
 	// A SIGTERM that reached this shim before the command starts is not
 	// checked for: Go delivers signals asynchronously, so no read of sigs
 	// here is reliable. The command starts and the daemon's SIGKILL, 10 s
-	// after the cancel, ends it.
+	// after the cancel, ends it, and the job settles as cancelled (spec §5.5).
 	cmd, err := startCommand(spec, env)
 	if err != nil {
 		return shimReport(jobDir, Exit{Code: 127, Ended: time.Now(), Error: err.Error()})
