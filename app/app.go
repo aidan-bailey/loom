@@ -84,6 +84,9 @@ const (
 	// stateIssuePicker is the state when the GitHub issue picker overlay
 	// is displayed (opened by the 'I' key).
 	stateIssuePicker
+	// stateWorkCaps is the state when the work view's caps form is displayed
+	// (opened by the 'e' key in the work view).
+	stateWorkCaps
 )
 
 // viewMode selects the top-level presentation: focus (rail + panes) or
@@ -1575,7 +1578,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions || m.state == stateIssuePicker || m.state == stateSettings {
+	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions || m.state == stateIssuePicker || m.state == stateSettings || m.state == stateWorkCaps {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -1629,6 +1632,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateLaunchOptionsKey(m, msg)
 	case stateIssuePicker:
 		return handleStateIssuePickerKey(m, msg)
+	case stateWorkCaps:
+		return handleStateWorkCapsKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -2059,7 +2064,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker, stateLaunchOptions, stateIssuePicker:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker, stateLaunchOptions, stateIssuePicker, stateWorkCaps:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true))
 		}
 	}

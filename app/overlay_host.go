@@ -25,6 +25,7 @@ const (
 	overlayMergePicker
 	overlayLaunchOptions
 	overlayIssuePicker
+	overlayWorkCaps
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -124,6 +125,15 @@ func (m *home) launchOptionsOverlay() *overlay.SessionLaunchOptions {
 // overlay is active.
 func (m *home) issuePicker() *overlay.IssuePicker {
 	if o, ok := m.activeOverlay.(*overlay.IssuePicker); ok {
+		return o
+	}
+	return nil
+}
+
+// workCapsOverlay returns the active WorkCapsOverlay, or nil when a
+// different overlay is active.
+func (m *home) workCapsOverlay() *overlay.WorkCapsOverlay {
+	if o, ok := m.activeOverlay.(*overlay.WorkCapsOverlay); ok {
 		return o
 	}
 	return nil

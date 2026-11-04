@@ -20,6 +20,7 @@ type pendingReq struct {
 	op     *pendingOp     // a lifecycle request the user made (opReq)
 	script *pendingScript // a Lua call waiting to resume (app_scripts.go)
 	issue  *pendingIssue  // an issue fetch (state_issue_picker.go)
+	work   *pendingWork   // a request of the work view (work.go)
 }
 
 // newReq records p and returns the ReqID to send with its request.
@@ -49,6 +50,8 @@ func (m *home) handleReply(r core.Reply) tea.Cmd {
 		return m.refusal(p.op.op+" "+p.op.title, r)
 	case p.script != nil:
 		return m.scriptReplied(p.script, r)
+	case p.work != nil:
+		return m.workReplied(p.work, r)
 	case p.issue != nil && p.issue.picked != nil:
 		msg := *p.issue.picked
 		msg.issue, msg.err = r.Issue, r.Err

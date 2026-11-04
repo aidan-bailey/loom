@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -502,4 +504,170 @@ func TestWorkPager_NeedsAJob(t *testing.T) {
 	m := workHome(t)
 	assert.Nil(t, pressWork(t, m, "enter"))
 	assert.Nil(t, m.work.pager)
+}
+
+// workWatch is a home's Core that records the work view's requests instead
+// of sending them.
+type workWatch struct {
+	core.Core
+	caps []config.SchedulerSettings
+	reqs []core.ReqID
+}
+
+// watchWork puts a workWatch between m and its model.
+func watchWork(t *testing.T, m *home) *workWatch {
+	t.Helper()
+	w := &workWatch{Core: m.core}
+	testStacks.Store(core.Core(w), stackOf(m))
+	t.Cleanup(func() { testStacks.Delete(core.Core(w)) })
+	m.core = w
+	return w
+}
+
+func (w *workWatch) SetSchedulerCaps(s config.SchedulerSettings, req core.ReqID) {
+	w.caps = append(w.caps, s)
+	w.reqs = append(w.reqs, req)
+}
+
+// capsSent opens the form over one running job, types 2000 into the CPUs
+// field and saves: the form is waiting for the model's answer to
+// w.reqs[0].
+func capsSent(t *testing.T) (*home, *workWatch) {
+	t.Helper()
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	w := watchWork(t, m)
+	pressWork(t, m, "e")
+	require.Equal(t, stateWorkCaps, m.state)
+	for _, key := range []string{"2", "0", "0", "0", "enter"} {
+		_, _ = handleStateWorkCapsKey(m, keyFor(t, key))
+	}
+	require.Len(t, w.caps, 1)
+	return m, w
+}
+
+func TestWorkCaps_EOpensTheFormOverTheViewWithTheConfiguredValues(t *testing.T) {
+	q := testQueue(queueJob(14, sched.Running, "a"))
+	q.Settings = config.SchedulerSettings{CPUs: 8, DefaultClaim: &config.ClaimSettings{CPUs: 2}}
+	m := workHome(t)
+	setQueue(t, m, q)
+
+	assert.Nil(t, pressWork(t, m, "e"))
+	require.Equal(t, stateWorkCaps, m.state)
+	o := m.workCapsOverlay()
+	require.NotNil(t, o)
+	assert.Equal(t, overlay.WorkCapsValues{CPUs: 8, ClaimCPUs: 2}, o.Values())
+	assert.Contains(t, ansi.Strip(o.Render()), "set · host default 14", "the form shows the host's defaults beside the set values")
+
+	screen := ansi.Strip(m.View().Content)
+	assert.Contains(t, screen, "Work queue caps · fresco", "the form is drawn over the view")
+	assert.Contains(t, screen, "Work queue · fresco", "the view stays under it")
+}
+
+func TestWorkCaps_NothingToEditBeforeTheDaemonReports(t *testing.T) {
+	m := workHome(t)
+	setQueue(t, m, core.QueueView{})
+	pressWork(t, m, "e")
+	assert.Equal(t, stateDefault, m.state)
+	assert.Contains(t, m.errBox.String(), "has not reported its work queue yet")
+}
+
+func TestWorkCaps_OfflineRefusesTheKey(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	m.link.state = linkWaiting
+	cmd := pressWork(t, m, "e")
+	assert.Nil(t, cmd)
+	assert.Equal(t, stateDefault, m.state, "no form opens over a daemon that is gone")
+	assert.Contains(t, m.errBox.String(), "the loom daemon is stopped: e needs it")
+}
+
+func TestWorkCaps_SavingSendsTheFormsSettingsOnce(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	w := watchWork(t, m)
+	pressWork(t, m, "e")
+	require.Equal(t, stateWorkCaps, m.state)
+
+	for _, key := range []string{"1", "2", "tab", "tab", "tab", "3", "enter", "enter"} {
+		_, _ = handleStateWorkCapsKey(m, keyFor(t, key))
+	}
+	require.Len(t, w.caps, 1, "the second enter finds the save in flight")
+	assert.Equal(t, config.SchedulerSettings{CPUs: 12, DefaultClaim: &config.ClaimSettings{CPUs: 3}}, w.caps[0])
+	assert.NotZero(t, w.reqs[0], "the save carries a ReqID, so its answer finds the form")
+	assert.True(t, m.workCapsOverlay().Saving())
+	assert.Equal(t, stateWorkCaps, m.state, "the form stays until the model answers")
+}
+
+func TestWorkCaps_ARefusalIsShownInTheForm(t *testing.T) {
+	m, w := capsSent(t)
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: errors.New("scheduler.cpus is 2000: it must be 1–1024")})
+
+	assert.Equal(t, stateWorkCaps, m.state, "the form stays open")
+	o := m.workCapsOverlay()
+	require.NotNil(t, o)
+	assert.False(t, o.Saving())
+	assert.Contains(t, ansi.Strip(o.Render()), "scheduler.cpus is 2000: it must be 1–1024")
+
+	_, _ = handleStateWorkCapsKey(m, keyFor(t, "enter"))
+	assert.Len(t, w.caps, 2, "the form can be sent again")
+}
+
+func TestWorkCaps_AnAcceptedSaveClosesTheForm(t *testing.T) {
+	m, w := capsSent(t)
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0]})
+	assert.Equal(t, stateDefault, m.state)
+	assert.Nil(t, m.workCapsOverlay())
+	assert.Equal(t, viewWork, m.viewMode)
+}
+
+func TestWorkCaps_ARefusalAfterTheFormClosedIsAnError(t *testing.T) {
+	m, w := capsSent(t)
+	_, _ = handleStateWorkCapsKey(m, keyFor(t, "esc"))
+	require.Equal(t, stateDefault, m.state)
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: errors.New("scheduler.cpus is 2000: it must be 1–1024")})
+	assert.Contains(t, m.errBox.String(), "scheduler.cpus is 2000")
+}
+
+func TestWorkCaps_AnOldSavesAnswerDoesNotTouchANewForm(t *testing.T) {
+	m, w := capsSent(t)
+	_, _ = handleStateWorkCapsKey(m, keyFor(t, "esc"))
+	pressWork(t, m, "e")
+	fresh := m.workCapsOverlay()
+	require.NotNil(t, fresh)
+
+	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: errors.New("scheduler.cpus is 2000: it must be 1–1024")})
+	assert.Equal(t, stateWorkCaps, m.state)
+	assert.NotContains(t, ansi.Strip(fresh.Render()), "scheduler.cpus is 2000")
+	assert.Contains(t, m.errBox.String(), "scheduler.cpus is 2000", "the refusal reaches the user as an error instead")
+}
+
+func TestWorkCaps_ItsKeysAreNotDeferredByMenuHighlighting(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"))
+	pressWork(t, m, "e")
+	require.Equal(t, stateWorkCaps, m.state)
+
+	_, cmd := m.handleKeyPress(keyFor(t, "t"))
+	assert.Nil(t, cmd, "t is a built-in binding: a modal state outside the exclusion list defers it")
+	assert.False(t, m.keySent)
+	typeBurstThroughHandleKeyPress(t, m, "1234")
+	assert.Equal(t, 1234, m.workCapsOverlay().Values().CPUs, "a burst of digits types in order")
+}
+
+func TestWorkDefaults(t *testing.T) {
+	got := workDefaults(sched.Host{Name: "fresco", Cores: 16, RAMBytes: 30 << 30})
+	assert.Equal(t, overlay.WorkCapsValues{CPUs: 14, MemoryGB: 22, IOJobs: 2, ClaimCPUs: 4, ClaimMemoryGB: 6, StarveMinutes: 10, KeepFinished: 50}, got)
+
+	noRAM := workDefaults(sched.Host{Name: "odd", Cores: 8})
+	assert.Equal(t, overlay.WorkCapsValues{CPUs: 6, IOJobs: 2, ClaimCPUs: 4, StarveMinutes: 10, KeepFinished: 50}, noRAM,
+		"a host whose RAM could not be read has no memory default")
+}
+
+func TestSchedulerSettingsRoundTrip(t *testing.T) {
+	for _, s := range []config.SchedulerSettings{
+		{},
+		{CPUs: 8, MemoryGB: 16, IOJobs: 3, StarveAfterMinutes: 5, KeepFinished: 20},
+		{DefaultClaim: &config.ClaimSettings{CPUs: 2, MemoryGB: 3}},
+		{DefaultClaim: &config.ClaimSettings{MemoryGB: 3}},
+	} {
+		assert.Equal(t, s, schedulerSettings(capsValues(s)))
+	}
+	assert.Nil(t, schedulerSettings(overlay.WorkCapsValues{}).DefaultClaim, "a form with no claim edited leaves no claim block in config.json")
 }
