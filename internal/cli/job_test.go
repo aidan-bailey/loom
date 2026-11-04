@@ -690,95 +690,149 @@ func TestJobRun_TheWindowsRefusalIsNothingSubmitted(t *testing.T) {
 	assert.Contains(t, exit.Msg, "loom: nothing was submitted: ")
 }
 
-// A follower that can't read the job's output.log can't go on: it exits 125
-// and says the job may still be running and how to follow it again.
+// A join that fails is a *joinError, which reads as its cause, and the
+// command's work does not run: `run` reports it as nothing submitted. An error
+// of the work's own is not one.
+func TestWithDaemon_AFailedJoinIsAJoinError(t *testing.T) {
+	isolateWorkspaces(t)
+	serveDaemon(t, "true")
+	dial := Join
+	t.Cleanup(func() { Join = dial })
+	c := &cobra.Command{}
+	c.SetErr(io.Discard)
+	var join *joinError
+
+	cause := errors.New("no daemon to join")
+	Join = func() (*rpc.Client, error) { return nil, cause }
+	ran := false
+	err := withDaemon(c, func(*client) error { ran = true; return nil })
+	require.ErrorAs(t, err, &join)
+	assert.ErrorIs(t, err, cause)
+	assert.Equal(t, "no daemon to join", err.Error())
+	assert.False(t, ran, "the work does not run without a daemon")
+
+	Join = nil
+	err = withDaemon(c, func(*client) error { ran = true; return nil })
+	assert.ErrorAs(t, err, &join)
+	assert.False(t, ran)
+
+	Join = dial
+	own := errors.New("the work's own")
+	err = withDaemon(c, func(*client) error { ran = true; return own })
+	assert.True(t, ran)
+	assert.ErrorIs(t, err, own)
+	assert.False(t, errors.As(err, &join), "an error of the work's own is not the join's")
+}
+
+// A follower that can't read the job's output.log can't go on, and exits 125:
+// for a job it saw ended, saying how the job ended; for one that may still be
+// running, saying so and how to follow it again.
 func TestJobWait_AnUnreadableLogExits125(t *testing.T) {
 	isolateWorkspaces(t)
 	t.Setenv(claudemod.EnvLaunch, "")
 	d := serveDaemon(t, "true")
-	_, _, err := runJob(t, "run", "-d", "quick", "--", "sh", "-c", "echo hi")
-	require.NoError(t, err)
-	log := d.job(1).LogPath
-	require.NotEmpty(t, log)
 	// A directory in the log's place opens, then fails to read: whoever runs
 	// the test, root included.
-	require.NoError(t, os.Remove(log))
-	require.NoError(t, os.Mkdir(log, 0o755))
+	unreadable := func(t *testing.T, id sched.JobID) {
+		t.Helper()
+		log := d.job(id).LogPath
+		require.NotEmpty(t, log)
+		require.NoError(t, os.Remove(log))
+		require.NoError(t, os.Mkdir(log, 0o755))
+	}
 
-	_, errOut, err := runJob(t, "wait", "1")
+	t.Run("a job seen ended", func(t *testing.T) {
+		_, _, err := runJob(t, "run", "-d", "quick", "--", "sh", "-c", "echo hi")
+		require.NoError(t, err)
+		unreadable(t, 1)
 
-	assert.Equal(t, 125, exitCode(t, err))
-	assert.Regexp(t, `^loom: copy the job's output: .*; job 1 may still be running \(loom job wait 1 follows it again\)\n$`, errOut)
+		_, errOut, err := runJob(t, "wait", "1")
+
+		assert.Equal(t, 125, exitCode(t, err))
+		assert.Regexp(t, `^loom: copy the job's output: .*; job 1 done in \S+ \(exit 0\)\n$`, errOut)
+	})
+	t.Run("a job still running", func(t *testing.T) {
+		_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sh", "-c", "echo up; exec sleep 60")
+		require.NoError(t, err)
+		d.waitLog(t, 2, "up")
+		unreadable(t, 2)
+
+		_, errOut, err := runJob(t, "wait", "2")
+
+		assert.Equal(t, 125, exitCode(t, err))
+		assert.Regexp(t, `^loom: copy the job's output: .*; job 2 may still be running \(loom job wait 2 follows it again\)\n$`, errOut)
+		_, _, err = runJob(t, "cancel", "2")
+		require.NoError(t, err)
+		d.waitFinished(t, 2)
+	})
 }
 
-// A job the daemon accepted but never reported is the follower's loss, not
-// the job's: awaitJob's error says so, and mayStillRun ends the command with
-// 125 and how to follow the job again.
-func TestJobAwaitJob_AJobTheDaemonNeverReportsIs125(t *testing.T) {
-	isolateWorkspaces(t)
-	t.Setenv(claudemod.EnvLaunch, "")
-	serveDaemon(t, "true")
-	rc, err := Join()
-	require.NoError(t, err)
-	defer rc.Close()
-	var errOut bytes.Buffer
-	d := &client{Client: rc, errOut: &errOut, ctx: context.Background()}
-	defer func(w time.Duration) { jobWait = w }(jobWait)
-	jobWait = 50 * time.Millisecond
-
-	_, err = d.awaitJob(99)
-	require.ErrorIs(t, err, errNotReported)
-	got := d.mayStillRun(99, fmt.Sprintf("job %d was submitted, but %v", 99, err))
-
-	assert.Equal(t, 125, exitCode(t, got))
-	assert.Equal(t, "loom: job 99 was submitted, but the loom daemon did not report it; job 99 may still be running (loom job wait 99 follows it again)\n", errOut.String())
-}
-
-// cutAfterReply is a connection to the daemon that drops the queue's views and
-// delivers the frames up to the first Reply event, then reads as closed: the
-// daemon is lost the moment the submit's answer lands, before the job's view
-// has (the Reply can come first, as awaitJob allows). The wire is one JSON
-// frame per line.
-type cutAfterReply struct {
+// queueBlind is a connection to the daemon that drops the queue's views
+// (QueueChanged), so its client never sees a job, and passes every other frame
+// whole. With cutAtReply it delivers the frames up to the first Reply event,
+// then reads as closed: the daemon is lost the moment the submit's answer
+// lands, before the job's view has (the Reply can come first, as awaitJob
+// allows). The wire is one JSON frame per line.
+type queueBlind struct {
 	io.ReadWriteCloser
-	buf []byte
-	cut bool
+	cutAtReply bool
+	in, out    []byte // what was read short of a whole frame; frames to deliver
+	cut        bool
 }
 
-func (c *cutAfterReply) Read(p []byte) (int, error) {
-	for len(c.buf) == 0 {
+func (c *queueBlind) Read(p []byte) (int, error) {
+	for len(c.out) == 0 {
 		if c.cut {
 			c.ReadWriteCloser.Close()
 			return 0, io.EOF
 		}
 		chunk := make([]byte, 4096)
 		n, err := c.ReadWriteCloser.Read(chunk)
-		c.buf = append(c.buf, chunk[:n]...)
-		if err != nil && n == 0 {
+		c.in = append(c.in, chunk[:n]...)
+		for !c.cut {
+			end := bytes.IndexByte(c.in, '\n')
+			if end < 0 {
+				break
+			}
+			frame := c.in[:end+1]
+			c.in = c.in[end+1:]
+			if bytes.Contains(frame, []byte(`"event":"QueueChanged"`)) {
+				continue
+			}
+			c.out = append(c.out, frame...)
+			c.cut = c.cutAtReply && bytes.Contains(frame, []byte(`"event":"Reply"`))
+		}
+		if err != nil && len(c.out) == 0 {
 			return 0, err
 		}
-		if end := bytes.IndexByte(c.buf, '\n'); end >= 0 {
-			// Keep whole lines only, up to and including the first Reply's.
-			var keep []byte
-			for _, line := range bytes.SplitAfter(c.buf, []byte("\n")) {
-				if !bytes.HasSuffix(line, []byte("\n")) {
-					break
-				}
-				if bytes.Contains(line, []byte(`"event":"QueueChanged"`)) {
-					continue
-				}
-				keep = append(keep, line...)
-				if bytes.Contains(line, []byte(`"event":"Reply"`)) {
-					c.cut = true
-					break
-				}
-			}
-			c.buf = keep
-		}
 	}
-	n := copy(p, c.buf)
-	c.buf = c.buf[n:]
+	n := copy(p, c.out)
+	c.out = c.out[n:]
 	return n, nil
+}
+
+// `run` whose job the daemon accepted but never reported (the queue's views
+// never reach it, though the daemon stays up) can't go on: awaitJob gives up,
+// and the command says the job may still be running and how to follow it
+// again, and exits 125.
+func TestJobRun_AJobTheDaemonNeverReportsExits125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	t.Cleanup(func(j func() (*rpc.Client, error)) func() { return func() { Join = j } }(Join))
+	Join = func() (*rpc.Client, error) {
+		a, b := net.Pipe()
+		d.srv.Serve(a)
+		return rpc.Dial(&queueBlind{ReadWriteCloser: b})
+	}
+	defer func(w time.Duration) { jobWait = w }(jobWait)
+	jobWait = 50 * time.Millisecond
+
+	_, errOut, err := runJob(t, "run", "-d", "quick", "--", "true")
+
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Equal(t, "loom: job 1 was submitted, but the loom daemon did not report it; job 1 may still be running (loom job wait 1 follows it again)\n", errOut)
+	d.waitFinished(t, 1) // the job went on without the follower
 }
 
 // `run` that loses the daemon after it accepted the job, before the job's
@@ -791,7 +845,7 @@ func TestJobRun_LosingTheDaemonBeforeTheJobsViewSaysTheJobContinues(t *testing.T
 	Join = func() (*rpc.Client, error) {
 		a, b := net.Pipe()
 		d.srv.Serve(a)
-		return rpc.Dial(&cutAfterReply{ReadWriteCloser: b})
+		return rpc.Dial(&queueBlind{ReadWriteCloser: b, cutAtReply: true})
 	}
 
 	_, errOut, err := runJob(t, "run", "-d", "quick", "--", "true")

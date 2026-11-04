@@ -49,18 +49,27 @@ type client struct {
 	ctx context.Context
 }
 
+// joinError is withDaemon's error when it could not join the daemon, so
+// nothing was sent; it reads as its cause.
+type joinError struct{ err error }
+
+func (e *joinError) Error() string { return e.err.Error() }
+
+func (e *joinError) Unwrap() error { return e.err }
+
 // withDaemon joins the daemon (Join), runs fn with the client and closes
-// it. The notices the daemon gives this connection are written to the
-// command's stderr: a command is a client like any TUI, so it can be the
-// first to connect, and the daemon then hands it the notices kept for the
-// first client (its boot's).
+// it. A join that fails is a *joinError, and fn does not run. The notices
+// the daemon gives this connection are written to the command's stderr: a
+// command is a client like any TUI, so it can be the first to connect, and
+// the daemon then hands it the notices kept for the first client (its
+// boot's).
 func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 	if Join == nil {
-		return errors.New("loom: no way to reach the loom daemon")
+		return &joinError{err: errors.New("loom: no way to reach the loom daemon")}
 	}
 	rc, err := Join()
 	if err != nil {
-		return err
+		return &joinError{err: err}
 	}
 	defer rc.Close()
 	ctx := cmd.Context()

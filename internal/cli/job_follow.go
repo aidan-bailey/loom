@@ -251,9 +251,11 @@ func (f *jobFollower) copyLog(path string) error {
 // outcome and returns the exit code it asks for (an *ExitError, or nil for
 // exit 0). A job the daemon does not know, a lost daemon or an output.log
 // that can't be read ends the command with exitNotRun and a line on stderr
-// that says which (lostDaemon, mayStillRun). An interrupt (signalled names it) leaves the job running and ends the command
-// (interrupted). queuedHere is true for a job this command
-// queued, so its start is reported even when it never waited.
+// that says which: with how to follow the job again while it may still run
+// (lostDaemon, mayStillRun), and with how it ended once it was seen ended.
+// An interrupt (signalled names it) leaves the job running and ends the
+// command (interrupted). queuedHere is true for a job this command queued,
+// so its start is reported even when it never waited.
 func (d *client) follow(out io.Writer, id sched.JobID, signalled func() os.Signal, queuedHere bool) error {
 	f := &jobFollower{d: d, id: id, out: out, queued: queuedHere}
 	v, err := f.run()
@@ -277,7 +279,15 @@ func (d *client) follow(out io.Writer, id sched.JobID, signalled func() os.Signa
 	case errors.Is(err, context.Canceled):
 		return d.interrupted(id, signalled())
 	}
-	// What is left is a log that can't be read (copyLog's errors).
+	// What is left is a log that can't be read (copyLog's errors). The view
+	// was read before the log, so a job it shows ended is not running: the
+	// line says how it ended. The exit is exitNotRun all the same, since its
+	// output was not passed on.
+	if v.State.Finished() {
+		line, _ := jobOutcome(v)
+		d.say("%v; %s", err, line)
+		return &ExitError{Code: exitNotRun}
+	}
 	return d.mayStillRun(id, err.Error())
 }
 
@@ -400,10 +410,9 @@ func newJobRunCmd() *cobra.Command {
 				}
 				return d.follow(c.OutOrStdout(), id, signalled, true)
 			})
-			// Every failure inside the closure is an *ExitError already; one
-			// that is not is the join's, before anything was sent.
-			var exit *ExitError
-			if err != nil && !errors.As(err, &exit) {
+			// A join that failed sent nothing.
+			var join *joinError
+			if errors.As(err, &join) {
 				return notSubmitted(err)
 			}
 			return err
