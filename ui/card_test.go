@@ -231,3 +231,137 @@ func TestRenderCard_LongWaitReasonStaysInBounds(t *testing.T) {
 		assert.LessOrEqual(t, ansi.StringWidth(l), 24)
 	}
 }
+
+// withJobBadges publishes badges for the test and clears them at cleanup.
+func withJobBadges(t *testing.T, b map[core.InstanceID]string) {
+	t.Helper()
+	SetJobBadges(b)
+	t.Cleanup(func() { SetJobBadges(nil) })
+}
+
+// railFirstLine is the rail card's title line, styling stripped.
+func railFirstLine(d CardData, width int) string {
+	return ansi.Strip(strings.Split(RenderCard(d, DensityRail, width), "\n")[0])
+}
+
+func TestBuildCardData_CarriesTheJobBadge(t *testing.T) {
+	withJobBadges(t, map[core.InstanceID]string{7: "⚙ job 14 +1"})
+
+	with := BuildCardData(core.InstanceView{ID: 7, Title: "t", Status: session.Ready}, Pane{}, false, "", 0)
+	assert.Equal(t, "⚙ job 14 +1", with.JobBadge)
+
+	without := BuildCardData(core.InstanceView{ID: 8, Title: "t", Status: session.Ready}, Pane{}, false, "", 0)
+	assert.Equal(t, "", without.JobBadge, "a session the map does not name has no badge")
+
+	SetJobBadges(nil)
+	assert.Equal(t, "", JobBadge(7), "clearing the map clears every badge")
+}
+
+func TestRenderCard_RailShowsTheJobBadge(t *testing.T) {
+	d := CardData{Title: "fix-login", Index: 1, Status: session.Running, JobBadge: "⚙ job 14 +1"}
+	out := RenderCard(d, DensityRail, 40)
+	first := railFirstLine(d, 40)
+	assert.Contains(t, first, "1. fix-login")
+	assert.Contains(t, first, "⚙ job 14 +1")
+	for _, line := range strings.Split(out, "\n") {
+		assert.LessOrEqual(t, ansi.StringWidth(line), 40)
+	}
+
+	d.JobBadge = ""
+	assert.NotContains(t, railFirstLine(d, 40), "⚙", "no badge, no token")
+}
+
+// TestRenderCard_JobBadgeDecisionIsWidthOnly pins that, at a given card
+// width, every badge text within the cap makes the same call: the decision
+// reserves railJobBadgeMaxWidth, never the badge's own width.
+func TestRenderCard_JobBadgeDecisionIsWidthOnly(t *testing.T) {
+	badges := []string{"⚙ queued", "⚙ job 14", "⚙ job 14 +12"}
+	wantShown := map[int]bool{20: false, 32: false, 33: true, 40: true}
+	for w, want := range wantShown {
+		for _, b := range badges {
+			d := CardData{Title: "fix-login", Index: 1, Status: session.Running, JobBadge: b}
+			first := railFirstLine(d, w)
+			assert.Equal(t, want, strings.Contains(first, "⚙"), "width %d, badge %q", w, b)
+		}
+	}
+}
+
+// TestRenderCard_LongJobBadgeIsDroppedWhole pins the cap: a badge wider than
+// railJobBadgeMaxWidth is dropped, never cut (a cut "+9" could read as "+").
+func TestRenderCard_LongJobBadgeIsDroppedWhole(t *testing.T) {
+	d := CardData{Title: "fix-login", Index: 1, Status: session.Running, JobBadge: "⚙ job 123456789012 +9"}
+	first := railFirstLine(d, 60)
+	assert.Contains(t, first, "1. fix-login")
+	assert.NotContains(t, first, "⚙")
+}
+
+// TestRenderCard_JobBadgeTakesRoomFromTheAccountBadge pins the order of
+// precedence when both want the title line's right edge: the job badge
+// stays and the account badge goes first, and the account still shows on
+// the same card at the same width once the job ends.
+func TestRenderCard_JobBadgeTakesRoomFromTheAccountBadge(t *testing.T) {
+	d := CardData{Title: "fix-login", Index: 1, Status: session.Running, Account: "max-2", JobBadge: "⚙ job 14"}
+
+	tight := railFirstLine(d, 40)
+	assert.Contains(t, tight, "⚙ job 14")
+	assert.NotContains(t, tight, "@max-2", "no room for both at 40")
+
+	roomy := railFirstLine(d, 44)
+	assert.Contains(t, roomy, "⚙ job 14")
+	assert.Contains(t, roomy, "@max-2")
+	assert.Less(t, strings.Index(roomy, "⚙"), strings.Index(roomy, "@"), "the job badge sits left of the account's")
+
+	d.JobBadge = ""
+	assert.Contains(t, railFirstLine(d, 40), "@max-2", "without a job the account shows at 40")
+}
+
+func TestRenderCard_SelectedRailJobBadgeStaysInsideTheCard(t *testing.T) {
+	d := CardData{Title: "fix-login", Index: 1, Status: session.Running, Selected: true,
+		Account: "max-2", JobBadge: "⚙ job 14 +2"}
+	for _, w := range []int{33, 44, 60} {
+		for _, line := range strings.Split(RenderCard(d, DensityRail, w), "\n") {
+			assert.LessOrEqual(t, ansi.StringWidth(line), w, "width %d", w)
+		}
+	}
+}
+
+func TestRenderOverviewCard_ShowsTheJobBadge(t *testing.T) {
+	d := CardData{Title: "fix-login", Branch: "aidanb/fix", Status: session.Running, JobBadge: "⚙ queued"}
+	assert.Contains(t, ansi.Strip(renderOverviewCard(d, 50)), "⚙ queued")
+
+	d.JobBadge = ""
+	assert.NotContains(t, ansi.Strip(renderOverviewCard(d, 50)), "⚙")
+}
+
+// TestRenderOverviewCard_JobBadgeOutlastsTheAccountOnTheMetaLine pins the
+// ordering: the job badge is the meta line's first token, so the right-hand
+// truncation drops the account (the last) before it.
+func TestRenderOverviewCard_JobBadgeOutlastsTheAccountOnTheMetaLine(t *testing.T) {
+	d := CardData{
+		Title: "fix-login", Branch: "aidanb/fix-login-flow", Status: session.Running,
+		Account: "max-2", JobBadge: "⚙ job 14",
+		HasParity: true, Ahead: 2, Behind: 1,
+		HasDiff: true, DiffAdded: 3, DiffRemoved: 1,
+	}
+	wide := ansi.Strip(renderOverviewCard(d, 40))
+	assert.Contains(t, wide, "⚙ job 14")
+	assert.Contains(t, wide, "@max-2")
+
+	narrow := ansi.Strip(renderOverviewCard(d, 20))
+	assert.Contains(t, narrow, "⚙ job 14", "the badge survives the cut")
+	assert.NotContains(t, narrow, "@max-2", "the account is cut first")
+}
+
+func TestOverview_JobBadgeKeepsCardHeight(t *testing.T) {
+	for _, width := range []int{18, 40, 60} {
+		for _, badge := range []string{"⚙ queued", "⚙ job 14 +2", "⚙ job 123456789012 +99"} {
+			d := CardData{Title: strings.Repeat("long-title-", 6), Status: session.Running,
+				Branch: "aidanb/branch", Account: "max-2", JobBadge: badge,
+				HasParity: true, Ahead: 100, Behind: 2000,
+				HasDiff: true, DiffAdded: 1234, DiffRemoved: 5678}
+			card := renderOverviewCard(d, width)
+			assert.Equal(t, overviewCardHeight, len(strings.Split(card, "\n")),
+				"width %d, badge %q", width, badge)
+		}
+	}
+}

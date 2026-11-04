@@ -275,6 +275,11 @@ func renderOverviewCard(d CardData, width int) string {
 
 	dim := lipgloss.NewStyle().Foreground(Dim)
 	var right []string
+	// First: ansi.Truncate below trims the meta line from the right, so the
+	// job badge outlasts every other token.
+	if d.JobBadge != "" {
+		right = append(right, dim.Render(d.JobBadge))
+	}
 	if p := parityToken(d); p != "" {
 		right = append(right, p)
 	}

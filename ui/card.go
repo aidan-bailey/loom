@@ -73,6 +73,13 @@ const railAccountBadgeMinTitle = 12
 // than reading it off this particular card.
 const railIndexPrefixReserve = 4
 
+// railJobBadgeMaxWidth caps the title line's job badge ("⚙ job 14 +2"). Like
+// railAccountBadgeMaxWidth it is what the show/hide decision reserves, never
+// the badge's actual width, so every card on the rail decides the same way at
+// a given width. A badge wider than the cap (a job ID past five digits with
+// a "+N") is dropped whole, not cut: a cut "+9" could read as "+".
+const railJobBadgeMaxWidth = 14
+
 // showAccounts turns account badges on. app sets it (SetShowAccounts)
 // while an extra account is registered. Main goroutine only.
 var showAccounts bool
@@ -82,6 +89,30 @@ func SetShowAccounts(on bool) { showAccounts = on }
 
 // ShowAccounts reports whether account badges are on.
 func ShowAccounts() bool { return showAccounts }
+
+// jobBadges maps a session to its work-queue badge text ("⚙ job 14",
+// "⚙ job 14 +2", "⚙ queued"). app sets it (SetJobBadges) whenever the queue
+// changes; a session the map does not name has no job. Main goroutine only.
+var jobBadges map[core.InstanceID]string
+
+// SetJobBadges replaces every session's job badge. A nil map clears them.
+func SetJobBadges(b map[core.InstanceID]string) { jobBadges = b }
+
+// JobBadge is session id's badge text, "" for none.
+func JobBadge(id core.InstanceID) string { return jobBadges[id] }
+
+// jobToken is the rail's dim job badge, "" without one or when the text is
+// wider than railJobBadgeMaxWidth.
+func jobToken(d CardData, solidBg bool) string {
+	if d.JobBadge == "" || lipgloss.Width(d.JobBadge) > railJobBadgeMaxWidth {
+		return ""
+	}
+	st := lipgloss.NewStyle().Foreground(Dim)
+	if solidBg {
+		st = st.Background(Panel)
+	}
+	return st.Render(d.JobBadge)
+}
 
 // accountLabel is v's account badge text: its account's name
 // (account.DefaultName for the default account), or "" when badges are off
@@ -157,6 +188,9 @@ type CardData struct {
 	// Account is the Claude account badge ("max-2", "default"); empty when
 	// badges are off (no extra account) or the session isn't Claude.
 	Account string
+	// JobBadge is the work-queue badge ("⚙ job 14 +2", "⚙ queued"); empty
+	// when the session has no queued or running job. See SetJobBadges.
+	JobBadge string
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -188,6 +222,7 @@ func BuildCardData(v core.InstanceView, pane Pane, selected bool, spinnerFrame s
 		Spinner:             spinnerFrame,
 		WaitReason:          sanitizeCardText(v.WaitReason),
 		Account:             accountLabel(&v),
+		JobBadge:            JobBadge(v.ID),
 	}
 	for _, a := range v.Subagents {
 		d.Subagents = append(d.Subagents, SubagentRow{
@@ -628,20 +663,39 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	// shorter account name nor a single-digit index can sneak the badge
 	// onto a card too narrow for a longer name or a double-digit index;
 	// see railAccountBadgeMinTitle.
+	// The job badge rides the same edge, left of the account badge, under
+	// the same rule: its decision reserves railJobBadgeMaxWidth. A shown job
+	// badge takes its cap and a space from the account badge's room, so the
+	// account goes first when both cannot fit.
+	job := jobToken(d, solidBg)
+	if job != "" && inner-railIndexPrefixReserve-railJobBadgeMaxWidth-1 < railAccountBadgeMinTitle {
+		job = ""
+	}
+	jobReserve := 0
+	if job != "" {
+		jobReserve = railJobBadgeMaxWidth + 1
+	}
 	acct := accountToken(d, solidBg)
-	if acct != "" && inner-railIndexPrefixReserve-railAccountBadgeMaxWidth-1 < railAccountBadgeMinTitle {
+	if acct != "" && inner-railIndexPrefixReserve-jobReserve-railAccountBadgeMaxWidth-1 < railAccountBadgeMinTitle {
 		acct = ""
 	}
+	right := acct
+	if job != "" {
+		right = job
+		if acct != "" {
+			right = job + sep + acct
+		}
+	}
 	titleW := inner
-	if acct != "" {
-		titleW = inner - lipgloss.Width(acct) - 1
+	if right != "" {
+		titleW = inner - lipgloss.Width(right) - 1
 	}
 	title := truncate(prefix+d.Title, titleW)
 	composeTitle := func(st lipgloss.Style) string {
-		if acct == "" {
+		if right == "" {
 			return bar + sep + st.Render(title)
 		}
-		return bar + sep + spreadLineBg(st.Render(title), acct, inner, solidBg)
+		return bar + sep + spreadLineBg(st.Render(title), right, inner, solidBg)
 	}
 	titleLine := composeTitle(titleStyleC)
 
