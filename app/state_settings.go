@@ -28,6 +28,14 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if req, ok := so.TakeAccountRequest(); ok {
 		cmds = append(cmds, m.handleAccountRequest(req))
 	}
+	if hours, ok := so.TakeBuildSweepRequest(); ok {
+		// The threshold is global: the model writes it to the global
+		// config.json, whichever workspace this overlay edits.
+		if err := m.core.ConfigureBuildSweep(hours); err != nil {
+			cmds = append(cmds, m.handleError(err))
+		}
+		so.SetBuildSweep(m.core.BuildSweep().AfterHours)
+	}
 
 	if changed {
 		// The model saves config.json beside the workspace's state (the

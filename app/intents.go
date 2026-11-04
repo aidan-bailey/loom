@@ -469,6 +469,7 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	so := overlay.NewSettingsOverlay(m.settingsEdit, m.core.RCAuth().Blocked(), m.core.RCAuth().Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	so.SetAccountNotice(m.accountsScreenNotice())
+	so.SetBuildSweep(m.core.BuildSweep().AfterHours)
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 	m.core.RequestUsageProbe()

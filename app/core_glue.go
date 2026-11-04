@@ -153,6 +153,12 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 			// left open, emptying it at the next poll.
 			m.core.WatchGitHub(m.repoPath())
 		}
+	case core.ModelChanged:
+		// The build sweep's threshold is global: another client's change
+		// reaches an open settings overlay here.
+		if so := m.settingsOverlay(); so != nil {
+			so.SetBuildSweep(m.core.BuildSweep().AfterHours)
+		}
 	case core.AccountsChanged:
 		ui.SetShowAccounts(m.core.HasExtraAccounts())
 		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
