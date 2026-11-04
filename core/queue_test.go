@@ -1010,3 +1010,127 @@ func TestJobQueue_ARefusedPauseOrKillCancelsNothing(t *testing.T) {
 	assert.Empty(t, rec.CancelReason)
 	assert.NotEqual(t, sched.Cancelled, rec.State)
 }
+
+// wqQueuedRecord is a queued job that fits any cap: one core, 1 GB, a real
+// folder, a command that exits at once.
+func wqQueuedRecord(t *testing.T, id sched.JobID) sched.Record {
+	t.Helper()
+	return sched.Record{
+		ID: id, Order: int64(id), Description: "queued", Argv: []string{"true"}, Cwd: t.TempDir(),
+		Claim: sched.Claim{CPUs: 1, MemoryGB: 1}, Tail: 2, State: sched.Queued, Submitted: time.Now(),
+	}
+}
+
+// wqNoSiblings asserts that dir holds nothing but config.json and the jobs
+// directory: nothing was renamed aside (config.LoadConfigFrom's quarantine).
+func wqNoSiblings(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.Contains(t, []string{config.ConfigFileName, jobsDirName}, e.Name(), "nothing is moved aside")
+	}
+}
+
+// A global config.json that fails to parse pauses admission and is left
+// exactly where it is, whatever the pass reads it for: LoadConfigFrom would
+// have renamed it aside and run the queue on the host's defaults.
+func TestJobQueue_AGarbledGlobalConfigPausesAdmissionAndIsLeftAsItIs(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, config.ConfigFileName)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"default_program": "my-claude", "scheduler": {"cpus": 4}}`), 0o644))
+	m := wqModelAt(t, dir)
+	t.Cleanup(func() { wqStop(t, m) })
+	wqSeed(t, m, wqQueuedRecord(t, 1))
+	require.Empty(t, m.queue.paused)
+
+	garbled := []byte(`{"default_program": "my-claude", "scheduler": {"cpus": 4,}`)
+	require.NoError(t, os.WriteFile(cfgPath, garbled, 0o644))
+	m.admitJobs()
+
+	assert.True(t, strings.HasPrefix(m.queue.paused, "config.json could not be read: "), m.queue.paused)
+	assert.NotContains(t, m.queue.paused, "\n")
+	assert.Equal(t, sched.Policy{}, m.queue.policy, "no cap is guessed")
+	assert.Equal(t, "admission paused: "+m.queue.paused, m.queue.waiting[1])
+	assert.Equal(t, sched.Queued, wqRecord(t, m, 1).State, "the queued job does not start")
+	assert.Empty(t, m.Drain().Jobs)
+	got, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(garbled), string(got), "the file is byte-identical")
+	wqNoSiblings(t, dir)
+
+	// The tick runs a pass every few seconds while jobs wait: still nothing moves.
+	m.queue.lastPass = time.Now().Add(-queueInterval)
+	m.tickQueue()
+	got, err = os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(garbled), string(got))
+	wqNoSiblings(t, dir)
+	_, _, err = m.submitJob(wqJob(t, "true"))
+	assert.ErrorContains(t, err, "admission paused: config.json could not be read: ")
+
+	// The other side: the file mended, the next pass admits what waited.
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"default_program": "my-claude", "scheduler": {"cpus": 4}}`), 0o644))
+	m.admitJobs()
+	assert.Empty(t, m.queue.paused)
+	assert.Equal(t, 4, m.queue.policy.Caps.CPUs)
+	assert.Equal(t, sched.Running, wqRecord(t, m, 1).State)
+}
+
+// A daemon booted over a garbled global config.json pauses at load and leaves
+// the file alone.
+func TestJobQueue_ABootOverAGarbledGlobalConfigPausesAndLeavesIt(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, config.ConfigFileName)
+	garbled := []byte(`{not json`)
+	require.NoError(t, os.WriteFile(cfgPath, garbled, 0o644))
+
+	m := wqModelAt(t, dir)
+
+	assert.True(t, strings.HasPrefix(m.queue.paused, "config.json could not be read: "), m.queue.paused)
+	got, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(garbled), string(got))
+	wqNoSiblings(t, dir)
+}
+
+// A file without a scheduler block, or no file at all, is the host's defaults,
+// not a fault.
+func TestJobQueue_AConfigWithoutASchedulerBlockOrNoConfigRunsOnTheHostsDefaults(t *testing.T) {
+	for name, body := range map[string]string{"no file": "", "no block": `{"default_program": "x"}`} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if body != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, config.ConfigFileName), []byte(body), 0o644))
+			}
+			m := wqModelAt(t, dir)
+			policy, paused := m.refreshPolicy()
+			assert.Empty(t, paused)
+			assert.Equal(t, 14, policy.Caps.CPUs)
+		})
+	}
+}
+
+// The caps form on a file that can't be read refuses and writes nothing, where
+// LoadConfigFrom would have written the defaults over every other setting.
+func TestJobQueue_SetSchedulerCapsOnAGarbledConfigRefusesAndLeavesIt(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, config.ConfigFileName)
+	m := wqModelAt(t, dir)
+	garbled := []byte(`{"default_program": "my-claude", "scheduler": [`)
+	require.NoError(t, os.WriteFile(cfgPath, garbled, 0o644))
+
+	err := m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config.json could not be read, so the caps were not saved")
+	got, rerr := os.ReadFile(cfgPath)
+	require.NoError(t, rerr)
+	assert.Equal(t, string(garbled), string(got), "byte-identical")
+	wqNoSiblings(t, dir)
+
+	// The other side: a readable file takes the caps.
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"default_program": "my-claude"}`), 0o644))
+	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8}))
+	assert.Equal(t, 8, config.LoadConfigFrom(dir).GetScheduler().CPUs)
+}

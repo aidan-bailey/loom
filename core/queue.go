@@ -200,11 +200,23 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 // a hand edit may have changed, and resolves it against the host. It records
 // the block, the policy in effect and why admission is paused ("" when it
 // isn't; the policy is then zero: no cap is guessed), and returns the last
-// two.
+// two. A config.json that can't be read or parsed pauses admission with the
+// error and is left where it is: the block is read with diskSchedulerBlock,
+// never config.LoadConfigFrom, which would rename the file aside and fall back
+// to the host's defaults.
 func (m *Model) refreshPolicy() (sched.Policy, string) {
 	q := m.queue
-	settings := config.LoadConfigFrom(q.cfgDir).GetScheduler()
-	policy, err := sched.Resolve(settings, q.host)
+	var settings config.SchedulerSettings
+	var policy sched.Policy
+	block, err := diskSchedulerBlock(q.cfgDir)
+	if err != nil {
+		err = fmt.Errorf("config.json could not be read: %w", err)
+	} else {
+		if block != nil {
+			settings = *block
+		}
+		policy, err = sched.Resolve(settings, q.host)
+	}
 	reason := q.pauseReason(err)
 	if reason != "" {
 		policy = sched.Policy{}

@@ -217,6 +217,12 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	if _, err := sched.Resolve(s, q.host); err != nil {
 		return err
 	}
+	// LoadConfigFrom renames a config.json that fails to parse and returns the
+	// defaults, and the save below would then write those over every other
+	// global setting: a file that can't be read is refused, and left as it is.
+	if _, err := diskSchedulerBlock(q.cfgDir); err != nil {
+		return fmt.Errorf("config.json could not be read, so the caps were not saved: %w", err)
+	}
 	cfg := config.LoadConfigFrom(q.cfgDir)
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
