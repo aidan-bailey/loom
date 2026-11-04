@@ -106,9 +106,9 @@ func TestRenderWork_ShowsTheBarsTheSectionsAndTheTail(t *testing.T) {
 		"CPU ██████████░░░░ 10/14 claimed · 11.2 in use",
 		"MEM ████████░░░░░░ 12/22 GB claimed · 9.8 GB in use",
 		"I/O ██░░", "1/2",
-		"polyoxide tests", "kalshi · polyoxide", "4c 6G", "3m10s", "peak 5.1G",
+		"polyoxide tests", "kalshi · polyoxide", "4c/6G", "3m10s", "peak 5.1G",
 		"go test ./...", "work-scheduler · loom", "0m42s", "peak 1.2G",
-		"release build", "8c 12G io", "needs 8 cores (4 free)",
+		"release build", "8c/12G io", "needs 8 cores (4 free)",
 		"bench orderbook", "exclusive", "waits for job 16",
 		"clippy", "✓ 0", "1m02s", "2m ago",
 		"cargo test", "✗ 101", "4m33s", "10m ago",
@@ -221,8 +221,13 @@ func TestRenderWork_FailedAndCancelledJobsSayHow(t *testing.T) {
 	cancelled.CancelReason = "from the work view"
 	lost := workFinished(33, "vanished", sched.Lost, 0, time.Minute, time.Second)
 	lost.Exit = nil
-	q.Jobs = []core.JobView{start, killed, cancelled, lost}
+	exec := workFinished(34, "noexec", sched.Failed, 127, time.Minute, time.Second)
+	exec.Exit.Error = `exec: "nope": executable file not found in $PATH`
+	exec.Failure = exec.Exit.Error
+	q.Jobs = []core.JobView{start, killed, cancelled, lost, exec}
 	out := ansi.Strip(RenderWork(140, 30, WorkData{Queue: q, Now: workNow}))
+	assert.Contains(t, lineWith(t, out, "noexec"), "✗ start", "an exec failure is a job that did not start, not an exit 127")
+	assert.NotContains(t, lineWith(t, out, "noexec"), "✗ 127")
 	assert.Contains(t, lineWith(t, out, "nostart"), "✗ start")
 	assert.Contains(t, lineWith(t, out, "nostart"), "its folder is gone")
 	assert.Contains(t, lineWith(t, out, "killed"), "✗ SIGKILL")

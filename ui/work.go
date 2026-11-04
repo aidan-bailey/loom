@@ -474,17 +474,6 @@ func workOwner(j core.JobView) string {
 	return j.OwnerTitle + " · " + j.OwnerWorkspace
 }
 
-func workClaim(j core.JobView) string {
-	if j.Claim.Exclusive {
-		return "exclusive"
-	}
-	s := fmt.Sprintf("%dc %dG", j.Claim.CPUs, j.Claim.MemoryGB)
-	if j.Claim.IO {
-		s += " io"
-	}
-	return s
-}
-
 // workRowFacts is what a row shows besides the job's name: the claim cell
 // (the outcome, for a finished job) with its style, the time cell, and the
 // last cell.
@@ -495,13 +484,13 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}
-		return workClaim(j), lipgloss.NewStyle(), workDur(now.Sub(j.Started)), extra
+		return j.Claim.String(), lipgloss.NewStyle(), workDur(now.Sub(j.Started)), extra
 	case sched.Queued:
 		extra = j.Waiting
 		if extra == "" {
 			extra = "waiting"
 		}
-		return workClaim(j), lipgloss.NewStyle(), workWait(now.Sub(j.Submitted)), extra
+		return j.Claim.String(), lipgloss.NewStyle(), workWait(now.Sub(j.Submitted)), extra
 	}
 	claim, claimStyle = workResult(j)
 	timeText = "-"
@@ -535,7 +524,7 @@ func workResult(j core.JobView) (string, lipgloss.Style) {
 		return fmt.Sprintf("✓ %d", code), workOKStyle
 	case sched.Failed:
 		switch {
-		case j.Exit == nil:
+		case j.StartFailed():
 			return "✗ start", workErrStyle
 		case j.Exit.Signal != "":
 			return "✗ " + j.Exit.Signal, workErrStyle
