@@ -586,6 +586,7 @@ func TestStorage_PreservedTitles(t *testing.T) {
 	// test above): forcing one through LoadAndReconcile needs an empty
 	// title, which would make the assertion ambiguous.
 	s.unrecovered = []InstanceData{{Title: "flaky"}}
+	s.publishLocked() // as every change to the cache does
 
 	assert.ElementsMatch(t, []string{"flaky", "future"}, s.PreservedTitles(),
 		"untitled and unreadable titles are skipped; the loaded record is the live list's to claim")

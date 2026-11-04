@@ -10,6 +10,10 @@ import (
 	"sync"
 )
 
+// writeStateFile writes state.json; a variable so tests can hold a write
+// open and watch what waits on it.
+var writeStateFile = AtomicWriteFile
+
 // StateFileName is the on-disk filename for ephemeral app state
 // (help-screen-seen flags, etc.). InstancesFileName stores the
 // serialized session list. Both are resolved relative to the config
@@ -82,14 +86,17 @@ type StateManager interface {
 
 // State represents the application state that persists between sessions
 type State struct {
-	// mu guards every field below and serializes the save path. The same
-	// *State backs both the instance-save path (Storage.SaveInstances,
-	// invoked from a tea.Cmd goroutine on pause/resume/kill) and the
-	// help-screen path (SetHelpScreensSeen, invoked from the Update
-	// goroutine). Bubble Tea runs Cmds concurrently with Update, so these
-	// saves genuinely overlap and must not race on InstancesData,
-	// HelpScreensSeen, or the lastWritten cache. Held across the
-	// AtomicWriteFile so a save is atomic end-to-end.
+	// saveMu serializes saves: each holds it from the change it makes,
+	// through the marshal, to the write, so saves reach the disk in the
+	// order they changed the fields and the last one written is the latest.
+	// The same *State backs the instance saves of a pause, resume or kill
+	// job and the help-screen and UI saves, which overlap. It guards
+	// lastWritten. Always taken before mu.
+	saveMu sync.Mutex
+	// mu guards every field below but lastWritten, and is never held
+	// across the write: the daemon's loop reads the UI prefs and help flags
+	// on every wake (core's wsViewOf), and a write's fsyncs would otherwise
+	// freeze every client while a save ran.
 	mu sync.Mutex
 
 	// HelpScreensSeen is a bitmask tracking which help screens have been shown
@@ -106,8 +113,8 @@ type State struct {
 	// identical subsequent saves can skip AtomicWriteFile. Bubble Tea saves
 	// the full state on every user action (pause, resume, help-seen), but
 	// many of those produce byte-identical JSON — e.g. help flags toggled
-	// twice, or reconcile flipping a transient status back. Guarded by mu
-	// (see above). The cache is keyed to this *State instance, not to a
+	// twice, or reconcile flipping a transient status back. Guarded by
+	// saveMu (see above). The cache is keyed to this *State instance, not to a
 	// path; callers that save the same State to multiple directories must
 	// use separate *State objects.
 	lastWritten []byte
@@ -156,13 +163,7 @@ func LoadState() *State {
 
 // SaveState saves the state to disk
 func SaveState(state *State) error {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	dir, err := state.resolveDirLocked()
-	if err != nil {
-		return err
-	}
-	return state.saveToLocked(dir)
+	return state.update(nil)
 }
 
 // resolveDirLocked returns the directory SaveState should write to: the
@@ -179,23 +180,50 @@ func (s *State) resolveDirLocked() (string, error) {
 	return dir, nil
 }
 
-// saveToLocked marshals the state and atomically writes it to dir, skipping
-// the write when the bytes are identical to the last successful save. Caller
-// must hold s.mu so the marshal, the lastWritten compare, and the write are
-// one atomic unit.
-func (s *State) saveToLocked(dir string) error {
+// update applies change (nil for none) to the fields and saves the state
+// to its directory (resolveDirLocked).
+func (s *State) update(change func()) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	s.mu.Lock()
+	if change != nil {
+		change()
+	}
+	dir, err := s.resolveDirLocked()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	data, err := s.marshalLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.writeHeld(dir, data)
+}
+
+// marshalLocked is the state as state.json holds it. Caller holds s.mu.
+func (s *State) marshalLocked() ([]byte, error) {
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal state: %w", err)
+	}
+	return data, nil
+}
+
+// writeHeld atomically writes data, a marshalled state, to dir, skipping
+// the write when the bytes are identical to the last successful save.
+// Caller holds s.saveMu, so the compare, the write and lastWritten are one
+// unit, but not s.mu, which readers take while the write runs.
+func (s *State) writeHeld(dir string, data []byte) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 	statePath := filepath.Join(dir, StateFileName)
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
-	}
 	if bytes.Equal(s.lastWritten, data) {
 		return nil
 	}
-	if err := AtomicWriteFile(statePath, data, 0644); err != nil {
+	if err := writeStateFile(statePath, data, 0644); err != nil {
 		return err
 	}
 	s.lastWritten = data
@@ -255,23 +283,22 @@ func LoadStateFrom(dir string) *State {
 
 // SaveStateTo saves state to an explicit directory.
 func SaveStateTo(state *State, dir string) error {
+	state.saveMu.Lock()
+	defer state.saveMu.Unlock()
 	state.mu.Lock()
-	defer state.mu.Unlock()
-	return state.saveToLocked(dir)
+	data, err := state.marshalLocked()
+	state.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return state.writeHeld(dir, data)
 }
 
 // InstanceStorage interface implementation
 
 // SaveInstances saves the raw instance data
 func (s *State) SaveInstances(instancesJSON json.RawMessage) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.InstancesData = instancesJSON
-	dir, err := s.resolveDirLocked()
-	if err != nil {
-		return err
-	}
-	return s.saveToLocked(dir)
+	return s.update(func() { s.InstancesData = instancesJSON })
 }
 
 // GetInstances returns the raw instance data
@@ -283,14 +310,7 @@ func (s *State) GetInstances() json.RawMessage {
 
 // DeleteAllInstances removes all stored instances
 func (s *State) DeleteAllInstances() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.InstancesData = json.RawMessage("[]")
-	dir, err := s.resolveDirLocked()
-	if err != nil {
-		return err
-	}
-	return s.saveToLocked(dir)
+	return s.update(func() { s.InstancesData = json.RawMessage("[]") })
 }
 
 // AppState interface implementation
@@ -304,14 +324,7 @@ func (s *State) GetHelpScreensSeen() uint32 {
 
 // SetHelpScreensSeen updates the bitmask of seen help screens
 func (s *State) SetHelpScreensSeen(seen uint32) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.HelpScreensSeen = seen
-	dir, err := s.resolveDirLocked()
-	if err != nil {
-		return err
-	}
-	return s.saveToLocked(dir)
+	return s.update(func() { s.HelpScreensSeen = seen })
 }
 
 // GetUIPrefs returns a copy of the persisted UI layout prefs.
@@ -323,12 +336,6 @@ func (s *State) GetUIPrefs() UIPrefs {
 
 // SetUIPrefs replaces and persists the UI layout prefs.
 func (s *State) SetUIPrefs(p UIPrefs) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.UI = p.Clone()
-	dir, err := s.resolveDirLocked()
-	if err != nil {
-		return err
-	}
-	return s.saveToLocked(dir)
+	clone := p.Clone()
+	return s.update(func() { s.UI = clone })
 }

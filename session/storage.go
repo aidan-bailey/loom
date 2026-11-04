@@ -8,7 +8,9 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,8 +100,9 @@ type Storage struct {
 	// Tea executes concurrently with each other and with Update — so two
 	// saves, or a save racing a delete, can otherwise interleave their
 	// read-modify-write of the backing store and corrupt s.unrecovered.
-	// Held across the underlying state I/O; that I/O is fast (in-memory
-	// state plus one AtomicWriteFile) and never re-enters Storage.
+	// Held across the underlying state I/O (a write's fsyncs, a load's
+	// reconcile), which never re-enters Storage; what the daemon's loop
+	// reads on every wake comes from view instead.
 	mu sync.Mutex
 
 	state     config.InstanceStorage
@@ -130,6 +133,34 @@ type Storage struct {
 	// Storage loads first, so undecodable records (and loadErr) are known
 	// before anything is written.
 	loaded bool
+
+	// view is what WritesRefused and PreservedTitles answer, published
+	// (publishLocked) under mu after every change to loadErr, unrecovered
+	// or undecodable, and read without it. The daemon's loop asks both on
+	// every wake (core's wsViewOf), and mu is held across a write's fsyncs
+	// and a load's reconcile, which would freeze every client meanwhile.
+	view atomic.Pointer[storageView]
+}
+
+// storageView is a published answer of WritesRefused and PreservedTitles.
+type storageView struct {
+	refused   bool
+	preserved []string
+}
+
+// publishLocked publishes what WritesRefused and PreservedTitles answer
+// now. Caller holds s.mu.
+func (s *Storage) publishLocked() {
+	titles := make([]string, 0, len(s.unrecovered)+len(s.undecodable))
+	for _, d := range s.unrecovered {
+		titles = append(titles, d.Title)
+	}
+	for _, rec := range s.undecodable {
+		if rec.title != "" {
+			titles = append(titles, rec.title)
+		}
+	}
+	s.view.Store(&storageView{refused: s.loadErr != nil, preserved: titles})
 }
 
 // undecodableRecord is one record MigrateAll rejected: raw is written back
@@ -267,6 +298,7 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 		}
 		instances = append(instances, inst)
 	}
+	s.publishLocked()
 	return instances, nil
 }
 
@@ -291,30 +323,25 @@ func (s *Storage) UnrecoveredTitles() []string {
 // subagent hooks sweep — must spare these, or a preserved record keeps
 // its JSON but loses its still-running agent (e.g. a newer loom's session
 // after a downgrade, or a record whose reconcile failed transiently).
+//
+// It reads the published view (publishLocked), never waiting on a write.
 func (s *Storage) PreservedTitles() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	titles := make([]string, 0, len(s.unrecovered)+len(s.undecodable))
-	for _, d := range s.unrecovered {
-		titles = append(titles, d.Title)
+	v := s.view.Load()
+	if v == nil {
+		return []string{}
 	}
-	for _, rec := range s.undecodable {
-		if rec.title != "" {
-			titles = append(titles, rec.title)
-		}
-	}
-	return titles
+	return slices.Clone(v.preserved)
 }
 
 // WritesRefused reports whether the write latch is engaged: the last load
 // could not decode the payload as a whole, so every write returns
 // ErrStorageLoadFailed until a later load succeeds. Callers check it before
 // creating anything new, which could never be persisted — keeping a latched
-// Storage's list to exactly what it loaded (nothing).
+// Storage's list to exactly what it loaded (nothing). It reads the
+// published view (publishLocked), never waiting on a write.
 func (s *Storage) WritesRefused() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.loadErr != nil
+	v := s.view.Load()
+	return v != nil && v.refused
 }
 
 // UndecodableCount returns how many persisted records the last successful
@@ -423,6 +450,7 @@ func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 	data, skipped, err := MigrateAll(s.state.GetInstances())
 	if err != nil {
 		s.loadErr = err
+		s.publishLocked()
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
 	}
 	s.loadErr = nil
@@ -430,6 +458,7 @@ func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 	for _, raw := range skipped {
 		s.undecodable = append(s.undecodable, newUndecodableRecord(raw))
 	}
+	s.publishLocked()
 	return data, nil
 }
 
@@ -445,6 +474,7 @@ func (s *Storage) DeleteAllInstances() error {
 	s.undecodable = nil
 	s.loadErr = nil
 	s.loaded = false
+	s.publishLocked()
 	return s.state.DeleteAllInstances()
 }
 
@@ -498,4 +528,5 @@ func (s *Storage) dropUnrecovered(title string, createdAt time.Time) {
 		filtered = append(filtered, d)
 	}
 	s.unrecovered = filtered
+	s.publishLocked()
 }
