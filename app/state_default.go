@@ -118,6 +118,9 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if m.viewMode == viewWork {
+		return m.handleWorkKey(msg)
+	}
 	if m.viewMode == viewOverview {
 		switch msg.String() {
 		case "enter":

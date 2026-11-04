@@ -98,6 +98,11 @@ const (
 	// (terminal force-hidden), tabbed content panel right. Never
 	// persisted — quit/restart lands in focus.
 	viewWorkbench
+	// viewWork is the host-wide work queue: the jobs sessions submitted with
+	// loom job, what they claim of the caps, and the selected job's log
+	// (work.go). Entered from focus or overview and left for the one it came
+	// from. Never persisted.
+	viewWork
 )
 
 // overviewCursor is the fleet overview's selection in domain coordinates.
@@ -362,6 +367,10 @@ type home struct {
 	// into m.slots and an instance index into that slot's list. Distinct
 	// from the render-space ui.OverviewCursor overviewData() translates to.
 	overviewCursor overviewCursor
+
+	// work is the work view's own state (work.go): the selection, the log
+	// tail and the pager. The jobs it shows are home.queue's.
+	work workState
 
 	// listWidth is the current rendered width of the left list panel
 	// (= int(lastWidth * ListWidthPercent)). Cached for mouse-wheel
@@ -693,13 +702,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	model, cmd := m.update(msg)
-	cmd = tea.Batch(cmd, m.drainCore(), m.checkLink())
+	cmd = tea.Batch(cmd, m.drainCore(), m.checkLink(), m.workDrained())
 	m.publishSelection()
 	return model, cmd
 }
 
 // update is Update's message handler.
 func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.dropWorkMouse(msg) {
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case coreWakeMsg:
 		// The model's loop woke the TUI: Update's drain does the rest, and
@@ -716,6 +728,9 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case hideErrMsg:
 		m.errBox.Clear()
+	case workLogMsg:
+		m.applyWorkLog(msg)
+		return m, nil
 	case scriptDoneMsg:
 		return m, m.handleScriptDone(msg)
 	case scriptResumeMsg:
@@ -1011,6 +1026,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewMode == viewWorkbench {
 			if scan := m.workbenchScanCmd(); scan != nil {
 				cmds = append(cmds, scan)
+			}
+		}
+		// The work view's log grows between the model's samples.
+		if m.viewMode == viewWork {
+			if read := m.workTick(); read != nil {
+				cmds = append(cmds, read)
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -1631,7 +1652,7 @@ func (m *home) instanceChanged() tea.Cmd {
 	// clears when the user actually drops into focus on the card —
 	// the enter/esc handlers flip viewMode to viewFocus before calling
 	// instanceChanged, so the landing itself performs the clear.
-	if selected != nil && m.viewMode != viewOverview {
+	if selected != nil && m.viewMode != viewOverview && m.viewMode != viewWork {
 		delete(m.bells, selected.ID)
 		selected.Bell = false // the copy the panes and menu get below
 	}
@@ -1961,6 +1982,8 @@ func (m *home) View() tea.View {
 	var mainContent string
 	if m.viewMode == viewOverview && m.state != stateFileExplorer {
 		mainContent = m.overview.Render(m.overviewData())
+	} else if m.viewMode == viewWork {
+		mainContent = m.workContent()
 	} else if m.viewMode == viewWorkbench && m.state != stateFileExplorer {
 		// Workbench: agent split (terminal hidden) left, tabbed content
 		// panel right. The rail is not rendered — listWidth is zeroed by
@@ -2012,6 +2035,8 @@ func (m *home) View() tea.View {
 			hint = "enter focus · ] next waiting · z collapse · n new · tab/esc focus · q quit"
 		} else if m.viewMode == viewWorkbench {
 			hint = "esc focus · 1-5 panel · e edit · f follow · i attach · ] next waiting · q quit"
+		} else if m.viewMode == viewWork {
+			hint = m.workHint()
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())
@@ -2098,10 +2123,10 @@ func (m *home) windowTitle() string {
 // overlays, pickers, and non-default states keep the cursor hidden
 // (Bubble Tea's default when View.Cursor is nil).
 func (m *home) attachCursor(v *tea.View) {
-	// The overview grid has no pane content on screen — a hardware
-	// cursor positioned from the hidden split layout would float over
-	// arbitrary card cells.
-	if m.viewMode == viewOverview {
+	// The overview grid and the work view have no pane content on screen — a
+	// hardware cursor positioned from the hidden split layout would float
+	// over arbitrary cells.
+	if m.viewMode == viewOverview || m.viewMode == viewWork {
 		return
 	}
 	// Workbench: only the agent split (left column, x-offset 0) shows a
