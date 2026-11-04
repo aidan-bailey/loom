@@ -387,5 +387,6 @@ type ExitError struct {
 func (e *ExitError) Error() string { return e.Msg }
 
 // exitNotRun is the exit code of a follower whose job was lost, could not
-// start or was cancelled: it did not run to an exit of its own.
+// start or was cancelled, or that lost the daemon or found it did not know the
+// job: it saw no exit of the job's own.
 const exitNotRun = 125

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/claudemod"
@@ -598,9 +599,9 @@ func TestJobWait_ACancelledJobExits125(t *testing.T) {
 	assert.Equal(t, 125, exitCode(t, err))
 	assert.Contains(t, errOut, "loom: job 1 was cancelled with loom job cancel\n")
 
-	_, _, err = runJob(t, "wait", "99")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "there is no job 99")
+	_, errOut, err = runJob(t, "wait", "99")
+	assert.Equal(t, 125, exitCode(t, err), "a job the daemon does not know is not the job's own exit")
+	assert.Equal(t, "loom: there is no job 99\n", errOut)
 }
 
 // An interrupted follower of a job with no owner has no message to ask for;
@@ -622,23 +623,37 @@ func TestJobRun_AnInterruptWithNoOwnerSaysSo(t *testing.T) {
 	assert.Equal(t, sched.Done, v.State, "the job ran on and finished")
 }
 
-// Losing the daemon under a follower says the job goes on and how to follow
-// it again; the follower exits as for any error.
+// Losing the daemon under a follower says the job may still be running and
+// how to follow it again, and ends it with 125: the job's own exit code is
+// not known.
 func TestJobWait_LosingTheDaemonSaysTheJobContinues(t *testing.T) {
 	isolateWorkspaces(t)
 	t.Setenv(claudemod.EnvLaunch, "")
 	d := serveDaemon(t, "true")
-	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sleep", "2")
+	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sh", "-c", "echo up; sleep 2")
 	require.NoError(t, err)
+	d.waitLog(t, 1, "up")
+	// Close the server only once the follower has connected (and so holds the
+	// running job in its replica), not after a guessed delay.
+	dial := Join
+	connected := make(chan struct{})
+	Join = func() (*rpc.Client, error) {
+		c, err := dial()
+		if err == nil {
+			close(connected)
+		}
+		return c, err
+	}
+	t.Cleanup(func() { Join = dial })
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		<-connected
 		d.srv.Close()
 	}()
 
-	_, _, err = runJob(t, "wait", "1")
+	_, errOut, err := runJob(t, "wait", "1")
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "job 1 continues (loom job wait 1 follows it again): lost the loom daemon")
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Equal(t, "loom: lost the daemon; job 1 may still be running (loom job wait 1 follows it again)\n", errOut)
 }
 
 // An interrupt that lands after the job ended reports its outcome, not that
