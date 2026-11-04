@@ -493,6 +493,10 @@ const exitNotRun = 125
 // logPoll is how often a follower reads output.log for new output.
 var logPoll = 200 * time.Millisecond
 
+// notifyReq names the interrupted follower's NotifyJob request, apart from
+// the SubmitJob request (sessionReq) the same command made before it.
+const notifyReq core.ReqID = 2
+
 // notifyWait bounds an interrupted follower's wait for the daemon to answer
 // its request for a message.
 var notifyWait = 2 * time.Second
@@ -637,7 +641,7 @@ func (f *jobFollower) run() (core.JobView, error) {
 			return v, nil
 		}
 		if err := f.d.Err(); err != nil {
-			return v, fmt.Errorf("lost the loom daemon: %w", err)
+			return v, fmt.Errorf("job %d continues (loom job wait %d follows it again): lost the loom daemon: %w", f.id, f.id, err)
 		}
 		if err := f.d.ctx.Err(); err != nil {
 			return v, err
@@ -725,6 +729,7 @@ func (d *client) follow(out io.Writer, id sched.JobID, signalled func() os.Signa
 // so only when the daemon took the request; otherwise it says how to follow
 // the job again. The exit code is the signal's.
 func (d *client) interrupted(id sched.JobID, sig os.Signal) error {
+	d.events() // a job that has just ended must not look running
 	v, _ := jobOf(d.Queue(), id)
 	switch {
 	case v.State.Finished():
@@ -744,11 +749,11 @@ func (d *client) interrupted(id sched.JobID, sig os.Signal) error {
 func (d *client) askForMessage(id sched.JobID) bool {
 	n := *d
 	n.ctx = context.Background()
-	n.NotifyJob(id, sessionReq)
+	n.NotifyJob(id, notifyReq)
 	var reply core.Reply
 	got, err := n.await(notifyWait, func(events []core.Event) bool {
 		for _, ev := range events {
-			if r, ok := ev.(core.Reply); ok && r.Req == sessionReq {
+			if r, ok := ev.(core.Reply); ok && r.Req == notifyReq {
 				reply = r
 				return true
 			}

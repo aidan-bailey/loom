@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -576,6 +577,7 @@ func TestJobRun_ShowsItsPlaceInLineThenItsStart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "next\n", out)
 	assert.Regexp(t, `(?s)loom: job 2 queued \(1st in line, 1 running\)\n.*loom: job 2 started after \d+s\n.*loom: job 2 done in \S+ \(exit 0\)\n`, errOut)
+	assert.Equal(t, 1, strings.Count(errOut, "job 2 queued (1st in line, 1 running)"), "the place is said once while it holds, not on every poll: %q", errOut)
 	d.waitFinished(t, 1)
 }
 
@@ -615,8 +617,66 @@ func TestJobRun_AnInterruptWithNoOwnerSaysSo(t *testing.T) {
 	assert.Equal(t, 143, exitCode(t, err))
 	assert.Contains(t, errOut, "loom: job 1 continues (loom job wait 1 follows it again)\n")
 	assert.NotContains(t, errOut, "a message will bring")
+	assert.NotContains(t, errOut, "no message was asked for", "a job with no owner is not asked about")
 	v := d.waitFinished(t, 1)
 	assert.Equal(t, sched.Done, v.State, "the job ran on and finished")
+}
+
+// Losing the daemon under a follower says the job goes on and how to follow
+// it again; the follower exits as for any error.
+func TestJobWait_LosingTheDaemonSaysTheJobContinues(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sleep", "2")
+	require.NoError(t, err)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		d.srv.Close()
+	}()
+
+	_, _, err = runJob(t, "wait", "1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "job 1 continues (loom job wait 1 follows it again): lost the loom daemon")
+}
+
+// An interrupt that lands after the job ended reports its outcome, not that
+// it continues, and asks for no message; the exit code is the signal's.
+func TestJobInterrupted_AJobThatEndedReportsItsOutcome(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "run", "-d", "quick", "--", "true")
+	require.NoError(t, err)
+	var errOut bytes.Buffer
+	c := &client{Client: d.client, errOut: &errOut, ctx: context.Background()}
+
+	err = c.interrupted(1, syscall.SIGTERM)
+
+	assert.Equal(t, 143, exitCode(t, err))
+	assert.Regexp(t, `loom: job 1 done in \S+ \(exit 0\)\n`, errOut.String())
+	assert.NotContains(t, errOut.String(), "continues")
+	assert.NotContains(t, errOut.String(), "no message was asked for")
+}
+
+// The follower's request for a message is refused when the daemon refuses it
+// (here the job has no owner), and the refusal is written, not swallowed.
+// interrupted itself asks only for an owned job that has not ended, so a test
+// reaches the refusal through askForMessage: through interrupted it would
+// need the job to end between the follower's look and its request.
+func TestJobAskForMessage_ADaemonRefusalIsWritten(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sleep", "2")
+	require.NoError(t, err)
+	var errOut bytes.Buffer
+	c := &client{Client: d.client, errOut: &errOut, ctx: context.Background()}
+
+	assert.False(t, c.askForMessage(1))
+	assert.Contains(t, errOut.String(), "loom: no message was asked for: job 1 has no owner\n")
+	d.waitFinished(t, 1)
 }
 
 // An interrupted follower of a session's job asks the daemon for a message
