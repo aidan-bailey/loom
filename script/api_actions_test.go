@@ -358,3 +358,29 @@ func TestSyncActions_FleetPrimitivesReachHost(t *testing.T) {
 	assert.Equal(t, 1, h.resizeSplitUpCalls)
 	assert.Equal(t, 1, h.resizeSplitDownCalls)
 }
+
+func TestSyncActions_ToggleWorkViewReachesTheHost(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	h := &fakeHost{}
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("Q", function() cs.actions.toggle_work_view() end)`))
+	e.EndLoad()
+
+	matched, err := e.Dispatch(context.Background(), "Q", h)
+	require.NoError(t, err)
+	assert.True(t, matched)
+	assert.Equal(t, 1, h.toggleWorkViewCalls)
+}
+
+func TestDefaults_WTogglesTheWorkView(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.LoadDefaults()
+	h := &fakeHost{}
+
+	matched, err := e.Dispatch(context.Background(), "w", h)
+	require.NoError(t, err)
+	assert.True(t, matched, "script/defaults.lua binds w")
+	assert.Equal(t, 1, h.toggleWorkViewCalls)
+}

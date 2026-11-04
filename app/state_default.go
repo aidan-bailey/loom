@@ -26,7 +26,7 @@ var overviewKeyAllowed = map[string]bool{
 	"j": true, "k": true, "up": true, "down": true,
 	"]": true, "[": true, "tab": true,
 	"D": true, "r": true, "R": true,
-	"q": true, "?": true, "W": true, "S": true,
+	"q": true, "?": true, "W": true, "S": true, "w": true,
 	"{": true, "}": true, "l": true, ";": true,
 }
 
@@ -50,7 +50,7 @@ var offlineKeyAllowed = map[string]bool{
 	"shift+up": true, "shift+down": true, "alt+pgup": true, "alt+pgdown": true,
 	"K": true, "J": true, "g": true, "G": true,
 	"1": true, "2": true, "3": true, "4": true, "5": true,
-	"ctrl+left": true, "ctrl+right": true,
+	"ctrl+left": true, "ctrl+right": true, "w": true,
 }
 
 // offlineKeyRefused reports whether the offline gate refuses key, saying so

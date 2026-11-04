@@ -108,6 +108,10 @@ type Host interface {
 	// (rail + panes) and the fleet-overview card grid, persisting the
 	// chosen mode so it survives restarts.
 	ToggleOverview()
+	// ToggleWorkView flips between the work view (the jobs sessions
+	// submitted with loom job, over the whole host) and the focus or
+	// overview layout it was entered from. Not persisted.
+	ToggleWorkView()
 	ResizeSplitUp()
 	ResizeSplitDown()
 

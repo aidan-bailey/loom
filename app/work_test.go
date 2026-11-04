@@ -895,3 +895,80 @@ func TestWorkOpen_SaysWhyItCannot(t *testing.T) {
 		})
 	}
 }
+
+func TestToggleWorkView_ScriptHostEntersAndLeaves(t *testing.T) {
+	m := newTestHome(t)
+	toggle := func() {
+		host := newScriptHost(m)
+		host.ToggleWorkView()
+		_, _, actions := host.drain()
+		require.Len(t, actions, 1, "ToggleWorkView must defer exactly one model mutation")
+		_ = m.handleScriptDone(scriptDoneMsg{pendingActions: actions})
+	}
+
+	toggle()
+	assert.Equal(t, viewWork, m.viewMode)
+	toggle()
+	assert.Equal(t, viewFocus, m.viewMode)
+
+	m.state = stateSettings
+	toggle()
+	assert.Equal(t, viewFocus, m.viewMode, "a dialog that opened meanwhile keeps the layout under it")
+}
+
+func TestWKey_TogglesTheWorkViewThroughTheScriptEngine(t *testing.T) {
+	m := newTestHome(t)
+	press := func(key string) {
+		t.Helper()
+		_, cmd := handleStateDefaultKey(m, keyFor(t, key))
+		require.NotNil(t, cmd, "%q dispatches to the script engine", key)
+		msg, ok := cmd().(scriptDoneMsg)
+		require.True(t, ok)
+		require.NoError(t, msg.err)
+		_ = m.handleScriptDone(msg)
+	}
+
+	press("w")
+	assert.Equal(t, viewWork, m.viewMode, "w enters from focus")
+	press("w")
+	assert.Equal(t, viewFocus, m.viewMode, "and leaves")
+
+	m.viewMode = viewOverview
+	press("w")
+	assert.Equal(t, viewWork, m.viewMode, "w enters from overview")
+	press("w")
+	assert.Equal(t, viewOverview, m.viewMode, "and returns to it")
+}
+
+func TestWKey_TheWorkbenchDropsIt(t *testing.T) {
+	m := newTestHome(t)
+	m.viewMode = viewWorkbench
+	_, cmd := handleStateDefaultKey(m, keyFor(t, "w"))
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewWorkbench, m.viewMode)
+}
+
+func TestWKey_WorksOffline(t *testing.T) {
+	m := newTestHome(t)
+	m.link.state = linkWaiting
+	for _, want := range []viewMode{viewWork, viewFocus} {
+		_, cmd := handleStateDefaultKey(m, keyFor(t, "w"))
+		require.NotNil(t, cmd, "w only moves the TUI: the offline gate lets it through")
+		msg, ok := cmd().(scriptDoneMsg)
+		require.True(t, ok)
+		_ = m.handleScriptDone(msg)
+		assert.Equal(t, want, m.viewMode)
+	}
+}
+
+func TestWorkView_TheQueueStaysReadableOffline(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"), queueJob(16, sched.Queued, "b"))
+	m.link.state = linkWaiting
+	pressWork(t, m, "j")
+	assert.Equal(t, sched.JobID(16), selectedWork(t, m), "the last replica can still be walked")
+	pressWork(t, m, "enter")
+	assert.NotNil(t, m.work.pager, "and its logs opened")
+	pressWork(t, m, "esc")
+	pressWork(t, m, "esc")
+	assert.Equal(t, viewFocus, m.viewMode, "esc leaves")
+}

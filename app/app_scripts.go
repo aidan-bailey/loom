@@ -390,6 +390,13 @@ func (s *scriptHost) ToggleOverview() {
 	})
 }
 
+// ToggleWorkView implements script.Host. Not persisted, and applied only in
+// stateDefault like the other focus mutations, so a dialog that opened
+// meanwhile keeps the layout under it.
+func (s *scriptHost) ToggleWorkView() {
+	s.deferFocusMutation(func(m *home) { m.toggleWorkView() })
+}
+
 // ResizeSplitUp implements script.Host (divider up = agent shrinks).
 func (s *scriptHost) ResizeSplitUp() {
 	s.deferModelMutation(func(m *home) { m.resizeSplit(-0.05) })
