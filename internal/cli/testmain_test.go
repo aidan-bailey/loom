@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/internal/testenv"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -20,6 +21,9 @@ import (
 // still running afterwards would otherwise reach the developer's default
 // server, where loom's live sessions are.
 func TestMain(m *testing.M) {
+	// A job's runner here is this test binary (sched.TestRunner): when the
+	// daemon starts it as a shim, hand over to the shim before anything else.
+	sched.MaybeRunTestShim()
 	cleanup := testenv.MustIsolateLoomDirs()
 	sock := fmt.Sprintf("lt-cli-%d", os.Getpid())
 	if err := os.Setenv(tmux.EnvTmuxSocket, sock); err != nil {

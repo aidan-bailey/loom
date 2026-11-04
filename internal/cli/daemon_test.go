@@ -16,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/require"
 )
@@ -85,6 +86,9 @@ func serveDaemonOn(t *testing.T, program string, ex cmd.Executor) *testDaemon {
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
 	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: ex})
+	// A job here is a real process group: its runner is this test binary
+	// (sched.TestRunner), installed before Boot, which adopts and starts jobs.
+	model.SetJobRunnerForTest(sched.TestRunner())
 	model.Boot()
 	loop := core.Start(model)
 	srv := rpc.NewServer(loop)
