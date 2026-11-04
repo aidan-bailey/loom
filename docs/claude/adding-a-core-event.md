@@ -8,7 +8,7 @@
 
 ## Decide the kind
 
-- **A state event** carries a published view whole (`WorkspacesChanged`, `ModelChanged`, `AccountsChanged`, `GitHubChanged`, `ViewsChanged`). Only the newest matters: the server coalesces it, the replica keeps it, and `Sync` hands out one per kind in the model's publish order. The model publishes it by diffing in `syncEvents` (`core/views.go`) or `publishState` (`core/state_publish.go`), never by hand.
+- **A state event** carries a published view whole (`WorkspacesChanged`, `ModelChanged`, `AccountsChanged`, `GitHubChanged`, `QueueChanged`, `ViewsChanged`). Only the newest matters: the server coalesces it, the replica keeps it, and `Sync` hands out one per kind in the model's publish order. The model publishes it by diffing in `syncEvents` (`core/views.go`) or `publishState` (`core/state_publish.go`), never by hand.
 - **An event naming a request** carries `Req` (`Started`, `Recovered`, `Notice`, `Reply`). The server routes it so only the requester sees its own ID.
 - **Any other event** is delivered once, in order, to every client, and never dropped or coalesced.
 

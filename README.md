@@ -13,7 +13,7 @@ Loom is a terminal app that manages multiple [Claude Code](https://github.com/an
 - Each task gets its own isolated git workspace, so no conflicts
 - Lua-scripted keymap and a workspace registry for multi-repo flows
 - Agents run under a background daemon, so they keep working after you quit loom, and every terminal you open shows the same sessions
-- Drive sessions from the shell or a script (`loom session new`, `list`, `send`, `pause`, `resume`, `kill`)
+- Drive sessions from the shell or a script (`loom session new`, `list`, `send`, `pause`, `resume`, `kill`), and queue their heavy work against the host's CPU and memory caps (`loom job`)
 - Spread Claude sessions across several Claude accounts (`loom account`)
 - Watch and steer the fleet from an iPhone, with a notification when a session waits on you or finishes (`loom web`; see [Use Loom from Your Phone](USAGE.md#use-loom-from-your-phone))
 

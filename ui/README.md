@@ -8,6 +8,7 @@ Bubble Tea view components. Everything here renders `core.InstanceView` copies t
 - **Right panel** (`split_pane.go`, 80% width): agent and terminal panes stacked vertically (70/30 default split, resized with `ctrl+up`/`ctrl+down`, terminal hidden with `T`) and a hotkey-toggled diff overlay (`diff.go`). `SplitPane.HitTest` maps a cell to pane content for mouse selection, which works over the rendered text (`selection.go`).
 - **Overview** (`overview.go`): the fleet card grid of overview mode.
 - **Workbench** (`workbench.go`): the right half of workbench mode, with markdown (`markdown.go`; Glamour styles in `markdown_style.go`), diff, files, terminal and review tabs. It holds the review pane through the `ReviewPane` interface.
+- **Work** (`work.go`): the work view, the host's job queue, rendered from a `core.QueueView` (`RenderWork`, and `RenderWorkPager` for a job's log). Everything an agent wrote is cleaned before it is drawn (`CleanText`). The rail and overview cards show a job badge, set by `app` through `SetJobBadges` (`card.go`).
 - `quick_input.go` is the inline input bar that sends text to tmux; `workspace_tab_bar.go` renders the workspace tabs; `account_strip.go` the accounts row (`AccountStrip`, whose `SetWarning` leads the row with the credential-override warning); `menu.go` the bottom menu; `err.go` the error and info bar.
 
 ## Panes and scrolling
@@ -22,7 +23,7 @@ Bubble Tea view components. Everything here renders `core.InstanceView` copies t
 
 ## Sub-packages
 
-- `ui/overlay/` — modal dialogs: text input, text, confirmation, branch, profile and workspace pickers, file explorer, settings (with the Accounts and Profiles managers and the Claude Preferences screen), merge picker, Session Launch Options and issue picker. The settings overlay's `SetAccountNotice` puts a screen-wide notice above the Accounts screen's rows (`AccountsManager.SetNotice`); Session Launch Options' `SetAccountNotice` puts one under its Account row.
+- `ui/overlay/` — modal dialogs: text input, text, confirmation, branch, profile and workspace pickers, file explorer, settings (with the Accounts and Profiles managers and the Claude Preferences screen), merge picker, Session Launch Options, issue picker and the work view's caps form (`ui/overlay/workCapsOverlay.go`). The settings overlay's `SetAccountNotice` puts a screen-wide notice above the Accounts screen's rows (`AccountsManager.SetNotice`); Session Launch Options' `SetAccountNotice` puts one under its Account row.
 - `ui/review/` (package `reviewui`) — the embedded review pane, vendored from kevindutra/crit (MIT, see `NOTICE.md`) with theme-hooked styles: doc-review and code-review modes behind one `Pane` type, which implements `ui.ReviewPane`. `NewDocPane`/`NewCodePane` build it; `LoadCmd` reads documents, diffs and review state off the Update goroutine; `Busy()` reports a capture-all state (comment modal, tab search, visual selection); while idle, `claimsIdleKey` claims only the keys the pane acts on; persistence results arrive as `SavedMsg`. Package `ui` holds only the `ReviewPane` interface, because `reviewui` imports `ui`.
 
 ## Tests

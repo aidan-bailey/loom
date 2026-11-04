@@ -25,12 +25,19 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `accounts.go`, `usage.go` | the account registry, auth, sync and reload (`InitAccounts`, `ReloadAccounts`, `maybeReloadAccounts`, `publishAccounts`, `accountsRefreshJob`), usage probes (`maybeUsageProbe`, `deliverUsage`) |
 | `claude_tmp.go` | `requestClaudeTmpSweep`, `maybeClaudeTmpSweep` |
 | `build_sweep.go` | `maybeBuildSweep`, `SweepBuilds`, `buildSweepTargets`, `buildSweepJob`, `deliverBuildSweep` |
+| `queue.go` | the work queue's state, boot, adoption and retention: `queueState`, `bootQueue`, `loadQueue`, `refreshPolicy`, `saveQueue`, `saveQueueQuiet`, `markPendingNotices`, `adoptJobs`, `reprobeHeld`, `retainFinished` |
+| `queue_admit.go` | admission and starting: `admitJobs`, `tickQueue`, `startJob`, `runJobStart`, `deliverJobStarted` |
+| `queue_watch.go` | the gated lock pass and settling: `maybeQueue`, `queuePassFor`, `runQueuePass`, `deliverQueuePass`, `settleGone`, `finishJob`, `applyUsage`, `lockHeld`, `signalAlive` |
+| `queue_ops.go` | the queue's operations: `submitJob`, `cancelJob`, `moveJobToFront`, `notifyJob`, `setSchedulerCaps`, `cancelOwnerJobs` |
+| `queue_notice.go` | a job's end sent to its owner's Claude: `sendJobNotice`, `noticeTarget`, `buildNoticeJob`, `deliverJobNotice`, `composeNotice`, `readLogTail` |
+| `queue_requests.go` | the queue's requests: `SubmitJob`, `CancelJob` (`CancelFrom`), `MoveJobToFront`, `NotifyJob`, `SetSchedulerCaps` |
+| `queue_view.go` | the published queue: `QueueView`, `JobView`, `Queue`, `queueView`, `queueJobView`, published as the `QueueChanged` event (defined in `events.go`; `publishQueue` in `state_publish.go` emits it) |
 | `settings.go` | `SaveSettings`, `SetUIPrefs`, `SetHelpScreensSeen` |
 | `web.go`, `web_store.go` | the web settings and devices: `WebView`, `WebDevice`, `NotifySettings`, `Pairing`, `PushSubscription`, `PushState`, the validators (`ValidateWebListen`, `ValidateWebOrigin`, `ValidateDeviceName`, `NormalizePairingCode`), the requests `ConfigureWeb`, `PairDevice` and `RevokeDevice`, and `web.json` (read, atomic write, the VAPID key) |
 | `web_host.go`, `loop_web.go` | `core.WebHost`, the web layer's host (never on the wire), and `ValidatePushSubscription`; `*Loop` implements it |
 | `view.go`, `views.go` | `core.InstanceView`; `idOf`, `viewOf`, `Views(id)`/`View(id)`, `cloneViews`, `syncEvents` |
 | `workspace_view.go`, `workspace_views.go`, `workspace_requests.go` | `core.WorkspaceView`, `wsIDOf`, `publishWorkspaces`, the workspace requests |
-| `state_views.go`, `state_publish.go` | `ModelView`, `AccountsView`, `GitHubView`, `WorkspacesView`; `publishState`, `Snapshot` |
+| `state_views.go`, `state_publish.go` | `ModelView`, `AccountsView`, `GitHubView`, `WorkspacesView`; `publishState`, `publishQueue`, `Snapshot` |
 | `events.go`, `events_json.go`, `wire_error.go` | every `core.Event`, `EventTypes()`, the JSON forms of `Notice` and `Reply`, `core.WireError` |
 | `iface.go` | `core.Core`, the wire's source |
 | `loop.go`, `loop_core.go` | `core.Loop` (the health tick's timer and the hook timer) and its `Core` forwarders |
@@ -95,18 +102,19 @@ Clients see an instance only as a `core.InstanceView` (`view.go`): everything th
 
 A workspace crosses as a `core.WorkspaceID` (`wsIDOf`, a hash of its canonical config dir, so every daemon over one disk agrees and a tab closed and reopened shows the same one) and a `core.WorkspaceView` (`workspace_view.go`; `LoadErr` is the text of a failed load, "" once it loaded), answered by `Workspaces()` (every served workspace, in serve order) and `Workspace(id)`. The workspace requests take and return IDs and views (`workspace_requests.go`: `Workspaces`, `Open`, `Views`, `Create`, `IsLoaded`, `Registry`, `ReloadRegistry`). `Started`/`Recovered` name their owner by ID with its label.
 
-`SaveSettings` (`settings.go`) replaces a workspace's settings, writes its `config.json` and applies the change at once: that workspace's launch toggles in `session`, and, for the global workspace only, the program the accounts' Claude commands run with (`Options.Program`, the global config's in the daemon, then the global workspace's last saved default program). The program a client's drafts default to is the client's own (`home.program` in the TUI). `SetUIPrefs` and `SetHelpScreensSeen` write its `state.json`.
+`SaveSettings` (`settings.go`) replaces a workspace's settings, writes its `config.json` and applies the change at once: that workspace's launch toggles in `session`, and, for the global workspace only, the program the accounts' Claude commands run with (`Options.Program`, the global config's in the daemon, then the global workspace's last saved default program). Saving the global workspace keeps the `scheduler` block as it is on disk (a save never rewrites the caps; `SetSchedulerCaps` does), and a global `config.json` that cannot be read or parsed refuses the save. The program a client's drafts default to is the client's own (`home.program` in the TUI). `SetUIPrefs` and `SetHelpScreensSeen` write its `state.json`.
 
 `Registry()` is a `RegistryView` copy (the registered workspaces, the open list, `LastUsed`). `ReloadRegistry` rereads the registry, serves any workspace registered since, and applies removals and renames made since (a hand edit of `workspaces.json` included). The registry's writes are `Register` (which returns the new workspace's view, for the client to `Open`), `SetLastUsed` and `PersistOpenList` (the open list a client hands it, its tabs then the ones it failed to open: the model only writes it, and never acts on it). `AccountNames()` is all the TUI sees of the account registry. Every query hands out copies (`GitHubSnapshot`, `AccountUsage`, `AccountSync`, the views; `core/copies_test.go`).
 
 ## Publishing state
 
-`Sync` (`syncEvents`) publishes by diffing, in a fixed order and ahead of every other event: one `WorkspacesChanged` carrying every served workspace's view whenever any changed (`publishWorkspaces`, `workspace_views.go`), then `publishState`'s events (`state_publish.go`), then a `ViewsChanged` for each served workspace whose views changed since the last publish, carrying deep copies (`cloneViews`). It also forgets the IDs of instances no served workspace holds.
+`Sync` (`syncEvents`) publishes by diffing, in a fixed order and ahead of every other event: one `WorkspacesChanged` carrying every served workspace's view whenever any changed (`publishWorkspaces`, `workspace_views.go`), then `publishState`'s events (`ModelChanged`, `AccountsChanged`, `GitHubChanged`, then `QueueChanged`; `state_publish.go`), then a `ViewsChanged` for each served workspace whose views changed since the last publish, carrying deep copies (`cloneViews`). It also forgets the IDs of instances no served workspace holds.
 
-`publishState` emits three events, each carrying a state view of `state_views.go` (the fourth, `WorkspacesView`, is the workspace views):
+`publishState` emits four events, each carrying a published view (the first three are state views of `state_views.go`, the fourth `QueueView` of `queue_view.go`; `WorkspacesView`, the workspace views, is published ahead of them):
 - `ModelChanged` (`ModelView`: the default account's remote-control auth, the registry and `Web`, the web settings and devices);
 - `AccountsChanged` (`AccountsView`: the names, the loaded and extra flags, the Claude program, the accounts, their auth, link reports and usage, the probes' errors, `CredentialOverride` and `RunningAsAccount`);
 - `GitHubChanged` (`GitHubView`: the snapshots, the poll errors, the aliases and gh's availability).
+- `QueueChanged` (`QueueView`, `queue_view.go`: the host, the caps as configured and in effect, why admission is paused, what the running jobs claim and use, and every job's `JobView`; `publishQueue` emits it on the first `Sync` and whenever the queue changed).
 
 The model and account views are diffed whole (`reflect.DeepEqual`). The views' `Clone` methods deep-copy their slices and keep every other field (a `ModelView.Clone` that rebuilt the `RegistryView` once lost `LastUsed`, so every replica's restore focused the first tab). The account view is also republished after every usage probe round (`usageGen`, bumped in `deliverUsage`), since the TUI renders a sample's age; the GitHub view, whose snapshots can be large, is republished whenever a poll lands (`ghGen`, bumped in `deliverGH`, the one place its state changes). Nothing emits `AccountsChanged` or `GitHubChanged` by hand.
 
