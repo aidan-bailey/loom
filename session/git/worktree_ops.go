@@ -514,6 +514,17 @@ func (g *GitWorktree) cleanup(deleteBranch, toTrash bool) (err error) {
 		log.For("git").Debug("worktree.cleanup.end", args...)
 	}()
 
+	// The repository is gone: there is no registration to prune and no
+	// branch to delete, and the tree, if still on disk, may hold the only
+	// copy of the work. Leave it and say so, so the kill can finish.
+	if g.RepoGone() {
+		removeTitleSidecar(g.worktreePath)
+		if _, err := os.Lstat(g.worktreePath); err == nil {
+			return &LeftoverDirError{Path: g.worktreePath, Err: fmt.Errorf("its repository %s is gone", g.repoPath)}
+		}
+		return nil
+	}
+
 	var errs []error
 	var leftover error
 	removed := false
@@ -581,6 +592,14 @@ func (g *GitWorktree) cleanup(deleteBranch, toTrash bool) (err error) {
 	}
 
 	return nil
+}
+
+// RepoGone reports whether the worktree's repository is positively gone:
+// its path does not exist. Any other stat failure is no answer, and reads
+// false.
+func (g *GitWorktree) RepoGone() bool {
+	_, err := os.Stat(g.repoPath)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // isUntrackedTreeErr reports whether a `git worktree remove` failure says
