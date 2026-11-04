@@ -334,12 +334,12 @@ func stateText(j core.JobView) string {
 }
 
 // ranAs says how a failed job ran: ran is false when it never did (its start
-// failed, or it has no exit record), else it was killed by the signal sig (a
-// name) or exited with code.
+// failed, as core.JobView.StartFailed says, which the notice and the TUI use
+// too), else it was killed by the signal sig (a name) or exited with code.
 func ranAs(j core.JobView) (sig string, code int, ran bool) {
 	e := j.Exit
 	switch {
-	case e == nil || e.Error != "":
+	case j.StartFailed() || e == nil:
 		return "", 0, false
 	case e.Signal != "":
 		return e.Signal, 0, true

@@ -441,6 +441,10 @@ func TestJobOutcome(t *testing.T) {
 	noStart := ran(sched.Failed, nil)
 	noStart.Failure = "its folder is gone"
 	execFailed := ran(sched.Failed, &sched.Exit{Code: 127, Error: `exec: "nope": executable file not found in $PATH`})
+	// The daemon never writes this pair; core.JobView.StartFailed counts it as
+	// a start that failed, as the notice and the TUI do, and so does the CLI.
+	reasonedWithExit := ran(sched.Failed, &sched.Exit{Code: 3})
+	reasonedWithExit.Failure = "its folder is gone"
 
 	for _, tc := range []struct {
 		name string
@@ -459,6 +463,7 @@ func TestJobOutcome(t *testing.T) {
 		{"cancelled, no reason", cancelledBare, "job 5 was cancelled", exitNotRun},
 		{"lost", lost, "job 5 was lost: its runner died without a result (the host may have rebooted)", exitNotRun},
 		{"its start failed", noStart, "job 5 could not start: its folder is gone", exitNotRun},
+		{"a reason beside an exit record without an error", reasonedWithExit, "job 5 could not start: its folder is gone", exitNotRun},
 		{"its exec failed", execFailed, `job 5 could not start: exec: "nope": executable file not found in $PATH`, exitNotRun},
 	} {
 		line, code := jobOutcome(tc.job)
