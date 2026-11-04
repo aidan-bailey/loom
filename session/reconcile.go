@@ -238,13 +238,13 @@ func heldElsewhere(name string, home SessionHome, dir string, found bool, err er
 }
 
 // sessionHeldElsewhere is HeldElsewhere for the session ts names, asked on
-// ts's server (the session a Kill is about to close or a Resume to
-// reattach), against home, where the record's own session starts. It
-// returns the directory the session under the name was started in, for the
-// caller's message. The caller passes home from its own snapshot of the
-// record's handles: Kill clears the instance's worktree before it asks, and
-// Instance.SessionHome read then would give an agent no home at all, so
-// that its own session read as another's.
+// ts's server (the session a Resume is about to reattach), against home,
+// where the record's own session starts. It returns the directory the
+// session under the name was started in, for the caller's message. The
+// caller passes home from its own snapshot of the record's handles, not
+// Instance.SessionHome read later, which can give an agent no home at all,
+// so that its own session reads as another's. Kill and Pause judge their
+// sessions from one listing instead (placeRecordSessions).
 func sessionHeldElsewhere(ts *tmux.Session, home SessionHome) (held bool, dir string, err error) {
 	dir, found, err := ts.StartDir()
 	held, err = heldElsewhere(ts.SessionName(), home, dir, found, err)

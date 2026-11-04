@@ -1,7 +1,8 @@
 // The screens app.mjs renders by route name: each a Screen (the body, in
 // <main>) and a Head (its context row and, for a session, its tabs, in the
-// header under the status row), both with the props {snap, stale, link,
-// route, go, act, toast, pending}. Pairing is app.mjs's own screen.
+// pinned header; the status row is the footer's), both with the props
+// {snap, stale, link, route, go, act, toast, pending}. Pairing is app.mjs's
+// own screen.
 import { Fleet, FleetHead } from "./fleet.mjs";
 import { Session, SessionHead } from "./session.mjs";
 import { NewSession, NewHead } from "./newsession.mjs";

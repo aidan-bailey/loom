@@ -336,7 +336,7 @@ input.text {
 .sc-group { margin-top: 14px; }
 .sc-section { margin-top: 16px; }
 /* scroll-margin-top clears the pinned header (the fleet's context row,
-   44px, plus room) when a tile jumps to a group. */
+   44px, plus room) when an in-page jump lands on a group. */
 .sc-group-title,
 .sc-rule {
   display: flex;
