@@ -35,7 +35,9 @@ const snapshotSlack = 2 * time.Second
 //
 // When zipPath exists and nothing under src (src included) was modified
 // after the zip's own mtime, it writes nothing. Otherwise it writes a fresh
-// zip: src's content, walked as Archive walks it, then every entry of the
+// zip: src's content, walked as Archive walks it (a file unchanged since
+// the previous zip's walk began is copied across from it compressed, never
+// read again: see reusable), then every entry of the
 // previous zip that src no longer has (Claude's cleanup deleted the file),
 // copied across without recompression and named in m.CarriedForward. A
 // file on disk always replaces its archived copy, and nothing an earlier
@@ -57,6 +59,7 @@ func Snapshot(src, zipPath string, m Manifest) (Result, bool, error) {
 	}
 	dir := filepath.Dir(zipPath)
 	var prev *zip.ReadCloser
+	var reuse *reusable
 	if zi, err := os.Lstat(zipPath); err == nil {
 		if !modifiedSince(src, zi.ModTime()) {
 			return Result{}, false, nil
@@ -66,6 +69,11 @@ func Snapshot(src, zipPath string, m Manifest) (Result, bool, error) {
 			name := strings.TrimSuffix(filepath.Base(zipPath), ".zip")
 			if err := os.Rename(zipPath, demotedPath(dir, name, zi.ModTime())); err != nil {
 				return Result{}, false, fmt.Errorf("move the unreadable %s aside: %w", zipPath, err)
+			}
+		} else {
+			reuse = &reusable{stamp: zi.ModTime(), files: make(map[string]*zip.File, len(prev.File))}
+			for _, e := range prev.File {
+				reuse.files[e.Name] = e
 			}
 		}
 	}
@@ -104,7 +112,7 @@ func Snapshot(src, zipPath string, m Manifest) (Result, bool, error) {
 		return flate.NewWriter(w, flate.BestSpeed)
 	})
 	seen := map[string]bool{}
-	if err := addTree(zw, src, &m, &res, seen); err != nil {
+	if err := addTree(zw, src, &m, &res, seen, reuse); err != nil {
 		return fail(fmt.Errorf("archive %s: %w", src, err))
 	}
 	if prev != nil {
