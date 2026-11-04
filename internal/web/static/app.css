@@ -318,6 +318,7 @@ input.text {
 .sc-tile .sc-legend { letter-spacing: 0.06em; text-transform: uppercase; }
 .sc-tile-fig { display: flex; align-items: center; gap: 4px; font-size: 17px; font-weight: 700; line-height: 1.2; color: var(--title); white-space: nowrap; }
 .sc-tile-sub { display: block; margin-top: 4px; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-tile-sub + .sc-tile-sub { margin-top: 0; }
 .sc-stale .sc-tile-fig { color: var(--dim); }
 .sc-glyph { color: var(--dim); }
 .sc-glyph-needs_you { color: var(--attention); }
