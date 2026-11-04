@@ -1329,28 +1329,32 @@ func wqUnreadableLock(t *testing.T, m *Model, id sched.JobID) (restore func()) {
 	return func() { require.NoError(t, os.Chmod(path, 0o600)) }
 }
 
+// wqLockFailuresLogged counts the queue.lock_test_failed records whose line
+// holds marker. The log file is shared by the package's tests, so a marker (a
+// temp dir in a path, or a unique error text) picks out one test's records.
+func wqLockFailuresLogged(t *testing.T, marker string) int {
+	t.Helper()
+	data, err := os.ReadFile(log.LogFilePath())
+	require.NoError(t, err)
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "queue.lock_test_failed") && strings.Contains(line, marker) {
+			n++
+		}
+	}
+	return n
+}
+
 // A queued record whose lock test keeps failing is logged when the failure is
-// new, not at every pass (3 s).
+// new, not at every pass (3 s): the same text is not logged again, a different
+// one is.
 func TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce(t *testing.T) {
 	dir := t.TempDir()
 	old := wqModelAt(t, dir)
 	wqSeed(t, old, wqQueuedRecord(t, 1))
 	require.NoError(t, old.saveQueue())
 	restore := wqUnreadableLock(t, old, 1)
-	defer restore()
-	// The log file is shared by the package's tests: the temp dir in the
-	// lock's path picks out this test's records.
-	logged := func() int {
-		data, err := os.ReadFile(log.LogFilePath())
-		require.NoError(t, err)
-		n := 0
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, "queue.lock_test_failed") && strings.Contains(line, dir) {
-				n++
-			}
-		}
-		return n
-	}
+	logged := func() int { return wqLockFailuresLogged(t, dir) }
 
 	m := wqRestart(t, dir)
 	require.Contains(t, m.queue.unprobed, sched.JobID(1))
@@ -1361,6 +1365,86 @@ func TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce(t *testing.
 
 	require.Contains(t, m.queue.unprobed, sched.JobID(1), "the record is still held")
 	assert.Equal(t, 1, logged(), "the same failure at the next passes is not")
+
+	// The other side: the lock now fails in another way (a symlink loop where
+	// the file was), and that is news.
+	restore()
+	lock := filepath.Join(m.queue.jobDir(1), sched.LockFile)
+	require.NoError(t, os.Remove(lock))
+	require.NoError(t, os.Symlink(lock, lock))
+	m.reprobeHeld()
+
+	require.Contains(t, m.queue.unprobed, sched.JobID(1), "still held")
+	assert.Equal(t, 2, logged(), "a failure with other text is logged")
+	m.reprobeHeld()
+	assert.Equal(t, 2, logged(), "and once")
+}
+
+// A running record whose lock test keeps failing is logged when the failure is
+// new for that job, not at every pass; an answer in between makes the same
+// failure news again.
+func TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce(t *testing.T) {
+	m := wqModel(t)
+	running := wqEnded(1, 0)
+	running.State, running.Exit, running.Ended = sched.Running, nil, time.Time{}
+	wqSeed(t, m, running)
+	other := running
+	other.ID = 2
+	wqSeed(t, m, other)
+	marker := t.TempDir() // unique per run: the log file outlives runs
+	fail := func(id sched.JobID, why string) {
+		m.deliverQueuePass(queuePassResult{at: time.Now(), obs: []jobObs{{id: id, err: errors.New(marker + " " + why)}}})
+	}
+	answer := func(id sched.JobID) {
+		m.deliverQueuePass(queuePassResult{at: time.Now(), obs: []jobObs{{id: id, pid: 1 << 22}}})
+	}
+	logged := func() int { return wqLockFailuresLogged(t, marker) }
+
+	fail(1, "denied")
+	assert.Equal(t, 1, logged(), "the first failure is logged")
+	fail(1, "denied")
+	fail(1, "denied")
+	assert.Equal(t, 1, logged(), "the same failure at the next passes is not")
+
+	fail(2, "denied")
+	assert.Equal(t, 2, logged(), "another job's identical failure is its own")
+
+	fail(1, "loop")
+	assert.Equal(t, 3, logged(), "a failure with other text is logged")
+	fail(1, "loop")
+	assert.Equal(t, 3, logged())
+
+	answer(1)
+	fail(1, "loop")
+	assert.Equal(t, 4, logged(), "after an answer the same failure is news again")
+}
+
+// A failed start's shim whose lock test keeps failing is logged when the text
+// is new, and again after the test answered.
+func TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew(t *testing.T) {
+	m := wqModel(t)
+	const id = sched.JobID(5)
+	m.queue.silent[id] = silentShim{pid: 1 << 22, since: time.Now()}
+	marker := t.TempDir() // unique per run: the log file outlives runs
+	obs := func(err error) {
+		m.noteSilent(jobObs{id: id, silent: true, err: err})
+	}
+	logged := func() int { return wqLockFailuresLogged(t, marker) }
+
+	obs(errors.New(marker + " denied"))
+	obs(errors.New(marker + " denied"))
+	assert.Equal(t, 1, logged(), "once for a run of the same failure")
+	obs(errors.New(marker + " loop"))
+	assert.Equal(t, 2, logged(), "a failure with other text is logged")
+
+	obs(nil) // the test answered, the shim is still owed its kill
+	obs(errors.New(marker + " loop"))
+	assert.Equal(t, 3, logged(), "after an answer the same failure is news again")
+	assert.Contains(t, m.queue.silent, id)
+
+	obs(nil)
+	m.noteSilent(jobObs{id: 6, silent: true, err: errors.New(marker + " unknown")})
+	assert.Equal(t, 3, logged(), "an entry that is gone logs nothing")
 }
 
 // A queued record whose boot probe failed is not admitted: a shim may be

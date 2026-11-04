@@ -46,6 +46,7 @@ func (m *Model) settledJob(i int) {
 	rec := q.store.Jobs[i]
 	delete(q.usage, rec.ID)
 	delete(q.cpuMarks, rec.ID)
+	delete(q.lockLogged, rec.ID)
 	delete(q.waiting, rec.ID)
 	delete(q.starting, rec.ID)
 	q.moved()
@@ -407,10 +408,17 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 				delete(q.unprobed, ob.id)
 			}
 		}
+		if ob.err == nil {
+			delete(q.lockLogged, ob.id)
+		}
 		switch {
 		case ob.err != nil:
-			if !repeated {
+			if ob.queued && !repeated {
 				log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+			} else if !ob.queued && q.lockLogged[ob.id] != ob.err.Error() {
+				// A running record: the same failure comes at every pass.
+				log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+				q.lockLogged[ob.id] = ob.err.Error()
 			}
 		case ob.gone && ob.queued && ob.exit == nil:
 			// A queued record whose shim never ran: it stays queued.

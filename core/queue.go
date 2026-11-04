@@ -116,6 +116,10 @@ type queueState struct {
 	// reprobeHeld tests it again before every pass, until the lock answers.
 	// In memory only.
 	unprobed map[sched.JobID]error
+	// lockLogged holds, per running job whose lock test failed, the text of
+	// the failure last logged, so the same failure at every pass (3 s) is
+	// logged once. An answer, or the job's end, forgets it. In memory only.
+	lockLogged map[sched.JobID]string
 	// reprobing is set while reprobeHeld runs, so the pass its settles bring
 	// does not test again.
 	reprobing bool
@@ -123,12 +127,13 @@ type queueState struct {
 
 func newQueueState() *queueState {
 	return &queueState{
-		waiting:  map[sched.JobID]string{},
-		usage:    map[sched.JobID]jobUsage{},
-		starting: map[sched.JobID]bool{},
-		silent:   map[sched.JobID]silentShim{},
-		cpuMarks: map[sched.JobID]cpuMark{},
-		unprobed: map[sched.JobID]error{},
+		waiting:    map[sched.JobID]string{},
+		usage:      map[sched.JobID]jobUsage{},
+		starting:   map[sched.JobID]bool{},
+		silent:     map[sched.JobID]silentShim{},
+		cpuMarks:   map[sched.JobID]cpuMark{},
+		unprobed:   map[sched.JobID]error{},
+		lockLogged: map[sched.JobID]string{},
 	}
 }
 
