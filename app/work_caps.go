@@ -50,7 +50,7 @@ func (m *home) openWorkCaps() {
 		return
 	}
 	host := overlay.WorkCapsHost{Name: q.Host.Name, Cores: q.Host.Cores, RAMBytes: q.Host.RAMBytes}
-	o := overlay.NewWorkCapsOverlay(host, workDefaults(q.Host), capsValues(q.Settings), q.Paused)
+	o := overlay.NewWorkCapsOverlay(host, workDefaults(q.Host, q.Settings), capsValues(q.Settings), q.Paused)
 	o.SetSize(int(float32(m.lastWidth)*ui.OverlayWidthPercent), int(float32(m.lastHeight)*ui.OverlayHeightPercent))
 	m.setOverlay(o, overlayWorkCaps)
 	m.state = stateWorkCaps
@@ -76,32 +76,62 @@ func handleStateWorkCapsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// workDefaults is the host's default for each field of the form, from the
-// same function the model resolves its caps with. A host whose RAM could
-// not be read has no memory default (the model refuses a block that does
-// not set one), so those two fields stay 0 and the others keep theirs.
-func workDefaults(h sched.Host) overlay.WorkCapsValues {
-	p, err := sched.Resolve(config.SchedulerSettings{}, h)
-	noMemory := err != nil
-	if noMemory {
-		p, err = sched.Resolve(config.SchedulerSettings{MemoryGB: 1}, h)
-		if err != nil {
-			return overlay.WorkCapsValues{}
+// workDefaults is what each field of the form takes when it is left empty:
+// the value in effect, which the model's resolve gives the published scheduler
+// block with only that field zeroed, so a default that follows another field
+// (the claim's, which follows the caps) is the one in effect. A field whose
+// resolve fails has no default and stays 0: a host whose RAM could not be read
+// with no memory_gb set has no memory default, nor a claim's, while the fields
+// that do not depend on memory keep theirs.
+func workDefaults(h sched.Host, s config.SchedulerSettings) overlay.WorkCapsValues {
+	// The fields that do not depend on memory resolve against a placeholder
+	// memory when the host has none to take it from, since Resolve refuses
+	// the whole block then. The placeholder only has to pass the claim's
+	// bound; no field read through it is a memory one.
+	other := cloneSettings(s)
+	if s.MemoryGB == 0 && h.RAMBytes == 0 {
+		other.MemoryGB = 1
+		if s.DefaultClaim != nil {
+			other.MemoryGB = max(1, s.DefaultClaim.MemoryGB)
 		}
 	}
-	v := overlay.WorkCapsValues{
-		CPUs:          p.Caps.CPUs,
-		MemoryGB:      p.Caps.MemoryGB,
-		IOJobs:        p.Caps.IOJobs,
-		ClaimCPUs:     p.DefaultClaim.CPUs,
-		ClaimMemoryGB: p.DefaultClaim.MemoryGB,
-		StarveMinutes: int(p.StarveAfter / time.Minute),
-		KeepFinished:  p.KeepFinished,
+	// of resolves base with zero applied to a copy, and reads one field of
+	// the result; 0 when the resolve fails.
+	of := func(base config.SchedulerSettings, zero func(*config.SchedulerSettings), field func(sched.Policy) int) int {
+		c := cloneSettings(base)
+		zero(&c)
+		p, err := sched.Resolve(c, h)
+		if err != nil {
+			return 0
+		}
+		return field(p)
 	}
-	if noMemory {
-		v.MemoryGB, v.ClaimMemoryGB = 0, 0
+	claim := func(set func(*config.ClaimSettings)) func(*config.SchedulerSettings) {
+		return func(c *config.SchedulerSettings) {
+			if c.DefaultClaim != nil {
+				set(c.DefaultClaim)
+			}
+		}
 	}
-	return v
+	return overlay.WorkCapsValues{
+		CPUs:          of(other, func(c *config.SchedulerSettings) { c.CPUs = 0 }, func(p sched.Policy) int { return p.Caps.CPUs }),
+		MemoryGB:      of(s, func(c *config.SchedulerSettings) { c.MemoryGB = 0 }, func(p sched.Policy) int { return p.Caps.MemoryGB }),
+		IOJobs:        of(other, func(c *config.SchedulerSettings) { c.IOJobs = 0 }, func(p sched.Policy) int { return p.Caps.IOJobs }),
+		ClaimCPUs:     of(other, claim(func(d *config.ClaimSettings) { d.CPUs = 0 }), func(p sched.Policy) int { return p.DefaultClaim.CPUs }),
+		ClaimMemoryGB: of(s, claim(func(d *config.ClaimSettings) { d.MemoryGB = 0 }), func(p sched.Policy) int { return p.DefaultClaim.MemoryGB }),
+		StarveMinutes: of(other, func(c *config.SchedulerSettings) { c.StarveAfterMinutes = 0 }, func(p sched.Policy) int { return int(p.StarveAfter / time.Minute) }),
+		KeepFinished:  of(other, func(c *config.SchedulerSettings) { c.KeepFinished = 0 }, func(p sched.Policy) int { return p.KeepFinished }),
+	}
+}
+
+// cloneSettings is s with its own default claim, so a field zeroed in the
+// copy leaves the published block alone.
+func cloneSettings(s config.SchedulerSettings) config.SchedulerSettings {
+	if s.DefaultClaim != nil {
+		d := *s.DefaultClaim
+		s.DefaultClaim = &d
+	}
+	return s
 }
 
 // capsValues is the scheduler block as the form's numbers: 0 for a field the

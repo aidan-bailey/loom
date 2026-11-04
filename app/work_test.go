@@ -788,12 +788,60 @@ func TestWorkCaps_ItsKeysAreNotDeferredByMenuHighlighting(t *testing.T) {
 }
 
 func TestWorkDefaults(t *testing.T) {
-	got := workDefaults(sched.Host{Name: "fresco", Cores: 16, RAMBytes: 30 << 30})
+	got := workDefaults(sched.Host{Name: "fresco", Cores: 16, RAMBytes: 30 << 30}, config.SchedulerSettings{})
 	assert.Equal(t, overlay.WorkCapsValues{CPUs: 14, MemoryGB: 22, IOJobs: 2, ClaimCPUs: 4, ClaimMemoryGB: 6, StarveMinutes: 10, KeepFinished: 50}, got)
 
-	noRAM := workDefaults(sched.Host{Name: "odd", Cores: 8})
+	noRAM := workDefaults(sched.Host{Name: "odd", Cores: 8}, config.SchedulerSettings{})
 	assert.Equal(t, overlay.WorkCapsValues{CPUs: 6, IOJobs: 2, ClaimCPUs: 4, StarveMinutes: 10, KeepFinished: 50}, noRAM,
 		"a host whose RAM could not be read has no memory default")
+}
+
+func TestWorkDefaults_ClaimFollowsTheConfiguredCaps(t *testing.T) {
+	host := sched.Host{Name: "fresco", Cores: 16, RAMBytes: 30 << 30}
+
+	got := workDefaults(host, config.SchedulerSettings{CPUs: 2, MemoryGB: 3})
+	assert.Equal(t, 2, got.ClaimCPUs, "the claim defaults to min(4, the configured cpus)")
+	assert.Equal(t, 3, got.ClaimMemoryGB, "the claim defaults to min(6, the configured memory_gb)")
+	assert.Equal(t, 14, got.CPUs, "a cap's own default is the host's")
+	assert.Equal(t, 22, got.MemoryGB)
+
+	// A claim half that is set does not hide the other half's default, nor
+	// its own.
+	got = workDefaults(host, config.SchedulerSettings{CPUs: 8, DefaultClaim: &config.ClaimSettings{CPUs: 6}})
+	assert.Equal(t, 4, got.ClaimCPUs, "the default is what an empty field would take, not the set value")
+	assert.Equal(t, 6, got.ClaimMemoryGB)
+}
+
+func TestWorkDefaults_UnreadableRAMWithMemoryConfigured(t *testing.T) {
+	noRAM := sched.Host{Name: "odd", Cores: 8}
+	s := config.SchedulerSettings{MemoryGB: 4}
+
+	got := workDefaults(noRAM, s)
+	assert.Equal(t, 4, got.ClaimMemoryGB, "min(6, the configured memory_gb) is in effect")
+	assert.Equal(t, 0, got.MemoryGB, "memory_gb itself has no default without RAM to take it from")
+	assert.Equal(t, 6, got.CPUs)
+	assert.Equal(t, 4, got.ClaimCPUs)
+
+	assert.Equal(t, 4, s.MemoryGB, "the published block is not edited")
+}
+
+func TestWorkCaps_FormShowsTheDefaultInEffectForTheClaim(t *testing.T) {
+	q := testQueue(queueJob(14, sched.Running, "a"))
+	q.Settings = config.SchedulerSettings{CPUs: 2}
+	m := workHome(t)
+	setQueue(t, m, q)
+	pressWork(t, m, "e")
+	o := m.workCapsOverlay()
+	require.NotNil(t, o)
+	for _, l := range strings.Split(ansi.Strip(o.Render()), "\n") {
+		if strings.Contains(l, "Default claim CPUs") {
+			assert.Contains(t, l, "2", "an empty claim field takes min(4, the configured cpus)")
+			assert.Contains(t, l, "host default")
+			assert.NotContains(t, l, "4", "not the 4 of an unconfigured host")
+			return
+		}
+	}
+	t.Fatal("the form has no claim CPUs row")
 }
 
 func TestSchedulerSettingsRoundTrip(t *testing.T) {
