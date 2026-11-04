@@ -5,7 +5,7 @@ The Lua scripting engine, on `github.com/yuin/gopher-lua`. Every key in the TUI'
 ## Loading
 
 - The full built-in keymap lives in `defaults.lua`, embedded via `go:embed` and loaded at engine init before any user script.
-- Users extend or override bindings from `~/.loom/scripts/*.lua` (the config dir's `scripts/`: user-supplied `*.lua` files; global, shared across workspaces, not per workspace), loaded at startup in filename order after the defaults (`loader.go`). `cs.bind` and `cs.register_action` overwrite each other, so the last write wins and a user binding for a built-in key replaces it. `ctrl+c` is reserved: binding it is dropped with a warning.
+- Users extend or override bindings from `~/.loom/scripts/*.lua` (the config dir's `scripts/`: user-supplied `*.lua` files; global, shared across workspaces, not per workspace), loaded at startup in filename order after the defaults (`loader.go`). `cs.bind` and `cs.register_action` overwrite each other, so the last write wins and a user binding for a built-in key replaces it. `ctrl+c` and `ctrl+q` are reserved (the app's `buildReservedKeys`): binding either is dropped with a warning.
 
 ## Dispatch
 

@@ -7,9 +7,9 @@ Tmux session management: launching, probing and killing sessions for lifecycle, 
 | File | Holds |
 |---|---|
 | `command.go` (`session/tmux/command.go`) | `tmux.Command`, `tmux.CommandOnSocket`, `tmuxCommand`, `UseServer`, `ResolveServer`, `ServerRunning`, `SameServer`, `EnclosingSessionName` |
-| `target.go` (`session/tmux/target.go`) | `tmux.SessionTarget`, `tmux.PaneTarget`, `ToLoomTmuxName`, `ExactlyTargetable` |
+| `target.go` (`session/tmux/target.go`) | `tmux.SessionTarget`, `tmux.PaneTarget`, `ExactlyTargetable` |
 | `session.go` | `Session`: launch, probes, capture-pane, `TrustPromptShown`/`TrustPromptChoice`/`TrustPromptLeftToUser`/`AnswerTrustPrompt`/`TrustPromptOpen`, `SelectedOption`/`IsOption`, `TypeText`/`SendPrompt`/`PressKeys`, `AnswersTrustPrompt`, `WithProgramEnv`, `NewSessionNamed`, `NewSessionNamedWithDeps`, `NewSessionWithDeps` |
-| `tmux.go` | `TmuxSession`, the attach client: `Restore`, `PausePreview`, `Close`, the output pump, `stateMu`, `ForwardMouse`, `Attached`, `PtmxAlive`, `statusContent`, `PaneTitle`, `NewTmuxSessionWithDeps`, `ToLegacyTmuxName`, `RenameLegacySessions` |
+| `tmux.go` | `TmuxSession`, the attach client: `Restore`, `PausePreview`, `Close`, the output pump, `stateMu`, `ForwardMouse`, `Attached`, `PtmxAlive`, `statusContent`, `PaneTitle`, `NewTmuxSessionWithDeps`, `ToLoomTmuxName`, `ToLegacyTmuxName`, `RenameLegacySessions` |
 | `attach.go` | `NewAttachClient`, `NewAttachClientWithDeps`, `DetectStatus` |
 | `notify.go` | the per-session coalescer and `tmux.SetNotifier` |
 | `nesting.go` | `CheckNestingFromEnv`, the nesting guard's tmux half |
