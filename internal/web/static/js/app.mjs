@@ -1,7 +1,8 @@
 // The app: routes, the live snapshot, the header and the toasts. The
 // screens are in screens.mjs and pairing in pair.mjs; this file owns the data
 // they draw, as the props {snap, stale, link, route, go, act, toast, pending}.
-// The header's rows are chrome.mjs's; each screen's context row is its Head.
+// The header's and footer's rows are chrome.mjs's; each screen's context row
+// is its Head.
 import { html, render, useState, useEffect, useRef, useCallback } from "../lib/preact-htm.mjs";
 import { call, connect } from "./api.mjs";
 import { loadSnapshot, saveSnapshot, clearSnapshot, pref } from "./store.mjs";
@@ -387,23 +388,31 @@ function App() {
     )}
   </div>`;
 
+  // The pinned header holds the screen's context row (and a session's
+  // tabs); the status row is pinned at the bottom, under the reply box.
   let header = null;
+  let footer = null;
   if (chromed) {
     const groups = fleetGroups(snap);
     const counts = { needs_you: groups.needs_you.length, your_turn: groups.your_turn.length, working: groups.working.length };
     header = html`<header class="sc-chrome">
       <div class="sc-chrome-in">
-        <${StatusRow} link=${link} host=${snap.host} updated=${lastUpdated} counts=${counts} onJump=${jump} />
         ${entry ? html`<${entry.Head} ...${props} />` : null}
       </div>
       ${toastList}
     </header>`;
+    footer = html`<footer class="sc-foot">
+      <div class="sc-chrome-in">
+        <${StatusRow} link=${link} host=${snap.host} updated=${lastUpdated} counts=${counts} onJump=${jump} />
+      </div>
+    </footer>`;
   }
 
   return html`
     <div class=${"shell" + (chromed ? " sc-chromed" : "")}>
       ${header}
       <main>${body}</main>
+      ${footer}
       ${chromed ? null : toastList}
     </div>
   `;
