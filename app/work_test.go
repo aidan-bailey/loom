@@ -362,6 +362,123 @@ func TestWorkView_ATailReadForAnotherJobIsDropped(t *testing.T) {
 	assert.Equal(t, ui.WorkTail{ID: 14, Err: "boom"}, m.work.tail)
 }
 
+func TestWorkView_AnOlderReadLandingLastIsDropped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.log")
+	writeLog(t, path, 3)
+	job := queueJob(14, sched.Running, "a")
+	job.LogPath = path
+	m := workHome(t, job)
+
+	older := m.workDrained()()
+	require.NotNil(t, older)
+	writeLog(t, path, 5)
+	newer := m.workTick()()
+
+	// Bubble Tea may deliver the two results in either order.
+	m.applyWorkLog(newer.(workLogMsg))
+	require.Equal(t, 5, len(m.work.tail.Lines))
+	m.applyWorkLog(older.(workLogMsg))
+	assert.Len(t, m.work.tail.Lines, 5, "the older read, landing last, does not overwrite the newer")
+
+	// In the other order the current one is applied over nothing newer.
+	m2 := workHome(t, job)
+	o := m2.workDrained()().(workLogMsg)
+	n := m2.workTick()().(workLogMsg)
+	m2.applyWorkLog(o)
+	assert.Empty(t, m2.work.tail.Lines, "the older read is dropped even first: a newer one is in flight")
+	m2.applyWorkLog(n)
+	assert.Len(t, m2.work.tail.Lines, 5)
+}
+
+func TestWorkView_APagerReadAlsoDropsAnOlderOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.log")
+	writeLog(t, path, 3)
+	job := queueJob(14, sched.Running, "a")
+	job.LogPath = path
+	m := workHome(t, job)
+	pressWork(t, m, "enter")
+	older := m.workDrained()().(workLogMsg)
+	writeLog(t, path, 6)
+	newer := m.workTick()().(workLogMsg)
+	m.applyWorkLog(newer)
+	m.applyWorkLog(older)
+	assert.Len(t, m.work.pager.lines, 6)
+}
+
+func TestWorkView_ASeqSurvivesLeavingTheView(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.log")
+	writeLog(t, path, 3)
+	job := queueJob(14, sched.Running, "a")
+	job.LogPath = path
+	m := workHome(t, job)
+	stale := m.workDrained()().(workLogMsg)
+	m.leaveWorkView()
+	m.enterWorkView()
+	fresh := m.workDrained()().(workLogMsg)
+	assert.Greater(t, fresh.seq, stale.seq, "a read of the new visit outranks one still in flight from the last")
+}
+
+func TestWorkView_AnUnchangedLogIsNotReadAgain(t *testing.T) {
+	for _, pager := range []bool{false, true} {
+		t.Run(map[bool]string{false: "tail", true: "pager"}[pager], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "output.log")
+			writeLog(t, path, 3)
+			job := queueJob(14, sched.Running, "a")
+			job.LogPath = path
+			m := workHome(t, job)
+			if pager {
+				pressWork(t, m, "enter")
+			}
+			lines := func() []string {
+				if pager {
+					return m.work.pager.lines
+				}
+				return m.work.tail.Lines
+			}
+
+			first := m.workDrained()().(workLogMsg)
+			require.False(t, first.unchanged)
+			m.applyWorkLog(first)
+			require.Equal(t, []string{"line 1", "line 2", "line 3"}, lines())
+
+			again := m.workTick()().(workLogMsg)
+			assert.True(t, again.unchanged, "same size and mtime: nothing read")
+			assert.Empty(t, again.lines)
+			m.applyWorkLog(again)
+			assert.Equal(t, []string{"line 1", "line 2", "line 3"}, lines(), "the lines are kept")
+
+			writeLog(t, path, 5)
+			grown := m.workTick()().(workLogMsg)
+			assert.False(t, grown.unchanged, "a grown log is read again")
+			m.applyWorkLog(grown)
+			assert.Len(t, lines(), 5)
+
+			// Same size, new mtime: rewritten in place.
+			require.NoError(t, os.WriteFile(path, []byte("LINE 1\nLINE 2\nLINE 3\nLINE 4\nLINE 5\n"), 0o600))
+			later := time.Now().Add(time.Hour)
+			require.NoError(t, os.Chtimes(path, later, later))
+			touched := m.workTick()().(workLogMsg)
+			assert.False(t, touched.unchanged, "a changed mtime is read again")
+		})
+	}
+}
+
+func TestWorkView_AFreshPagerReadsAnUnchangedLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.log")
+	writeLog(t, path, 3)
+	job := queueJob(14, sched.Running, "a")
+	job.LogPath = path
+	m := workHome(t, job)
+	pressWork(t, m, "enter")
+	m.applyWorkLog(m.workDrained()().(workLogMsg))
+	pressWork(t, m, "esc")
+	pressWork(t, m, "enter")
+	msg := m.workDrained()().(workLogMsg)
+	assert.False(t, msg.unchanged, "a reopened pager holds no lines yet")
+	m.applyWorkLog(msg)
+	assert.Len(t, m.work.pager.lines, 3)
+}
+
 func TestReadLogEnd(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "output.log")
 

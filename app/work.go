@@ -55,6 +55,14 @@ type workState struct {
 	pager *workPager
 	// sig is what the last log read was made for (workDrained).
 	sig workSig
+	// seq is the sequence number of the last log read issued. Bubble Tea
+	// runs Cmds concurrently, so reads can land out of order: a result
+	// older than seq is dropped. It survives leaving the view, so a read
+	// still in flight from an earlier visit cannot beat a new one.
+	seq uint64
+	// tailStat is the log's size and mtime as tail's last read found them,
+	// so the next read of that log can be skipped while they hold.
+	tailStat logStat
 }
 
 // workPager is the open log pager over one job's log.
@@ -70,6 +78,25 @@ type workPager struct {
 	loaded  bool
 	omitted bool
 	err     string
+	// stat is the log's size and mtime as the last read found them.
+	stat logStat
+}
+
+// logStat is a log file's size and mtime (UnixNano) at a read. A zero one
+// (known false) matches nothing: the file was absent or unreadable.
+type logStat struct {
+	known bool
+	size  int64
+	mtime int64
+}
+
+// statLog is path's logStat; zero when it cannot be stat'd.
+func statLog(path string) logStat {
+	st, err := os.Stat(path)
+	if err != nil {
+		return logStat{}
+	}
+	return logStat{known: true, size: st.Size(), mtime: st.ModTime().UnixNano()}
 }
 
 // workSig is what a log read was made for: the job shown, its state and
@@ -91,7 +118,7 @@ func (m *home) enterWorkView() {
 		m.errBox.SetInfo(sched.ErrUnsupported.Error())
 		return
 	}
-	m.work = workState{from: m.viewMode, sel: m.work.sel, selIdx: m.work.selIdx}
+	m.work = workState{from: m.viewMode, sel: m.work.sel, selIdx: m.work.selIdx, seq: m.work.seq}
 	m.viewMode = viewWork
 }
 
@@ -285,22 +312,52 @@ func (m *home) handleWorkPagerKey(key string) {
 // workLogMsg is a log read's result: a job's tail, or all the pager can
 // show of it.
 type workLogMsg struct {
-	id      sched.JobID
-	full    bool
-	lines   []string
-	omitted bool
-	err     string
+	id   sched.JobID
+	full bool
+	// seq orders the reads: see workState.seq.
+	seq uint64
+	// stat is the log's size and mtime when the read began, and unchanged
+	// says they matched the ones the caller already holds, so nothing was
+	// read and lines is empty.
+	stat      logStat
+	unchanged bool
+	lines     []string
+	omitted   bool
+	err       string
 }
 
-// workLogCmd reads the end of the log at path for job id. Everything it
-// reads is passed in: the Cmd runs off the Update goroutine.
-func workLogCmd(id sched.JobID, path string, full bool) tea.Cmd {
+// workLogRead issues the read of job's log for the tail or the pager,
+// numbering it (workState.seq) and handing the Cmd the stat of what the
+// view already holds for that log, if any.
+func (m *home) workLogRead(job core.JobView, full bool) tea.Cmd {
+	m.work.seq++
+	var prev logStat
+	if full {
+		if p := m.work.pager; p != nil && p.id == job.ID && p.loaded && p.err == "" {
+			prev = p.stat
+		}
+	} else if m.work.tail.ID == job.ID && m.work.tail.Err == "" {
+		prev = m.work.tailStat
+	}
+	return workLogCmd(job.ID, job.LogPath, full, m.work.seq, prev)
+}
+
+// workLogCmd reads the end of the log at path for job id, unless the log's
+// size and mtime are prev's: then the view already has what a read would
+// find. Everything it reads is passed in: the Cmd runs off the Update
+// goroutine. The stat comes before the read, so a log that grows between
+// them is read again next time.
+func workLogCmd(id sched.JobID, path string, full bool, seq uint64, prev logStat) tea.Cmd {
 	limit := int64(workTailBytes)
 	if full {
 		limit = workPagerBytes
 	}
 	return func() tea.Msg {
-		msg := workLogMsg{id: id, full: full}
+		msg := workLogMsg{id: id, full: full, seq: seq, stat: statLog(path)}
+		if prev.known && msg.stat == prev {
+			msg.unchanged = true
+			return msg
+		}
 		data, partial, err := readLogEnd(path, limit)
 		if err != nil {
 			msg.err = err.Error()
@@ -343,31 +400,46 @@ func readLogEnd(path string, limit int64) (data []byte, partial bool, err error)
 	return data[:n], partial, nil
 }
 
-// applyWorkLog takes a log read's result. A tail read lands only for the
+// applyWorkLog takes a log read's result. One older than the last read
+// issued is dropped: a newer read is in flight or landed. A tail read lands only for the
 // job selected now, and a pager read only for the job the pager shows, so
 // a read that was overtaken by a key press shows under no other job. The
 // pager keeps its place unless it was at the end, where it follows.
 func (m *home) applyWorkLog(msg workLogMsg) {
+	if msg.seq < m.work.seq {
+		return
+	}
 	if !msg.full {
 		sel, ok := m.workSelected()
 		if m.work.pager != nil || !ok || sel.ID != msg.id {
 			return
 		}
+		if msg.unchanged && m.work.tail.ID == msg.id {
+			return
+		}
 		m.work.tail = ui.WorkTail{ID: msg.id, Lines: msg.lines, Err: msg.err}
+		m.work.tailStat = logStat{}
+		if msg.err == "" {
+			m.work.tailStat = msg.stat
+		}
 		return
 	}
 	p := m.work.pager
 	if p == nil || p.id != msg.id {
 		return
 	}
+	if msg.unchanged && p.loaded {
+		return
+	}
 	p.err = msg.err
+	p.stat = logStat{}
 	if msg.err != "" {
 		return
 	}
 	body := ui.WorkPagerBody(m.workHeight())
 	atEnd := !p.loaded || p.top >= max(0, len(p.lines)-body)
 	oldTop := p.top
-	p.lines, p.omitted, p.loaded = msg.lines, msg.omitted, true
+	p.lines, p.omitted, p.loaded, p.stat = msg.lines, msg.omitted, true, msg.stat
 	maxTop := max(0, len(p.lines)-body)
 	if atEnd {
 		p.top = maxTop
@@ -396,7 +468,7 @@ func (m *home) workDrained() tea.Cmd {
 		return nil
 	}
 	m.work.sig = sig
-	return workLogCmd(job.ID, job.LogPath, sig.pager)
+	return m.workLogRead(job, sig.pager)
 }
 
 // workTick is the health tick's read: a running job's log grows between
@@ -407,7 +479,7 @@ func (m *home) workTick() tea.Cmd {
 	if !ok || job.State != sched.Running {
 		return nil
 	}
-	return workLogCmd(job.ID, job.LogPath, m.work.pager != nil)
+	return m.workLogRead(job, m.work.pager != nil)
 }
 
 // workModelKeys are the work view's keys that need the model. Offline they
