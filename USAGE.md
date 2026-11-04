@@ -380,7 +380,7 @@ The work view covers the whole host, across every workspace. Mouse input is drop
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Move the selection |
-| `Enter` | Open the selected job's whole log in a scrolling pager (`Esc` back) |
+| `Enter` | Open the selected job's whole log in a scrolling pager, whose title shows the job's command and folder (`Esc` back) |
 | `x` | Cancel the selected job, after a confirmation (a queued job at once, a running one with SIGTERM and then SIGKILL) |
 | `t` | Move a queued job to the front of the queue |
 | `o` | Focus the job's owner session in focus mode, opening its workspace's tab if it is not open. A job whose owner is in the global workspace, which no open tab shows, is left alone: `o` changes nothing and says so on the info line |
