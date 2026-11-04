@@ -1045,6 +1045,65 @@ func TestJobQueue_ARefusedPauseOrKillCancelsNothing(t *testing.T) {
 	assert.NotEqual(t, sched.Cancelled, rec.State)
 }
 
+// A reset counts as a requested kill of every session in its workspace: it
+// cancels their queued jobs first, with no notice, and leaves the jobs of no
+// owner and of a session in another workspace alone (spec §5.7).
+func TestJobQueue_ResetCancelsTheWorkspacesOwnersJobsAndOnlyTheirs(t *testing.T) {
+	f := newResetFixture(t)
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	f.m.SetJobRunnerForTest(sched.TestRunner())
+	other := storedWorkspace(t, "elsewhere")
+	stranger := pausedInst(t, "stranger")
+	other.add(stranger)
+	f.m.SetWorkspacesForTest(f.ws, other)
+	f.m.loadQueue(dir, wqHost)
+	owner := f.m.idOf(f.ws.insts[0])
+	require.NotZero(t, owner)
+
+	// Claims over the caps, so every job stays queued until a test cancels it.
+	seed := func(id sched.JobID, owner InstanceID) {
+		rec := wqQueuedRecord(t, id)
+		rec.Owner, rec.Notify = uint64(owner), owner != 0
+		rec.Claim = sched.Claim{CPUs: 64, MemoryGB: 6}
+		wqSeed(t, f.m, rec)
+	}
+	seed(1, owner)
+	seed(2, 0)
+	seed(3, f.m.idOf(stranger))
+
+	require.NoError(t, f.m.Reset(f.m.wsIDOf(f.ws), 7))
+
+	got := wqRecord(t, f.m, 1)
+	assert.Equal(t, sched.Cancelled, got.State)
+	assert.Equal(t, "because the session was reset", got.CancelReason)
+	assert.False(t, got.Notify, "and no notice is sent for it")
+	assert.Equal(t, sched.NoticeNone, got.Notice)
+	for _, id := range []sched.JobID{2, 3} {
+		rec := wqRecord(t, f.m, id)
+		assert.Equal(t, sched.Queued, rec.State, "job %d: not the reset workspace's", id)
+		assert.Empty(t, rec.CancelReason)
+	}
+}
+
+// A reset the model refuses cancels nothing.
+func TestJobQueue_ARefusedResetCancelsNothing(t *testing.T) {
+	f := newResetFixture(t)
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	f.m.SetJobRunnerForTest(sched.TestRunner())
+	f.m.loadQueue(dir, wqHost)
+	rec := wqQueuedRecord(t, 1)
+	rec.Owner, rec.Claim = uint64(f.m.idOf(f.ws.insts[0])), sched.Claim{CPUs: 64, MemoryGB: 6}
+	wqSeed(t, f.m, rec)
+	f.ws.resetting = true // a reset already running: refused
+
+	assert.ErrorIs(t, f.m.Reset(f.m.wsIDOf(f.ws), 7), ErrRefused)
+
+	assert.Equal(t, sched.Queued, wqRecord(t, f.m, 1).State)
+	assert.Empty(t, wqRecord(t, f.m, 1).CancelReason)
+}
+
 // wqQueuedRecord is a queued job that fits any cap: one core, 1 GB, a real
 // folder, a command that exits at once.
 func wqQueuedRecord(t *testing.T, id sched.JobID) sched.Record {

@@ -121,6 +121,12 @@ func (m *Model) Reset(id WorkspaceID, req ReqID) error {
 	if ws.loadErr != nil || ws.storage.WritesRefused() {
 		return refused(fmt.Errorf("reset %s: its sessions failed to load, so loom can't tell what the reset would delete: stop the daemon (`loom serve stop`), then run `loom reset`", ws.Label()))
 	}
+	// The sessions' work-queue jobs go first, as for a kill (a reset is a
+	// requested kill of every session): the reset removes the worktrees they
+	// run in. No notice is sent.
+	for _, inst := range ws.insts {
+		m.cancelOwnerJobs(m.idOf(inst), "because the session was reset")
+	}
 	ws.insts = nil
 	ws.resetting, ws.terminalUnsettled = true, false
 	ctx, storage, registry, exec, label := *ws.ctx, ws.storage, m.registryCopy(), m.executor(), ws.Label()
