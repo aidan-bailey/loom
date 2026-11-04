@@ -32,10 +32,12 @@ var (
 )
 
 // sourceExts are the files a symbol may be found in. Markdown is never one,
-// so a doc cannot confirm a symbol from another doc.
+// so a doc cannot confirm a symbol from another doc. The web app's modules,
+// scripts, styles and pages (internal/web/static) are source too.
 var sourceExts = map[string]bool{
 	".go": true, ".lua": true, ".nix": true, ".yml": true, ".yaml": true,
 	".toml": true, ".sh": true, ".json": true, ".mod": true, ".ts": true,
+	".mjs": true, ".js": true, ".css": true, ".html": true,
 }
 
 // pathExts make a token without a slash a file path.
