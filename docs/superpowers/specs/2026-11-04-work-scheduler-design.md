@@ -269,6 +269,8 @@ A session's rail card and overview card show:
 
 The claim figures in the paragraph are the defaults' wording. The file is static, so it doesn't follow a host's `default_claim`.
 
+Each file's closing sentence drops "running builds and tests", which the paragraph now contradicts (the owner, 2026-11-04). They become `Everything else — editing files, committing, diffing, and viewing history within your branch — works exactly as normal.` and `Editing files, committing, and viewing diffs/history all work exactly as normal.`
+
 ## 9. Wire
 
 - **Requests** (`core/iface.go`, request kind):
