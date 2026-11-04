@@ -7,6 +7,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,4 +97,29 @@ func TestCheckSlotInvariant_SlotsShowServedWorkspaces(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "the classic slot")
 	})
+}
+
+// TestApplyCoreEvent_QueueChangedKeepsTheNewestQueue: the work view reads
+// home.queue, which only the QueueChanged applier sets. The test applies the
+// events as a drain does, with no syncViews to hide a missing applier. It
+// builds the views directly: this package's tests run no job shim, so there
+// is no model queue to change under it.
+func TestApplyCoreEvent_QueueChangedKeepsTheNewestQueue(t *testing.T) {
+	m := newTestHome(t)
+	require.Empty(t, m.queue.Jobs, "nothing has been applied yet")
+
+	_ = m.applyCoreEvent(core.QueueChanged{View: core.QueueView{
+		Dir:    "/jobs",
+		Host:   sched.Host{Name: "h", Cores: 8},
+		Paused: "why",
+		Jobs:   []core.JobView{{ID: 1, Description: "tests", Argv: []string{"cargo", "test"}, State: sched.Queued}},
+	}})
+	assert.Equal(t, "/jobs", m.queue.Dir)
+	assert.Equal(t, "why", m.queue.Paused)
+	require.Len(t, m.queue.Jobs, 1)
+	assert.Equal(t, "tests", m.queue.Jobs[0].Description)
+
+	_ = m.applyCoreEvent(core.QueueChanged{View: core.QueueView{Dir: "/jobs", Host: sched.Host{Name: "h", Cores: 8}}})
+	assert.Empty(t, m.queue.Jobs, "the newest queue replaces the last")
+	assert.Empty(t, m.queue.Paused)
 }

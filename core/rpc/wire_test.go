@@ -127,7 +127,7 @@ func TestProtocolReference(t *testing.T) {
 			stateEvents = append(stateEvents, reflect.TypeOf(ev).Name())
 		}
 	}
-	order := []core.Event{core.WorkspacesChanged{}, core.ModelChanged{}, core.AccountsChanged{}, core.GitHubChanged{}, core.ViewsChanged{}}
+	order := []core.Event{core.WorkspacesChanged{}, core.ModelChanged{}, core.AccountsChanged{}, core.GitHubChanged{}, core.QueueChanged{}, core.ViewsChanged{}}
 	require.Len(t, order, len(stateEvents), "a state event was added: say where it goes in the order below")
 	p("## State events\n\n")
 	p("The events that make up the published state, which a client's replica keeps, in the order the model\n")
@@ -339,7 +339,7 @@ func TestWire_EveryFieldSurvives(t *testing.T) {
 			assert.Equal(t, normalize(full), normalize(got))
 		})
 	}
-	for _, v := range []any{core.InstanceView{}, core.WorkspaceView{}, core.AccountsView{}, core.GitHubView{}} {
+	for _, v := range []any{core.InstanceView{}, core.WorkspaceView{}, core.AccountsView{}, core.GitHubView{}, core.QueueView{}} {
 		typ := reflect.TypeOf(v)
 		t.Run(typ.Name(), func(t *testing.T) {
 			full := filled(t, typ).Interface()

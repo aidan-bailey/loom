@@ -156,6 +156,8 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	case core.AccountsChanged:
 		ui.SetShowAccounts(m.core.HasExtraAccounts())
 		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
+	case core.QueueChanged:
+		m.queue = ev.View
 	case core.Reply:
 		return m.handleReply(ev)
 	case core.Answered:

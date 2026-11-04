@@ -86,8 +86,8 @@ func (m *Model) githubView() GitHubView {
 	return v
 }
 
-// publishState returns a ModelChanged, an AccountsChanged and a
-// GitHubChanged for each of those views that changed since the last
+// publishState returns a ModelChanged, an AccountsChanged, a GitHubChanged
+// and a QueueChanged for each of those views that changed since the last
 // publish (always on the first). The model and account views are
 // compared whole; the account view is also republished after every usage
 // probe round (usageGen, which deliverUsage bumps), because the TUI
@@ -111,11 +111,35 @@ func (m *Model) publishState() []Event {
 		m.ghPublished, m.ghPublishedGen = true, m.ghGen
 		events = append(events, GitHubChanged{View: m.githubView()})
 	}
+	events = append(events, m.publishQueue()...)
 	return events
 }
 
+// queuePublication is what publishQueue last published: the queue (by
+// pointer, since a boot replaces the one the model was built with) and its
+// revision.
+type queuePublication struct {
+	sent bool
+	of   *queueState
+	rev  uint64
+}
+
+// publishQueue returns a QueueChanged when the queue is not the one last
+// published or its revision moved since, and on the first call always. The
+// revision is queueState.rev, which every change to the queue, to a job or
+// to the sampled usage bumps: a change that leaves it alone is not seen
+// until something else moves it.
+func (m *Model) publishQueue() []Event {
+	p := queuePublication{sent: true, of: m.queue, rev: m.queueRev()}
+	if m.queuePub == p {
+		return nil
+	}
+	m.queuePub = p
+	return []Event{QueueChanged{View: m.queueView()}}
+}
+
 // Snapshot is the whole published state as events, in Sync's order: the
-// workspace views, the model, account and GitHub views, and every served
+// workspace views, the model, account, GitHub and queue views, and every served
 // workspace's instance views. It leaves what the next Sync diffs against
 // alone: it is what a client needs when it subscribes, before the diffs.
 func (m *Model) Snapshot() []Event {
@@ -124,6 +148,7 @@ func (m *Model) Snapshot() []Event {
 		ModelChanged{View: m.modelView()},
 		AccountsChanged{View: m.accountsView()},
 		GitHubChanged{View: m.githubView()},
+		QueueChanged{View: m.queueView()},
 	}
 	for _, w := range m.workspaces {
 		views := make([]InstanceView, len(w.insts))

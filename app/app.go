@@ -172,6 +172,9 @@ type home struct {
 	// sentSelected is the selection last published to the model
 	// (publishSelection).
 	sentSelected core.InstanceID
+	// queue is the work queue as last published (core.QueueChanged): what
+	// the work view draws. The zero view until the first event.
+	queue core.QueueView
 	// initCmd holds the Cmds startHome drained from the model before the
 	// program ran (an error notice's hide timer); Init returns them.
 	initCmd tea.Cmd

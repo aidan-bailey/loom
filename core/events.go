@@ -144,6 +144,17 @@ type GitHubChanged struct {
 
 func (GitHubChanged) coreEvent() {}
 
+// QueueChanged carries the work queue whenever it changed (a job submitted,
+// started, settled or cancelled, the caps edited, the running jobs' usage
+// sampled) and on the first Sync: the TUI keeps it for the work view
+// (home.queue), and a replica answers Queue from it. The view holds no job's
+// environment.
+type QueueChanged struct {
+	View QueueView
+}
+
+func (QueueChanged) coreEvent() {}
+
 // AccountsChanged carries the account state whenever the registry, an
 // account's auth, sync report or usage, or the Claude program changed
 // (and on the first Sync): the TUI refreshes every view showing accounts
@@ -231,7 +242,7 @@ func EventTypes() []Event {
 	return []Event{
 		AccountsChanged{}, Alive{}, Answered{}, ClientsStale{}, GitHubChanged{},
 		HealthChecked{}, InstancesChanged{}, ModelChanged{}, Notice{},
-		Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
+		QueueChanged{}, Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
 		StatusesChanged{}, ViewsChanged{}, WorkspacesChanged{},
 	}
 }

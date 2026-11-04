@@ -235,6 +235,8 @@ type Model struct {
 	// views, so every round must reach it, even one that left the account
 	// view unchanged (the same probe failing again).
 	usageGen, usagePublishedGen uint64
+	// queuePub is the work queue as last published (publishQueue).
+	queuePub queuePublication
 
 	// out holds the events and the jobs queued since the last take; bgJobs
 	// the background jobs (spawnBackground), kept apart so a loop stopping

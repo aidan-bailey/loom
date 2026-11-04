@@ -65,6 +65,7 @@ publishes them and a client's Sync hands them out, newest state only and ahead o
 - ModelChanged
 - AccountsChanged
 - GitHubChanged
+- QueueChanged
 - ViewsChanged (one per workspace, by its `WS`)
 
 A server queues at most one of each (one per workspace for `ViewsChanged`) for a connection: a newer
@@ -524,6 +525,10 @@ Result: `{}`
 ### Notice
 
 `{}`
+
+### QueueChanged
+
+`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
 ### Reactivated
 
