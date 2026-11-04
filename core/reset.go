@@ -124,9 +124,13 @@ func (m *Model) Reset(id WorkspaceID, req ReqID) error {
 	// The sessions' work-queue jobs go first, as for a kill (a reset is a
 	// requested kill of every session): the reset removes the worktrees they
 	// run in. No notice is sent.
+	// One walk for all of them: cancelling session by session lets a settle
+	// start another session's queued job, which is then only cancelled.
+	owners := map[InstanceID]bool{}
 	for _, inst := range ws.insts {
-		m.cancelOwnerJobs(m.idOf(inst), "because the session was reset")
+		owners[m.idOf(inst)] = true
 	}
+	m.cancelOwnerJobs(owners, "because the session was reset")
 	ws.insts = nil
 	ws.resetting, ws.terminalUnsettled = true, false
 	ctx, storage, registry, exec, label := *ws.ctx, ws.storage, m.registryCopy(), m.executor(), ws.Label()

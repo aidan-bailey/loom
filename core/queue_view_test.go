@@ -189,10 +189,6 @@ func TestQueueView_OrdersJobsAndTotals(t *testing.T) {
 	assert.Equal(t, "from the work view", jobOf(t, v, 8).CancelReason)
 }
 
-// While admission is paused the policy is zero, so an exclusive claim needs
-// nothing, and a queued job the last pass said nothing about waits for the
-// reason; one it did speak of keeps its own. The block's invalid cores pause
-// admission, so neither job starts.
 // StartFailed is true for a job that failed without running its command (the
 // daemon's reason, no exit record, or an exec error) and for no other.
 func TestJobView_StartFailed(t *testing.T) {
@@ -220,6 +216,10 @@ func TestJobView_StartFailed(t *testing.T) {
 	}
 }
 
+// While admission is paused the policy is zero, so an exclusive claim needs
+// nothing, and a queued job the last pass said nothing about waits for the
+// reason; one it did speak of keeps its own. The block's invalid cores pause
+// admission, so neither job starts.
 func TestQueueView_PausedQueueSaysWhy(t *testing.T) {
 	const why = "scheduler.cpus is 5000: it must be 1–1024"
 	exclusive := qvRecord(2, sched.Queued)

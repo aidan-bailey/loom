@@ -1154,6 +1154,96 @@ func TestJobQueue_ResetCancelsTheWorkspacesOwnersJobsAndOnlyTheirs(t *testing.T)
 	}
 }
 
+// The reset's jobs of other owners and of none keep running: only the
+// sessions' own are cancelled (spec §5.7), the running one by SIGTERM.
+func TestJobQueue_ResetLeavesTheOtherJobsRunning(t *testing.T) {
+	f := newResetFixture(t)
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	f.m.SetJobRunnerForTest(sched.TestRunner())
+	other := storedWorkspace(t, "elsewhere")
+	stranger := pausedInst(t, "stranger")
+	other.add(stranger)
+	f.m.SetWorkspacesForTest(f.ws, other)
+	f.m.loadQueue(dir, wqHost)
+	t.Cleanup(func() { wqStop(t, f.m) })
+	owner := f.m.idOf(f.ws.insts[0])
+	require.NotZero(t, owner)
+
+	seed := func(id sched.JobID, owner InstanceID) {
+		rec := wqQueuedRecord(t, id)
+		rec.Owner, rec.Notify = uint64(owner), owner != 0
+		rec.Argv, rec.Claim = []string{"sleep", "30"}, sched.Claim{CPUs: 4, MemoryGB: 6}
+		wqSeed(t, f.m, rec)
+		require.NoError(t, sched.WriteSpec(f.m.queue.jobDir(id), sched.Spec{ID: id, Argv: rec.Argv, Cwd: rec.Cwd, Env: []string{"PATH=" + os.Getenv("PATH")}}))
+	}
+	seed(1, owner)
+	seed(2, 0)
+	seed(3, f.m.idOf(stranger))
+	f.m.admitJobs() // the host's caps have room for all three
+	wqPump(t, f.m)  // real shims
+	for _, id := range []sched.JobID{1, 2, 3} {
+		require.Equal(t, sched.Running, wqRecord(t, f.m, id).State, "the setup: job %d runs", id)
+	}
+
+	require.NoError(t, f.m.Reset(f.m.wsIDOf(f.ws), 7))
+	f.m.Drain() // the reset job itself is not run; nor is the gate pass that went with it
+	f.m.gate(gateQueue).inFlight = false
+	wqPass(t, f.m) // carries out the running job's cancel
+
+	for _, id := range []sched.JobID{2, 3} {
+		rec := wqRecord(t, f.m, id)
+		assert.Equal(t, sched.Running, rec.State, "job %d: not the reset workspace's, so it keeps running", id)
+		assert.Empty(t, rec.CancelReason)
+	}
+	got := wqSettle(t, f.m, 1)
+	assert.Equal(t, sched.Cancelled, got.State)
+	assert.Equal(t, "because the session was reset", got.CancelReason)
+	require.NotNil(t, got.Exit)
+	assert.Equal(t, "SIGTERM", got.Exit.Signal)
+	assert.Equal(t, sched.NoticeNone, got.Notice)
+}
+
+// A reset cancels all its sessions' queued jobs before any admission pass.
+// Session A's job is a starved head that cannot start yet, so it holds session
+// B's fitting job behind it; ending A's alone would let the pass that follows
+// start B's job, only for the reset to kill it.
+func TestJobQueue_ResetCancelsAllItsQueuedJobsBeforeAdmitting(t *testing.T) {
+	f := newResetFixture(t)
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	f.m.SetJobRunnerForTest(sched.TestRunner())
+	second := pausedInst(t, "second")
+	f.ws.add(second)
+	f.m.SetWorkspacesForTest(f.ws)
+	f.m.loadQueue(dir, wqHost)
+	t.Cleanup(func() { wqStop(t, f.m) })
+	a, b := f.m.idOf(f.ws.insts[0]), f.m.idOf(second)
+	require.NotZero(t, a)
+	require.NotZero(t, b)
+
+	wqLaunch(t, f.m, "sleep", "30") // takes 4 of the 14 cores and 6 of the 24 GB
+	seed := func(id sched.JobID, owner InstanceID, claim sched.Claim, submitted time.Time) {
+		rec := wqQueuedRecord(t, id)
+		rec.Owner, rec.Claim, rec.Submitted = uint64(owner), claim, submitted
+		wqSeed(t, f.m, rec)
+	}
+	seed(2, a, sched.Claim{CPUs: 11, MemoryGB: 1}, time.Now().Add(-2*time.Hour)) // starved, and 4 + 11 > 14
+	seed(3, b, sched.Claim{CPUs: 1, MemoryGB: 1}, time.Now())                    // fits, but waits for job 2
+	f.m.admitJobs()
+	require.Equal(t, sched.Queued, wqRecord(t, f.m, 3).State, "the setup: job 2 holds job 3 back")
+
+	require.NoError(t, f.m.Reset(f.m.wsIDOf(f.ws), 7))
+	f.m.Drain() // the reset job itself is not run, nor the gate pass that went with it
+	f.m.gate(gateQueue).inFlight = false
+
+	for _, id := range []sched.JobID{2, 3} {
+		rec := wqRecord(t, f.m, id)
+		assert.Equal(t, sched.Cancelled, rec.State, "job %d", id)
+		assert.Equal(t, "because the session was reset", rec.CancelReason)
+	}
+}
+
 // A reset the model refuses cancels nothing.
 func TestJobQueue_ARefusedResetCancelsNothing(t *testing.T) {
 	f := newResetFixture(t)

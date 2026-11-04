@@ -278,22 +278,26 @@ func readGlobalConfig(dir string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// cancelOwnerJobs cancels every job of owner that has not ended, for reason
-// ("because the session was paused" or "…killed"): the queued ones at once, the
-// running ones by a request gateQueue carries out. Pause and Kill call it
-// before they act, and neither waits for the jobs to exit. The owner is sent
-// no notice for them (the flag is cleared), and the jobs of other owners and
-// of none are not touched.
-func (m *Model) cancelOwnerJobs(owner InstanceID, reason string) {
+// cancelOwnerJobs cancels every job of the sessions in owners that has not
+// ended, for reason ("because the session was paused", "…killed" or
+// "…reset"): the queued ones at once, the running ones by a request
+// gateQueue carries out. Pause and Kill call it with a set of one before
+// they act, and a reset with all its sessions, so that one walk ends every
+// queued job before the single admission pass: ending them one session at a
+// time let the first's settle start a later session's job, only to cancel it.
+// Neither waits for the jobs to exit. The owners are sent no notice for them
+// (the flag is cleared), and the jobs of other owners and of none (owner 0,
+// whether or not the set holds it) are not touched.
+func (m *Model) cancelOwnerJobs(owners map[InstanceID]bool, reason string) {
 	q := m.queue
-	if q == nil || !q.ready() || owner == 0 {
+	if q == nil || !q.ready() || len(owners) == 0 {
 		return
 	}
 	now := time.Now()
 	found, settled := false, false
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.Owner != uint64(owner) || rec.State.Finished() {
+		if rec.Owner == 0 || !owners[InstanceID(rec.Owner)] || rec.State.Finished() {
 			continue
 		}
 		found = true
