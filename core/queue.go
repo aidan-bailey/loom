@@ -290,14 +290,13 @@ func (m *Model) saveQueueQuiet(after string) bool {
 	if !q.saveFailed {
 		q.saveFailed = true
 		// The failure belongs to every client, not to the request this save
-		// may run inside (a kill's delivery cancelling the owner's jobs, an
-		// admission pass a request began): a Notice carrying the request's
-		// cause would reach the requester alone, and saveFailed then
-		// suppresses every later one, so no other client would ever hear it.
-		cause := m.cause
-		m.cause = 0
-		m.notifyErr(fmt.Errorf("work queue: %w; the change is kept in memory and written with the next save", err))
-		m.cause = cause
+		// may run inside (a save made while delivering a request's result,
+		// causedBy): a Notice carrying the request's cause would reach the
+		// requester alone, and saveFailed then suppresses every later one, so
+		// no other client would ever hear it.
+		m.causedBy(0, func() {
+			m.notifyErr(fmt.Errorf("work queue: %w; the change is kept in memory and written with the next save", err))
+		})
 	}
 	return false
 }
