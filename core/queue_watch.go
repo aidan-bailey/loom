@@ -362,6 +362,17 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	if !q.ready() {
 		return
 	}
+	switch {
+	case r.sampleErr != nil:
+		// ps failing leaves usage frozen at its last values: say so once per
+		// run of failures, not at every pass.
+		if !q.sampleFailing {
+			log.For("core").Warn("queue.sample_failed", "err", r.sampleErr)
+		}
+		q.sampleFailing = true
+	case r.snap != nil:
+		q.sampleFailing = false
+	}
 	settled, changed := false, false
 	for _, ob := range r.obs {
 		if ob.silent {

@@ -101,6 +101,9 @@ type queueState struct {
 	// saveFailed is set while the last quiet save failed, so a run of failures
 	// raises one notice.
 	saveFailed bool
+	// sampleFailing is set while the last sample failed (ps), so a run of
+	// failures is logged once.
+	sampleFailing bool
 }
 
 func newQueueState() *queueState {
