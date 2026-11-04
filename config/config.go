@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -382,4 +384,25 @@ func LoadConfigFrom(dir string) *Config {
 		return DefaultConfig()
 	}
 	return cfg
+}
+
+// ReadConfigFrom reads dir's config.json strictly, for a caller that writes
+// it back: a missing file is the defaults, as in LoadConfigFrom, but a file
+// that can't be read or parsed is an error and stays where it is.
+// LoadConfigFrom would quarantine it and start from the defaults, which a
+// write would then put in its place.
+func ReadConfigFrom(dir string) (*Config, error) {
+	path := filepath.Join(dir, ConfigFileName)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return DefaultConfig(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
 }

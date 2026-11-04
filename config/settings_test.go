@@ -85,3 +85,12 @@ func TestFromSettings_OwnsItsCopy(t *testing.T) {
 	cfg.Mutate(func(c *Config) { c.Profiles[0].Program = "y" })
 	assert.Equal(t, "x", s.Profiles[0].Program)
 }
+
+func TestValidateBuildSweepAfterHours(t *testing.T) {
+	for _, ok := range []int{0, 1, 12, MaxBuildSweepAfterHours} {
+		assert.NoError(t, ValidateBuildSweepAfterHours(ok), ok)
+	}
+	for _, bad := range []int{-1, MaxBuildSweepAfterHours + 1} {
+		assert.Error(t, ValidateBuildSweepAfterHours(bad), bad)
+	}
+}
