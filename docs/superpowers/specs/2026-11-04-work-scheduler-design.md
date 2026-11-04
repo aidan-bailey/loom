@@ -117,6 +117,7 @@ The systemd unit in `USAGE.md` gains `KillMode=process`. Under the default (`con
 ### 5.7 Session lifecycle
 
 - Pausing or killing a job's owner cancels its queued and running jobs first (§5.5), with the reason "because the session was paused" or "because the session was killed". The pause or kill then goes ahead without waiting for the jobs to exit. A paused agent can't take a result, and a kill removes the worktree the job runs in. No notice is sent for these cancellations.
+- Only a pause or kill that someone requests cancels jobs. When loom pauses a session on its own because its tmux session died (`pauseGone`), the session's jobs keep their places and run on (the owner, 2026-11-04): a dead pane isn't anyone's choice to drop the work. A notice due while the session is paused is recorded as undelivered (§5.8), and the result stays in the view and the log.
 - Resuming a session doesn't restart its jobs.
 - A job whose owner is no longer served (unregistered, or gone when the daemon boots) keeps its place, and its notice is recorded as undelivered. A job whose cwd is gone fails when it starts (§5.3).
 - Jobs without an owner are never touched by a session's lifecycle.
@@ -149,7 +150,7 @@ Everything is under `<globalDir>/jobs/`, written only by the model (mode 0700 fo
 | Path | Holds |
 |---|---|
 | `jobs.json` | `{"version": 1, "next_id": N, "jobs": [...]}`: every job's record except its environment (ID, owner, description, argv, cwd, claim, notify and tail, state, the times it was submitted, started and ended, exit, peak memory, the shim's pid, any cancel request and the notice's fate) |
-| `<id>/spec.json` | What the shim needs: argv, cwd, the captured environment, the claim |
+| `<id>/spec.json` | What the shim needs: the job's ID, argv, cwd and captured environment, and the parallelism hint (§5.1), which is written when the job starts |
 | `<id>/output.log` | The command's stdout and stderr |
 | `<id>/run.lock`, `<id>/started.json`, `<id>/exit.json` | The shim's lock, start record and result (§5.3) |
 
