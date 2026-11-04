@@ -18,7 +18,7 @@ const buildSweepInterval = 30 * time.Minute
 
 // errBuildSweepOff is a sweep's error when no threshold is set: the
 // setting is absent or 0 and the request named none.
-var errBuildSweepOff = errors.New("the build sweep is off: turn it on in Settings (S) → Build Sweep, or pass --after")
+var errBuildSweepOff = errors.New("the build sweep is off: turn it on in Settings (S) → Build Sweep (build_sweep_after_hours in the global config.json), or pass --after")
 
 // buildSweepResult is a build sweep's job result: its report, or why it
 // didn't run.
