@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -697,4 +698,222 @@ func TestJobQueue_AStartThatCannotWorkFailsTheJob(t *testing.T) {
 
 		assert.Equal(t, sched.Cancelled, wqRecord(t, m, id).State)
 	})
+}
+
+// wqRestart is a daemon restarted over dir: a second model over the same
+// global dir, which settles every job it still finds running when the test
+// ends.
+func wqRestart(t *testing.T, dir string) *Model {
+	t.Helper()
+	m := wqModelAt(t, dir)
+	t.Cleanup(func() { wqStop(t, m) })
+	return m
+}
+
+// wqShimDone waits until job id's shim has written its result and let go of
+// its lock.
+func wqShimDone(t *testing.T, m *Model, id sched.JobID) {
+	t.Helper()
+	dir := m.queue.jobDir(id)
+	wqWait(t, "the shim to finish", func() bool {
+		if _, err := sched.ReadExit(dir); err != nil {
+			return false
+		}
+		alive, _ := sched.Probe(dir)
+		return !alive
+	})
+}
+
+// wqGated is a command that runs until the file gate exists, then exits with
+// code: a job a test can keep running across a restart and end when it likes.
+func wqGated(gate string, code int) []string {
+	return []string{"sh", "-c", fmt.Sprintf(`while [ ! -e "$1" ]; do sleep 0.05; done; exit %d`, code), "sh", gate}
+}
+
+func TestJobQueue_ABootAdoptsARunningJobAndSettlesItLater(t *testing.T) {
+	dir := t.TempDir()
+	gate := filepath.Join(t.TempDir(), "go")
+	old := wqModelAt(t, dir)
+	id := wqLaunch(t, old, wqGated(gate, 7)...)
+	old.queue.store.Jobs[0].PeakRSSKB = 1 << 40
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	rec := wqRecord(t, m, id)
+	assert.Equal(t, sched.Running, rec.State)
+	assert.Equal(t, wqRecord(t, old, id).PID, rec.PID)
+	assert.Less(t, rec.PeakRSSKB, int64(1<<40), "the peak restarts from zero when a daemon adopts a job")
+	assert.NotContains(t, m.queue.starting, id)
+
+	require.NoError(t, os.WriteFile(gate, nil, 0o600))
+	done := wqSettle(t, m, id)
+	assert.Equal(t, sched.Failed, done.State)
+	require.NotNil(t, done.Exit)
+	assert.Equal(t, 7, done.Exit.Code)
+}
+
+func TestJobQueue_ABootSettlesWhatEndedWhileTheDaemonWasDown(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	id := wqLaunch(t, old, "sh", "-c", "exit 0")
+	wqShimDone(t, old, id)
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	rec := wqRecord(t, m, id)
+	assert.Equal(t, sched.Done, rec.State)
+	require.NotNil(t, rec.Exit)
+	saved, err := sched.LoadStore(m.queue.dir)
+	require.NoError(t, err)
+	assert.Equal(t, sched.Done, saved.Jobs[0].State, "and written")
+}
+
+func TestJobQueue_ABootCallsAShimThatVanishedLost(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	rec := wqEnded(1, 0)
+	rec.State, rec.Exit, rec.Ended, rec.PID = sched.Running, nil, time.Time{}, 999999
+	wqSeed(t, old, rec)
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	got := wqRecord(t, m, 1)
+	assert.Equal(t, sched.Lost, got.State)
+	assert.Equal(t, lostWhy, got.Failure)
+}
+
+// A start whose save failed leaves a running shim behind a queued record: it
+// is adopted as running, and never started twice (spec §5.6).
+func TestJobQueue_ABootAdoptsAShimBehindAQueuedRecord(t *testing.T) {
+	dir := t.TempDir()
+	gate := filepath.Join(t.TempDir(), "go")
+	old := wqModelAt(t, dir)
+	id := wqLaunch(t, old, wqGated(gate, 0)...)
+	old.queue.store.Jobs[0].State, old.queue.store.Jobs[0].PID, old.queue.store.Jobs[0].Started = sched.Queued, 0, time.Time{}
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	got := wqRecord(t, m, id)
+	assert.Equal(t, sched.Running, got.State, "adopted")
+	assert.Greater(t, got.PID, 1)
+	assert.Empty(t, m.queue.starting)
+	assert.Empty(t, m.Drain().Jobs, "no start job: it is never started twice")
+	require.NoError(t, os.WriteFile(gate, nil, 0o600))
+	assert.Equal(t, sched.Done, wqSettle(t, m, id).State)
+}
+
+func TestJobQueue_ABootSettlesAQueuedRecordFromItsExit(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	id := wqLaunch(t, old, "sh", "-c", "exit 3")
+	wqShimDone(t, old, id)
+	old.queue.store.Jobs[0].State, old.queue.store.Jobs[0].PID, old.queue.store.Jobs[0].Started = sched.Queued, 0, time.Time{}
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	got := wqRecord(t, m, id)
+	assert.Equal(t, sched.Failed, got.State)
+	require.NotNil(t, got.Exit)
+	assert.Equal(t, 3, got.Exit.Code)
+	assert.Empty(t, m.Drain().Jobs, "it is never started twice")
+}
+
+// A queued record whose shim never ran stays queued through adoption, and the
+// first admission pass, which comes after it, starts it.
+func TestJobQueue_ABootLeavesAnUnstartedQueuedJobToTheFirstPass(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	queued := wqEnded(1, 0)
+	queued.State, queued.Exit, queued.Started, queued.Ended = sched.Queued, nil, time.Time{}, time.Time{}
+	wqSeed(t, old, queued)
+	require.NoError(t, old.saveQueue())
+
+	m := wqModelAt(t, dir)
+
+	assert.Equal(t, sched.Running, wqRecord(t, m, 1).State, "admitted")
+	assert.True(t, m.queue.starting[1])
+	assert.Len(t, m.Drain().Jobs, 1, "with one start job")
+}
+
+// The first admission pass counts the jobs boot adopted: with three default
+// jobs running, the fourth still waits for cores.
+func TestJobQueue_ABootCountsAdoptedJobsBeforeItAdmits(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	t.Cleanup(func() { wqStop(t, old) })
+	var ids []sched.JobID
+	for range 3 {
+		ids = append(ids, wqSubmit(t, old, "sleep", "30"))
+	}
+	wqPump(t, old)
+	fourth := wqSubmit(t, old, "sleep", "30")
+	require.Equal(t, sched.Queued, wqRecord(t, old, fourth).State)
+
+	m := wqRestart(t, dir)
+
+	for _, id := range ids {
+		assert.Equal(t, sched.Running, wqRecord(t, m, id).State)
+	}
+	assert.Equal(t, sched.Queued, wqRecord(t, m, fourth).State, "adoption came before admission")
+	assert.Equal(t, "needs 4 cores (2 free)", m.queue.waiting[fourth])
+	assert.Empty(t, m.queue.starting)
+}
+
+func TestJobQueue_ABootMarksNoticesStillOnTheirWayUndelivered(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	pending := wqEnded(1, 77)
+	sent := wqEnded(2, 77)
+	sent.Notice = sched.NoticeSent
+	quiet := wqEnded(3, 77)
+	quiet.Notify = false
+	ownerless := wqEnded(4, 0)
+	for _, rec := range []sched.Record{pending, sent, quiet, ownerless} {
+		wqSeed(t, old, rec)
+	}
+	require.NoError(t, old.saveQueue())
+
+	m := wqRestart(t, dir)
+
+	got := wqRecord(t, m, 1)
+	assert.Equal(t, sched.NoticeUndelivered, got.Notice)
+	assert.Equal(t, "the daemon stopped before the message was delivered", got.NoticeWhy)
+	assert.Equal(t, sched.NoticeSent, wqRecord(t, m, 2).Notice)
+	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, 3).Notice)
+	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, 4).Notice)
+	saved, err := sched.LoadStore(m.queue.dir)
+	require.NoError(t, err)
+	assert.Equal(t, sched.NoticeUndelivered, saved.Jobs[0].Notice, "and written")
+}
+
+// A job that ended while no daemon ran is settled at boot, and its owner, a
+// session this daemon serves, is told: its notice is not taken for one that
+// was lost with the old daemon.
+func TestJobQueue_ABootSendsTheNoticeOfAJobThatEndedWhileTheDaemonWasDown(t *testing.T) {
+	withMod(t)
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	id := wqLaunch(t, old, "sh", "-c", "echo done")
+	wqShimDone(t, old, id)
+	m := NewForTest(Options{})
+	m.SetJobRunnerForTest(sched.TestRunner())
+	inst := modInst(t, m, "owner")
+	old.queue.store.Jobs[0].Owner, old.queue.store.Jobs[0].Notify = uint64(m.idOf(inst)), true
+	require.NoError(t, old.saveQueue())
+
+	m.loadQueue(dir, wqHost)
+	wqPump(t, m)
+
+	assert.Equal(t, sched.Done, wqRecord(t, m, id).State)
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
+	msgs, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "the owner is told")
+	assert.Contains(t, msgs[0].Text, "finished: exit 0")
+	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, id).Notice, "still on its way")
 }

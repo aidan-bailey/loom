@@ -191,6 +191,8 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	}
 	q.store = store
 	q.moved()
+	m.markPendingNotices()
+	m.adoptJobs()
 	m.admitJobs()
 }
 
@@ -300,4 +302,47 @@ func removeJobDirsJob(dir string, ids []sched.JobID) Job {
 		}
 		return nil
 	}
+}
+
+// markPendingNotices records as undelivered every notice that was still on its
+// way when the last daemon stopped: a finished job that asked for one, has an
+// owner and has no fate. Its message may have reached the mod or not, and a
+// message the mod may have submitted is never sent again. It runs before
+// adoption, whose settled jobs send their own notices.
+func (m *Model) markPendingNotices() {
+	q := m.queue
+	changed := false
+	for i := range q.store.Jobs {
+		rec := &q.store.Jobs[i]
+		if rec.State.Finished() && rec.Notify && rec.Owner != 0 && rec.Notice == sched.NoticeNone {
+			rec.Notice, rec.NoticeWhy = sched.NoticeUndelivered, "the daemon stopped before the message was delivered"
+			changed = true
+		}
+	}
+	if changed {
+		q.moved()
+		m.saveQueueQuiet("boot")
+	}
+}
+
+// adoptJobs settles what ran while no daemon was up (spec §5.6): each running
+// job through the lock test of a pass, which settles one whose lock is free
+// from exit.json (lost when there is none), and each queued job too, since a
+// start whose save failed leaves a running shim behind a queued record: one
+// whose lock is held is adopted as running, one with an exit.json settles from
+// it, and either way it is never started twice. The pass runs here, before the
+// loop starts, so the first admission pass counts the jobs adopted. A job's
+// peak memory restarts from zero.
+func (m *Model) adoptJobs() {
+	q := m.queue
+	for i := range q.store.Jobs {
+		if q.store.Jobs[i].State == sched.Running {
+			q.store.Jobs[i].PeakRSSKB = 0
+		}
+	}
+	pass := m.queuePassFor(true)
+	if len(pass.jobs) == 0 {
+		return
+	}
+	m.deliverQueuePass(runQueuePass(pass))
 }
