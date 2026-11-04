@@ -825,6 +825,25 @@ func TestWorkDefaults_UnreadableRAMWithMemoryConfigured(t *testing.T) {
 	assert.Equal(t, 4, s.MemoryGB, "the published block is not edited")
 }
 
+// An invalid published block is when the form is opened to fix it: one
+// field's fault takes only the defaults that depend on it.
+func TestWorkDefaults_AnInvalidBlockKeepsTheDefaultsThatDoNotDependOnTheFault(t *testing.T) {
+	host := sched.Host{Name: "fresco", Cores: 16, RAMBytes: 30 << 30}
+	normal := overlay.WorkCapsValues{CPUs: 14, MemoryGB: 22, IOJobs: 2, ClaimCPUs: 4, ClaimMemoryGB: 6, StarveMinutes: 10, KeepFinished: 50}
+
+	assert.Equal(t, normal, workDefaults(host, config.SchedulerSettings{IOJobs: 100}),
+		"io_jobs over its bound leaves every other default as on a plain host")
+	assert.Equal(t, normal, workDefaults(host, config.SchedulerSettings{StarveAfterMinutes: -3, KeepFinished: 99999}))
+
+	got := workDefaults(host, config.SchedulerSettings{CPUs: 5000})
+	want := normal
+	want.ClaimCPUs = 0 // the claim follows the cpus cap, which is the fault
+	assert.Equal(t, want, got, "a fault in cpus takes the claim's cpu default, which follows it, and nothing else")
+
+	got = workDefaults(host, config.SchedulerSettings{DefaultClaim: &config.ClaimSettings{CPUs: 5000, MemoryGB: 3}})
+	assert.Equal(t, normal, got, "a bad claim half hides neither a cap's default nor the other half's")
+}
+
 func TestWorkCaps_FormShowsTheDefaultInEffectForTheClaim(t *testing.T) {
 	q := testQueue(queueJob(14, sched.Running, "a"))
 	q.Settings = config.SchedulerSettings{CPUs: 2}
