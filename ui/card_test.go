@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
@@ -284,6 +285,30 @@ func TestRenderCard_JobBadgeDecisionIsWidthOnly(t *testing.T) {
 			assert.Equal(t, want, strings.Contains(first, "⚙"), "width %d, badge %q", w, b)
 		}
 	}
+}
+
+// TestRenderCard_JobBadgeAtTheCapIsKeptAndOneOverIsDropped pins the
+// boundary: a badge exactly railJobBadgeMaxWidth cells wide shows, one cell
+// wider is dropped.
+func TestRenderCard_JobBadgeAtTheCapIsKeptAndOneOverIsDropped(t *testing.T) {
+	badgeOfWidth := func(w int) string {
+		b := "⚙ job "
+		for lipgloss.Width(b) < w {
+			b += "1"
+		}
+		assert.Equal(t, w, lipgloss.Width(b))
+		return b
+	}
+	atCap := badgeOfWidth(railJobBadgeMaxWidth)
+	over := badgeOfWidth(railJobBadgeMaxWidth + 1)
+
+	d := CardData{Title: "fix-login", Index: 1, Status: session.Running, JobBadge: atCap}
+	assert.Contains(t, railFirstLine(d, 60), atCap, "a badge at the cap is kept")
+
+	d.JobBadge = over
+	first := railFirstLine(d, 60)
+	assert.Contains(t, first, "1. fix-login")
+	assert.NotContains(t, first, "⚙", "a badge one cell over is dropped whole")
 }
 
 // TestRenderCard_LongJobBadgeIsDroppedWhole pins the cap: a badge wider than
