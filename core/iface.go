@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
@@ -144,6 +145,18 @@ type Core interface {
 	ConfigureWeb(listen, origin string) error
 	PairDevice(name string) (Pairing, error)
 	RevokeDevice(name string) error
+
+	// The work queue (package sched, owned by the model): its published
+	// state, which a replica answers, and the requests that change it. Each
+	// request is answered at once, with its refusal when it is refused.
+	// SubmitJob's Reply carries the new job's ID (Job) and, in Notice, the
+	// warning for a submission from a launch no served session holds.
+	Queue() QueueView // rpc:local
+	SubmitJob(spec sched.Submit, req ReqID)
+	CancelJob(id sched.JobID, from CancelFrom, req ReqID)
+	MoveJobToFront(id sched.JobID, req ReqID)
+	NotifyJob(id sched.JobID, req ReqID)
+	SetSchedulerCaps(s config.SchedulerSettings, req ReqID)
 }
 
 var _ Core = (*Loop)(nil)

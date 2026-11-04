@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
@@ -666,6 +667,66 @@ type RevokeDeviceParams struct {
 type RevokeDeviceResult struct {
 }
 
+// QueueParams are Queue's parameters on the wire.
+type QueueParams struct {
+}
+
+// QueueResult is Queue's result on the wire; an error travels in the reply.
+type QueueResult struct {
+	Value core.QueueView `json:"value"`
+}
+
+// SubmitJobParams are SubmitJob's parameters on the wire.
+type SubmitJobParams struct {
+	Spec sched.Submit `json:"spec"`
+	Req  core.ReqID   `json:"req"`
+}
+
+// SubmitJobResult is SubmitJob's result on the wire; an error travels in the reply.
+type SubmitJobResult struct {
+}
+
+// CancelJobParams are CancelJob's parameters on the wire.
+type CancelJobParams struct {
+	ID   sched.JobID     `json:"id"`
+	From core.CancelFrom `json:"from"`
+	Req  core.ReqID      `json:"req"`
+}
+
+// CancelJobResult is CancelJob's result on the wire; an error travels in the reply.
+type CancelJobResult struct {
+}
+
+// MoveJobToFrontParams are MoveJobToFront's parameters on the wire.
+type MoveJobToFrontParams struct {
+	ID  sched.JobID `json:"id"`
+	Req core.ReqID  `json:"req"`
+}
+
+// MoveJobToFrontResult is MoveJobToFront's result on the wire; an error travels in the reply.
+type MoveJobToFrontResult struct {
+}
+
+// NotifyJobParams are NotifyJob's parameters on the wire.
+type NotifyJobParams struct {
+	ID  sched.JobID `json:"id"`
+	Req core.ReqID  `json:"req"`
+}
+
+// NotifyJobResult is NotifyJob's result on the wire; an error travels in the reply.
+type NotifyJobResult struct {
+}
+
+// SetSchedulerCapsParams are SetSchedulerCaps's parameters on the wire.
+type SetSchedulerCapsParams struct {
+	S   config.SchedulerSettings `json:"s"`
+	Req core.ReqID               `json:"req"`
+}
+
+// SetSchedulerCapsResult is SetSchedulerCaps's result on the wire; an error travels in the reply.
+type SetSchedulerCapsResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -736,6 +797,12 @@ var methods = []methodInfo{
 	{Name: "ConfigureWeb", Kind: kindRequest, Params: ConfigureWebParams{}, Result: ConfigureWebResult{}},
 	{Name: "PairDevice", Kind: kindRequest, Params: PairDeviceParams{}, Result: PairDeviceResult{}},
 	{Name: "RevokeDevice", Kind: kindRequest, Params: RevokeDeviceParams{}, Result: RevokeDeviceResult{}},
+	{Name: "Queue", Kind: kindLocal, Params: QueueParams{}, Result: QueueResult{}},
+	{Name: "SubmitJob", Kind: kindRequest, Params: SubmitJobParams{}, Result: SubmitJobResult{}},
+	{Name: "CancelJob", Kind: kindRequest, Params: CancelJobParams{}, Result: CancelJobResult{}},
+	{Name: "MoveJobToFront", Kind: kindRequest, Params: MoveJobToFrontParams{}, Result: MoveJobToFrontResult{}},
+	{Name: "NotifyJob", Kind: kindRequest, Params: NotifyJobParams{}, Result: NotifyJobResult{}},
+	{Name: "SetSchedulerCaps", Kind: kindRequest, Params: SetSchedulerCapsParams{}, Result: SetSchedulerCapsResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1245,6 +1312,62 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		err := b.RevokeDevice(p.Name)
 		return RevokeDeviceResult{}, err, true
+	case "Queue":
+		var p QueueParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return QueueResult{Value: b.Queue()}, nil, true
+	case "SubmitJob":
+		var p SubmitJobParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.SubmitJob(p.Spec, p.Req)
+		return SubmitJobResult{}, nil, true
+	case "CancelJob":
+		var p CancelJobParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.CancelJob(p.ID, p.From, p.Req)
+		return CancelJobResult{}, nil, true
+	case "MoveJobToFront":
+		var p MoveJobToFrontParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.MoveJobToFront(p.ID, p.Req)
+		return MoveJobToFrontResult{}, nil, true
+	case "NotifyJob":
+		var p NotifyJobParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.NotifyJob(p.ID, p.Req)
+		return NotifyJobResult{}, nil, true
+	case "SetSchedulerCaps":
+		var p SetSchedulerCapsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.SetSchedulerCaps(p.S, p.Req)
+		return SetSchedulerCapsResult{}, nil, true
 	}
 	return nil, nil, false
 }
@@ -1677,4 +1800,41 @@ func (c *Client) PairDevice(name string) (core.Pairing, error) {
 func (c *Client) RevokeDevice(name string) error {
 	var r RevokeDeviceResult
 	return c.request("RevokeDevice", RevokeDeviceParams{Name: name}, &r)
+}
+
+// Queue is core.Core's Queue (local).
+func (c *Client) Queue() core.QueueView {
+	var v0 core.QueueView
+	c.local(func(r *replica) { v0 = r.Queue() })
+	return v0
+}
+
+// SubmitJob is core.Core's SubmitJob (request).
+func (c *Client) SubmitJob(spec sched.Submit, req core.ReqID) {
+	var r SubmitJobResult
+	c.noteRefused(c.requestNoErr("SubmitJob", SubmitJobParams{Spec: spec, Req: req}, &r), req)
+}
+
+// CancelJob is core.Core's CancelJob (request).
+func (c *Client) CancelJob(id sched.JobID, from core.CancelFrom, req core.ReqID) {
+	var r CancelJobResult
+	c.noteRefused(c.requestNoErr("CancelJob", CancelJobParams{ID: id, From: from, Req: req}, &r), req)
+}
+
+// MoveJobToFront is core.Core's MoveJobToFront (request).
+func (c *Client) MoveJobToFront(id sched.JobID, req core.ReqID) {
+	var r MoveJobToFrontResult
+	c.noteRefused(c.requestNoErr("MoveJobToFront", MoveJobToFrontParams{ID: id, Req: req}, &r), req)
+}
+
+// NotifyJob is core.Core's NotifyJob (request).
+func (c *Client) NotifyJob(id sched.JobID, req core.ReqID) {
+	var r NotifyJobResult
+	c.noteRefused(c.requestNoErr("NotifyJob", NotifyJobParams{ID: id, Req: req}, &r), req)
+}
+
+// SetSchedulerCaps is core.Core's SetSchedulerCaps (request).
+func (c *Client) SetSchedulerCaps(s config.SchedulerSettings, req core.ReqID) {
+	var r SetSchedulerCapsResult
+	c.noteRefused(c.requestNoErr("SetSchedulerCaps", SetSchedulerCapsParams{S: s, Req: req}, &r), req)
 }

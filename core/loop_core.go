@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
@@ -193,4 +194,32 @@ func (l *Loop) PairDevice(name string) (Pairing, error) {
 // RevokeDevice runs Model.RevokeDevice on the loop.
 func (l *Loop) RevokeDevice(name string) error {
 	return get(l, func(m *Model) error { return m.RevokeDevice(name) })
+}
+
+// Queue runs Model.Queue on the loop.
+func (l *Loop) Queue() QueueView { return get(l, (*Model).Queue) }
+
+// SubmitJob runs Model.SubmitJob on the loop.
+func (l *Loop) SubmitJob(spec sched.Submit, req ReqID) {
+	l.do(func(m *Model) { m.SubmitJob(spec, req) })
+}
+
+// CancelJob runs Model.CancelJob on the loop.
+func (l *Loop) CancelJob(id sched.JobID, from CancelFrom, req ReqID) {
+	l.do(func(m *Model) { m.CancelJob(id, from, req) })
+}
+
+// MoveJobToFront runs Model.MoveJobToFront on the loop.
+func (l *Loop) MoveJobToFront(id sched.JobID, req ReqID) {
+	l.do(func(m *Model) { m.MoveJobToFront(id, req) })
+}
+
+// NotifyJob runs Model.NotifyJob on the loop.
+func (l *Loop) NotifyJob(id sched.JobID, req ReqID) {
+	l.do(func(m *Model) { m.NotifyJob(id, req) })
+}
+
+// SetSchedulerCaps runs Model.SetSchedulerCaps on the loop.
+func (l *Loop) SetSchedulerCaps(s config.SchedulerSettings, req ReqID) {
+	l.do(func(m *Model) { m.SetSchedulerCaps(s, req) })
 }

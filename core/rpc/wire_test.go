@@ -30,6 +30,7 @@ func TestEvents_RoundTrip(t *testing.T) {
 	samples = append(samples,
 		core.Notice{Err: core.ErrNoSession},
 		core.Reply{Req: 2, ID: 3, Err: errors.New("kill x: worktree locked")},
+		core.Reply{Req: 3, Job: 14, Notice: errors.New("job 14 has no owner")},
 		core.ViewsChanged{WS: 1, Views: []core.InstanceView{{
 			ID: 4, Title: "x", Status: session.Running, StatusSince: time.Unix(100, 0),
 			Diff: git.DiffStats{Added: 1, Error: errors.New("no base")}, HasDiff: true,

@@ -7,14 +7,17 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/stretchr/testify/assert"
@@ -687,4 +690,126 @@ func TestClosed_CallsReturn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a call blocked on a closed connection")
 	}
+}
+
+// queueModel is a booted model whose global dir holds a scheduler block
+// (8 cores, 16 GB, a default claim of 2 cores and 4 GB) and a queue written
+// by sched.SaveStore: a queued job (2) whose claim is over the cap, so it
+// never starts, and a finished one (3). The next ID is 4.
+func queueModel(t *testing.T) *core.Model {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	block := `{"scheduler": {"cpus": 8, "memory_gb": 16, "io_jobs": 2, "default_claim": {"cpus": 2, "memory_gb": 4}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, config.ConfigFileName), []byte(block), 0o644))
+	t0 := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	job := func(id sched.JobID, state sched.State, claim sched.Claim) sched.Record {
+		return sched.Record{
+			ID: id, Order: int64(id), Description: fmt.Sprintf("job %d", id),
+			Argv: []string{"sleep", "1"}, Cwd: "/work", Claim: claim, Tail: 20,
+			State: state, Submitted: t0.Add(time.Duration(id) * time.Second),
+		}
+	}
+	over := job(2, sched.Queued, sched.Claim{CPUs: 99, MemoryGB: 4})
+	done := job(3, sched.Done, sched.Claim{CPUs: 2, MemoryGB: 4})
+	done.Started, done.Ended = t0, t0.Add(time.Minute)
+	done.Exit = &sched.Exit{Code: 0, Ended: done.Ended, MaxRSSKB: 2048}
+	jobsDir := filepath.Join(dir, "jobs")
+	for _, r := range []sched.Record{over, done} {
+		require.NoError(t, sched.WriteSpec(sched.JobDir(jobsDir, r.ID), sched.Spec{ID: r.ID, Argv: r.Argv, Cwd: r.Cwd}))
+	}
+	require.NoError(t, sched.SaveStore(jobsDir, sched.Store{Version: sched.StoreVersion, NextID: 4, Jobs: []sched.Record{over, done}}))
+	noTmux := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return &exec.ExitError{} },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	model := core.NewForTest(core.Options{CmdExec: noTmux})
+	model.Boot()
+	return model
+}
+
+// TestReplica_QueueAnswersAsTheModel: Queue is an rpc:local query, so the
+// client answers it from the last QueueChanged, and gives what the model
+// gives, the scheduler block's default claim and the jobs included.
+func TestReplica_QueueAnswersAsTheModel(t *testing.T) {
+	loop := core.StartForTest(queueModel(t))
+	c := pair(t, loop)
+
+	require.Len(t, loop.Queue().Jobs, 2, "fixture: the queue's jobs are in the view")
+	require.NotNil(t, loop.Queue().Settings.DefaultClaim, "fixture: and the scheduler block's default claim")
+	assert.Equal(t, normalize(loop.Queue()), normalize(c.Queue()))
+}
+
+// TestQueueRequests_ThroughTheClient: the work queue's requests over the
+// wire. A submission's Reply carries the new ID and the owner warning, and
+// its effect is in the replica when it returns, with no trace of the
+// environment; each refusal matches ErrRefused with its text; a cancel's
+// source reaches the job's reason.
+func TestQueueRequests_ThroughTheClient(t *testing.T) {
+	loop := core.StartForTest(queueModel(t))
+	c := pair(t, loop)
+	c.Sync() // the snapshot
+
+	replyTo := func(req core.ReqID) core.Reply {
+		t.Helper()
+		require.NoError(t, c.FlushForTest())
+		for _, ev := range c.Sync() {
+			if r, ok := ev.(core.Reply); ok && r.Req == req {
+				return r
+			}
+		}
+		require.Failf(t, "no Reply", "request %d", req)
+		return core.Reply{}
+	}
+	job := func(id sched.JobID) (core.JobView, bool) {
+		for _, j := range c.Queue().Jobs {
+			if j.ID == id {
+				return j, true
+			}
+		}
+		return core.JobView{}, false
+	}
+
+	c.SubmitJob(sched.Submit{
+		Argv: []string{"cargo", "test"}, Cwd: t.TempDir(), Env: []string{"LOOM_WIRE_SECRET=hunter2"},
+		Description: "tests", Notify: true, Tail: 20, Launch: "ghost",
+	}, 11)
+	r := replyTo(11)
+	require.NoError(t, r.Err)
+	assert.Equal(t, sched.JobID(4), r.Job, "the new job's ID crosses the wire")
+	require.Error(t, r.Notice)
+	assert.Equal(t, "this shell's loom session (launch ghost) isn't one the daemon serves: job 4 has no owner, so no message will come", r.Notice.Error())
+	j, ok := job(4)
+	require.True(t, ok, "the replica holds the job when the request returns")
+	assert.Equal(t, sched.Running, j.State, "it fits, so the pass that follows the submit admits it; its start job is held")
+	assert.Equal(t, "tests", j.Description)
+	b, err := json.Marshal(c.Queue())
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "hunter2", "the environment is in no published view")
+
+	c.CancelJob(4, core.CancelFromView, 12)
+	require.NoError(t, replyTo(12).Err)
+	j, _ = job(4)
+	assert.Equal(t, "from the work view", j.CancelReason, "the cancel's source reached the job")
+
+	for _, tc := range []struct {
+		name string
+		ask  func(req core.ReqID)
+		want string
+	}{
+		{"a cancel of a finished job", func(req core.ReqID) { c.CancelJob(3, core.CancelFromCLI, req) }, "job 3 has finished"},
+		{"a cancel from an unknown source", func(req core.ReqID) { c.CancelJob(2, core.CancelFrom("web"), req) }, `cancel job 2: unknown source "web"`},
+		{"a move of a job that isn't waiting", func(req core.ReqID) { c.MoveJobToFront(4, req) }, "job 4 isn't waiting"},
+		{"a move of a job that doesn't exist", func(req core.ReqID) { c.MoveJobToFront(99, req) }, "there is no job 99"},
+		{"a notice for a job with no owner", func(req core.ReqID) { c.NotifyJob(2, req) }, "job 2 has no owner"},
+		{"caps outside the bounds", func(req core.ReqID) { c.SetSchedulerCaps(config.SchedulerSettings{CPUs: -1}, req) }, "scheduler.cpus is -1"},
+	} {
+		tc.ask(20)
+		r := replyTo(20)
+		assert.ErrorIs(t, r.Err, core.ErrRefused, tc.name)
+		require.Error(t, r.Err, tc.name)
+		assert.Contains(t, r.Err.Error(), tc.want, tc.name)
+	}
+	j, _ = job(2)
+	assert.Equal(t, sched.Queued, j.State, "the refused requests changed nothing")
 }

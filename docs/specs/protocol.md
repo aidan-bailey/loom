@@ -82,7 +82,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0}}`
 
 ## Methods
 
@@ -488,6 +488,42 @@ Params: `{"name":""}`
 
 Result: `{}`
 
+### Queue (local)
+
+Params: `{}`
+
+Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
+
+### SubmitJob (request)
+
+Params: `{"spec":{"argv":null,"cwd":"","env":null,"description":"","claim":{},"notify":false,"tail":0,"launch":""},"req":0}`
+
+Result: `{}`
+
+### CancelJob (request)
+
+Params: `{"id":0,"from":"","req":0}`
+
+Result: `{}`
+
+### MoveJobToFront (request)
+
+Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
+### NotifyJob (request)
+
+Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
+### SetSchedulerCaps (request)
+
+Params: `{"s":{},"req":0}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged
@@ -540,7 +576,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0}`
 
 ### SessionLaunched
 
