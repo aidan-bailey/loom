@@ -95,6 +95,14 @@ func TestRemoveJobDir_DoesNotFollowLinks(t *testing.T) {
 	assert.NoDirExists(t, JobDir(dir, 9))
 	assert.FileExists(t, outsideFile)
 	assert.FileExists(t, filepath.Join(outsideTree, "keep.txt"))
+
+	// The job's own directory is a link to an outside tree: the link goes,
+	// the tree stays.
+	require.NoError(t, os.Symlink(outsideTree, JobDir(dir, 10)))
+	require.NoError(t, RemoveJobDir(dir, 10))
+	_, err := os.Lstat(JobDir(dir, 10))
+	assert.True(t, os.IsNotExist(err), "the link itself is removed")
+	assert.FileExists(t, filepath.Join(outsideTree, "keep.txt"), "the tree the job directory linked to survives")
 }
 
 // TestRemoveJobDir_RefusesWhatItCannotProve: a dir that is empty, relative or
