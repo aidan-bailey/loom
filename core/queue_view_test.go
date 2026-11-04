@@ -321,9 +321,9 @@ func TestPublishQueue_OnceThenOnChange(t *testing.T) {
 }
 
 // qvOwned is a booted model serving workspace "a" with a session "x", and a
-// finished job x owns, published by a first Sync. The model's queue is the
-// one Boot loaded over the global dir; the job is added to it afterwards, as
-// a submit adds one.
+// finished job x owns, published by a first Sync. The queue is loaded over
+// the test's global dir (savedModel's boot loads none), and the job is added
+// to it afterwards, as a submit adds one.
 func qvOwned(t *testing.T) (m *Model, ws *Workspace, owner InstanceID, job sched.JobID) {
 	t.Helper()
 	a := workspaceDef(t, "a", `[{"title":"x","status":3,"program":"claude"}]`, "true")
@@ -331,6 +331,11 @@ func qvOwned(t *testing.T) (m *Model, ws *Workspace, owner InstanceID, job sched
 	ws = served(m, a)
 	owner = m.idOf(ws.byTitle("x"))
 	require.NotZero(t, owner, "fixture: x is served")
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	m.SetJobRunnerForTest(sched.TestRunner())
+	m.loadQueue(dir, wqHost)
+	require.Equal(t, filepath.Join(dir, "jobs"), m.queue.dir, "fixture: the queue has its directory")
 	rec := qvFinished(1, sched.Done, qvEpoch)
 	rec.Owner = uint64(owner)
 	wqSeed(t, m, rec)
