@@ -336,7 +336,7 @@ func TestPublishQueue_OnceThenOnChange(t *testing.T) {
 
 	m.queue = &queueState{dir: m.queue.dir, rev: m.queue.rev}
 	replaced := queueEvents(m.Sync().Events)
-	require.Len(t, replaced, 1, "a different queue at the same revision, as SetJobRunnerForTest or a later replacement installs one")
+	require.Len(t, replaced, 1, "a different queue at the same revision: publishing is by pointer, so a queue installed in place of the last published one is republished (no path does that today; the guard is defensive)")
 	assert.Empty(t, replaced[0].View.Jobs)
 
 	m.queue.rev++
@@ -423,6 +423,33 @@ func TestPublishQueue_FollowsTheOwnersState(t *testing.T) {
 			assert.Empty(t, queueEvents(m.Sync().Events), "and once")
 		})
 	}
+}
+
+// The way back: registering the workspace again serves its session under the
+// same ID, and the job's owner fields resolve again and are republished.
+func TestPublishQueue_FollowsTheOwnersStateBackWhenTheWorkspaceIsRegisteredAgain(t *testing.T) {
+	m, ws, owner, job := qvOwned(t)
+	wsID := m.wsIDOf(ws)
+	def := m.registry.Get("a")
+	require.NotNil(t, def)
+	path := def.Path
+	require.NoError(t, m.Unregister("a"))
+	gone := queueEvents(m.Sync().Events)
+	require.Len(t, gone, 1, "republished when the owner stops resolving")
+	require.Empty(t, jobOf(t, gone[0].View, job).OwnerTitle, "fixture: the owner no longer resolves")
+
+	_, err := m.Register("a", path)
+	require.NoError(t, err)
+
+	back := queueEvents(m.Sync().Events)
+	require.Len(t, back, 1, "republished when it resolves again")
+	got := jobOf(t, back[0].View, job)
+	assert.Equal(t, owner, got.Owner)
+	assert.Equal(t, "x", got.OwnerTitle)
+	assert.Equal(t, "a", got.OwnerWorkspace)
+	assert.Equal(t, wsID, got.OwnerWorkspaceID)
+	assert.Equal(t, m.Queue(), back[0].View)
+	assert.Empty(t, queueEvents(m.Sync().Events), "and once")
 }
 
 // The other side: a Sync after which no job's owner resolves differently, and

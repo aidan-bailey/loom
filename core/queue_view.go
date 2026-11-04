@@ -106,15 +106,38 @@ type jobOwner struct {
 	workspaceID WorkspaceID
 }
 
-// jobOwnerOf resolves owner by identity (lookup) to its title, its
-// workspace's label and its workspace's ID. The view and the publisher's
-// owner signature (queueOwners) both read it, so they can't disagree.
-func (m *Model) jobOwnerOf(owner InstanceID) jobOwner {
-	inst, ws := m.lookup(owner)
-	if inst == nil {
-		return jobOwner{}
+// jobOwners resolves the owners of jobs by identity, as lookup does (the
+// first served session holding an ID, by the ID idOf gives it: a workspace
+// registered again is resolved in the Sync that serves it, before its views
+// have named its sessions), to each one's title, its workspace's
+// label and its workspace's ID. It builds one map for the whole call, not a
+// walk of every workspace per job, and none (nil, which every lookup answers
+// with the zero jobOwner) when no job has an owner. The view (queueView) and
+// the publisher's owner signature (queueOwners) both read it, so they can't
+// disagree.
+func (m *Model) jobOwners(jobs []sched.Record) map[InstanceID]jobOwner {
+	owned := false
+	for i := range jobs {
+		if jobs[i].Owner != 0 {
+			owned = true
+			break
+		}
 	}
-	return jobOwner{title: inst.Title, workspace: ws.Label(), workspaceID: m.wsIDOf(ws)}
+	if !owned {
+		return nil
+	}
+	owners := map[InstanceID]jobOwner{}
+	for _, ws := range m.workspaces {
+		label, wsID := ws.Label(), m.wsIDOf(ws)
+		for _, inst := range ws.insts {
+			id := m.idOf(inst) // what a client's view of the session names it, assigned if the views have not yet
+			if _, held := owners[id]; id == 0 || held {
+				continue
+			}
+			owners[id] = jobOwner{title: inst.Title, workspace: label, workspaceID: wsID}
+		}
+	}
+	return owners
 }
 
 // queueOwners is the owner each job of the store resolves to, in store
@@ -123,9 +146,10 @@ func (m *Model) jobOwnerOf(owner InstanceID) jobOwner {
 // the queue's revision.
 func (m *Model) queueOwners() []jobOwner {
 	jobs := m.queue.store.Jobs
+	byID := m.jobOwners(jobs)
 	owners := make([]jobOwner, len(jobs))
 	for i := range jobs {
-		owners[i] = m.jobOwnerOf(InstanceID(jobs[i].Owner))
+		owners[i] = byID[InstanceID(jobs[i].Owner)]
 	}
 	return owners
 }
@@ -166,8 +190,9 @@ func (m *Model) queueView() QueueView {
 	slices.SortStableFunc(finished, func(a, b sched.Record) int {
 		return cmp.Or(b.Ended.Compare(a.Ended), cmp.Compare(b.ID, a.ID))
 	})
+	byID := m.jobOwners(q.store.Jobs)
 	for _, r := range slices.Concat(running, queued, finished) {
-		jv := m.queueJobView(q, r)
+		jv := m.queueJobView(q, r, byID)
 		if r.State == sched.Running {
 			v.Claimed.CPUs += jv.Need.CPUs
 			v.Claimed.MemoryGB += jv.Need.MemoryGB
@@ -183,8 +208,8 @@ func (m *Model) queueView() QueueView {
 // queueJobView is the view of record r. Only a running job has usage, and
 // only a queued one has a reason to wait: a stale entry for a job that has
 // moved on is not shown. A queued job the last pass said nothing about,
-// while admission is paused, waits for that.
-func (m *Model) queueJobView(q *queueState, r sched.Record) JobView {
+// while admission is paused, waits for that. owners is jobOwners' answer.
+func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceID]jobOwner) JobView {
 	jv := JobView{
 		ID:           r.ID,
 		State:        r.State,
@@ -208,7 +233,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record) JobView {
 		e := *r.Exit
 		jv.Exit = &e
 	}
-	o := m.jobOwnerOf(jv.Owner)
+	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
 	switch r.State {
 	case sched.Running:

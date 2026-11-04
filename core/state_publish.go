@@ -117,9 +117,10 @@ func (m *Model) publishState() []Event {
 }
 
 // queuePublication is what publishQueue last published: the queue (by
-// pointer, which guards a queue installed in place of the one last
-// published, as SetJobRunnerForTest or a later replacement does), its
-// revision, and the owners its jobs resolved to.
+// pointer, so a queue installed in place of the one last published is
+// republished; no path does that today, since SetJobRunnerForTest assigns
+// only a nil queue, and the guard is defensive), its revision, and the
+// owners its jobs resolved to.
 type queuePublication struct {
 	sent   bool
 	of     *queueState
