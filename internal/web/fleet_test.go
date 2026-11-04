@@ -87,6 +87,7 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		RemoteSession: "session_01AbC",
 		Started:       true,
 		Bell:          true,
+		Mockup:        core.MockupView{Screen: "layout.html", Changed: time.Date(2026, 10, 21, 9, 29, 0, 0, time.UTC), Fresh: true},
 	}
 
 	got, err := json.Marshal(sessionOf(7, v))
@@ -111,7 +112,8 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		"account": "work",
 		"agents": [{"name": "explorer", "description": "reads the tree", "idle": true}],
 		"remote_url": "https://claude.ai/code/session_01AbC",
-		"claude": true
+		"claude": true,
+		"mockup": {"screen": "layout.html", "changed": "2026-10-21T09:29:00Z", "fresh": true}
 	}`, string(got))
 }
 
@@ -493,4 +495,16 @@ func TestResolvedQuickReplies(t *testing.T) {
 	assert.NotNil(t, none, "none: an empty list, never null")
 	assert.Empty(t, none)
 	assert.Equal(t, []string{"ship it"}, resolvedQuickReplies([]string{"ship it"}))
+}
+
+func TestSessionOf_TheMockupIsItsScreenOrNull(t *testing.T) {
+	at := time.Date(2026, 11, 4, 9, 30, 0, 0, time.UTC)
+	got := sessionOf(1, core.InstanceView{Mockup: core.MockupView{Screen: "layout.html", Changed: at, Fresh: true}})
+	require.NotNil(t, got.Mockup)
+	assert.Equal(t, mockupJSON{Screen: "layout.html", Changed: "2026-11-04T09:30:00Z", Fresh: true}, *got.Mockup)
+	assert.Nil(t, sessionOf(1, core.InstanceView{}).Mockup)
+
+	raw, err := json.Marshal(sessionOf(1, core.InstanceView{}))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"mockup":null`, "the app reads null as none")
 }

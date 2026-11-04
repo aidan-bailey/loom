@@ -99,6 +99,70 @@ func TestSnapshot_ANewerFileAnywhereTriggersAWrite(t *testing.T) {
 	assert.Equal(t, "kill", readZipManifest(t, zipPath).Reason)
 }
 
+// TestSnapshot_AnUnchangedFileIsNotReadAgain: every pause re-read and
+// re-compressed the whole project dir once anything in it changed (156 MB
+// of transcripts took 0.73 s, onto a slow archive drive). A file not
+// modified since the previous snapshot began, whose size and recorded time
+// still match, is copied across from the previous zip compressed, so it is
+// never opened; a changed file is read afresh.
+func TestSnapshot_AnUnchangedFileIsNotReadAgain(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	src := chatTree(t)
+	zipPath := snapshotted(t, src)
+	unchanged := filepath.Join(src, "s1", "tool-results", "result-1.txt")
+	require.NoError(t, os.Chmod(unchanged, 0))
+	t.Cleanup(func() { _ = os.Chmod(unchanged, 0o600) })
+	writeTree(t, src, map[string]string{"s1.jsonl": "turn 1\nturn 2\n"})
+
+	_, wrote, err := Snapshot(src, zipPath, Manifest{Reason: "pause"})
+
+	require.NoError(t, err, "the unchanged file was opened")
+	assert.True(t, wrote)
+	entries := zipEntries(t, zipPath)
+	assert.Equal(t, "out\n", readZipEntry(t, entries["s1/tool-results/result-1.txt"]), "copied across intact")
+	assert.Equal(t, "turn 1\nturn 2\n", readZipEntry(t, entries["s1.jsonl"]), "the changed file is read afresh")
+}
+
+// TestSnapshot_AChangedFileWithAnOldTimeIsReadAfresh pins each term of the
+// reuse check: a rewritten file is copied across from the previous zip only
+// when it was modified no later than that zip's stamp and its size and
+// recorded second still match. A file dated back (a restore, `touch -d`)
+// must match both; one rewritten at the same size in the second the
+// previous walk read it in is newer than the stamp.
+func TestSnapshot_AChangedFileWithAnOldTimeIsReadAfresh(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fresh   bool // written just before the first snapshot, not an hour ago
+		content string
+		mtime   func(recorded time.Time) time.Time
+	}{
+		{"another size, the recorded time", false, "out, rewritten\n", func(r time.Time) time.Time { return r }},
+		{"the same size, another time", false, "OUT\n", func(r time.Time) time.Time { return r.Add(-time.Hour) }},
+		{"the same size and second, after the stamp", true, "OUT\n", func(r time.Time) time.Time { return r }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := chatTree(t)
+			changed := filepath.Join(src, "s1", "tool-results", "result-1.txt")
+			if tc.fresh {
+				now := time.Now()
+				require.NoError(t, os.Chtimes(changed, now, now))
+			}
+			zipPath := snapshotted(t, src)
+			recorded := zipEntries(t, zipPath)["s1/tool-results/result-1.txt"].Modified
+			require.NoError(t, os.WriteFile(changed, []byte(tc.content), 0o600))
+			require.NoError(t, os.Chtimes(changed, tc.mtime(recorded), tc.mtime(recorded)))
+			writeTree(t, src, map[string]string{"s1.jsonl": "turn 1\nturn 2\n"}) // so a snapshot is due
+
+			_, _, err := Snapshot(src, zipPath, Manifest{Reason: "pause"})
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.content, readZipEntry(t, zipEntries(t, zipPath)["s1/tool-results/result-1.txt"]))
+		})
+	}
+}
+
 // TestSnapshot_CarriesForwardWhatTheSourceLost: Claude's cleanup deletes a
 // transcript between two snapshots. The second must not drop it: the zip
 // may be its only copy.

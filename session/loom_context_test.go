@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,10 +15,18 @@ func TestWriteLoomContextFiles(t *testing.T) {
 
 	wt := filepath.Join(dir, "claude-loom-context.md")
 	ws := filepath.Join(dir, "claude-loom-context-workspace.md")
-	for _, p := range []string{wt, ws} {
-		b, err := os.ReadFile(p)
+	// Each written file is its variant's head, a blank line, then the tail
+	// both variants share; every fragment ends in exactly one newline, so
+	// the seam is one blank line.
+	for _, frag := range [][]byte{loomContextWorktreeHead, loomContextMainHead, loomContextSharedTail} {
+		assert.True(t, bytes.HasSuffix(frag, []byte("\n")) && !bytes.HasSuffix(frag, []byte("\n\n")),
+			"a loom-context fragment must end in exactly one newline")
+	}
+	for path, head := range map[string][]byte{wt: loomContextWorktreeHead, ws: loomContextMainHead} {
+		b, err := os.ReadFile(path)
 		assert.NoError(t, err)
 		assert.Contains(t, string(b), "Loom session context")
+		assert.Equal(t, string(head)+"\n"+string(loomContextSharedTail), string(b), path)
 	}
 
 	// skip-if-current: a second write with already-current content must not

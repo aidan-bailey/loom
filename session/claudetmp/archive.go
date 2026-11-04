@@ -142,7 +142,7 @@ func Archive(src, zipPath string, m Manifest) (Result, error) {
 	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) {
 		return flate.NewWriter(w, flate.BestSpeed)
 	})
-	if err := addTree(zw, src, &m, &res, nil); err != nil {
+	if err := addTree(zw, src, &m, &res, nil, nil); err != nil {
 		return fail(fmt.Errorf("archive %s: %w", src, err))
 	}
 	if err := addManifest(zw, m); err != nil {
@@ -228,7 +228,34 @@ func syncDir(dir string) {
 // addTree adds src's content to zw, named by slash paths relative to src.
 // WalkDir never follows symlinks. When seen is non-nil, every entry name
 // written is recorded in it (a directory's with its trailing "/").
-func addTree(zw *zip.Writer, src string, m *Manifest, res *Result, seen map[string]bool) error {
+// reusable is the previous snapshot's entries a new one may copy across
+// compressed, rather than read and compress their files again (Snapshot).
+type reusable struct {
+	stamp time.Time // the previous zip's mtime: before its walk began
+	files map[string]*zip.File
+}
+
+// entry returns the previous zip's entry for name when info, the file on
+// disk, has not changed since that zip's walk began: modified no later than
+// its stamp, as modifiedSince judges the whole dir, and with the size and
+// the modification second the entry recorded. nil otherwise, and on a nil
+// r.
+func (r *reusable) entry(name string, info fs.FileInfo) *zip.File {
+	if r == nil {
+		return nil
+	}
+	e := r.files[name]
+	if e == nil || !e.Mode().IsRegular() || info.ModTime().After(r.stamp) ||
+		e.UncompressedSize64 != uint64(info.Size()) || e.Modified.Unix() != info.ModTime().Unix() {
+		return nil
+	}
+	return e
+}
+
+// addTree adds src's content to zw, recording each name in seen when it is
+// non-nil, and copies a regular file reuse has an unchanged entry for
+// across from the previous zip instead of reading it.
+func addTree(zw *zip.Writer, src string, m *Manifest, res *Result, seen map[string]bool, reuse *reusable) error {
 	note := func(name string) {
 		if seen != nil {
 			seen[name] = true
@@ -280,7 +307,12 @@ func addTree(zw *zip.Writer, src string, m *Manifest, res *Result, seen map[stri
 			note(name + "/")
 			return nil
 		case mode.IsRegular():
-			if err := addFile(zw, p, name, info, res); err != nil {
+			if e := reuse.entry(name, info); e != nil {
+				if err := zw.Copy(e); err != nil {
+					return err
+				}
+				res.BytesIn += info.Size()
+			} else if err := addFile(zw, p, name, info, res); err != nil {
 				return err
 			}
 			note(name)

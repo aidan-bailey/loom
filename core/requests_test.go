@@ -3,10 +3,12 @@ package core
 import (
 	"errors"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
@@ -121,6 +123,76 @@ func TestPause_AFailedPauseRevertsToTheStatusItHad(t *testing.T) {
 	assert.Equal(t, ReqID(6), rs[0].Req)
 	assert.Error(t, rs[0].Err)
 	assert.Equal(t, session.Ready, inst.GetStatus(), "reverted to the status it had, not to Loading")
+}
+
+// TestPause_AFailedFinalSaveFinishesThePause: Instance.Pause reports a
+// final save that failed after the agent was stopped as a Notice. The
+// pause is done: the reply carries no error, the session stays Paused (a
+// revert showed a dead agent as Running and gave the TUI a client for it),
+// and the save's failure is shown.
+func TestPause_AFailedFinalSaveFinishesThePause(t *testing.T) {
+	rec := &recordingInstanceStorage{failOn: 2, failErr: errors.New("no space left on device")}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	ws := NewWorkspace(WorkspaceParts{Storage: storage})
+	inst := startedInst(t, "p", "claude")
+	ws.add(inst)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+
+	m.Pause(m.idOf(inst), 6)
+	out := run(m, m.Drain())
+
+	rs := replies(out)
+	require.Len(t, rs, 1)
+	assert.NoError(t, rs[0].Err)
+	assert.Equal(t, session.Paused, inst.GetStatus())
+	assert.NotContains(t, out.Events, Event(Reactivated{ID: m.idOf(inst)}))
+	assert.True(t, slices.ContainsFunc(out.Events, func(e Event) bool {
+		n, ok := e.(Notice)
+		return ok && n.Err != nil && strings.Contains(n.Err.Error(), "no space left on device")
+	}), "the failed save is shown")
+}
+
+// TestPauseAndResume_KeepASessionCreatedWhileTheyRan: a pause's or resume's
+// job saves seconds after the request (Pause archives Claude's temp dir and
+// chats in between). It used to save the workspace's list as it stood at
+// the request, dropping from state.json a session created meanwhile, until
+// the next save; a daemon stopped first lost its record. Each saves only
+// its own record now.
+func TestPauseAndResume_KeepASessionCreatedWhileTheyRan(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		inst  func(t *testing.T) *session.Instance
+		begin func(m *Model, id InstanceID)
+	}{
+		{"pause", func(t *testing.T) *session.Instance { return startedInst(t, "a", "claude") }, func(m *Model, id InstanceID) { m.Pause(id, 1) }},
+		{"resume", func(t *testing.T) *session.Instance {
+			inst := startedInst(t, "a", "claude")
+			require.NoError(t, inst.Pause(nil))
+			return inst
+		}, func(m *Model, id InstanceID) { m.Resume(id, 1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := storedWorkspace(t, "w")
+			a := tc.inst(t)
+			ws.add(a)
+			m := NewForTest(Options{})
+			m.SetWorkspacesForTest(ws)
+			require.NoError(t, m.saveWS(ws))
+
+			tc.begin(m, m.idOf(a))
+			out := m.Drain()
+			b := startedInst(t, "b", "claude")
+			ws.add(b)
+			require.NoError(t, m.saveWS(ws), "as the new session's start saves")
+			rs := replies(run(m, out))
+			require.Len(t, rs, 1)
+			require.NoError(t, rs[0].Err, "fixture: the %s succeeds", tc.name)
+
+			assert.Contains(t, string(ws.state.(*config.State).GetInstances()), `"title":"b"`, "the session created meanwhile is still on disk")
+		})
+	}
 }
 
 // TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes: Resume moves the
@@ -349,6 +421,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"read the conversation of a terminal", func(f fixture) { f.m.ReadTurns(f.id["term"], transcript.Query{}, 1) }, "read the conversation of term: not allowed on a workspace terminal"},
 		{"read the conversation of another agent", func(f fixture) { f.m.ReadTurns(f.id["aider"], transcript.Query{}, 1) }, "read the conversation of aider: the session does not run Claude"},
 		{"read the diff of a terminal", func(f fixture) { f.m.ReadDiff(f.id["term"], 1) }, "read the diff of term: not allowed on a workspace terminal"},
+		{"read the mockup of a terminal", func(f fixture) { f.m.ReadMockup(f.id["term"], 1) }, "read the mockup of term: not allowed on a workspace terminal"},
 		{"read the diff of a loading session", func(f fixture) { f.m.ReadDiff(f.id["loading"], 1) }, "read the diff of loading: the session is busy (Loading)"},
 		{"read the diff of a deleting session", func(f fixture) { f.m.ReadDiff(f.id["deleting"], 1) }, "read the diff of deleting: the session is busy (Deleting)"},
 		{"read the diff of a paused session", func(f fixture) { f.m.ReadDiff(f.id["paused"], 1) }, "read the diff of paused: the session is not running (Paused)"},

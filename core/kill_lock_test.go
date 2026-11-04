@@ -106,7 +106,7 @@ func TestKill_LockedWorktreeKeepsTheRowAndShowsTheRemedy(t *testing.T) {
 			assert.Contains(t, string(out), "u/locked", "and so is its branch")
 			// DeleteInstance reports ErrInstanceNotFound for a record the
 			// kill already removed.
-			require.NoError(t, ws.Storage().DeleteInstance("locked"), "the record was not deleted from storage")
+			require.NoError(t, ws.Storage().DeleteInstance("locked", inst.CreatedAt), "the record was not deleted from storage")
 		})
 	}
 }

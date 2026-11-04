@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 )
 
 // syncMockStorage is a trivially thread-safe InstanceStorage: it never
@@ -49,8 +50,66 @@ func TestStorage_ConcurrentSaveAndDelete(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			_ = s.DeleteInstance("Target") // writes s.unrecovered via dropUnrecovered
+			_ = s.DeleteInstance("Target", time.Time{}) // writes s.unrecovered via dropUnrecovered
 		}
 	}()
 	wg.Wait()
+}
+
+// blockingStateStorage is an InstanceStorage whose SaveInstances signals
+// writing and then waits for release, as a slow fsync does.
+type blockingStateStorage struct {
+	data             json.RawMessage
+	writing, release chan struct{}
+}
+
+func (b *blockingStateStorage) SaveInstances(data json.RawMessage) error {
+	close(b.writing)
+	<-b.release
+	b.data = data
+	return nil
+}
+func (b *blockingStateStorage) GetInstances() json.RawMessage { return b.data }
+func (b *blockingStateStorage) DeleteAllInstances() error     { return nil }
+
+// TestStorage_ReadsDoNotWaitForAWrite: the daemon's loop asks every
+// workspace's storage whether it refuses writes and which titles it
+// preserves on every wake (core's wsViewOf), while a pause, resume or kill
+// writes the same storage from its job. The write held the storage's lock
+// across the state file's fsyncs, so every client froze for as long as the
+// disk took. Those reads wait for no write now.
+func TestStorage_ReadsDoNotWaitForAWrite(t *testing.T) {
+	state := &blockingStateStorage{
+		data:    json.RawMessage(`[{"title":"kept","status":3,"program":"claude","worktree":{"repo_path":"/r","worktree_path":"/wt","branch_name":"b"}},{"schema_version":99,"title":"future"}]`),
+		writing: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	s, err := NewStorage(state, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadAndReconcile(noopExec()); err != nil {
+		t.Fatal(err)
+	}
+	wrote := make(chan error)
+	go func() { wrote <- s.DeleteInstance("kept", time.Time{}) }()
+	<-state.writing
+
+	read := make(chan []string)
+	go func() {
+		_ = s.WritesRefused()
+		read <- s.PreservedTitles()
+	}()
+	select {
+	case titles := <-read:
+		if len(titles) != 1 || titles[0] != "future" {
+			t.Errorf("PreservedTitles() = %v, want [future]", titles)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("a read waited for the write")
+	}
+	close(state.release)
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
 }

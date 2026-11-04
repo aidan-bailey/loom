@@ -209,8 +209,11 @@ func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
 		assert.Equal(t, http.StatusOK, code, p)
 		assert.NotContains(t, body, `"now`, "%s: every relative time is filled", p)
 	}
+	code, body := get(t, srv.URL+"/api/v1/sessions/7/mockup")
+	assert.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, "window.brainstorm", "the canned page is the companion's")
 	assert.Empty(t, c.takeMisses())
-	code, _ := get(t, srv.URL+"/api/v1/push-key")
+	code, _ = get(t, srv.URL+"/api/v1/push-key")
 	assert.Equal(t, http.StatusNotFound, code)
 	assert.Equal(t, []string{"GET /api/v1/push-key"}, c.takeMisses())
 }

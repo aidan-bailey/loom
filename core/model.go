@@ -491,6 +491,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverTracked(msg)
 	case resetResult:
 		m.deliverReset(msg)
+	case mockupResult:
+		m.deliverMockup(msg)
 	case issueResult, turnsResult, diffResult:
 		// Only its Reply carries it (deliverTracked).
 	default:

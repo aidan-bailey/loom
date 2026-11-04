@@ -118,10 +118,17 @@ func pausedWorktreeInst(t *testing.T, repoDir, title, branch string) *session.In
 type recordingInstanceStorage struct {
 	calls    int
 	lastData json.RawMessage
+	// failOn, when set, makes that call (1-based) fail with failErr and
+	// keep the payload it had.
+	failOn  int
+	failErr error
 }
 
 func (r *recordingInstanceStorage) SaveInstances(data json.RawMessage) error {
 	r.calls++
+	if r.failOn != 0 && r.calls == r.failOn {
+		return r.failErr
+	}
 	r.lastData = data
 	return nil
 }

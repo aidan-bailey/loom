@@ -143,6 +143,53 @@ func (r *recordingRunner) CombinedOutput(c *exec.Cmd) ([]byte, error) {
 	return c.CombinedOutput()
 }
 
+// TestSetup_ReusedBranchIsOwnedOnlyByTheSessionThatCreatedIt: a new
+// session's Setup that finds its branch already there checks out a branch
+// some earlier session left behind, so Cleanup keeps it; a rebuild of a
+// session's own tree (Resume over a removed or gutted tree, from the saved
+// record or from the same GitWorktree) finds its own branch there and must
+// leave Cleanup deleting it.
+func TestSetup_ReusedBranchIsOwnedOnlyByTheSessionThatCreatedIt(t *testing.T) {
+	t.Run("a new session reusing a branch keeps it", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		runGit(t, repoDir, "branch", "u/reused")
+		prefix := "u/"
+		gw, _, err := NewGitWorktreeFromSpec(WorktreeSpec{RepoPath: repoDir, SessionName: "reused", ConfigDir: configDir, BranchPrefix: &prefix})
+		require.NoError(t, err)
+
+		require.NoError(t, gw.Setup())
+		assert.True(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.True(t, branchExists(t, repoDir, "u/reused"))
+	})
+	t.Run("a rebuild from the saved record deletes its own branch", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		runGit(t, repoDir, "branch", "u/own")
+		gw := NewGitWorktreeFromStorage(repoDir, filepath.Join(configDir, "worktrees", "own_x"), "own", "u/own", "", false, configDir)
+
+		require.NoError(t, gw.Setup())
+		assert.False(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.False(t, branchExists(t, repoDir, "u/own"))
+	})
+	t.Run("a second Setup of a new session's worktree deletes its own branch", func(t *testing.T) {
+		configDir, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		prefix := "u/"
+		gw, _, err := NewGitWorktreeFromSpec(WorktreeSpec{RepoPath: repoDir, SessionName: "again", ConfigDir: configDir, BranchPrefix: &prefix})
+		require.NoError(t, err)
+		require.NoError(t, gw.Setup())
+		require.NoError(t, os.RemoveAll(gw.GetWorktreePath()), "the tree is gone, as before a rebuild")
+
+		require.NoError(t, gw.Setup())
+		assert.False(t, gw.IsExistingBranch())
+		require.NoError(t, gw.Cleanup())
+
+		assert.False(t, branchExists(t, repoDir, "u/again"))
+	})
+}
+
 // TestSetupNewWorktree_DeletesNoBranch: a new session's Setup only creates
 // a branch after show-ref said it is absent, so a `branch -D` there could
 // only ever delete one created since — another session's.
@@ -225,4 +272,152 @@ func TestSetup_UnreadableTreeKeepsItsLock(t *testing.T) {
 	_ = gw.Setup()
 
 	assert.FileExists(t, lockFile, "an unreadable tree is not known to be gone")
+}
+
+// TestCleanup_AsksGitNothingItAlreadyKnows: a kill checks the worktree's
+// lock twice (before it closes the agent, and in Cleanup, since a lock can
+// appear in between), and each check ran `git rev-parse --absolute-git-dir`
+// to find the admin dir its .git file names; and Cleanup pruned after a
+// remove that had already dropped the tree's registration. Both are
+// subprocesses a slow machine makes wait. The lock is found through the
+// .git file, and prune runs only when the remove did not. (The trash is
+// blocked here, so git removes the tree.)
+func TestCleanup_AsksGitNothingItAlreadyKnows(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	blockTrash(t, configDir)
+	rec := &recordingRunner{}
+	gw := NewGitWorktreeFromStorageWithRunner(repoDir, worktreePath, "x", branchName, "", false, configDir, rec)
+
+	require.NoError(t, RefuseLocked(repoDir, worktreePath, rec))
+	require.NoError(t, gw.Cleanup())
+
+	for _, argv := range rec.args {
+		assert.False(t, slices.Contains(argv, "rev-parse"), "ran %v", argv)
+		assert.False(t, slices.Contains(argv, "prune"), "ran %v", argv)
+	}
+	assert.NoDirExists(t, worktreePath)
+	assert.False(t, branchExists(t, repoDir, branchName))
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), worktreePath, "the registration is gone")
+}
+
+// TestRefuseLocked_FindsTheLockThroughARelativeGitFile: git writes a
+// relative gitdir into a worktree's .git file under
+// worktree.useRelativePaths. The lock must still be found.
+func TestRefuseLocked_FindsTheLockThroughARelativeGitFile(t *testing.T) {
+	_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+	runGit(t, repoDir, "worktree", "lock", "--reason", "keep me", worktreePath)
+	rel, err := filepath.Rel(worktreePath, adminDir(t, worktreePath))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: "+rel+"\n"), 0o644))
+
+	err = RefuseLocked(repoDir, worktreePath, nil)
+
+	require.ErrorIs(t, err, ErrWorktreeLocked)
+	assert.Contains(t, err.Error(), "keep me")
+}
+
+// blockTrash puts a file where configDir's worktree trash goes, so no tree
+// can be moved there and Cleanup removes it with git.
+func blockTrash(t *testing.T, configDir string) {
+	t.Helper()
+	trash, err := TrashDir(configDir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(trash, nil, 0o600))
+}
+
+// TestCleanup_MovesAnIntactTreeToTheTrash: `git worktree remove -f` deletes
+// the whole tree before it returns (a Rust target/ of several GB), and the
+// kill's row spun in Deleting all that while. A tree git's own files show
+// to be a linked worktree of this repository is renamed into the trash
+// instead, where a background job deletes it (RemoveTrash); its
+// registration is pruned and its branch deleted as before.
+func TestCleanup_MovesAnIntactTreeToTheTrash(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "work.txt"), []byte("wip"), 0o644))
+	rec := &recordingRunner{}
+	gw := NewGitWorktreeFromStorageWithRunner(repoDir, worktreePath, "x", branchName, "", false, configDir, rec)
+
+	require.NoError(t, gw.Cleanup())
+
+	trash := gw.Trashed()
+	require.NotEmpty(t, trash, "the tree was moved")
+	root, err := TrashDir(configDir)
+	require.NoError(t, err)
+	assert.Equal(t, root, filepath.Dir(trash))
+	assert.FileExists(t, filepath.Join(trash, "work.txt"), "for the background job to delete")
+	assert.NoDirExists(t, worktreePath)
+	for _, argv := range rec.args {
+		assert.False(t, slices.Contains(argv, "remove"), "ran %v", argv)
+		assert.False(t, slices.Contains(argv, "rev-parse"), "ran %v", argv)
+	}
+	assert.False(t, branchExists(t, repoDir, branchName))
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), worktreePath, "the registration is gone")
+
+	require.NoError(t, RemoveTrash(trash))
+	assert.NoDirExists(t, trash)
+}
+
+// TestCleanup_RemovesWithGitWhatItCannotVouchFor pins the fast path's
+// checks: a tree whose admin dir no longer points back at it, or another
+// repository's worktree, is no tree of this repository's to move, and goes
+// to `git worktree remove` as before.
+func TestCleanup_RemovesWithGitWhatItCannotVouchFor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(t *testing.T, worktreePath string) (repoDir string)
+	}{
+		{"its admin dir points elsewhere", func(t *testing.T, worktreePath string) string {
+			require.NoError(t, os.WriteFile(filepath.Join(adminDir(t, worktreePath), "gitdir"), []byte("/elsewhere/.git\n"), 0o644))
+			return ""
+		}},
+		{"another repository's", func(t *testing.T, _ string) string {
+			_, other, _, _ := setupTestRepoWithWorktree(t)
+			return other
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+			if other := tc.break_(t, worktreePath); other != "" {
+				repoDir = other
+			}
+			gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "x", branchName, "", true, configDir)
+
+			_ = gw.Cleanup()
+
+			assert.Empty(t, gw.Trashed(), "nothing was moved")
+		})
+	}
+}
+
+// TestPurgeWorktreeTrash_RemovesWhatAStopLeft: a daemon stopped before its
+// background delete ran leaves the moved tree in the trash, which nothing
+// else would delete. The next load purges the trash dir.
+func TestPurgeWorktreeTrash_RemovesWhatAStopLeft(t *testing.T) {
+	configDir := t.TempDir()
+	root, err := TrashDir(configDir)
+	require.NoError(t, err)
+	left := filepath.Join(root, "x_18be000000000001.18be000000000002")
+	require.NoError(t, os.MkdirAll(filepath.Join(left, "target", "debug"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(left, "target", "debug", "bin"), []byte("x"), 0o755))
+	require.NoError(t, os.Chmod(filepath.Join(left, "target"), 0o555), "a read-only dir, as a module cache leaves")
+
+	assert.Equal(t, 1, PurgeWorktreeTrash(configDir))
+
+	assert.NoDirExists(t, left)
+}
+
+// TestLinkedWorktreeOf_ALockedTreeIsNotMoved: Cleanup refuses a locked tree
+// before it moves anything (RefuseLocked), but a lock taken in between must
+// still keep the tree out of the trash: git's remove, which refuses it, is
+// the path a locked tree takes.
+func TestLinkedWorktreeOf_ALockedTreeIsNotMoved(t *testing.T) {
+	_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+	require.True(t, linkedWorktreeOf(repoDir, worktreePath), "fixture: an unlocked tree is vouched for")
+	runGit(t, repoDir, "worktree", "lock", worktreePath)
+
+	assert.False(t, linkedWorktreeOf(repoDir, worktreePath))
 }

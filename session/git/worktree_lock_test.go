@@ -94,18 +94,22 @@ func TestUnlockStaleInit_GuttedTreeRunsNothing(t *testing.T) {
 	assert.FileExists(t, lock, "a gutted tree keeps its existing handling")
 }
 
-// TestUnlockStaleInit_RefusesAnUnusableGitDir: git must answer with an
-// absolute git dir. An empty or relative answer would be joined onto the
-// process's cwd, so the lock of some other tree could be read — and
-// removed. It is an error, and nothing past the answer runs.
+// TestUnlockStaleInit_RefusesAnUnusableGitDir: when the .git file names no
+// gitdir it can read, git is asked, and must answer with an absolute git
+// dir. An empty or relative answer would be joined onto the process's cwd,
+// so the lock of some other tree could be read — and removed. It is an
+// error, and nothing past the answer runs.
 func TestUnlockStaleInit_RefusesAnUnusableGitDir(t *testing.T) {
 	for name, answer := range map[string]string{"empty": "", "relative": ".git\n"} {
 		t.Run(name, func(t *testing.T) {
 			_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
 			lockInitializing(t, worktreePath)
 			backdateLock(t, worktreePath)
+			admin := adminDir(t, worktreePath)
+			require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("not a gitdir line\n"), 0o644))
+			asked := false
 			r := cmd_test.MockCmdExec{
-				OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(answer), nil },
+				OutputFunc: func(*exec.Cmd) ([]byte, error) { asked = true; return []byte(answer), nil },
 				RunFunc: func(*exec.Cmd) error {
 					t.Error("nothing but the rev-parse may run")
 					return nil
@@ -118,9 +122,10 @@ func TestUnlockStaleInit_RefusesAnUnusableGitDir(t *testing.T) {
 
 			state, _, err := unlockStaleInit(repoDir, worktreePath, r)
 
+			require.True(t, asked, "fixture: git is asked")
 			require.Error(t, err)
 			assert.Equal(t, notLocked, state)
-			assert.FileExists(t, filepath.Join(adminDir(t, worktreePath), "locked"))
+			assert.FileExists(t, filepath.Join(admin, "locked"))
 		})
 	}
 }

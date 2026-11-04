@@ -269,7 +269,7 @@ A session an older loom paused (it removed the worktree on pause) is resumed by 
 
 **Running/Paused → Killed** (on kill, `D`):
 1. Tmux session destroyed
-2. Worktree removed
+2. Worktree removed (moved into `worktree-trash/` beside `worktrees/` and deleted in the background, so the kill does not wait on a large tree)
 3. Branch deleted (unless it was a pre-existing branch you selected at creation)
 4. Instance removed from storage
 5. Claude's temp dir is archived (a paused session's archive simply stays)

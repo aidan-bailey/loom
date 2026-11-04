@@ -19,6 +19,8 @@ Tmux session management: lifecycle sessions that never attach, the TUI's attach 
 
 ### Session state
 
+- **Let `SessionLiveness` read Dead only when tmux ran and exited with a status of its own; a deadline, a failed lookup or fork/exec, or a kill by a signal is Unknown (`tmuxNeverAnswered`).** The load that starves one probe (a process limit, EMFILE) starves every probe at once, and a Dead there marks the whole fleet Paused and lets Pause archive a live agent's scratchpad. **Enforced** by `TestSessionLiveness_TimeoutIsUnknown`, `TestSessionLiveness_TmuxThatNeverRanIsUnknown` and `TestSessionLiveness_AnsweredProbeIsDead`.
+
 - **Snapshot `ptmx`, `monitor` and the emulator under `stateMu`, and never hold it across PTY or subprocess I/O.** Status scans run off the TUI's Update goroutine while the attach lifecycle swaps those fields; holding the lock across I/O stalls every scan behind a slow tmux. **Convention** — races `CC=clang CGO_ENABLED=1 go test -race` finds, or a UI that freezes behind tmux.
 - **Keep lifecycle's `Session` client-free: `Start` never attaches, and only the terminal pane's shells launch through `NewTmuxSession` plus `Start`.** The TUI's pane clients own every attach; a client the daemon attached would fight the TUI's over the window size. **Enforced** by `TestSession_StartLaunchesWithoutAttaching` and `TestSession_CloseOnlyKills`.
 - **Set `detach-on-destroy on` for every loom session, at `Session.Start` and again at `Restore` for sessions an older loom launched.** Under a global `off`, tmux switches a destroyed session's clients to another session, so a client keyed by the dead name shows, and types into, another agent's pane and never reads EOF. **Enforced** by `TestKilledSessionsClientExits_RealTmux`.

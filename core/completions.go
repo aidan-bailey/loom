@@ -67,11 +67,16 @@ type KillResult struct {
 	Instance *session.Instance
 	Title    string
 	Notice   error
+	// Trash is where the kill moved the worktree for deliverKill to have
+	// deleted in the background (git.RemoveTrash); "" when git removed it.
+	Trash string
 }
 
-// PauseResult is a finished pause (Pause).
+// PauseResult is a finished pause (Pause). Notice is what the pause could
+// not finish but the user must see (a final save that failed).
 type PauseResult struct {
-	Title string
+	Title  string
+	Notice error
 }
 
 // OpFailed is a kill, discard, pause or resume that failed: the instance
@@ -254,12 +259,17 @@ func (m *Model) deliverRecover(r RecoverResult) {
 func (m *Model) deliverKill(r KillResult) {
 	m.removeEverywhere(r.Instance)
 	m.notifyErr(r.Notice)
+	if r.Trash != "" {
+		m.spawnBackground(removeTrash(r.Trash))
+	}
 	m.emit(InstancesChanged{})
 	m.emit(ClientsStale{})
 }
 
-// deliverPause finishes a pause; Pause already killed the session and saved.
-func (m *Model) deliverPause(PauseResult) {
+// deliverPause finishes a pause; Pause already killed the session and saved,
+// or reported the save it could not make (Notice).
+func (m *Model) deliverPause(r PauseResult) {
+	m.notifyErr(r.Notice)
 	m.emit(InstancesChanged{})
 	m.emit(ClientsStale{})
 }
@@ -280,6 +290,16 @@ func (m *Model) deliverOpFailed(r OpFailed) {
 		// Loading. A no-op unless it is active (a reverted discard is
 		// Recoverable, a reverted resume Paused).
 		m.emit(Reactivated{ID: m.idOf(r.Instance)})
+		// Saves made while the op ran wrote its transient status, and a
+		// kill's left the Deleting record out of state.json altogether
+		// (Persistable): put the reverted record back on disk now, or a
+		// daemon stopped before the next save loses it. A workspace with no
+		// storage (a bare test fixture's) has nothing to save.
+		if ws := m.holding(r.Instance); ws != nil && ws.storage != nil {
+			if err := m.saveWS(ws); err != nil {
+				m.notifyErr(err)
+			}
+		}
 	}
 	log.For("core").Error("op_failed", "op", r.Op, "title", r.Title, "err", r.Err)
 	m.notifyErr(r.Err)

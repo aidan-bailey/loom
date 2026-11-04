@@ -68,6 +68,99 @@ func TestStart_FailedStartKeepsAPreexistingBranch(t *testing.T) {
 	assert.NoDirExists(t, gw.GetWorktreePath(), "the worktree the failed start created is removed")
 }
 
+// TestKill_KeepsAPreexistingBranchTheSessionReused: a new session whose
+// title matches a branch an earlier session left behind (a discard keeps
+// the branch) checks that branch out. Killing it later removes its worktree
+// but must not delete the branch, whose commits were never this session's,
+// and the saved record must say so, or a kill after a restart deletes it.
+func TestKill_KeepsAPreexistingBranchTheSessionReused(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "reused", &fakeTmuxServer{})
+	gitIn(t, repoDir, "checkout", "-q", "-b", branch)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "earlier.txt"), []byte("unmerged work\n"), 0644))
+	gitIn(t, repoDir, "add", ".")
+	gitIn(t, repoDir, "commit", "-q", "-m", "earlier session's work")
+	gitIn(t, repoDir, "checkout", "-q", "main")
+	tip := branchTip(t, repoDir, branch)
+
+	require.NoError(t, inst.Start(true))
+	assert.True(t, inst.ToInstanceData().Worktree.IsExistingBranch, "the saved record marks the branch as not this session's")
+	wt := inst.getGitWorktree().GetWorktreePath()
+
+	require.NoError(t, inst.Kill())
+
+	assert.NoDirExists(t, wt, "the kill removes the worktree")
+	assert.Equal(t, tip, branchTip(t, repoDir, branch), "a kill must not delete a branch the session reused")
+}
+
+// TestKill_DeletesTheBranchItsStartCreated pins the other side: a branch the
+// session's own start created goes with the kill.
+func TestKill_DeletesTheBranchItsStartCreated(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "fresh", &fakeTmuxServer{})
+
+	require.NoError(t, inst.Start(true))
+	assert.False(t, inst.ToInstanceData().Worktree.IsExistingBranch)
+	require.NoError(t, inst.Kill())
+
+	assert.Empty(t, branchTip(t, repoDir, branch), "the branch the start created is deleted")
+}
+
+// TestKill_ADirectoryGitNoLongerTracksIsANotice: a session whose worktree
+// was gutted of its `.git` (or whose registration was pruned) leaves a
+// directory git refuses to remove. The kill finishes, keeps the directory,
+// and names it in a Notice: a failure would leave a row D could never
+// remove, and a silent success would hide what is left on disk.
+func TestKill_ADirectoryGitNoLongerTracksIsANotice(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "gutted", &fakeTmuxServer{})
+	require.NoError(t, inst.Start(true))
+	wt := inst.getGitWorktree().GetWorktreePath()
+	require.NoError(t, os.Remove(filepath.Join(wt, ".git")))
+
+	err := inst.Kill()
+
+	n, ok := OnlyNotice(err)
+	require.True(t, ok, "the kill finished, with something to report: %v", err)
+	assert.Contains(t, n.Error(), wt)
+	assert.DirExists(t, wt, "the directory is left")
+	assert.Empty(t, branchTip(t, repoDir, branch), "the branch is deleted")
+	assert.False(t, inst.Started(), "the instance is not put back for a retry")
+}
+
+// TestKill_KeepsTheHooksFolderOfASessionHoldingTheName: hooks folders are
+// keyed by tmux name, which two titles of one workspace can share. When a
+// session started elsewhere holds the name, the kill leaves that session
+// running, and must leave the folder it is writing its hook events to as
+// well. The record's own session (absent here) still has its folder
+// removed.
+func TestKill_KeepsTheHooksFolderOfASessionHoldingTheName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		listing string
+		kept    bool
+	}{
+		{"held elsewhere", "loom_held\t/somewhere/else\n", true},
+		{"its own", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fakeTmuxServer{}
+			inst, _, _ := newStartFixtureOn(t, "held", srv)
+			require.NoError(t, inst.Start(true))
+			runner := srv.runner()
+			runner.OutputFunc = func(*exec.Cmd) ([]byte, error) { return []byte(tc.listing), nil }
+			inst.setTmuxSession(tmux.NewSessionWithDeps("held", "claude", srv, runner))
+			hooks := SubagentHooksDir(inst.ConfigDir, inst.Title)
+			require.NoError(t, os.MkdirAll(filepath.Join(hooks, "events"), 0o755))
+
+			require.NoError(t, inst.Kill())
+
+			if tc.kept {
+				assert.DirExists(t, hooks, "the holder's hook events keep their folder")
+			} else {
+				assert.NoDirExists(t, hooks)
+			}
+		})
+	}
+}
+
 // TestStart_FailedStartRemovesWhatItCreated: when Start created the branch
 // itself, a failed launch removes both it and the worktree.
 func TestStart_FailedStartRemovesWhatItCreated(t *testing.T) {

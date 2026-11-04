@@ -44,6 +44,7 @@ func (m *Model) startInst(inst *session.Instance, fallback *Workspace) Job {
 func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(), job Job) {
 	previousStatus := selected.GetStatus()
 	title := selected.Title
+	createdAt := selected.CreatedAt
 	// The owning workspace's storage, captured here on the model's
 	// goroutine: killAction runs for seconds in a job, and reading the
 	// TUI's focused workspace there would race a focus change and, after a
@@ -92,13 +93,20 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 				notice = n
 			}
 			if _, only := session.OnlyNotice(err); !only {
-				log.For("core").Error("kill.instance_kill_failed", "title", title, "err", err)
-				// A discarded orphan whose cleanup failed must NOT vanish
-				// from the list: the worktree is still on disk and would
-				// silently reappear on the next workspace load. Keep the
-				// row, revert to Recoverable, and show the error (notices
-				// included) so the user can retry D.
+				// The kill was refused or did not finish, and Instance.Kill
+				// put the instance back for a retry: whatever it could not
+				// remove (an agent tmux could not confirm gone, a worktree
+				// whose remove failed, a branch) is still there, or nothing
+				// was touched at all (a lock loom respects, a session tmux
+				// could not place). The row must not vanish and the record
+				// must not be deleted: the next load would auto-clean a
+				// clean leftover tree, offer a dirty one for recovery
+				// without its launch options, and the orphan sweep may kill
+				// a still-running agent. Keep the row, revert it, and show
+				// the error (notices included) so the user can retry D.
 				if previousStatus == session.Recoverable {
+					// A discarded orphan: its worktree would reappear as
+					// Recoverable at the next load.
 					return OpFailed{
 						Instance: selected,
 						Title:    title,
@@ -107,33 +115,23 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 						Err:      fmt.Errorf("discard %s: %w", title, err),
 					}
 				}
-				// A worktree lock loom respects (the user's, or a young
-				// "initializing" one) refused the kill before anything was
-				// touched (Instance.Kill checks it before closing the
-				// agent's tmux session): the agent, worktree and branch all
-				// remain. Keep the row, like the discard above, and show the
-				// error, which names the `git worktree unlock` that lets D
-				// be pressed again.
-				if errors.Is(err, git.ErrWorktreeLocked) {
-					return OpFailed{
-						Instance: selected,
-						Title:    title,
-						Op:       "delete",
-						Previous: previousStatus,
-						Err:      err,
-					}
+				return OpFailed{
+					Instance: selected,
+					Title:    title,
+					Op:       "delete",
+					Previous: previousStatus,
+					Err:      err,
 				}
 			}
 		}
 
-		// Past this point tmux + worktree + branch are gone (or, for a
-		// non-Recoverable kill, best-effort gone with the failure logged).
-		// Reverting status on a storage error would leave a zombie in the
-		// list (Ready/Running with no backing resources); return
-		// KillResult regardless so the TUI matches reality.
+		// Past this point tmux + worktree + branch are gone. Reverting
+		// status on a storage error would leave a zombie in the list
+		// (Ready/Running with no backing resources); return KillResult
+		// regardless so the TUI matches reality.
 		// ErrInstanceNotFound just means storage already agreed, so it's a
 		// debug-level note rather than an error.
-		if err := storage.DeleteInstance(selected.Title); err != nil {
+		if err := storage.DeleteInstance(title, createdAt); err != nil {
 			if errors.Is(err, session.ErrInstanceNotFound) {
 				log.For("core").Debug("kill.storage_already_absent", "title", title)
 			} else {
@@ -141,36 +139,67 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 			}
 		}
 
-		return KillResult{Instance: selected, Title: title, Notice: notice}
+		return KillResult{Instance: selected, Title: title, Notice: notice, Trash: worktree.Trashed()}
 	}
 
 	return preAction, killAction
 }
 
-// saveSnapshot returns a save of ws's instances for Pause and Resume, to
-// run in their job. It snapshots the membership now, on the model's
-// goroutine, because the instance list must not be read from the job;
-// status filtering still happens at save time (Persistable), so the state
-// changes Pause and Resume make themselves are captured.
-func (m *Model) saveSnapshot(ws *Workspace) func() error {
+// removeTrash returns the job deleting path, a worktree a kill moved into
+// the trash rather than waited on deleting (git.Cleanup); it takes as long
+// as the tree is large, which no request waits for. A failure is logged,
+// and the next load's purge (purgeWorktreeTrash) tries again.
+func removeTrash(path string) Job {
+	return func() any {
+		if err := git.RemoveTrash(path); err != nil {
+			log.For("core").Warn("worktree_trash.remove_failed", "path", path, "err", err)
+		}
+		return nil
+	}
+}
+
+// purgeWorktreeTrash returns the job removing what cfgDir's worktree trash
+// still holds: trees whose background delete a stop or crash cut short.
+func purgeWorktreeTrash(cfgDir string) Job {
+	return func() any {
+		if n := git.PurgeWorktreeTrash(cfgDir); n > 0 {
+			log.For("core").Info("worktree_trash.purged", "config_dir", cfgDir, "removed", n)
+		}
+		return nil
+	}
+}
+
+// saveOwn returns a save of inst's record alone, in ws's storage, for
+// Pause and Resume to run in their job. The job runs for seconds and must
+// not read the instance list, and a save of the list as it stood at the
+// request dropped every session created or recovered meanwhile; writing one
+// record (Storage.SaveInstance) leaves the others on disk as they are. A
+// status Persistable filters out is not saved.
+func (m *Model) saveOwn(ws *Workspace, inst *session.Instance) func() error {
 	storage := ws.storage
-	snapshot := append([]*session.Instance(nil), ws.insts...)
 	return func() error {
-		return storage.SaveInstances(Persistable(snapshot))
+		if len(Persistable([]*session.Instance{inst})) == 0 {
+			return nil
+		}
+		return storage.SaveInstance(inst)
 	}
 }
 
 // pauseInst returns the job pausing selected (Instance.Pause: save a
 // checkpoint, kill the session and its terminal pane's shell, archive
-// Claude's temp dir, save ws's instances through saveSnapshot), reporting a
+// Claude's temp dir, save its own record through saveOwn), reporting a
 // PauseResult, or an OpFailed reverting to the status selected has now; the
 // caller moves it to Loading. ws is the workspace holding it.
 func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
-	saveFunc := m.saveSnapshot(ws)
+	saveFunc := m.saveOwn(ws, selected)
 	return func() any {
 		if err := selected.Pause(saveFunc); err != nil {
+			// A Notice alone: the agent is stopped and the pause done.
+			if n, only := session.OnlyNotice(err); only {
+				return PauseResult{Title: pauseTitle, Notice: n}
+			}
 			return OpFailed{Instance: selected, Title: pauseTitle, Op: "pause", Previous: previousStatus, Err: err}
 		}
 		return PauseResult{Title: pauseTitle}
@@ -187,7 +216,7 @@ func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 // A resume that launched the agent anew (inst.Launches moved) says so
 // (ResumeResult.Relaunched).
 func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
-	saveFunc := m.saveSnapshot(ws)
+	saveFunc := m.saveOwn(ws, inst)
 	title := inst.Title
 	owner := m.startOwner(inst, ws)
 	return func() any {

@@ -227,6 +227,15 @@ type Instance struct {
 	// serialized — ages reset on restart, which is acceptable for the
 	// "waiting 4m" card labels it feeds).
 	statusChangedAt time.Time
+	// turnStartedAt is when the instance last entered Running from any
+	// status but Prompting: the start of the turn a brainstorm screen is
+	// fresh in (in-memory only; zero until this process sees one).
+	turnStartedAt time.Time
+	// mockupScreen and mockupChanged are the brainstorm companion's screen
+	// the model last found in the worktree (core/mockup.go), in memory
+	// only; "" for none.
+	mockupScreen  string
+	mockupChanged time.Time
 
 	// waitReason is Claude's own account of what this session is blocked
 	// on ("permission: Bash" from a PermissionRequest hook, "sandbox
@@ -571,7 +580,11 @@ func (i *Instance) TransitionTo(to Status) error {
 		return fmt.Errorf("illegal status transition for %q: %s → %s", i.Title, from, to)
 	}
 	i.Status = to
-	i.statusChangedAt = time.Now()
+	now := time.Now()
+	i.statusChangedAt = now
+	if to == Running && from != Prompting {
+		i.turnStartedAt = now
+	}
 	return nil
 }
 
@@ -1054,21 +1067,26 @@ func (i *Instance) Kill() (err error) {
 	// what is this record's: its own agent cannot be running, since the one
 	// session with its name started elsewhere. When tmux does not answer,
 	// whose the session is cannot be told: refuse, changing nothing.
+	// From the snapshot: i.gitWorktree is already cleared.
+	wtPath := ""
+	if gitWT != nil {
+		wtPath = gitWT.GetWorktreePath()
+	}
+	home := sessionHome(isWorkspaceTerm, i.Path, wtPath)
 	closeSessions := tmuxSess != nil
+	nameHeld := false
+	var placed recordSessions
 	if closeSessions {
-		// From the snapshot: i.gitWorktree is already cleared.
-		wtPath := ""
-		if gitWT != nil {
-			wtPath = gitWT.GetWorktreePath()
-		}
-		held, dir, err := sessionHeldElsewhere(tmuxSess, sessionHome(isWorkspaceTerm, i.Path, wtPath))
+		var err error
+		placed, err = placeRecordSessions(tmuxSess, i.Title, home)
 		if err != nil {
 			restore()
 			return fmt.Errorf("cannot kill %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, tmuxSess.SessionName(), err)
 		}
-		if held {
-			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", dir)
+		if placed.agentHeld {
+			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", placed.agentDir)
 			closeSessions = false
+			nameHeld = true
 		}
 	}
 
@@ -1090,18 +1108,23 @@ func (i *Instance) Kill() (err error) {
 				errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
 			}
 		}
-		// See the matching comment in Pause: the terminal pane's tmux
-		// session is untracked by Instance and must be killed alongside
-		// the agent session, or it leaks until the next app-startup
-		// orphan sweep. Best-effort: "no such session" is the common case.
-		if err := tmuxSess.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
-			log.For("session").Debug("kill_close_terminal_tmux_failed", "title", i.Title, "err", err)
-		}
+	}
+	// See the matching comment in Pause: the terminal pane's tmux session
+	// is untracked by Instance and must be killed alongside the agent
+	// session, or it leaks until the next app-startup orphan sweep. Its
+	// name is per server too, so it is judged on its own: the record's
+	// shell goes even when another session holds the agent's name.
+	if tmuxSess != nil {
+		closeOwnTerminal(tmuxSess, i.Title, placed)
 	}
 
 	// After the agent's tmux session is gone, so a SessionEnd hook firing
-	// on exit finds no folder and exits harmlessly.
-	i.removeSubagentHooks()
+	// on exit finds no folder and exits harmlessly. Not while a session
+	// started elsewhere holds the name: the folder is keyed by that name,
+	// and its agent is writing its hook events there.
+	if !nameHeld {
+		i.removeSubagentHooks()
+	}
 
 	// Then clean up git worktree (workspace terminals don't have one)
 	if gitWT != nil && !isWorkspaceTerm {
@@ -1116,7 +1139,15 @@ func (i *Instance) Kill() (err error) {
 			}
 		}
 		if err := gitWT.Cleanup(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
+			// A directory git no longer tracks as a worktree is left on
+			// disk, the rest cleaned up: report it rather than fail, or the
+			// kill would be refused the same way on every retry.
+			var left *git.LeftoverDirError
+			if errors.As(err, &left) {
+				notices = append(notices, fmt.Errorf("killed %s, but %s: check what is in it, then delete it", i.Title, left.Error()))
+			} else {
+				errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
+			}
 		}
 	}
 
@@ -1310,6 +1341,17 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	}
 	defer end()
 
+	// The name is unique per tmux server, not per workspace (see Kill): a
+	// session another workspace started under it is not this record's agent,
+	// which cannot be running under a name another session holds, so it is
+	// left running and the record paused. When tmux does not answer, whose
+	// the session is cannot be told: refuse before the checkpoint, changing
+	// nothing.
+	placed, err := placeRecordSessions(ts, i.Title, sessionHome(false, i.Path, gw.GetWorktreePath()))
+	if err != nil {
+		return fmt.Errorf("cannot pause %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, ts.SessionName(), err)
+	}
+
 	// Checkpoint before anything stops (see the doc comment). A failed save
 	// stops the pause with the agent still running.
 	if saveState != nil {
@@ -1322,7 +1364,9 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// Kill the tmux session so the agent process actually stops. Resume
 	// relaunches it with BuildRecoveryCommand, so --continue (or its
 	// equivalent) restores the conversation for agents that support it.
-	if err := ts.Close(); err != nil {
+	if placed.agentHeld {
+		i.getLogger().Warn("instance.pause.session_held_elsewhere", "session", ts.SessionName(), "dir", placed.agentDir)
+	} else if err := ts.Close(); err != nil {
 		log.For("session").Warn("pause_close_tmux_failed", "err", err)
 		// A Close failure usually just means the session was already dead,
 		// which is harmless — carry on. Only an answered "no such session"
@@ -1339,11 +1383,9 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// The terminal pane (ui.TerminalPane) runs its own tmux session for this
 	// instance, keyed by the same title but tracked outside Instance and
 	// TmuxSession. A pause stops everything the session runs, and a shell
-	// kept alive under a Paused row has no client to show it. Best-effort:
-	// "no such session" (never opened) is the common case.
-	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
-		log.For("session").Debug("pause_close_terminal_tmux_failed", "err", err)
-	}
+	// kept alive under a Paused row has no client to show it. Only the
+	// record's own shell (closeOwnTerminal).
+	closeOwnTerminal(ts, i.Title, placed)
 
 	// Before the status reads Paused: the app can start a resume the moment
 	// it does, and a resume that began while this slow step was still
@@ -1361,8 +1403,12 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 
 	_ = i.TransitionTo(Paused)
 	if saveState != nil {
+		// The agent is stopped and its files archived: the pause has
+		// happened. A failed save now is the user's to hear about, not a
+		// failure to revert, which would show a dead agent as Running. The
+		// record on disk still reads Loading, which reconcile marks Paused.
 		if err := saveState(); err != nil {
-			return fmt.Errorf("pause checkpoint save: %w", err)
+			return NewNotice(fmt.Errorf("paused %s, but could not save it: %w", i.Title, err))
 		}
 	}
 	return nil
