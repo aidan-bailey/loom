@@ -1,10 +1,12 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -221,13 +223,10 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	if _, err := sched.Resolve(s, q.host); err != nil {
 		return err
 	}
-	// LoadConfigFrom renames a config.json that fails to parse and returns the
-	// defaults, and the save below would then write those over every other
-	// global setting: a file that can't be read is refused, and left as it is.
-	if _, err := diskSchedulerBlock(q.cfgDir); err != nil {
+	cfg, err := readGlobalConfig(q.cfgDir)
+	if err != nil {
 		return fmt.Errorf("config.json could not be read, so the caps were not saved: %w", err)
 	}
-	cfg := config.LoadConfigFrom(q.cfgDir)
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)
@@ -237,6 +236,28 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	}
 	m.admitJobs()
 	return nil
+}
+
+// readGlobalConfig decodes dir's config.json in full over the defaults, as
+// config.LoadConfigFrom does for a file that decodes (a missing file is the
+// defaults too). It differs where LoadConfigFrom would rename a file that
+// fails to decode and return the defaults: a file that can't be read or
+// decoded is an error, and is left as it is, since saving defaults over it
+// would drop every other global setting.
+func readGlobalConfig(dir string) (*config.Config, error) {
+	path := filepath.Join(dir, config.ConfigFileName)
+	cfg := config.DefaultConfig()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return cfg, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, nil
 }
 
 // cancelOwnerJobs cancels every job of owner that has not ended, for reason

@@ -1150,10 +1150,25 @@ func TestJobQueue_SetSchedulerCapsOnAGarbledConfigRefusesAndLeavesIt(t *testing.
 	assert.Equal(t, string(garbled), string(got), "byte-identical")
 	wqNoSiblings(t, dir)
 
-	// The other side: a readable file takes the caps.
+	// Valid JSON with a mistyped field elsewhere fails config.json's full
+	// decode: LoadConfigFrom would quarantine it and the save would write the
+	// defaults over every other setting.
+	mistyped := []byte(`{"default_program": 5, "branch_prefix": "x/"}`)
+	require.NoError(t, os.WriteFile(cfgPath, mistyped, 0o644))
+	err = m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config.json could not be read, so the caps were not saved")
+	got, rerr = os.ReadFile(cfgPath)
+	require.NoError(t, rerr)
+	assert.Equal(t, string(mistyped), string(got), "byte-identical")
+	wqNoSiblings(t, dir)
+
+	// The other side: a readable file takes the caps and keeps its settings.
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"default_program": "my-claude"}`), 0o644))
 	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8}))
-	assert.Equal(t, 8, config.LoadConfigFrom(dir).GetScheduler().CPUs)
+	saved := config.LoadConfigFrom(dir)
+	assert.Equal(t, 8, saved.GetScheduler().CPUs)
+	assert.Equal(t, "my-claude", saved.DefaultProgram)
 }
 
 // wqUnreadableLock makes job id's lock file fail the lock test (an open that
