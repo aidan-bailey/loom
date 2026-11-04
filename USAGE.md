@@ -66,11 +66,12 @@ nix run .
 
 ## TUI Layout
 
-Loom has three view modes:
+Loom has four view modes:
 
 - **Focus mode** (the default, shown below) — a session rail on the left plus the selected session's agent and terminal panes on the right. Toggle to overview with `tab`.
 - **Overview mode** — a full-width fleet card grid for triaging many sessions at once. See [Overview Mode](#overview-mode).
 - **Session workbench** — a single-session deep-dive: the agent pane on the left, a tabbed panel (markdown / diff / files / terminal / review) on the right. Press `enter` in focus mode to open it. See [Session Workbench](#session-workbench).
+- **Work view** — the host's job queue, across every workspace. Press `w` in focus or overview mode to open it; `w` or `Esc` returns to the mode it came from. It is not persisted: a restarted TUI opens in focus or overview as before. See [The Work Queue](#the-work-queue).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -324,6 +325,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `Enter` | Open the session workbench for the selected session |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
+| `w` | Open the work view: the host's job queue (see [The Work Queue](#the-work-queue)) |
 | `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
@@ -340,6 +342,7 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 | `↑` / `k`, `↓` / `j` | Walk the attention-sorted card grid |
 | `Enter` / `Esc` | Return to focus mode on the selected session, switching to its workspace tab |
 | `Tab` | Return to focus mode |
+| `w` | Open the work view; `w` or `Esc` there returns to the overview |
 | `z` | Collapse/expand the active workspace group |
 | `]` / `[` | Move the cursor to the next/previous agent waiting for input, in any open workspace |
 | `n` / `N` | Drop to focus mode, then open the create flow |
@@ -369,6 +372,20 @@ Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt
 | `Esc` | (editing) Cancel the edit, confirming first if there are unsaved changes; (otherwise) return to focus mode |
 | `Tab` | Exit straight to overview mode |
 | `n` / `N` | Drop to focus mode, then open the create flow |
+
+### Work View (after pressing `w`)
+
+The work view covers the whole host, across every workspace. Mouse input is dropped. Offline (daemon away), it shows the last state it had and its actions are refused like every other model key.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k`, `↓` / `j` | Move the selection |
+| `Enter` | Open the selected job's whole log in a scrolling pager (`Esc` back) |
+| `x` | Cancel the selected job, after a confirmation (a queued job at once, a running one with SIGTERM and then SIGKILL) |
+| `t` | Move a queued job to the front of the queue |
+| `o` | Focus the job's owner session in focus mode, opening its workspace's tab if it is not open. A job whose owner is in the global workspace, which no open tab shows, is left alone: `o` changes nothing and says so on the info line |
+| `e` | Open the caps form: the cores, memory and I/O caps, the default claim, the starvation wait and how many finished jobs to keep. It shows each value in effect, whether it is the host's default, and the host's detected cores and RAM; saving applies it at once, and a refused value is shown in the form |
+| `w` / `Esc` | Return to the mode the view came from |
 
 ### Name Entry Mode (after pressing `n` or `N`)
 
@@ -791,6 +808,9 @@ Type=simple
 ExecStart=%h/.local/bin/loom serve
 Restart=on-failure
 RestartSec=5
+# Leave the jobs the work queue runs alone when the unit stops or restarts:
+# each runs in a session of its own and outlives the daemon.
+KillMode=process
 # The login environment, which a user service does not inherit (below).
 EnvironmentFile=-%h/.config/loom/serve.env
 
@@ -817,6 +837,13 @@ After installing a new loom build, restart the unit too. A `loom` you start by
 hand that finds an older daemon replaces it with a detached daemon of its own,
 outside the unit.
 
+**`KillMode=process` is what lets jobs survive a restart.** The work queue's
+running jobs belong to the unit's cgroup. Under systemd's default
+(`control-group`), `systemctl --user restart loom` kills every one of them with
+the daemon; with `KillMode=process` only the daemon's own process is stopped,
+and the restarted daemon adopts the jobs that are still running (see
+[The Work Queue](#the-work-queue)).
+
 #### When something is wrong
 
 | You see | Cause |
@@ -830,6 +857,30 @@ outside the unit.
 | The fleet is greyed with every action off | The app shows its last snapshot until the stream is back |
 | No notifications | The app is not installed to the Home Screen, notifications are off or paused for the device, the origin is a development `http://127.0.0.1:<port>` or `http://localhost:<port>` (push needs `https`), or `loom web devices` shows `expired` or `failing` |
 | `loom web enable` says the daemon did not say whether it serves | The web layer may have stopped (a panic, or it failed to start with the daemon, which is only logged), and `loom web status` then shows `Serving: no` with no reason. Restart the daemon to start it again (`systemctl --user restart loom`, or see [The Loom Daemon](#the-loom-daemon)); sessions keep running; the daemon's `serve.log` says what happened |
+
+### The Work Queue
+
+Builds, test suites and benchmarks from several sessions at once can starve a host. The daemon keeps a per-host queue: a session (or you) submits a command with `loom job`, the daemon starts it when its claim fits what the host has left, runs it detached from the daemon, and tells the submitting session's Claude when it ends. Loom's Claude context tells agents to use it. Nothing rewrites an agent's commands, so work not submitted through `loom job` competes as before. The scheduler is not available on Windows.
+
+```
+loom job run -d "tests" -- cargo test       # queue it, follow it, exit with its exit code
+loom job submit -d "tests" -- cargo test    # queue it and return; a message arrives when it ends
+loom job wait 14                            # follow a job again
+loom job logs 14 -f                         # its output, following
+loom job list --all                         # running, queued and the finished ones kept
+loom job cancel 14
+```
+
+- **No shell.** The command runs as given, in the folder you ran `loom job` from, with your environment. Write a pipeline as `-- sh -c '…'`.
+- **Claims.** A job claims `--cpus N` cores and `--mem N` GB (each defaults to the default claim), plus `--io` if it is I/O-heavy, or `--exclusive` for the whole host (it cannot combine with the others). It starts when its claim fits within the caps beside the running jobs' claims; otherwise `loom job list` and the work view say why it waits ("needs 8 cores (4 free)"). The claim is only an estimate used for admission: nothing stops a job from using more.
+- **Order.** First fit, so a small job can pass a big one that waits for room, until the big one has waited past `starve_after_minutes` ([Scheduler Caps](#scheduler-caps)); then nothing else starts before it.
+- **Parallelism.** The CPU claim is the job's parallelism: loom sets `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `MAKEFLAGS=-jN`, `NIX_BUILD_CORES`, `CMAKE_BUILD_PARALLEL_LEVEL` and `GOFLAGS=-p=N` unless your environment already sets them, and `LOOM_JOB=<id>` always.
+- **Owner and messages.** A job submitted from a loom session belongs to it (loom reads `$LOOM_LAUNCH`); one from a plain shell has no owner. `submit` messages the owner's Claude when the job ends, through the loom mod: `[loom] job 14 "tests" finished: exit 0 after 3m10s`, the log's path and its last lines (`--tail N`, default 20; `--no-notify` sends none). `run` sends none while it follows, but if it is interrupted (a Bash timeout, say) it asks for one and leaves the job running. A message the session cannot take (no live mod, or the session is not running) is never typed into its pane: the work view marks the job and says why.
+- **Following.** `run` and `wait` print the log on stdout and status lines (`loom: job 14 started after 1m42s`) on stderr, and exit with the job's exit code, `128+N` for a job killed by signal N, or `125` for one that was lost, could not start, or was cancelled.
+- **Cancelling.** A queued job is cancelled at once; a running job gets SIGTERM to its whole process group, and SIGKILL if it is still there 10 s later. Pausing or killing a session when you ask (or a script does) cancels its jobs first, with no message. When loom pauses a session on its own because its tmux session died, its jobs keep their places and run on.
+- **Daemon restarts.** Running jobs live in sessions of their own, so stopping or upgrading the daemon leaves them running, and the next daemon adopts and settles them before it admits anything new. Under systemd this needs `KillMode=process` in the unit ([Keep the daemon up](#keep-the-daemon-up-a-systemd-user-unit)). A job whose runner vanished without a result (a reboot) is marked `lost`.
+- **The work view.** `w` shows the host's caps, what the running jobs claim and use, the running, queued and recent jobs, and the selected job's log tail (keys: [Work View](#work-view-after-pressing-w)). A session's card in the rail and the overview shows `⚙ job 14` (with `+N` for more running) or `⚙ queued`.
+- **Files.** Everything is under `~/.loom/jobs/`: `jobs.json` and, per job, `<id>/output.log` (no size cap; `keep_finished` bounds how many finished jobs are kept). A `jobs.json` the daemon cannot read is left untouched and the queue refuses submissions, saying why.
 
 ### Session Recovery (orphaned worktrees)
 
@@ -980,6 +1031,7 @@ loom [command]
 | `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
+| `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -1017,6 +1069,19 @@ Each acts on a registered workspace: `-w <name>`, else the one whose repository 
 | `session kill <title> [-y] [--id <n>]` | Kill a session (its agent, tmux session and worktree) after asking; `-y` skips the question |
 | `session pause <title> [--id <n>]` | Pause a running session: its agent stops; its worktree and branch stay as they are |
 | `session resume <title> [--id <n>]` | Resume a paused session |
+
+### Job Subcommands
+
+A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `--io` and `--exclusive`; `-d`/`--desc` names the job (default: the command line, cut to 60 characters).
+
+| Command | Description |
+|---------|-------------|
+| `job submit [-d <desc>] [claim flags] [--tail <n>] [--no-notify] -- <cmd…>` | Queue the command and return: `job 14 queued (3rd in line, 2 running)` or `job 14 started`. A refusal (a claim over a cap, admission paused, a bound exceeded) is printed with exit 1. The owner's Claude is messaged when the job ends; `--tail` (0–200, default 20) sets how many log lines the message carries |
+| `job run [-d <desc>] [claim flags] -- <cmd…>` | Queue the command and follow it: the log on stdout, status lines on stderr, the job's exit code (see [The Work Queue](#the-work-queue)) |
+| `job wait <id>` | Follow an existing job the same way |
+| `job logs <id> [--tail <n>] [-f]` | Print the job's output, all of it or the last `n` lines; `-f` follows until the job ends |
+| `job list [--all]` | The running and queued jobs, with why each waits; `--all` adds the finished ones kept |
+| `job cancel <id>` | Cancel a queued or running job; refused for a finished one |
 
 ### Web Subcommands
 
@@ -1079,6 +1144,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
 | `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off). See [Build Sweep](#build-sweep) |
+| `scheduler` | object | host defaults | The work queue's caps and default claim (global `config.json` only). See [Scheduler Caps](#scheduler-caps) |
 
 ### Example config.json
 
@@ -1191,6 +1257,37 @@ Cargo builds into each session's own `<worktree>/target/` and never deletes a te
 - **"Unused" means the file's last access time,** so the disk must record access times. Linux only. A disk mounted `noatime` is skipped. One mounted `relatime` records an access at most once a day, so it is swept only with a threshold of 24 hours or more. For hour thresholds, mount it `strictatime,lazytime`: every access is recorded, and `lazytime` writes the timestamps out in batches. A skipped disk shows a notice once each time the daemon starts.
 - **Never mid-build:** a session is skipped while cargo holds its target dir's locks, or while any of your `cargo` processes runs inside the worktree. That second check covers `cargo test`, which drops its locks before it runs the tests.
 - **On demand:** `loom sweep` runs the sweep now. `loom sweep --dry-run --after 12 -v` lists what would go, file by file, and deletes nothing; `--after` works even while the setting is off. Each sweep is logged as `build_sweep.swept` and `build_sweep.skipped` in the daemon's log.
+
+### Scheduler Caps
+
+The work queue admits jobs against caps on the host's cores, memory and I/O-heavy jobs. They live in a `scheduler` block of the global `~/.loom/config.json` (per host; a workspace's `config.json` never holds them, and the `S` settings overlay does not show them). Edit them in the work view (`w`, then `e`) or by hand; the daemon rereads the block at every admission pass, so a hand edit applies without a restart.
+
+```json
+{
+  "scheduler": {
+    "cpus": 14,
+    "memory_gb": 24,
+    "io_jobs": 2,
+    "default_claim": { "cpus": 4, "memory_gb": 6 },
+    "starve_after_minutes": 10,
+    "keep_finished": 50
+  }
+}
+```
+
+An absent or `0` field takes the host's default:
+
+| Field | Default | Bounds |
+|-------|---------|--------|
+| `cpus` | cores − 2 (at least 1) | 1–1024 |
+| `memory_gb` | ¾ of the RAM in GB (at least 1; a GB is 2^30 bytes) | 1–65536 |
+| `io_jobs` | `2` | 1–64 |
+| `default_claim.cpus` | the lesser of `4` and `cpus` | 1 to `cpus` |
+| `default_claim.memory_gb` | the lesser of `6` and `memory_gb` | 1 to `memory_gb` |
+| `starve_after_minutes` | `10` | 1–1440 |
+| `keep_finished` | `50` | 1–10000 |
+
+A value outside its bounds, or a default claim larger than a cap, makes the block invalid: admission pauses, running jobs are left alone, `loom job submit` is refused, and the work view says why. No cap is guessed. If the RAM cannot be read, `memory_gb` has no default and must be set. Lowering a cap never touches running jobs; it changes only what starts next.
 
 ### Claude Fullscreen Renderer
 
