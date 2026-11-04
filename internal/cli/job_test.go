@@ -2,8 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -366,4 +369,257 @@ func TestJobSubmit_RefusalsArePrintedAndQueueNothing(t *testing.T) {
 		})
 	}
 	assert.Empty(t, d.jobs(), "no refusal queued a job")
+}
+
+// exitCode is the exit code a command's error asks main to end with.
+func exitCode(t *testing.T, err error) int {
+	t.Helper()
+	var exit *ExitError
+	require.ErrorAs(t, err, &exit)
+	return exit.Code
+}
+
+// interruptWhenAJobExists replaces the follower's signal source with one that
+// delivers sig once d serves a job, and restores it when the test ends.
+func interruptWhenAJobExists(t *testing.T, d *testDaemon, sig os.Signal) {
+	t.Helper()
+	sigs := make(chan os.Signal, 1)
+	orig := notifySignals
+	notifySignals = func() (<-chan os.Signal, func()) { return sigs, func() {} }
+	t.Cleanup(func() { notifySignals = orig })
+	go func() {
+		for {
+			if len(d.jobs()) > 0 {
+				sigs <- sig
+				return
+			}
+			select {
+			case <-t.Context().Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+}
+
+func TestJobOutcome(t *testing.T) {
+	t0 := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)
+	ran := func(state sched.State, exit *sched.Exit) core.JobView {
+		return core.JobView{ID: 5, State: state, Submitted: t0.Add(-time.Minute), Started: t0, Ended: t0.Add(190 * time.Second), Exit: exit}
+	}
+	cancelled := ran(sched.Cancelled, &sched.Exit{Code: -1, Signal: "SIGTERM"})
+	cancelled.CancelReason = "from the work view"
+	cancelledBare := ran(sched.Cancelled, nil)
+	lost := ran(sched.Lost, nil)
+	lost.Failure = "its runner died without a result (the host may have rebooted)"
+	noStart := ran(sched.Failed, nil)
+	noStart.Failure = "its folder is gone"
+	execFailed := ran(sched.Failed, &sched.Exit{Code: 127, Error: `exec: "nope": executable file not found in $PATH`})
+
+	for _, tc := range []struct {
+		name string
+		job  core.JobView
+		line string
+		code int
+	}{
+		{"done", ran(sched.Done, &sched.Exit{Code: 0}), "job 5 done in 3m10s (exit 0)", 0},
+		{"failed", ran(sched.Failed, &sched.Exit{Code: 3}), "job 5 failed in 3m10s (exit 3)", 3},
+		{"killed", ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGKILL"}), "job 5 was killed by SIGKILL after 3m10s", 137},
+		{"terminated", ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGTERM"}), "job 5 was killed by SIGTERM after 3m10s", 143},
+		{"a signal beyond the usual few", ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGXCPU"}), "job 5 was killed by SIGXCPU after 3m10s", 152},
+		{"a real-time signal the platform has no name for", ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIG63"}), "job 5 was killed by SIG63 after 3m10s", 191},
+		{"a name no signal has", ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGBOGUS"}), "job 5 was killed by SIGBOGUS after 3m10s", exitNotRun},
+		{"cancelled", cancelled, "job 5 was cancelled from the work view", exitNotRun},
+		{"cancelled, no reason", cancelledBare, "job 5 was cancelled", exitNotRun},
+		{"lost", lost, "job 5 was lost: its runner died without a result (the host may have rebooted)", exitNotRun},
+		{"its start failed", noStart, "job 5 could not start: its folder is gone", exitNotRun},
+		{"its exec failed", execFailed, `job 5 could not start: exec: "nope": executable file not found in $PATH`, exitNotRun},
+	} {
+		line, code := jobOutcome(tc.job)
+		assert.Equal(t, tc.line, line, tc.name)
+		assert.Equal(t, tc.code, code, tc.name)
+	}
+}
+
+func TestJobInterruptCode(t *testing.T) {
+	assert.Equal(t, 130, interruptCode(syscall.SIGINT))
+	assert.Equal(t, 143, interruptCode(syscall.SIGTERM))
+	assert.Equal(t, 129, interruptCode(syscall.SIGHUP))
+	assert.Equal(t, 130, interruptCode(nil), "an interrupt that no signal brought (a cancelled context)")
+}
+
+func TestJobTailOffset(t *testing.T) {
+	tail := func(content string, n int) string {
+		off, err := tailOffset(strings.NewReader(content), int64(len(content)), n)
+		require.NoError(t, err)
+		return content[off:]
+	}
+
+	assert.Equal(t, "a\nb\nc\n", tail("a\nb\nc\n", -1), "a negative count is all of it")
+	assert.Equal(t, "", tail("a\nb\nc\n", 0))
+	assert.Equal(t, "c\n", tail("a\nb\nc\n", 1))
+	assert.Equal(t, "b\nc\n", tail("a\nb\nc\n", 2))
+	assert.Equal(t, "a\nb\nc\n", tail("a\nb\nc\n", 3))
+	assert.Equal(t, "a\nb\nc\n", tail("a\nb\nc\n", 10))
+	assert.Equal(t, "b", tail("a\nb", 1), "a last line with no newline is a line")
+	assert.Equal(t, "", tail("", 5))
+
+	var long strings.Builder
+	for i := 1; i <= 5000; i++ {
+		fmt.Fprintf(&long, "line %05d\n", i)
+	}
+	assert.Equal(t, "line 04998\nline 04999\nline 05000\n", tail(long.String(), 3), "found across several read blocks")
+	assert.Equal(t, long.String(), tail(long.String(), 5000))
+	assert.Equal(t, long.String()[len("line 00001\n"):], tail(long.String(), 4999))
+}
+
+func TestJobCopyLog_CopiesOnlyWhatIsNew(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.log")
+	var out bytes.Buffer
+	f := &jobFollower{out: &out}
+
+	require.NoError(t, f.copyLog(path), "a job that has not started has no log yet")
+	assert.Empty(t, out.String())
+
+	require.NoError(t, os.WriteFile(path, []byte("ab"), 0o600))
+	require.NoError(t, f.copyLog(path))
+	assert.Equal(t, "ab", out.String())
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = file.WriteString("cd")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.NoError(t, f.copyLog(path))
+	assert.Equal(t, "abcd", out.String(), "the second read starts where the first stopped")
+
+	require.NoError(t, f.copyLog(path))
+	assert.Equal(t, "abcd", out.String(), "nothing new, nothing copied")
+}
+
+// `run` follows the job to its end: the job's output goes to stdout, its
+// progress to stderr, and the command exits with the job's exit code. `logs`
+// and `wait` then read the finished job back.
+func TestJobRun_FollowsAJobToItsExitCodeAndLogsReadItBack(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	serveDaemon(t, "true")
+
+	out, errOut, err := runJob(t, "run", "-d", "fails", "--", "sh", "-c", "echo out; echo err >&2; exit 3")
+	assert.Equal(t, 3, exitCode(t, err))
+	assert.Equal(t, "out\nerr\n", out, "stdout and stderr of the job, in order")
+	assert.Contains(t, errOut, "loom: job 1 started after ")
+	assert.Regexp(t, `loom: job 1 failed in \S+ \(exit 3\)\n`, errOut)
+
+	out, errOut, err = runJob(t, "run", "-d", "fine", "--", "sh", "-c", "echo fine")
+	require.NoError(t, err)
+	assert.Equal(t, "fine\n", out)
+	assert.Regexp(t, `loom: job 2 done in \S+ \(exit 0\)\n`, errOut)
+
+	out, _, err = runJob(t, "logs", "1")
+	require.NoError(t, err)
+	assert.Equal(t, "out\nerr\n", out)
+	out, _, err = runJob(t, "logs", "1", "--tail", "1")
+	require.NoError(t, err)
+	assert.Equal(t, "err\n", out)
+	out, _, err = runJob(t, "logs", "1", "--tail", "0")
+	require.NoError(t, err)
+	assert.Equal(t, "", out)
+	out, _, err = runJob(t, "logs", "1", "-f")
+	require.NoError(t, err, "following a finished job prints its output and returns")
+	assert.Equal(t, "out\nerr\n", out)
+	_, _, err = runJob(t, "logs", "99")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "there is no job 99")
+
+	out, errOut, err = runJob(t, "wait", "1")
+	assert.Equal(t, 3, exitCode(t, err), "wait follows a finished job too")
+	assert.Equal(t, "out\nerr\n", out)
+	assert.Regexp(t, `loom: job 1 failed in \S+ \(exit 3\)\n`, errOut)
+}
+
+// A job that queues behind another says where it stands, and when it starts
+// how long it waited.
+func TestJobRun_ShowsItsPlaceInLineThenItsStart(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "hog", "--exclusive", "--no-notify", "--", "sh", "-c", "echo up; sleep 2")
+	require.NoError(t, err)
+
+	out, errOut, err := runJob(t, "run", "-d", "next", "--", "sh", "-c", "echo next")
+
+	require.NoError(t, err)
+	assert.Equal(t, "next\n", out)
+	assert.Regexp(t, `(?s)loom: job 2 queued \(1st in line, 1 running\)\n.*loom: job 2 started after \d+s\n.*loom: job 2 done in \S+ \(exit 0\)\n`, errOut)
+	d.waitFinished(t, 1)
+}
+
+// A job cancelled while waited on ends the wait with 125: it did not run to
+// an exit.
+func TestJobWait_ACancelledJobExits125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sh", "-c", "echo up; exec sleep 60")
+	require.NoError(t, err)
+	d.waitLog(t, 1, "up")
+	_, _, err = runJob(t, "cancel", "1")
+	require.NoError(t, err)
+
+	_, errOut, err := runJob(t, "wait", "1")
+
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Contains(t, errOut, "loom: job 1 was cancelled with loom job cancel\n")
+
+	_, _, err = runJob(t, "wait", "99")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "there is no job 99")
+}
+
+// An interrupted follower of a job with no owner has no message to ask for;
+// it says the job goes on and how to follow it again, and exits with the
+// signal's code. The job is never cancelled by the follower's end.
+func TestJobRun_AnInterruptWithNoOwnerSaysSo(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	interruptWhenAJobExists(t, d, syscall.SIGTERM)
+
+	_, errOut, err := runJob(t, "run", "-d", "nap", "--", "sleep", "1")
+
+	assert.Equal(t, 143, exitCode(t, err))
+	assert.Contains(t, errOut, "loom: job 1 continues (loom job wait 1 follows it again)\n")
+	assert.NotContains(t, errOut, "a message will bring")
+	v := d.waitFinished(t, 1)
+	assert.Equal(t, sched.Done, v.State, "the job ran on and finished")
+}
+
+// An interrupted follower of a session's job asks the daemon for a message
+// (`run` submitted it without one): the job's result then reaches the
+// session's Claude through the mod when it ends.
+func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
+	isolateWorkspaces(t)
+	withModSocket(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+	launch := launchOf(t, d, "ws-a", "alpha")
+	require.NoError(t, d.loop.ModHello(launch, core.ModHello{Mod: 1}))
+	carried := playMod(t, d.loop, launch, "", "")
+	t.Setenv(claudemod.EnvLaunch, launch)
+	interruptWhenAJobExists(t, d, syscall.SIGTERM)
+
+	_, errOut, err := runJob(t, "run", "-d", "nap", "--", "sleep", "2")
+
+	assert.Equal(t, 143, exitCode(t, err))
+	assert.Contains(t, errOut, "loom: job 1 continues; a message will bring its result (loom job wait 1 follows it again)\n")
+	select {
+	case text := <-carried:
+		assert.Contains(t, text, `[loom] job 1 "nap" finished: exit 0`, "the notice the interrupt asked for")
+	case <-time.After(30 * time.Second):
+		t.Fatal("the job's result never reached the session's Claude")
+	}
 }

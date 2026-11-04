@@ -441,6 +441,15 @@ func main() {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
+		// A job follower ends with the job's own exit code, having said what
+		// happened on stderr as it went (cli.ExitError).
+		var exit *cli.ExitError
+		if errors.As(err, &exit) {
+			if exit.Msg != "" {
+				fmt.Fprintln(os.Stderr, exit.Msg)
+			}
+			os.Exit(exit.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
