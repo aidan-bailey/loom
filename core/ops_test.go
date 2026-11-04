@@ -190,9 +190,21 @@ func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.
 		assert.Zero(t, calls, "the terminal shell must not be ended for a refused kill")
 	}
 
-	t.Run("no worktree", func(t *testing.T) {
-		// Never started: GetGitWorktree fails.
-		refused(t, newInst(t, "unstarted"), "has not been started")
+	t.Run("never started", func(t *testing.T) {
+		// Nothing of its own runs, so its kill removes it and ends no shell.
+		inst := newInst(t, "unstarted")
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		ws.add(inst)
+		m.SetWorkspacesForTest(ws)
+		calls, there := 0, false
+		terminalKills(t, inst, inst.GetWorktreePath(), &calls, &there)
+		pre, job := m.killInst(ws, inst)
+		pre()
+
+		_, ok := job().(KillResult)
+		require.True(t, ok, "the kill proceeds")
+		assert.Zero(t, calls, "no terminal shell is ended")
 	})
 
 	t.Run("branch checked out in the repository", func(t *testing.T) {
@@ -296,4 +308,33 @@ func TestReconcileOrphans_PurgesTheWorktreeTrash(t *testing.T) {
 
 	m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
 	assert.Empty(t, m.Drain().Jobs, "an empty trash queues no job")
+}
+
+// TestKill_ASessionWhoseRepositoryIsGoneIsRemoved: with the session's
+// repository deleted, the checked-out-branch check failed on every D, so
+// the row could only go by `loom reset` or a hand edit of state.json. The
+// kill now finishes: the record and row go, and the worktree, which may
+// hold the only copy of the work, is left on disk and named in a notice.
+func TestKill_ASessionWhoseRepositoryIsGoneIsRemoved(t *testing.T) {
+	repo := gitRepo(t)
+	inst := pausedWorktreeInst(t, repo, "orphaned", "orphaned-branch")
+	wtPath := inst.GetWorktreePath()
+	calls, there := 0, false
+	terminalKills(t, inst, wtPath, &calls, &there)
+	require.NoError(t, os.RemoveAll(repo))
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	pre, job := m.killInst(ws, inst)
+	pre()
+
+	res, ok := job().(KillResult)
+	require.True(t, ok, "the kill finishes")
+	require.Error(t, res.Notice)
+	assert.Contains(t, res.Notice.Error(), wtPath)
+	assert.DirExists(t, wtPath, "the worktree is left on disk")
+
+	m.Deliver(res)
+	assert.NotContains(t, ws.instances(), inst, "the row is gone")
 }

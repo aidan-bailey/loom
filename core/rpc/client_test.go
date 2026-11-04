@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -66,6 +67,23 @@ func running(t *testing.T, title string) *session.Instance {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
+	return inst
+}
+
+// unkillable is a fixture instance whose kill the model admits and whose
+// job then fails before it touches anything: a Paused session on the
+// branch its repository has checked out.
+func unkillable(t *testing.T, title string) *session.Instance {
+	t.Helper()
+	repo := t.TempDir()
+	out, err := exec.Command("git", "-C", repo, "init", "-q", "-b", "main").CombinedOutput()
+	require.NoError(t, err, string(out))
+	inst, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         title, Status: session.Paused, Program: "claude",
+		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "main", SessionName: title},
+	}, t.TempDir())
+	require.NoError(t, err)
 	return inst
 }
 

@@ -146,3 +146,26 @@ func TestKillAndPause_ListTmuxSessionsOnce(t *testing.T) {
 		})
 	}
 }
+
+// TestKill_ARefusedKillNeverLooksStopped: Kill cleared the instance's
+// started flag and handles before its refusal checks, and restored them
+// only after. A health probe or the mod link's tick that read the instance
+// in between saw a stopped session: the probe's Dead landed after the
+// revert and paused a running agent, and the tick ended its mod link. A
+// kill the checks refuse leaves the instance as it was throughout.
+func TestKill_ARefusedKillNeverLooksStopped(t *testing.T) {
+	var inst *Instance
+	startedWhileChecked := false
+	inst, srv, _ := startedOn(t, "api", func(string) (string, error) {
+		startedWhileChecked = inst.Started() && inst.TmuxSession() != nil
+		return "", errors.New("signal: killed")
+	})
+
+	err := inst.Kill()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing was changed")
+	assert.True(t, startedWhileChecked, "the instance looked started while the kill checked")
+	assert.True(t, inst.Started())
+	assert.False(t, killed(srv, "api"))
+}

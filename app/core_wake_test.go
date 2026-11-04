@@ -73,7 +73,7 @@ func TestSelection_ReachesTheModel(t *testing.T) {
 // it under -race.
 func TestRealLoop_AJobsResultReachesTheTUIByWake(t *testing.T) {
 	m := homeWithAppState(t)
-	addReadyInstance(t, m) // never started: the kill's job fails (no worktree)
+	addUnkillableInstance(t, m, "a") // the kill's job fails: its branch is checked out
 	m.errBox.SetSize(400, 1)
 	m.syncViews()
 	model := testModel(m)
@@ -89,7 +89,7 @@ func TestRealLoop_AJobsResultReachesTheTUIByWake(t *testing.T) {
 	_, _ = runKillSelectedNoConfirm(m)
 	// The first wake is the request's own publish (the row's Deleting), long
 	// before the job has run; wait for the wake that brings the failure.
-	const notice = "cannot get git worktree"
+	const notice = "is currently checked out"
 	deadline := time.After(10 * time.Second)
 	for !strings.Contains(m.errBox.String(), notice) {
 		select {

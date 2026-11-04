@@ -475,3 +475,56 @@ func TestInspectTree(t *testing.T) {
 		assert.Equal(t, TreeGutted, state)
 	})
 }
+
+// TestCleanup_ARepositoryThatIsGoneLeavesTheTreeAndSaysSo: the session's
+// repository was deleted (a global-workspace session's repo is wherever
+// the TUI was started). Nothing is left for git to prune or delete, and
+// the tree may now hold the only copy of the work: Cleanup leaves it and
+// names it (*LeftoverDirError), so a kill can finish instead of failing on
+// every retry. With no tree on disk either, there is nothing to do.
+func TestCleanup_ARepositoryThatIsGoneLeavesTheTreeAndSaysSo(t *testing.T) {
+	t.Run("the tree is still there", func(t *testing.T) {
+		configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+		require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "work.txt"), []byte("wip"), 0o644))
+		require.NoError(t, os.RemoveAll(repoDir))
+		gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "gone", branchName, "", false, configDir)
+
+		err := gw.Cleanup()
+
+		var left *LeftoverDirError
+		require.ErrorAs(t, err, &left, "got %v", err)
+		assert.Equal(t, worktreePath, left.Path)
+		assert.Contains(t, err.Error(), repoDir)
+		assert.FileExists(t, filepath.Join(worktreePath, "work.txt"))
+	})
+	t.Run("no tree either", func(t *testing.T) {
+		configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+		require.NoError(t, os.RemoveAll(repoDir))
+		require.NoError(t, os.RemoveAll(worktreePath))
+		gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "gone", branchName, "", false, configDir)
+
+		assert.NoError(t, gw.Cleanup())
+	})
+}
+
+// TestRepoGone_OnlyAMissingPathIsGone: a kill skips git and leaves the tree
+// only on positive evidence the repository is gone. A path that cannot be
+// stat'ed says nothing, and the kill goes on to ask git as before.
+func TestRepoGone_OnlyAMissingPathIsGone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root stats a path whatever its parent's mode")
+	}
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o755))
+	gw := NewGitWorktreeFromStorage(repo, filepath.Join(parent, "wt"), "x", "u/x", "", false, t.TempDir())
+	assert.False(t, gw.RepoGone(), "there")
+
+	require.NoError(t, os.Chmod(parent, 0))
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+	assert.False(t, gw.RepoGone(), "unreadable is not gone")
+
+	require.NoError(t, os.Chmod(parent, 0o755))
+	require.NoError(t, os.Remove(repo))
+	assert.True(t, gw.RepoGone())
+}

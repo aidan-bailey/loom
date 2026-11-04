@@ -7,8 +7,10 @@ Read this before changing `session.Instance.Kill`, `Instance.Pause`, core's `kil
 core's `killInst` reads `Instance.Kill`'s error three ways:
 
 - **nil**: the kill is done. The record is deleted (`Storage.DeleteInstance`), the row leaves every workspace (`deliverKill`), and `KillResult.Trash`, when set, is deleted by a background job.
-- **only a `session.Notice`** (`OnlyNotice`): the kill is done, and the user must act on what the notice names: a stash entry it could not drop, or a directory git refused to remove as no valid worktree (`git.LeftoverDirError`, left on disk because it may hold the only copy of work).
+- **only a `session.Notice`** (`OnlyNotice`): the kill is done, and the user must act on what the notice names: a stash entry it could not drop, or a directory left on disk because it may hold the only copy of work (`git.LeftoverDirError`): one git refused to remove as no valid worktree, or one whose repository is gone (`RepoGone`, which also spares `killInst` the checked-out-branch question git could never answer).
 - **anything else**: the kill was refused or did not finish. `killInst` returns `OpFailed`, the row reverts to its previous status, and `deliverOpFailed` saves the workspace, because every save made while the kill ran left the Deleting record out of `state.json` (`core.Persistable`).
+
+A session that never started (a script's `ctx:new_instance`) owns nothing, so `killInst` removes it without calling `Kill`; a `Recoverable` placeholder is started and takes the full cleanup.
 
 So return a plain error only when a retry can finish the job, and restore the instance for it (`Kill`'s `restore`). A kill once reported done whatever failed: the CLI printed "Killed", the record went, and the next load auto-cleaned a clean leftover tree, offered a dirty one for recovery without its launch options, or swept a still-running agent. A failure that a retry can never get past (a directory git will not remove, whatever the user does) must be a Notice, or `D` refuses forever.
 

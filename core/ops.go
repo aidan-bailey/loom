@@ -58,6 +58,17 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 	}
 
 	killAction := func() any {
+		// Never started (a script's ctx:new_instance creates a session
+		// unstarted): no tmux session, worktree or branch is its own, and it
+		// was never saved (Persistable). A Recoverable placeholder is
+		// started, so its discard takes the path below and removes its
+		// worktree.
+		if !selected.Started() {
+			if err := storage.DeleteInstance(title, createdAt); err != nil && !errors.Is(err, session.ErrInstanceNotFound) {
+				log.For("core").Error("kill.storage_delete_failed", "title", title, "err", err)
+			}
+			return KillResult{Instance: selected, Title: title}
+		}
 		worktree, err := selected.GetGitWorktree()
 		if err != nil {
 			return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: err}
@@ -69,9 +80,14 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 			return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: fmt.Errorf("instance %s has no worktree", title)}
 		}
 
-		checkedOut, err := worktree.IsBranchCheckedOut()
-		if err != nil {
-			return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: err}
+		// A repository that is gone has no branch checked out, and asking
+		// git would fail on every D (Cleanup leaves the tree and says so).
+		checkedOut := false
+		if !worktree.RepoGone() {
+			checkedOut, err = worktree.IsBranchCheckedOut()
+			if err != nil {
+				return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: err}
+			}
 		}
 
 		if checkedOut {

@@ -125,7 +125,7 @@ func TestServe_EachClientGetsTheRepliesToItsOwnRequests(t *testing.T) {
 // new session's pane.
 func TestServe_ARequestsEventsNameItOnlyToItsClient(t *testing.T) {
 	inst := running(t, "s")
-	unstarted := running(t, "u")
+	failing := unkillable(t, "u")
 	ws := workspace(t, "a", inst)
 	m := core.NewForTest(core.Options{})
 	m.SetWorkspacesForTest(ws)
@@ -152,9 +152,9 @@ func TestServe_ARequestsEventsNameItOnlyToItsClient(t *testing.T) {
 	assert.Equal(t, []core.ReqID{4, 0}, reqs(a.Sync()), "the client that asked is named its request")
 	assert.Equal(t, []core.ReqID{0, 0}, reqs(b.Sync()), "the other client is told of the start, not the request")
 
-	// a kills an instance that never started: its job fails (no worktree).
-	ws.AddForTest(unstarted)
-	id := m.IDOfForTest(unstarted)
+	// a kills an instance whose job fails (its branch is checked out).
+	ws.AddForTest(failing)
+	id := m.IDOfForTest(failing)
 	a.Kill(id, 3)
 	for _, j := range loop.JobsForTest() {
 		loop.DeliverForTest(j())
