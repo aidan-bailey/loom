@@ -10,4 +10,6 @@ You are running inside **loom**, a terminal UI that runs multiple coding agents 
 - **Commit normally.** Loom moves work between sessions via commits: pausing commits outstanding changes; merging pulls another session's committed work. Committed work is what loom can act on.
 - **You may not be alone.** Other loom sessions may be running in sibling worktrees on their own branches against this same repo. Don't assume you're the only actor, and don't reach into other worktrees.
 
-Everything else — editing files, running builds and tests, committing, diffing, and viewing history within your branch — works exactly as normal.
+**Heavy work goes through loom's work queue.** This machine is shared by many loom sessions. Run builds, full test suites and benchmarks with `loom job submit -d "<what>" -- <cmd>` and carry on: a `[loom] job N` message brings the result. Or use `loom job run -d "<what>" -- <cmd>` with Bash's `run_in_background` when you need the output to continue. A job gets 4 cores and 6 GB unless you claim more with `--cpus`/`--mem`, `--io` for full builds that write a lot, or `--exclusive` for benchmarks. Quick commands (`cargo check`, linters, git) run directly.
+
+Everything else — editing files, committing, diffing, and viewing history within your branch — works exactly as normal.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -621,5 +623,41 @@ func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
 		assert.Contains(t, text, `[loom] job 1 "nap" finished: exit 0`, "the notice the interrupt asked for")
 	case <-time.After(30 * time.Second):
 		t.Fatal("the job's result never reached the session's Claude")
+	}
+}
+
+// The paragraph both context files give an agent tells it how to submit work
+// and which flags claim resources. A flag renamed on the commands but not
+// there would send agents to a command that refuses it, so every flag the
+// paragraph names must exist on both `submit` and `run`. The closing sentence
+// no longer promises that builds and tests run directly, which the paragraph
+// contradicts (spec §8).
+func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, session.WriteLoomContextFiles(dir))
+	flagName := regexp.MustCompile(`--[a-z]+`)
+
+	for name, closing := range map[string]string{
+		"claude-loom-context.md":           "Everything else — editing files, committing, diffing, and viewing history within your branch — works exactly as normal.",
+		"claude-loom-context-workspace.md": "Editing files, committing, and viewing diffs/history all work exactly as normal.",
+	} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		require.NoError(t, err)
+		text := string(b)
+		start := strings.Index(text, "**Heavy work goes through loom's work queue.**")
+		require.GreaterOrEqual(t, start, 0, "%s carries the paragraph", name)
+		para, _, _ := strings.Cut(text[start:], "\n")
+		assert.True(t, strings.HasSuffix(strings.TrimSpace(text), closing), "%s ends with %q", name, closing)
+		assert.NotContains(t, text, "running builds and tests", name)
+
+		assert.Contains(t, para, `loom job submit -d "<what>" -- <cmd>`, name)
+		assert.Contains(t, para, `loom job run -d "<what>" -- <cmd>`, name)
+		flags := flagName.FindAllString(para, -1)
+		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive"}, flags, name)
+		for _, flag := range flags {
+			for _, command := range []*cobra.Command{newJobSubmitCmd(), newJobRunCmd()} {
+				assert.NotNil(t, command.Flags().Lookup(strings.TrimPrefix(flag, "--")), "%s: loom job %s has no %s", name, command.Name(), flag)
+			}
+		}
 	}
 }
