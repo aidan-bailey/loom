@@ -117,6 +117,7 @@ The systemd unit in `USAGE.md` gains `KillMode=process`. Under the default (`con
 ### 5.7 Session lifecycle
 
 - Pausing or killing a job's owner cancels its queued and running jobs first (§5.5), with the reason "because the session was paused" or "because the session was killed". The pause or kill then goes ahead without waiting for the jobs to exit. A paused agent can't take a result, and a kill removes the worktree the job runs in. No notice is sent for these cancellations.
+- A reset (`Model.Reset`, from `loom reset` or a client) kills its sessions and removes their worktrees, so it counts as a requested kill: before it drops each session it cancels that session's jobs, with the reason "because the session was reset", and sends no notice.
 - Only a pause or kill that someone requests cancels jobs. When loom pauses a session on its own because its tmux session died (`pauseGone`), the session's jobs keep their places and run on (the owner, 2026-11-04): a dead pane isn't anyone's choice to drop the work. A notice due while the session is paused is recorded as undelivered (§5.8), and the result stays in the view and the log.
 - Resuming a session doesn't restart its jobs.
 - A job whose owner is no longer served (unregistered, or gone when the daemon boots) keeps its place, and its notice is recorded as undelivered. A job whose cwd is gone fails when it starts (§5.3).
