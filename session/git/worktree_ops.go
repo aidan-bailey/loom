@@ -484,9 +484,11 @@ func (g *GitWorktree) setupNewWorktree() error {
 	return nil
 }
 
-// Cleanup removes the worktree and associated branch
+// Cleanup removes the worktree and associated branch. A tree it can vouch
+// for is moved into the trash rather than deleted (Trashed names where),
+// for its caller to have deleted in the background (RemoveTrash).
 func (g *GitWorktree) Cleanup() error {
-	return g.cleanup(!g.IsExistingBranch())
+	return g.cleanup(!g.IsExistingBranch(), true)
 }
 
 // CleanupFailedStart undoes a Setup whose session then failed to start: it
@@ -495,12 +497,13 @@ func (g *GitWorktree) Cleanup() error {
 // existed — one left behind by an earlier session with the same title,
 // whose commits may be unmerged — and that one is kept.
 func (g *GitWorktree) CleanupFailedStart() error {
-	return g.cleanup(!g.IsExistingBranch() && g.createdBranch())
+	return g.cleanup(!g.IsExistingBranch() && g.createdBranch(), false)
 }
 
-// cleanup removes the worktree, prunes, deletes the branch when deleteBranch
+// cleanup removes the worktree (moving it into the trash when toTrash and
+// moveToTrash vouches for it), prunes, deletes the branch when deleteBranch
 // is set, and drops the title sidecar.
-func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
+func (g *GitWorktree) cleanup(deleteBranch, toTrash bool) (err error) {
 	t0 := time.Now()
 	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath, "delete_branch", deleteBranch)
 	defer func() {
@@ -523,19 +526,23 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		if err := RefuseLocked(g.repoPath, g.worktreePath, g.runner); err != nil {
 			return err
 		}
-		// Remove the worktree using git command
-		if _, err := g.removeWorktree(); err != nil {
-			if isUntrackedTreeErr(err) {
-				// git does not track it as a worktree and will not delete
-				// it; neither does loom, since it may hold the only copy of
-				// work. The rest of the cleanup goes on, and the caller
-				// reports the directory (LeftoverDirError).
-				leftover = err
+		// Move it aside for a background delete, or remove it with git. A
+		// moved tree's registration is left for the prune below.
+		if !toTrash || !g.moveToTrash() {
+			if _, err := g.removeWorktree(); err != nil {
+				if isUntrackedTreeErr(err) {
+					// git does not track it as a worktree and will not
+					// delete it; neither does loom, since it may hold the
+					// only copy of work. The rest of the cleanup goes on,
+					// and the caller reports the directory
+					// (LeftoverDirError).
+					leftover = err
+				} else {
+					errs = append(errs, err)
+				}
 			} else {
-				errs = append(errs, err)
+				removed = true
 			}
-		} else {
-			removed = true
 		}
 	} else if !os.IsNotExist(err) {
 		// Only append error if it's not a "not exists" error

@@ -161,6 +161,10 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 	// auto-cleaned included: archived off the model's goroutine once the
 	// next health tick dispatches the sweep.
 	m.requestClaudeTmpSweep(ws, cfgDir)
+	// Trees a kill moved into the trash and a stop kept from deleting.
+	if git.HasWorktreeTrash(cfgDir) {
+		m.spawnBackground(purgeWorktreeTrash(cfgDir))
+	}
 	// Preserved records may come back on a later load (or under a newer
 	// loom); claimTitles keeps their hooks folders.
 	claimed := make(map[string]bool)

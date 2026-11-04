@@ -59,6 +59,10 @@ type GitWorktree struct {
 	// of the same worktree is a rebuild over the session's own branch.
 	// Guarded by refMu.
 	forNewSession bool
+	// trashed is where Cleanup moved the tree, for a background job to
+	// delete (see worktree_trash.go); "" until it moves one. Guarded by
+	// refMu.
+	trashed string
 	// branchCreated records that this GitWorktree's own Setup created the
 	// branch (guarded by refMu). Only such a branch may be deleted when
 	// the session then fails to start: Setup also checks out a branch

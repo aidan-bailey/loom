@@ -8,6 +8,7 @@ import (
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
 )
 
 // startOwner is the workspace an instance about to start or resume
@@ -138,10 +139,34 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 			}
 		}
 
-		return KillResult{Instance: selected, Title: title, Notice: notice}
+		return KillResult{Instance: selected, Title: title, Notice: notice, Trash: worktree.Trashed()}
 	}
 
 	return preAction, killAction
+}
+
+// removeTrash returns the job deleting path, a worktree a kill moved into
+// the trash rather than waited on deleting (git.Cleanup); it takes as long
+// as the tree is large, which no request waits for. A failure is logged,
+// and the next load's purge (purgeWorktreeTrash) tries again.
+func removeTrash(path string) Job {
+	return func() any {
+		if err := git.RemoveTrash(path); err != nil {
+			log.For("core").Warn("worktree_trash.remove_failed", "path", path, "err", err)
+		}
+		return nil
+	}
+}
+
+// purgeWorktreeTrash returns the job removing what cfgDir's worktree trash
+// still holds: trees whose background delete a stop or crash cut short.
+func purgeWorktreeTrash(cfgDir string) Job {
+	return func() any {
+		if n := git.PurgeWorktreeTrash(cfgDir); n > 0 {
+			log.For("core").Info("worktree_trash.purged", "config_dir", cfgDir, "removed", n)
+		}
+		return nil
+	}
 }
 
 // saveOwn returns a save of inst's record alone, in ws's storage, for

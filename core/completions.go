@@ -67,6 +67,9 @@ type KillResult struct {
 	Instance *session.Instance
 	Title    string
 	Notice   error
+	// Trash is where the kill moved the worktree for deliverKill to have
+	// deleted in the background (git.RemoveTrash); "" when git removed it.
+	Trash string
 }
 
 // PauseResult is a finished pause (Pause). Notice is what the pause could
@@ -256,6 +259,9 @@ func (m *Model) deliverRecover(r RecoverResult) {
 func (m *Model) deliverKill(r KillResult) {
 	m.removeEverywhere(r.Instance)
 	m.notifyErr(r.Notice)
+	if r.Trash != "" {
+		m.spawnBackground(removeTrash(r.Trash))
+	}
 	m.emit(InstancesChanged{})
 	m.emit(ClientsStale{})
 }

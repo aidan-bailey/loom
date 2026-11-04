@@ -158,15 +158,8 @@ func unlockStaleInit(repoPath, worktreePath string, r CommandRunner) (lockState,
 // reading the file saves two subprocesses; a .git that names no gitdir that
 // way (a directory, another shape) is asked of git.
 func worktreeGitDir(worktreePath string, r CommandRunner) (string, error) {
-	if data, err := os.ReadFile(filepath.Join(worktreePath, ".git")); err == nil {
-		if rest, ok := strings.CutPrefix(string(data), "gitdir:"); ok {
-			if dir := strings.TrimSpace(rest); dir != "" && !strings.ContainsAny(dir, "\r\n") {
-				if !filepath.IsAbs(dir) {
-					dir = filepath.Join(worktreePath, dir)
-				}
-				return filepath.Clean(dir), nil
-			}
-		}
+	if dir, ok := readGitFile(worktreePath); ok {
+		return dir, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
