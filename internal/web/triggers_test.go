@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -300,5 +301,45 @@ func TestPushJob_TopicHasALengthAppleTakes(t *testing.T) {
 		assert.Equal(t, uint64(id), binary.BigEndian.Uint64(raw), "id %d", id)
 		assert.NotContains(t, seen, topic, "id %d shares a topic", id)
 		seen[topic] = id
+	}
+}
+
+// TestPush_AFreshMockupLinksItsTab: a push opens the session's mockup tab
+// while its companion's screen changed in the latest turn and no dialog
+// waits on the session view; otherwise the session view.
+func TestPush_AFreshMockupLinksItsTab(t *testing.T) {
+	fresh := core.MockupView{Screen: "layout.html", Fresh: true}
+	for _, tc := range []struct {
+		name string
+		v    core.InstanceView
+		url  string
+	}{
+		{"fresh", core.InstanceView{ID: 4, Mockup: fresh}, "/#s/4/mockup"},
+		{"stale", core.InstanceView{ID: 4, Mockup: core.MockupView{Screen: "layout.html"}}, "/#s/4"},
+		{"fresh but an ask is open", core.InstanceView{ID: 4, Mockup: fresh, Asks: []core.AskView{{}}}, "/#s/4"},
+		{"none", core.InstanceView{ID: 4}, "/#s/4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := pushJob{Kind: pushFinished, Session: 4, Mockup: opensMockup(tc.v)}.payload()
+			require.NoError(t, err)
+			var p pushPayload
+			require.NoError(t, json.Unmarshal(raw, &p))
+			assert.Equal(t, tc.url, p.URL)
+		})
+	}
+
+	for _, kind := range []struct {
+		name     string
+		from, to session.Status
+	}{{"finished", session.Running, session.Ready}, {"waiting", session.Running, session.Prompting}} {
+		t.Run("a "+kind.name+" push of a fresh mockup", func(t *testing.T) {
+			w := newPushWatch()
+			w.observe(10, []core.InstanceView{pushTestView(1, kind.from)})
+			after := pushTestView(1, kind.to)
+			after.Mockup = fresh
+			jobs := w.observe(10, []core.InstanceView{after})
+			require.Len(t, jobs, 1)
+			assert.True(t, jobs[0].Mockup)
+		})
 	}
 }

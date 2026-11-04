@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/mockup"
 	"github.com/aidan-bailey/loom/session/transcript"
 )
 
@@ -42,12 +43,13 @@ type replyJSON struct {
 	Issue  github.Issue
 	Turns  transcript.Page
 	Diff   git.Patch
+	Mockup mockup.Page
 	Sweep  buildsweep.Report
 }
 
 // MarshalJSON encodes r with its errors as WireErrors.
 func (r Reply) MarshalJSON() ([]byte, error) {
-	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Sweep: r.Sweep})
+	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Mockup: r.Mockup, Sweep: r.Sweep})
 }
 
 // UnmarshalJSON decodes a Reply MarshalJSON encoded.
@@ -56,6 +58,6 @@ func (r *Reply) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &j); err != nil {
 		return err
 	}
-	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Sweep: j.Sweep}
+	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Mockup: j.Mockup, Sweep: j.Sweep}
 	return nil
 }

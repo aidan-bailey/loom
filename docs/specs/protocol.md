@@ -81,7 +81,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}}`
 
 ## Methods
 
@@ -191,7 +191,7 @@ Result: `{"value":null}`
 
 Params: `{"id":0}`
 
-Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
+Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","Fresh":false},"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
 
 ### Create (request)
 
@@ -272,6 +272,12 @@ Params: `{"id":0,"query":{"Conversation":"","Before":0,"After":0},"req":0}`
 Result: `{}`
 
 ### ReadDiff (request)
+
+Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
+### ReadMockup (request)
 
 Params: `{"id":0,"req":0}`
 
@@ -535,7 +541,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null}}`
 
 ### SessionLaunched
 

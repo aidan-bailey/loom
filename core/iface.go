@@ -84,11 +84,13 @@ type Core interface {
 	// session's loom mod took the answer.
 	Answer(id InstanceID, ask string, answer AskAnswer, req ReqID)
 	FetchIssue(repo string, number int, req ReqID)
-	// A session's conversation and its worktree's diff, read for the
-	// client that asks: the Reply's Turns (transcript.Read) and Diff
-	// (Instance.ReadPatch).
+	// A session's conversation, its worktree's diff and its brainstorm
+	// companion's page, read for the client that asks: the Reply's Turns
+	// (transcript.Read), Diff (Instance.ReadPatch) and Mockup
+	// (mockup.Fetch).
 	ReadTurns(id InstanceID, query transcript.Query, req ReqID)
 	ReadDiff(id InstanceID, req ReqID)
+	ReadMockup(id InstanceID, req ReqID)
 	// Delete idle and paused sessions' unused Rust executables now, or
 	// with DryRun list them: the Reply's Sweep (buildsweep.Report).
 	SweepBuilds(opts buildsweep.Options, req ReqID)

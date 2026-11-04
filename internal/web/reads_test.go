@@ -160,8 +160,10 @@ func TestAPI_ReadsOfAWorkspaceTerminalOrAnUnknownSessionAre404(t *testing.T) {
 	for _, path := range []string{
 		fmt.Sprintf("/api/v1/sessions/%d/turns", env.ids["term"]),
 		fmt.Sprintf("/api/v1/sessions/%d/diff", env.ids["term"]),
+		fmt.Sprintf("/api/v1/sessions/%d/mockup", env.ids["term"]),
 		"/api/v1/sessions/999999/turns",
 		"/api/v1/sessions/999999/diff",
+		"/api/v1/sessions/999999/mockup",
 	} {
 		status, out := env.do(http.MethodGet, path, nil)
 		assert.Equal(t, http.StatusNotFound, status, path)

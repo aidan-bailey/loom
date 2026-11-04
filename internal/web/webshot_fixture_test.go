@@ -31,7 +31,13 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 			require.NoError(t, dec.Decode(into))
 		})
 	}
+	page, err := os.ReadFile(filepath.Join(dir, "mockup.html"))
+	require.NoError(t, err)
+	require.Contains(t, string(page), "window.brainstorm", "the mockup is a page the companion would serve (mockup.Fetch's marker)")
+	canned, err := os.ReadFile(filepath.Join("..", "..", "tools", "webshot", "canned.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(canned), `"`+mockupCSP+`"`, "webshot frames its mockup under the policy the layer serves it under")
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 5, "a new fixture is checked here too")
+	require.Len(t, entries, 6, "a new fixture is checked here too")
 }

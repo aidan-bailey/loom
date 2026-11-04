@@ -421,6 +421,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"read the conversation of a terminal", func(f fixture) { f.m.ReadTurns(f.id["term"], transcript.Query{}, 1) }, "read the conversation of term: not allowed on a workspace terminal"},
 		{"read the conversation of another agent", func(f fixture) { f.m.ReadTurns(f.id["aider"], transcript.Query{}, 1) }, "read the conversation of aider: the session does not run Claude"},
 		{"read the diff of a terminal", func(f fixture) { f.m.ReadDiff(f.id["term"], 1) }, "read the diff of term: not allowed on a workspace terminal"},
+		{"read the mockup of a terminal", func(f fixture) { f.m.ReadMockup(f.id["term"], 1) }, "read the mockup of term: not allowed on a workspace terminal"},
 		{"read the diff of a loading session", func(f fixture) { f.m.ReadDiff(f.id["loading"], 1) }, "read the diff of loading: the session is busy (Loading)"},
 		{"read the diff of a deleting session", func(f fixture) { f.m.ReadDiff(f.id["deleting"], 1) }, "read the diff of deleting: the session is busy (Deleting)"},
 		{"read the diff of a paused session", func(f fixture) { f.m.ReadDiff(f.id["paused"], 1) }, "read the diff of paused: the session is not running (Paused)"},

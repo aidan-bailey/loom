@@ -11,20 +11,32 @@ import (
 	"github.com/aidan-bailey/loom/config"
 )
 
-// Loom-context prompt files, embedded at build time and written to the
-// config dir by WriteLoomContextFiles. The worktree variant orients an
-// isolated-worktree session; the workspace variant orients the root-repo
-// main session (IsWorkspaceTerminal).
+// Loom-context prompt files, written to the config dir by
+// WriteLoomContextFiles and appended to every Claude launch's system
+// prompt. The worktree variant orients an isolated-worktree session, the
+// workspace variant the root-repo main session (IsWorkspaceTerminal). Each
+// is its own head followed by the tail both share (loomContextFile).
 const (
 	loomContextFileWorktree  = "claude-loom-context.md"
 	loomContextFileWorkspace = "claude-loom-context-workspace.md"
 )
 
-//go:embed claude-loom-context.md
-var loomContextWorktreeBytes []byte
+// The embedded fragments the prompt files are built from.
+var (
+	//go:embed loom_context_worktree.md
+	loomContextWorktreeHead []byte
+	//go:embed loom_context_main.md
+	loomContextMainHead []byte
+	//go:embed loom_context_shared.md
+	loomContextSharedTail []byte
+)
 
-//go:embed claude-loom-context-workspace.md
-var loomContextWorkspaceBytes []byte
+// loomContextFile is a prompt file's content: head, a blank line (head
+// ends in a newline), then the shared tail. bytes.Join builds a slice of
+// its own, so no append ever writes into an embedded one.
+func loomContextFile(head []byte) []byte {
+	return bytes.Join([][]byte{head, loomContextSharedTail}, []byte("\n"))
+}
 
 // dirFlags is a boolean setting kept per config dir. Each workspace has its
 // own config, and the model keeps several workspaces loaded at once, so a
@@ -54,10 +66,10 @@ func SetLoomContextEnabled(configDir string, enabled bool) { loomContextOn.set(c
 // LoomContextEnabled reports configDir's loom-context toggle.
 func LoomContextEnabled(configDir string) bool { return loomContextOn.get(configDir, false) }
 
-// WriteLoomContextFiles writes both embedded prompt files into configDir,
-// (re)writing a file only when it is missing or its bytes differ from the
-// embedded content (so a loom upgrade refreshes the prose automatically).
-// A no-op when configDir is empty.
+// WriteLoomContextFiles writes both prompt files (loomContextFile) into
+// configDir, (re)writing a file only when it is missing or its bytes
+// differ (so a loom upgrade refreshes the prose automatically). A no-op
+// when configDir is empty.
 func WriteLoomContextFiles(configDir string) error {
 	if configDir == "" {
 		return nil
@@ -66,8 +78,8 @@ func WriteLoomContextFiles(configDir string) error {
 		name    string
 		content []byte
 	}{
-		{loomContextFileWorktree, loomContextWorktreeBytes},
-		{loomContextFileWorkspace, loomContextWorkspaceBytes},
+		{loomContextFileWorktree, loomContextFile(loomContextWorktreeHead)},
+		{loomContextFileWorkspace, loomContextFile(loomContextMainHead)},
 	}
 	for _, f := range files {
 		path := filepath.Join(configDir, f.name)

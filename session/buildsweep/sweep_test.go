@@ -165,17 +165,83 @@ func TestSweep_FindsEveryProfileDirAndFollowsNoSymlink(t *testing.T) {
 	assert.FileExists(t, outside, "reached only through a symlink")
 }
 
-func TestSweep_NeedsCargosCachedirTag(t *testing.T) {
+// TestSweep_NeedsCargosMarkOnTheTargetDir: cargo tags a target dir it
+// creates with CACHEDIR.TAG, and one that already existed (an agent's
+// notes written there first) only gets its .rustc_info.json.
+func TestSweep_NeedsCargosMarkOnTheTargetDir(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		marks []string
+		swept bool
+	}{
+		{"CACHEDIR.TAG", []string{"CACHEDIR.TAG"}, true},
+		{".rustc_info.json", []string{".rustc_info.json"}, true},
+		{"neither", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := fakeSystem(t, "rw")
+			wt, debug := cargoTree(t)
+			target := filepath.Join(wt, "target")
+			require.NoError(t, os.Remove(filepath.Join(target, "CACHEDIR.TAG")))
+			for _, m := range tc.marks {
+				put(t, filepath.Join(target, m), 0o644, now)
+			}
+			bin := filepath.Join(debug, "deps/app-0123456789abcdef")
+			put(t, bin, 0o755, now.Add(-3*day))
+
+			r := sweepOne(s, wt, 2*day, false)
+
+			if tc.swept {
+				require.Empty(t, r.Skip, r.Detail)
+				assert.NoFileExists(t, bin)
+			} else {
+				assert.Equal(t, SkipNoTarget, r.Skip)
+				assert.FileExists(t, bin)
+			}
+		})
+	}
+}
+
+func TestSweep_AMarkThatIsADirOrALinkIsNoMark(t *testing.T) {
+	for _, mark := range []string{"CACHEDIR.TAG", ".rustc_info.json"} {
+		t.Run(mark, func(t *testing.T) {
+			s := fakeSystem(t, "rw")
+			wt, debug := cargoTree(t)
+			target := filepath.Join(wt, "target")
+			require.NoError(t, os.Remove(filepath.Join(target, "CACHEDIR.TAG")))
+			real := filepath.Join(t.TempDir(), mark)
+			put(t, real, 0o644, now)
+			require.NoError(t, os.Symlink(real, filepath.Join(target, mark)))
+			bin := filepath.Join(debug, "deps/app-0123456789abcdef")
+			put(t, bin, 0o755, now.Add(-3*day))
+
+			r := sweepOne(s, wt, 2*day, false)
+
+			assert.Equal(t, SkipNoTarget, r.Skip)
+			assert.FileExists(t, bin)
+		})
+	}
+}
+
+// TestSweep_AWorktreeThatIsGoneHasNoTarget: a session paused before pause
+// kept its worktree has none on disk, which is nothing to sweep, not an
+// error. A worktree path that can't be resolved for another reason still
+// is one.
+func TestSweep_AWorktreeThatIsGoneHasNoTarget(t *testing.T) {
 	s := fakeSystem(t, "rw")
-	wt, debug := cargoTree(t)
-	require.NoError(t, os.Remove(filepath.Join(wt, "target", "CACHEDIR.TAG")))
-	bin := filepath.Join(debug, "deps/app-0123456789abcdef")
-	put(t, bin, 0o755, now.Add(-3*day))
+	dir := t.TempDir()
 
-	r := sweepOne(s, wt, 2*day, false)
+	gone := sweepOne(s, filepath.Join(dir, "gone"), 2*day, false)
 
-	assert.Equal(t, SkipNoTarget, r.Skip)
-	assert.FileExists(t, bin)
+	assert.Equal(t, SkipNoTarget, gone.Skip)
+	assert.Equal(t, "no worktree", gone.Detail)
+
+	loop := filepath.Join(dir, "loop")
+	require.NoError(t, os.Symlink(loop, loop))
+
+	unreadable := sweepOne(s, loop, 2*day, false)
+
+	assert.Equal(t, SkipError, unreadable.Skip)
 }
 
 func TestSweep_ADryRunDeletesNothing(t *testing.T) {

@@ -227,6 +227,15 @@ type Instance struct {
 	// serialized — ages reset on restart, which is acceptable for the
 	// "waiting 4m" card labels it feeds).
 	statusChangedAt time.Time
+	// turnStartedAt is when the instance last entered Running from any
+	// status but Prompting: the start of the turn a brainstorm screen is
+	// fresh in (in-memory only; zero until this process sees one).
+	turnStartedAt time.Time
+	// mockupScreen and mockupChanged are the brainstorm companion's screen
+	// the model last found in the worktree (core/mockup.go), in memory
+	// only; "" for none.
+	mockupScreen  string
+	mockupChanged time.Time
 
 	// waitReason is Claude's own account of what this session is blocked
 	// on ("permission: Bash" from a PermissionRequest hook, "sandbox
@@ -571,7 +580,11 @@ func (i *Instance) TransitionTo(to Status) error {
 		return fmt.Errorf("illegal status transition for %q: %s → %s", i.Title, from, to)
 	}
 	i.Status = to
-	i.statusChangedAt = time.Now()
+	now := time.Now()
+	i.statusChangedAt = now
+	if to == Running && from != Prompting {
+		i.turnStartedAt = now
+	}
 	return nil
 }
 

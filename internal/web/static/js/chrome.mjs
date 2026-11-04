@@ -68,12 +68,18 @@ export function SessionTabs({ s, current, conversation, changes }) {
   if (changes || current === "changes") {
     tabs.push({ key: "changes", label: "changes", href: base + "/diff", diff: d.added || d.removed ? d : null });
   }
+  // The mockup tab shows while the session's brainstorm companion runs; its
+  // dot while the screen is new this turn.
+  if (s.mockup || current === "mockup") {
+    tabs.push({ key: "mockup", label: "mockup", href: base + "/mockup", fresh: Boolean(s.mockup && s.mockup.fresh) });
+  }
   if (tabs.length === 1) return null;
   return html`<nav class="sc-tabs" aria-label="Session views">
     ${tabs.map(
       (t) => html`<a key=${t.key} class=${"sc-tab" + (t.key === current ? " sc-tab-on" : "")} href=${t.href} aria-current=${t.key === current ? "page" : undefined}>
         ${t.label}
         ${t.diff ? html`<span class="sc-tab-diff"><span class="sc-add">+${t.diff.added || 0}</span> <span class="sc-del">−${t.diff.removed || 0}</span></span>` : null}
+        ${t.fresh ? html`<span class="sc-tab-dot" aria-label="new"></span>` : null}
       </a>`,
     )}
   </nav>`;

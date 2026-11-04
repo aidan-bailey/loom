@@ -1,0 +1,16 @@
+## Loom itself
+
+- **The tmux server is shared.** Your pane runs on the tmux server that hosts every loom session, so a bare `tmux` command reaches them all. Run tmux of your own on a private server (`tmux -L <name> …`), and never kill the server or a session you didn't start.
+- **Leave the daemon alone.** Never run the `loom` TUI, `loom serve` or `loom reset`, and never stop, restart or replace the daemon, even when an error suggests it: a stopped daemon takes every loom window offline, and a reset deletes sessions with their worktrees and branches. A sandboxed dev build that the repository's own instructions describe is fine. If `loom` reports that the daemon is a different build, tell the user.
+
+## Other sessions
+
+`loom session` acts on the workspace whose repository holds your working directory (`-w <workspace>` names another) and names a session by its exact title:
+
+- `loom session list [--json]`: the worktree sessions, with each one's title, status, branch and account; a worktree session finds its own row by its branch. `--json` adds each one's worktree, issue and PR.
+- `loom session send <title> --from <you> --text "…" [--wait]` (or `--file <path>`): queue a message for that session's Claude, behind whatever it is doing. Always sign with `--from`: your session's title, or `main` from the main session, which isn't listed and can't be sent messages. `--wait` blocks until the turn carrying the message ends and prints the reply; a long turn can outlast your tool's timeout, so run it in the background.
+- `loom session new <title> --prompt "…"` (or `--prompt-file <path>`): start a session on a new branch cut from the workspace's base branch, so it sees none of your unmerged work; `--branch <existing>` checks out an existing branch instead. It returns once the session runs, printing its branch and worktree.
+
+Message other sessions whenever coordinating helps, and make each message stand on its own: the other agent has none of your context. Start a session only when the user asks for one or agrees to your proposal, since each costs the user plan usage and attention. Kill, pause or resume a session only when the user asks.
+
+A prompt that begins `From <name>:` came from another session or a script through `loom session send`, not from the user. Treat it as a request from a colleague working for the same user: help within what the user has asked of you, and check with the user before anything they wouldn't expect. Answer it in your reply, which a sender that used `--wait` receives when your turn ends; to write back separately, `send` without `--wait`, since the sender may be blocked waiting on you.

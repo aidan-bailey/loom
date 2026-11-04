@@ -19,16 +19,20 @@ const recentNotices = 20;
 const pendingFor = 5000;
 
 // parseRoute reads the location's hash: "" is the fleet, "#s/<id>" a session,
-// "#s/<id>/turns" its conversation and "#s/<id>/diff" its changes, "#new",
-// "#settings", "#pair"; anything else is the fleet. The session's id is a
-// number, as in the JSON.
+// "#s/<id>/turns" its conversation, "#s/<id>/diff" its changes,
+// "#s/<id>/mockup" its brainstorm mockup and "#s/<id>/mockup/full" the mockup
+// alone (full: no header, no reply box), "#new", "#settings", "#pair";
+// anything else is the fleet. The session's id is a number, as in the JSON.
 export function parseRoute(hash) {
   const h = (hash || "").replace(/^#\/?/, "");
   if (h === "new") return { name: "new" };
   if (h === "settings") return { name: "settings" };
   if (h === "pair") return { name: "pair" };
-  const m = h.match(/^s\/(\d+)(?:\/(turns|diff))?$/);
-  if (m) return { name: m[2] === "turns" ? "turns" : m[2] === "diff" ? "changes" : "session", id: Number(m[1]) };
+  const m = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup))?(\/full)?$/);
+  if (m && (!m[3] || m[2] === "mockup")) {
+    const name = { turns: "turns", diff: "changes", mockup: "mockup" }[m[2]] || "session";
+    return m[3] ? { name, id: Number(m[1]), full: true } : { name, id: Number(m[1]) };
+  }
   return { name: "fleet" };
 }
 
@@ -361,7 +365,7 @@ function App() {
   // first snapshot or a failed connect, restarting after a bye.
   const link = !stale ? "live" : restarting ? "restarting" : offline ? "offline" : "connecting";
   const entry = screens[route.name];
-  const chromed = Boolean(snap) && route.name !== "pair";
+  const chromed = Boolean(snap) && route.name !== "pair" && !route.full;
   const props = { snap, stale, link, route, go, act, toast, pending };
 
   let body;
