@@ -98,6 +98,9 @@ type queueState struct {
 	doomed []sched.JobID
 	// lastPass is when the last admission pass ran, to throttle the tick's.
 	lastPass time.Time
+	// lastPolicy is when the scheduler block was last read (refreshPolicy),
+	// to throttle the tick's read while no job waits.
+	lastPolicy time.Time
 	// handshake and escalation override the start's 5 s wait for started.json
 	// and the 10 s between a cancel's SIGTERM and SIGKILL; 0 keeps them. Tests
 	// shorten them.
@@ -222,6 +225,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 // to the host's defaults.
 func (m *Model) refreshPolicy() (sched.Policy, string) {
 	q := m.queue
+	q.lastPolicy = time.Now()
 	var settings config.SchedulerSettings
 	var policy sched.Policy
 	block, err := diskSchedulerBlock(q.cfgDir)

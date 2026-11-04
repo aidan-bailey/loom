@@ -388,6 +388,57 @@ func TestJobQueue_TheTickRereadsTheCapsWhileJobsWait(t *testing.T) {
 	assert.Equal(t, sched.Running, wqRecord(t, m, waiting).State)
 }
 
+// An idle queue rereads the scheduler block from the tick too, so a hand edit
+// reaches the published view (Settings, Policy, Paused) within a queue
+// interval, and a reread that finds the file unchanged publishes nothing.
+func TestJobQueue_AnIdleQueuesTickRereadsAndRepublishesTheBlock(t *testing.T) {
+	m := wqModel(t)
+	require.Len(t, queueEvents(m.Sync().Events), 1, "published the first time")
+	require.False(t, m.queue.hasQueued())
+
+	m.queue.lastPolicy = time.Now().Add(-queueInterval)
+	m.tickQueue()
+	assert.Empty(t, queueEvents(m.Sync().Events), "an unchanged file republishes nothing")
+
+	wqConfig(t, m, `{"cpus": 6}`) // edited by hand
+	m.tickQueue()
+	assert.Empty(t, queueEvents(m.Sync().Events), "a read a moment ago: the edit waits for the interval")
+
+	m.queue.lastPolicy = time.Now().Add(-queueInterval)
+	m.tickQueue()
+	got := queueEvents(m.Sync().Events)
+	require.Len(t, got, 1, "the edit is published")
+	assert.Equal(t, 6, got[0].View.Settings.CPUs)
+	assert.Equal(t, 6, got[0].View.Policy.Caps.CPUs)
+	assert.Empty(t, got[0].View.Paused)
+
+	m.queue.lastPolicy = time.Now().Add(-queueInterval)
+	m.tickQueue()
+	assert.Empty(t, queueEvents(m.Sync().Events), "read again, unchanged: nothing")
+}
+
+// A garbled config.json read by an idle queue's tick pauses admission with the
+// reason, publishes it, and is left where it is.
+func TestJobQueue_AnIdleQueuesTickPausesOnAGarbledConfig(t *testing.T) {
+	dir := t.TempDir()
+	m := wqModelAt(t, dir)
+	queueEvents(m.Sync().Events)
+	garbled := []byte(`{"scheduler": [`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, config.ConfigFileName), garbled, 0o644))
+
+	m.queue.lastPolicy = time.Now().Add(-queueInterval)
+	m.tickQueue()
+
+	got := queueEvents(m.Sync().Events)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].View.Paused, "config.json could not be read: ")
+	assert.Equal(t, sched.Policy{}, got[0].View.Policy)
+	data, err := os.ReadFile(filepath.Join(dir, config.ConfigFileName))
+	require.NoError(t, err)
+	assert.Equal(t, string(garbled), string(data), "left as it is")
+	wqNoSiblings(t, dir)
+}
+
 func TestJobQueue_AnInvalidSchedulerBlockPausesAdmissionAndSaysWhy(t *testing.T) {
 	m := wqModel(t)
 	wqConfig(t, m, `{"cpus": 4}`)

@@ -104,15 +104,27 @@ func (m *Model) admitJobs() {
 	}
 }
 
-// tickQueue runs an admission pass from the health tick while jobs wait, at
-// most once a queueInterval: a hand edit of the scheduler block applies
-// within seconds.
+// tickQueue keeps the queue current from the health tick, at most once a
+// queueInterval: while jobs wait it runs an admission pass, which picks up a
+// hand edit of the scheduler block within seconds; with none waiting it only
+// rereads the block (refreshPolicy), so the published settings, policy and
+// pause reason follow a hand edit on an idle queue too, and a client's caps
+// form never opens on a stale block. A reread that changes nothing
+// republishes nothing.
 func (m *Model) tickQueue() {
 	q := m.queue
-	if !q.ready() || !q.hasQueued() || time.Since(q.lastPass) < queueInterval {
+	if !q.ready() {
 		return
 	}
-	m.admitJobs()
+	if q.hasQueued() {
+		if time.Since(q.lastPass) >= queueInterval {
+			m.admitJobs()
+		}
+		return
+	}
+	if time.Since(q.lastPolicy) >= queueInterval {
+		m.refreshPolicy()
+	}
 }
 
 // jobStart is a start job's input: copies only.
