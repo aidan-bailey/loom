@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -241,15 +242,28 @@ func TestLoadStore_ADirThatCannotBeListedFailsTheLoad(t *testing.T) {
 		_, err := LoadStore(path)
 		require.Error(t, err)
 	})
-	t.Run("a dir that can't be read", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root lists everything")
+	// Mode 0300 lets jobs.json be opened by name but the dir not be listed.
+	// With no jobs.json, only the listing for the counter can fail the load.
+	for _, withStore := range []bool{true, false} {
+		name := "a dir that can't be read"
+		if !withStore {
+			name += ", with no jobs.json"
 		}
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, StoreFile), []byte(`{"version": 1, "jobs": []}`), 0o600))
-		require.NoError(t, os.Chmod(dir, 0o300))
-		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-		_, err := LoadStore(dir)
-		require.Error(t, err)
-	})
+		t.Run(name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Windows has no directory read bit")
+			}
+			if os.Geteuid() == 0 {
+				t.Skip("root lists everything")
+			}
+			dir := t.TempDir()
+			if withStore {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, StoreFile), []byte(`{"version": 1, "jobs": []}`), 0o600))
+			}
+			require.NoError(t, os.Chmod(dir, 0o300))
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			_, err := LoadStore(dir)
+			require.Error(t, err)
+		})
+	}
 }
