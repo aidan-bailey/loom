@@ -286,6 +286,9 @@ func (m *Model) Kill(id InstanceID, req ReqID) {
 	if !ok {
 		return
 	}
+	// The session's work-queue jobs go first, without waiting for them to
+	// exit: the kill removes the worktree they run in.
+	m.cancelOwnerJobs(id, "because the session was killed")
 	pre, job := m.killInst(ws, inst)
 	pre()
 	m.spawn(m.track(req, id, job))
@@ -303,6 +306,9 @@ func (m *Model) Pause(id InstanceID, req ReqID) {
 	if !ok {
 		return
 	}
+	// The session's work-queue jobs go first, without waiting for them to
+	// exit: a paused agent can't take a result.
+	m.cancelOwnerJobs(id, "because the session was paused")
 	job := m.pauseInst(ws, inst)
 	if err := inst.TransitionTo(session.Loading); err != nil {
 		log.For("core").Warn("pause.preaction_transition_failed", "err", err)

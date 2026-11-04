@@ -917,3 +917,96 @@ func TestJobQueue_ABootSendsTheNoticeOfAJobThatEndedWhileTheDaemonWasDown(t *tes
 	assert.Contains(t, msgs[0].Text, "finished: exit 0")
 	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, id).Notice, "still on its way")
 }
+
+// wqOwnerSession serves a started Claude session on launch L1, in a workspace
+// with storage (the pause and kill requests need one), and returns its ID. A
+// job submitted with Launch "L1" is that session's.
+func wqOwnerSession(t *testing.T, m *Model) InstanceID {
+	t.Helper()
+	inst := startedInst(t, "owner", "claude")
+	ws := storedWorkspace(t, "owners")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	adoptLaunch(t, m, inst, "L1", time.Now())
+	m.Drain()
+	return m.idOf(inst)
+}
+
+// Pausing or killing a job's owner cancels its queued and running jobs first,
+// with no notice, and leaves the jobs of other owners and of none alone (spec
+// §5.7).
+func TestJobQueue_PauseOrKillCancelsTheOwnersJobsAndOnlyTheirs(t *testing.T) {
+	cases := []struct {
+		name   string
+		act    func(*Model, InstanceID)
+		reason string
+	}{
+		{"pause", func(m *Model, id InstanceID) { m.Pause(id, 0) }, "because the session was paused"},
+		{"kill", func(m *Model, id InstanceID) { m.Kill(id, 0) }, "because the session was killed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := wqLiveModel(t)
+			wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
+			owner := wqOwnerSession(t, m)
+			submit := func(launch string, argv ...string) sched.JobID {
+				sub := wqJob(t, argv...)
+				sub.Launch, sub.Notify = launch, true
+				id, _, err := m.submitJob(sub)
+				require.NoError(t, err)
+				return id
+			}
+			running := submit("L1", "sleep", "30")
+			queued := submit("L1", "sleep", "30")
+			ownerless := submit("", "sleep", "30")
+			stranger := wqEnded(9, 77)
+			stranger.State, stranger.Exit, stranger.Started, stranger.Ended = sched.Queued, nil, time.Time{}, time.Time{}
+			stranger.Argv, stranger.Cwd, stranger.Claim = []string{"sleep", "30"}, t.TempDir(), sched.Claim{CPUs: 4, MemoryGB: 6}
+			wqSeed(t, m, stranger)
+			wqPump(t, m) // the running job's start: a real shim
+			require.Equal(t, owner, InstanceID(wqRecord(t, m, running).Owner))
+
+			c.act(m, owner)
+			m.Drain() // the session's own job, which this test does not run, and the pass that went with it
+			m.gate(gateQueue).inFlight = false
+
+			got := wqRecord(t, m, queued)
+			require.Equal(t, sched.Cancelled, got.State, "queued: cancelled at once")
+			assert.Equal(t, c.reason, got.CancelReason)
+			assert.False(t, got.Notify, "and no notice is sent for it")
+			got = wqRecord(t, m, running)
+			assert.Equal(t, sched.Running, got.State, "running: gateQueue ends it, and the request does not wait for that")
+			assert.Equal(t, c.reason, got.CancelReason)
+			assert.False(t, got.Notify)
+			assert.Empty(t, wqRecord(t, m, ownerless).CancelReason, "a job with no owner is not touched")
+			assert.Empty(t, wqRecord(t, m, 9).CancelReason, "nor is another owner's")
+
+			rec := wqSettle(t, m, running)
+			assert.Equal(t, sched.Cancelled, rec.State)
+			require.NotNil(t, rec.Exit)
+			assert.Equal(t, "SIGTERM", rec.Exit.Signal)
+			assert.Equal(t, sched.NoticeNone, rec.Notice, "no notice, not even an undelivered one")
+		})
+	}
+}
+
+// The cancel comes after the request is admitted: a request the model refuses
+// (the session is busy) changes nothing.
+func TestJobQueue_ARefusedPauseOrKillCancelsNothing(t *testing.T) {
+	m := wqModel(t)
+	owner := wqOwnerSession(t, m)
+	m.Pause(owner, 0) // admitted: it moves the session to Loading
+	m.Drain()
+	sub := wqJob(t, "sleep", "30")
+	sub.Launch = "L1"
+	later, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	m.Drain()
+
+	m.Pause(owner, 0) // refused: the session is busy
+	m.Kill(owner, 0)  // refused too
+
+	rec := wqRecord(t, m, later)
+	assert.Empty(t, rec.CancelReason)
+	assert.NotEqual(t, sched.Cancelled, rec.State)
+}

@@ -670,3 +670,50 @@ func TestJobQueue_RetentionDropsNothingWhileAdmissionIsPaused(t *testing.T) {
 
 	assert.Len(t, m.queue.store.Jobs, 3, "the limit is unknown while the block is invalid")
 }
+
+// The jobs run off the loop on snapshots: while one runs, the loop edits the
+// queue in every way a request can. Under -race a job that read model state
+// shows up here.
+func TestJobQueue_AGatePassOverlapsTheLoopsEdits(t *testing.T) {
+	m := wqLiveModel(t)
+	id := wqLaunch(t, m, "sh", "-c", "sleep 30")
+	m.gate(gateQueue).expedite()
+	require.True(t, m.maybeQueue())
+	jobs := m.Drain().Jobs
+	require.Len(t, jobs, 1)
+
+	done := make(chan any, 1)
+	go func() { done <- jobs[0]() }()
+	for i := range 200 {
+		extra := sched.JobID(100 + i)
+		m.queue.store.Jobs[m.queue.index(id)].CancelReason = fmt.Sprintf("edit %d", i)
+		m.queue.store.Jobs = append(m.queue.store.Jobs, wqEnded(extra, 0))
+		m.queue.waiting[extra] = "edit"
+		m.queue.usage[id] = jobUsage{RSSKB: int64(i)}
+		m.queue.starting[extra] = true
+		m.queue.cpuMarks[id] = cpuMark{cpu: time.Duration(i)}
+		m.queue.rev++
+	}
+	m.Deliver(<-done)
+
+	assert.False(t, m.gate(gateQueue).inFlight)
+}
+
+func TestJobQueue_AStartJobOverlapsTheLoopsEdits(t *testing.T) {
+	m := wqLiveModel(t)
+	id := wqSubmit(t, m, "sh", "-c", "exit 0")
+	jobs := m.Drain().Jobs
+	require.Len(t, jobs, 1)
+
+	done := make(chan any, 1)
+	go func() { done <- jobs[0]() }()
+	for i := range 200 {
+		rec := &m.queue.store.Jobs[m.queue.index(id)]
+		rec.Cwd, rec.Description = fmt.Sprintf("/elsewhere/%d", i), "edit"
+		m.queue.store.Jobs = append(m.queue.store.Jobs, wqEnded(sched.JobID(100+i), 0))
+		m.queue.rev++
+	}
+	m.Deliver(<-done)
+
+	assert.Greater(t, wqRecord(t, m, id).PID, 1, "it started on the snapshot it was given")
+}
