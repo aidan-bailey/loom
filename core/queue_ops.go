@@ -89,7 +89,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	if err := sched.CreateJobDir(q.dir, id); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			// The counter only goes up: move it past the directory so the
-			// next submit takes a free ID, not this one again until a
+			// next submit tries the next ID, not this one again until a
 			// restart. Not saved here; LoadStore raises it past the
 			// directory on the next load anyway.
 			q.store.NextID = id + 1
