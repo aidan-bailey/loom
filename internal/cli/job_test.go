@@ -116,6 +116,28 @@ func TestJobDefaultDescription(t *testing.T) {
 	assert.True(t, strings.HasPrefix(long, "echo 'éé"), "the cut keeps whole characters: %q", long)
 }
 
+// A multi-line script gives a one-line description, and a description (or an
+// owner) with control characters keeps list's rows whole.
+func TestJobDescription_StaysOnOneLine(t *testing.T) {
+	desc := defaultDescription([]string{"sh", "-c", "echo one\n\techo two"})
+	assert.NotContains(t, desc, "\n")
+	assert.NotContains(t, desc, "\t")
+	assert.Equal(t, "sh -c 'echo one  echo two'", desc)
+
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	q := core.QueueView{Jobs: []core.JobView{
+		{ID: 1, State: sched.Running, Description: "line one\nline two\tend", OwnerTitle: "al\rpha", Owner: 7, Claim: sched.Claim{CPUs: 1, MemoryGB: 1}, Started: now},
+		{ID: 2, State: sched.Running, Description: "plain", Claim: sched.Claim{CPUs: 1, MemoryGB: 1}, Started: now},
+	}}
+	var out bytes.Buffer
+	require.NoError(t, writeJobList(&out, q, true, now))
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	require.Len(t, lines, 3, "a header and one row per job: %q", out.String())
+	assert.Regexp(t, `^1 +running +line one line two end +al pha +1c/1G`, lines[1])
+	assert.Regexp(t, `^2 +running +plain +- +1c/1G`, lines[2])
+}
+
 func TestJobOrdinal(t *testing.T) {
 	for n, want := range map[int]string{
 		1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 10: "10th", 11: "11th", 12: "12th", 13: "13th",

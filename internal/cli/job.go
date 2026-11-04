@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/sched"
@@ -133,14 +134,25 @@ func (f *claimFlags) submission(c *cobra.Command, args []string, notify bool, ta
 	}, nil
 }
 
-// defaultDescription is the command line, each word shell-quoted, cut to
-// descriptionLimit characters.
+// oneLine maps every control character (a newline, a tab, an escape) to a
+// space, so a text stays on one line of a list's table.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// defaultDescription is the command line, each word shell-quoted and on one
+// line, cut to descriptionLimit characters.
 func defaultDescription(argv []string) string {
 	words := make([]string, len(argv))
 	for i, a := range argv {
 		words[i] = shellWord(a)
 	}
-	r := []rune(strings.Join(words, " "))
+	r := []rune(oneLine(strings.Join(words, " ")))
 	if len(r) > descriptionLimit {
 		r = r[:descriptionLimit]
 	}
@@ -362,7 +374,7 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 			waits = j.Waiting
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.ID, stateText(j), j.Description, ownerText(j), claimText(j.Claim), rounded(elapsed(j, now)), waits)
+			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j.Claim), rounded(elapsed(j, now)), oneLine(waits))
 	}
 	return tw.Flush()
 }
