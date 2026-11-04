@@ -133,10 +133,10 @@ func readLogEnd(path string, limit int64) (data []byte, partial bool, err error)
 }
 
 // applyWorkLog takes a log read's result. One older than the last read
-// issued is dropped: a newer read is in flight or landed. A tail read lands only for the
-// job selected now, and a pager read only for the job the pager shows, so
-// a read that was overtaken by a key press shows under no other job. The
-// pager keeps its place unless it was at the end, where it follows.
+// issued is dropped: a newer read is in flight or landed. A tail read lands
+// only for the job selected now, and a pager read only for the job the pager
+// shows, so a read that was overtaken by a key press shows under no other
+// job. The pager keeps its place unless it was at the end, where it follows.
 func (m *home) applyWorkLog(msg workLogMsg) {
 	if msg.seq < m.work.seq {
 		return

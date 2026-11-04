@@ -1081,20 +1081,49 @@ func TestWorkOpen_NoTabForTheGlobalWorkspace(t *testing.T) {
 }
 
 func TestWorkOpen_NoSecondSlotForAWorkspaceAlreadyOpen(t *testing.T) {
-	m, _, _ := ownerHome(t, true)
-	aID := m.slots[0].id
-	// The owner is in ws-a, which a slot shows, but its rail lacks the row.
-	setQueue(t, m, testQueue(ownedJob(core.InstanceID(9999), "ws-a", aID)))
-	m.enterWorkView()
-	before := openListOnDisk(t)
+	t.Run("tabs mode", func(t *testing.T) {
+		m, _, _ := ownerHome(t, true)
+		aID := m.slots[0].id
+		// The owner is in ws-a, which a slot shows, but its rail lacks the row.
+		setQueue(t, m, testQueue(ownedJob(core.InstanceID(9999), "ws-a", aID)))
+		m.enterWorkView()
+		before := openListOnDisk(t)
 
-	drainCmd(pressWork(t, m, "o"))
+		drainCmd(pressWork(t, m, "o"))
 
-	assert.Equal(t, viewWork, m.viewMode, "the view stays open")
-	assert.Equal(t, []string{"ws-a"}, m.slotNames(), "no second slot for ws-a")
-	assert.Equal(t, before, openListOnDisk(t))
-	assert.Contains(t, m.errBox.String(), "job 14's session isn't in workspace ws-a")
-	require.NoError(t, m.checkSlotInvariant())
+		assert.Equal(t, viewWork, m.viewMode, "the view stays open")
+		assert.Equal(t, []string{"ws-a"}, m.slotNames(), "no second slot for ws-a")
+		assert.Equal(t, before, openListOnDisk(t))
+		assert.Contains(t, m.errBox.String(), "job 14's session isn't in workspace ws-a")
+		require.NoError(t, m.checkSlotInvariant())
+	})
+	t.Run("classic mode", func(t *testing.T) {
+		isolateTmux(t)
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		reg, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		a := preservedTerminalWorkspace(t, "ws-a")
+		require.NoError(t, reg.Add(a.Name, a.Path))
+		m := startupHome(t, &recordingExec{}, reg, "ws-a", "")
+		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: 120, Height: 40})
+		aID, err := m.servedID("ws-a")
+		require.NoError(t, err)
+		require.Empty(t, m.slots, "fixture: classic mode")
+		require.Equal(t, aID, m.workspaceSlot.id, "fixture: the classic slot shows ws-a")
+		// The owner is in ws-a, which the classic slot shows, but its rail
+		// lacks the row.
+		setQueue(t, m, testQueue(ownedJob(core.InstanceID(9999), "ws-a", aID)))
+		m.enterWorkView()
+		before := openListOnDisk(t)
+
+		drainCmd(pressWork(t, m, "o"))
+
+		assert.Equal(t, viewWork, m.viewMode, "the view stays open")
+		assert.Empty(t, m.slots, "no tab opened for the workspace the classic slot shows")
+		assert.Equal(t, before, openListOnDisk(t))
+		assert.Contains(t, m.errBox.String(), "job 14's session isn't in workspace ws-a")
+		require.NoError(t, m.checkSlotInvariant())
+	})
 }
 
 func TestWorkOpen_SaysWhyItCannot(t *testing.T) {
