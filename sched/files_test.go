@@ -39,6 +39,29 @@ func TestJobDir_IsTheDecimalID(t *testing.T) {
 	assert.Equal(t, filepath.Join("/x/jobs", "1000000"), JobDir("/x/jobs", 1000000))
 }
 
+// TestCreateJobDir_IsExclusive: the directory is made (with its parents) only
+// when it does not exist; one that does is an fs.ErrExist error and keeps its
+// contents.
+func TestCreateJobDir_IsExclusive(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "jobs")
+	require.NoError(t, CreateJobDir(dir, 4), "the jobs dir is made too")
+	info, err := os.Stat(JobDir(dir, 4))
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
+
+	writeFixtureFile(t, filepath.Join(JobDir(dir, 4), "output.log"))
+	err = CreateJobDir(dir, 4)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, fs.ErrExist)
+	assert.FileExists(t, filepath.Join(JobDir(dir, 4), "output.log"))
+
+	assert.Error(t, CreateJobDir(dir, 0), "an ID below 1 is refused")
+	assert.NoDirExists(t, JobDir(dir, 0))
+}
+
 func TestRemoveJobDir_RemovesOnlyThatJobsDir(t *testing.T) {
 	dir := t.TempDir()
 	for _, p := range []string{"14/spec.json", "14/output.log", "14/sub/deep.txt", "140/spec.json", "1/spec.json", "jobs.json"} {

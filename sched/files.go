@@ -79,6 +79,24 @@ type Spec struct {
 	HintCPUs int      `json:"hint_cpus,omitempty"` // written when the job starts
 }
 
+// CreateJobDir makes the directory of job id under dir (mode 0700), and dir
+// and its parents (mode 0700) when they are absent, and only if the job's
+// directory does not exist yet: one that does is an error wrapping
+// fs.ErrExist and is left as it is, so a caller that gets nil owns the
+// directory and no other job's files are in it. It refuses an ID below 1.
+func CreateJobDir(dir string, id JobID) error {
+	if id < 1 {
+		return fmt.Errorf("refusing to create a directory for job %d: IDs start at 1", id)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := os.Mkdir(JobDir(dir, id), 0o700); err != nil {
+		return fmt.Errorf("create job %d's directory: %w", id, err)
+	}
+	return nil
+}
+
 // WriteSpec writes jobDir's spec.json (mode 0600), making jobDir (mode 0700)
 // when it is absent.
 func WriteSpec(jobDir string, s Spec) error {

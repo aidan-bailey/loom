@@ -10,7 +10,7 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `admit.go` — `Admit` and its `Decision`.
 - `hints.go` — `Hints`.
 - `store.go` — `Store`, `LoadStore`, `SaveStore` and `ErrNewerStore`.
-- `files.go` — the file names, `JobDir`, `RemoveJobDir`, and the codecs of `Spec`, `Started` and `Exit`.
+- `files.go` — the file names, `JobDir`, `CreateJobDir`, `RemoveJobDir`, and the codecs of `Spec`, `Started` and `Exit`.
 - `testmain_test.go` — isolates the loom dirs for the package's tests.
 
 ## Jobs
@@ -44,7 +44,7 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 | `<id>/started.json` | `Started`: the shim's pid and start time |
 | `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, and the start error if the exec failed |
 
-`JobDir(dir, id)` is `<dir>/<id>`, and `RemoveJobDir` removes it when retention drops a finished job.
+`JobDir(dir, id)` is `<dir>/<id>`, `CreateJobDir` makes it only if it does not exist (a submit never writes into a directory it did not create), and `RemoveJobDir` removes it when retention drops a finished job.
 
 ## The runtime
 
