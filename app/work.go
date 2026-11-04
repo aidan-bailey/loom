@@ -593,6 +593,18 @@ func (m *home) focusWorkOwner() tea.Cmd {
 	var opened tea.Cmd
 	idx, found := m.slotShowing(job.Owner)
 	if !found {
+		// The global workspace has a served ID but is never a tab (the TUI
+		// shows it as classic mode), so opening one would persist a tab
+		// named "" in the open list. A slot already showing the workspace
+		// is opened no second time: a slot shows one workspace for its life.
+		if m.isGlobalWorkspace(job.OwnerWorkspaceID) {
+			m.errBox.SetInfo(fmt.Sprintf("job %d's session is in the global workspace, which no open tab shows", job.ID))
+			return nil
+		}
+		if slices.ContainsFunc(m.openSlots(), func(s *workspaceSlot) bool { return s.id == job.OwnerWorkspaceID }) {
+			m.errBox.SetInfo(fmt.Sprintf("job %d's session isn't in workspace %s", job.ID, job.OwnerWorkspace))
+			return nil
+		}
 		cmd, err := m.openTab(job.OwnerWorkspaceID)
 		if err != nil {
 			return m.handleError(err)
@@ -610,4 +622,10 @@ func (m *home) focusWorkOwner() tea.Cmd {
 	m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 	m.persistFocusedWorkspace()
 	return tea.Batch(opened, m.instanceChanged())
+}
+
+// isGlobalWorkspace reports whether id is the global workspace, as the
+// model's published workspaces name it.
+func (m *home) isGlobalWorkspace(id core.WorkspaceID) bool {
+	return slices.ContainsFunc(m.core.Workspaces(), func(v core.WorkspaceView) bool { return v.ID == id && v.Name == "" })
 }

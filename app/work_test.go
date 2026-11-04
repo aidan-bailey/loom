@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -860,7 +861,7 @@ func TestWorkOpen_FocusesTheOwnersSessionInItsWorkspace(t *testing.T) {
 	require.NotNil(t, b1)
 	job := queueJob(14, sched.Running, "tests")
 	job.Owner, job.OwnerTitle, job.OwnerWorkspace = b1.ID, "b1", "bpeer"
-	job.OwnerWorkspaceID = 2 // not opened: the row is found by its ID in the open slots
+	job.OwnerWorkspaceID = 2 // any served ID: the workspace is already open, so the row is found by its InstanceID in the slots and no tab is opened
 	setQueue(t, m, testQueue(job))
 	m.enterWorkView()
 	require.Equal(t, viewWork, m.viewMode)
@@ -870,6 +871,112 @@ func TestWorkOpen_FocusesTheOwnersSessionInItsWorkspace(t *testing.T) {
 	assert.Equal(t, viewFocus, m.viewMode, "o drops to the focus layout")
 	assert.Equal(t, 1, m.focusedSlot, "the owner's workspace is focused")
 	assert.Equal(t, b1.ID, selID(m.list), "and its session selected")
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+// ownerHome is a TUI built through the production startup over two
+// registered, served workspaces, ws-a and ws-b. In classic mode none is a
+// tab; in tabs mode ws-a is. ws-b holds one session, b1, and the work view
+// shows a job b1 owns. The workspace IDs are returned with it.
+func ownerHome(t *testing.T, tabs bool) (m *home, b1 core.InstanceID, bID core.WorkspaceID) {
+	t.Helper()
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	m = newRestoreHome(t, &recordingExec{})
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	registerWorkspaces(t, m, a, b)
+	if tabs {
+		_, err := m.activateWorkspace(a)
+		require.NoError(t, err)
+		require.Equal(t, []string{"ws-a"}, m.slotNames())
+	}
+	bID, err := m.servedID("ws-b")
+	require.NoError(t, err)
+	_, err = testModel(m).Open(bID) // loaded in the model, shown in no tab
+	require.NoError(t, err)
+	inst := &session.Instance{Title: "b1", Status: session.Running}
+	testModel(m).WorkspaceForTest(bID).AddForTest(inst)
+	b1 = idOf(m, inst)
+	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: 120, Height: 40})
+	return m, b1, bID
+}
+
+// ownedJob is a running job owned by owner, a session of workspace ws.
+func ownedJob(owner core.InstanceID, ws string, wsID core.WorkspaceID) core.JobView {
+	job := queueJob(14, sched.Running, "tests")
+	job.Owner, job.OwnerTitle, job.OwnerWorkspace, job.OwnerWorkspaceID = owner, "b1", ws, wsID
+	return job
+}
+
+// openListOnDisk is the registry's open list as the next launch reads it.
+func openListOnDisk(t *testing.T) []string {
+	t.Helper()
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	return fresh.OpenWorkspaces
+}
+
+func TestWorkOpen_OpensTheOwnersWorkspaceAsATabAndFocusesIt(t *testing.T) {
+	for name, tabs := range map[string]bool{"classic mode": false, "tabs mode": true} {
+		t.Run(name, func(t *testing.T) {
+			m, b1, bID := ownerHome(t, tabs)
+			setQueue(t, m, testQueue(ownedJob(b1, "ws-b", bID)))
+			m.enterWorkView()
+			require.Equal(t, viewWork, m.viewMode)
+			require.Len(t, m.slots, map[bool]int{false: 0, true: 1}[tabs], "fixture: ws-b is no tab")
+
+			cmd := pressWork(t, m, "o")
+			drainCmd(cmd)
+
+			wantNames := map[bool][]string{false: {"ws-b"}, true: {"ws-a", "ws-b"}}[tabs]
+			assert.Equal(t, wantNames, m.slotNames(), "the owner's workspace is a new tab")
+			assert.Equal(t, viewFocus, m.viewMode, "o drops to the focus layout")
+			assert.Equal(t, "ws-b", m.name(), "the new tab is focused")
+			assert.Equal(t, b1, selID(m.list), "with the owner selected")
+			assert.Equal(t, wantNames, openListOnDisk(t), "and the open list persisted")
+			require.NoError(t, m.checkSlotInvariant())
+		})
+	}
+}
+
+func TestWorkOpen_NoTabForTheGlobalWorkspace(t *testing.T) {
+	m, _, _ := ownerHome(t, true)
+	var globalID core.WorkspaceID
+	for _, v := range m.core.Workspaces() {
+		if v.Name == "" {
+			globalID = v.ID
+		}
+	}
+	require.NotZero(t, globalID, "fixture: the model serves the global workspace")
+	g := &session.Instance{Title: "g1", Status: session.Running}
+	testModel(m).WorkspaceForTest(globalID).AddForTest(g)
+	setQueue(t, m, testQueue(ownedJob(idOf(m, g), "global", globalID)))
+	m.enterWorkView()
+	before := openListOnDisk(t)
+
+	drainCmd(pressWork(t, m, "o"))
+
+	assert.Equal(t, viewWork, m.viewMode, "the view stays open")
+	assert.Equal(t, []string{"ws-a"}, m.slotNames(), "no tab named \"\"")
+	assert.Equal(t, before, openListOnDisk(t))
+	assert.Contains(t, m.errBox.String(), "job 14's session is in the global workspace, which no open tab shows")
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+func TestWorkOpen_NoSecondSlotForAWorkspaceAlreadyOpen(t *testing.T) {
+	m, _, _ := ownerHome(t, true)
+	aID := m.slots[0].id
+	// The owner is in ws-a, which a slot shows, but its rail lacks the row.
+	setQueue(t, m, testQueue(ownedJob(core.InstanceID(9999), "ws-a", aID)))
+	m.enterWorkView()
+	before := openListOnDisk(t)
+
+	drainCmd(pressWork(t, m, "o"))
+
+	assert.Equal(t, viewWork, m.viewMode, "the view stays open")
+	assert.Equal(t, []string{"ws-a"}, m.slotNames(), "no second slot for ws-a")
+	assert.Equal(t, before, openListOnDisk(t))
+	assert.Contains(t, m.errBox.String(), "job 14's session isn't in workspace ws-a")
 	require.NoError(t, m.checkSlotInvariant())
 }
 
