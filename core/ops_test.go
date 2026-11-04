@@ -190,9 +190,21 @@ func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.
 		assert.Zero(t, calls, "the terminal shell must not be ended for a refused kill")
 	}
 
-	t.Run("no worktree", func(t *testing.T) {
-		// Never started: GetGitWorktree fails.
-		refused(t, newInst(t, "unstarted"), "has not been started")
+	t.Run("never started", func(t *testing.T) {
+		// Nothing of its own runs, so its kill removes it and ends no shell.
+		inst := newInst(t, "unstarted")
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		ws.add(inst)
+		m.SetWorkspacesForTest(ws)
+		calls, there := 0, false
+		terminalKills(t, inst, inst.GetWorktreePath(), &calls, &there)
+		pre, job := m.killInst(ws, inst)
+		pre()
+
+		_, ok := job().(KillResult)
+		require.True(t, ok, "the kill proceeds")
+		assert.Zero(t, calls, "no terminal shell is ended")
 	})
 
 	t.Run("branch checked out in the repository", func(t *testing.T) {

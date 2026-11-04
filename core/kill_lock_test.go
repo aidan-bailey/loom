@@ -157,6 +157,7 @@ func TestKill_DiscardsARecoverableOrphanWhoseTmuxSessionIsGone(t *testing.T) {
 			placeholder := ws.byTitle("x")
 			require.NotNil(t, placeholder)
 			require.Equal(t, session.Recoverable, placeholder.GetStatus())
+			require.True(t, placeholder.Started(), "a placeholder is started, so its discard cleans up rather than only dropping the row")
 			require.Error(t, tmux.Command(context.Background(), "has-session",
 				"-t", tmux.SessionTarget(tmux.ToLoomTmuxName("x"))).Run(), "fixture: no tmux session for the orphan")
 

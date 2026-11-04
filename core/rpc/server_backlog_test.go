@@ -65,12 +65,12 @@ func raiseRequestNotice(t *testing.T, loop *core.Loop, c *Client, id core.Instan
 	}
 }
 
-// failingKill makes the model raise a Notice: an unstarted instance's kill
-// job fails (it has no worktree). It returns the loop serving that model
-// and the instance's ID.
+// failingKill makes the model raise a Notice: the kill job of an instance
+// whose branch its repository has checked out fails (unkillable). It
+// returns the loop serving that model and the instance's ID.
 func failingKill(t *testing.T) (*core.Loop, core.InstanceID) {
 	t.Helper()
-	inst := running(t, "u")
+	inst := unkillable(t, "u")
 	m := core.NewForTest(core.Options{})
 	m.SetWorkspacesForTest(workspace(t, "a", inst))
 	loop := core.StartForTest(m)

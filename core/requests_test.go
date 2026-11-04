@@ -51,10 +51,10 @@ func TestRequests_AnUnknownIDIsRefused(t *testing.T) {
 func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	busy, unstarted := newInst(t, "busy"), newInst(t, "unstarted")
+	busy, failing := newInst(t, "busy"), unkillableInst(t, "failing")
 	require.NoError(t, busy.TransitionTo(session.Loading))
 	ws.add(busy)
-	ws.add(unstarted)
+	ws.add(failing)
 	m.SetWorkspacesForTest(ws)
 
 	m.Kill(99, 1)
@@ -67,7 +67,7 @@ func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
 	assert.EqualError(t, rs[1].Err, "kill busy: the session is busy (Loading)", "its message is kept")
 	assert.NotErrorIs(t, rs[1].Err, ErrNoSession)
 
-	m.Kill(m.idOf(unstarted), 3) // admitted; its job fails (no worktree)
+	m.Kill(m.idOf(failing), 3) // admitted; its job fails (its branch is checked out)
 	out := run(m, m.Drain())
 	rs = replies(out)
 	require.Len(t, rs, 1)
@@ -76,9 +76,9 @@ func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
 	assert.Contains(t, out.Events, Event(Notice{Err: rs[0].Err, Req: 3}), "the model reported it itself, naming the request")
 }
 
-// TestKill_RepliesWhenItFinishes: an unstarted instance has no worktree, so
-// the kill job refuses (OpFailed); the Reply comes when its result lands,
-// not when the request is made.
+// TestKill_RepliesWhenItFinishes: the Reply comes when the kill job's result
+// lands, not when the request is made (here an unstarted instance, which
+// the job removes).
 func TestKill_RepliesWhenItFinishes(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
@@ -97,7 +97,7 @@ func TestKill_RepliesWhenItFinishes(t *testing.T) {
 	require.Len(t, rs, 1)
 	assert.Equal(t, ReqID(7), rs[0].Req)
 	assert.Equal(t, id, rs[0].ID)
-	assert.Error(t, rs[0].Err)
+	assert.NoError(t, rs[0].Err)
 }
 
 // TestPause_AFailedPauseRevertsToTheStatusItHad: Pause takes the job (and
@@ -675,4 +675,23 @@ func TestCreate_WithAnIssueJoinsGitHubState(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 7, v.Issue)
 	assert.Equal(t, github.State{Known: true, IssueNumber: 7, IssueTitle: "Fix it"}, v.GitHub)
+}
+
+// TestKill_ASessionThatNeverStartedIsRemoved: a script's ctx:new_instance
+// creates a session unstarted, with no tmux session or worktree. Its kill
+// failed ("has not been started"), so D could never remove the row until
+// the daemon restarted. There is nothing to clean up: the kill removes it.
+func TestKill_ASessionThatNeverStartedIsRemoved(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	inst := newInst(t, "draft")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+
+	m.Kill(m.idOf(inst), 3)
+	rs := replies(run(m, m.Drain()))
+
+	require.Len(t, rs, 1)
+	assert.NoError(t, rs[0].Err)
+	assert.NotContains(t, ws.instances(), inst, "the row is gone")
 }

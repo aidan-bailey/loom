@@ -44,6 +44,22 @@ func newInst(t *testing.T, title string) *session.Instance {
 	return inst
 }
 
+// unkillableInst builds a Paused instance titled title whose kill the
+// model admits and whose job then fails before it touches anything: its
+// branch is the one its repository has checked out.
+func unkillableInst(t *testing.T, title string) *session.Instance {
+	t.Helper()
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q", "-b", "main")
+	inst, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         title, Status: session.Paused, Program: "claude",
+		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "main", SessionName: title},
+	}, t.TempDir())
+	require.NoError(t, err)
+	return inst
+}
+
 // newTerminal builds an unstarted workspace terminal titled title.
 func newTerminal(t *testing.T, title string) *session.Instance {
 	t.Helper()
