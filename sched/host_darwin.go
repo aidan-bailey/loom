@@ -1,24 +1,11 @@
 package sched
 
-import (
-	"context"
-	"os/exec"
-	"time"
-)
+import "golang.org/x/sys/unix"
 
-// sysctlTimeout bounds the one subprocess DetectHost runs.
-const sysctlTimeout = 5 * time.Second
-
-// readRAMBytes asks "sysctl -n hw.memsize"; 0 when it fails, runs out of
-// time or prints something else.
+// readRAMBytes reads the sysctl hw.memsize directly, with no subprocess and
+// so no PATH to depend on; 0 when it fails.
 func readRAMBytes() uint64 {
-	ctx, cancel := context.WithTimeout(context.Background(), sysctlTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "sysctl", "-n", "hw.memsize").Output()
-	if err != nil {
-		return 0
-	}
-	n, err := parseMemsize(out)
+	n, err := unix.SysctlUint64("hw.memsize")
 	if err != nil {
 		return 0
 	}

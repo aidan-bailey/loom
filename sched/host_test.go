@@ -47,21 +47,6 @@ func TestParseMemTotal_RefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
-func TestParseMemsize(t *testing.T) {
-	got, err := parseMemsize([]byte("34359738368\n"))
-	require.NoError(t, err)
-	assert.Equal(t, uint64(34359738368), got)
-
-	got, err = parseMemsize([]byte("  8589934592  "))
-	require.NoError(t, err)
-	assert.Equal(t, uint64(8589934592), got, "surrounding space is trimmed")
-
-	for _, in := range []string{"", "lots", "-5", "1.5e9"} {
-		_, err := parseMemsize([]byte(in))
-		assert.Error(t, err, "input %q", in)
-	}
-}
-
 func TestDetectHost(t *testing.T) {
 	h := DetectHost()
 

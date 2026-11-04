@@ -40,12 +40,3 @@ func parseMemTotal(meminfo []byte) (uint64, error) {
 	}
 	return 0, errors.New("no MemTotal line")
 }
-
-// parseMemsize reads the bytes "sysctl -n hw.memsize" prints.
-func parseMemsize(out []byte) (uint64, error) {
-	n, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("hw.memsize %q: %w", strings.TrimSpace(string(out)), err)
-	}
-	return n, nil
-}
