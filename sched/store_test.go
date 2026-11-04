@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,4 +186,70 @@ func TestLoadStore_RaisesNextIDPastEveryJob(t *testing.T) {
 			assert.Equal(t, tc.want, got.NextID)
 		})
 	}
+}
+
+// TestLoadStore_RaisesNextIDPastEveryJobDirectory: a job's directory outlives
+// its record (retention, a lost jobs.json), and a counter that came back below
+// it would hand the next job the old job's files. Files and names that are not
+// a job's ID count for nothing.
+func TestLoadStore_RaisesNextIDPastEveryJobDirectory(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string // jobs.json, or "" for none
+		entries []string
+		want    JobID
+	}{
+		{"no jobs.json", "", []string{"7/"}, 8},
+		{"no jobs.json, the highest of several", "", []string{"2/", "11/", "9/"}, 12},
+		{"a counter behind a directory", `{"version": 1, "next_id": 3, "jobs": []}`, []string{"9/"}, 10},
+		{"a counter ahead of the directories", `{"version": 1, "next_id": 20, "jobs": []}`, []string{"9/"}, 20},
+		{"non-numeric names and files", "", []string{"logs/", "7x/", "-3/", "0/", "007/", "99", "jobs.json.tmp"}, 1},
+		{"a numeric file", "", []string{"50"}, 1},
+		{"no directories", "", nil, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.content != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, StoreFile), []byte(tc.content), 0o600))
+			}
+			for _, e := range tc.entries {
+				if name, isDir := strings.CutSuffix(e, "/"); isDir {
+					require.NoError(t, os.Mkdir(filepath.Join(dir, name), 0o700))
+				} else {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, e), nil, 0o600))
+				}
+			}
+			got, err := LoadStore(dir)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.NextID)
+		})
+	}
+}
+
+// A jobs dir that is absent loads an empty store; one that can't be listed
+// fails the load, and nothing is written.
+func TestLoadStore_ADirThatCannotBeListedFailsTheLoad(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		got, err := LoadStore(filepath.Join(t.TempDir(), "jobs"))
+		require.NoError(t, err)
+		assert.Equal(t, JobID(1), got.NextID)
+	})
+	t.Run("a file where the dir goes", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "jobs")
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+		_, err := LoadStore(path)
+		require.Error(t, err)
+	})
+	t.Run("a dir that can't be read", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root lists everything")
+		}
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, StoreFile), []byte(`{"version": 1, "jobs": []}`), 0o600))
+		require.NoError(t, os.Chmod(dir, 0o300))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		_, err := LoadStore(dir)
+		require.Error(t, err)
+	})
 }

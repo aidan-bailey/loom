@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // StoreVersion is the version of jobs.json this build reads and writes.
@@ -28,12 +29,18 @@ var ErrNewerStore = errors.New("jobs.json is from a newer loom")
 // invalid one is an error, and one with a newer version is an error wrapping
 // ErrNewerStore, found before the rest is parsed, since a newer shape may not
 // parse here. A job ID that is below 1 or repeated is invalid. NextID is
-// raised past the highest ID on disk, so an ID is never reused.
+// raised past the highest ID on disk, in the file or as a numeric directory
+// under dir (a missing jobs.json included), so an ID is never reused; a dir
+// that can't be listed, other than one that is absent, is an error.
 func LoadStore(dir string) (Store, error) {
 	path := filepath.Join(dir, StoreFile)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Store{Version: StoreVersion, NextID: 1}, nil
+		s := Store{Version: StoreVersion, NextID: 1}
+		if err := raiseNextIDPastDirs(dir, &s); err != nil {
+			return Store{}, err
+		}
+		return s, nil
 	}
 	if err != nil {
 		return Store{}, fmt.Errorf("read %s: %w", path, err)
@@ -66,7 +73,36 @@ func LoadStore(dir string) (Store, error) {
 		s.NextID = max(s.NextID, r.ID+1)
 	}
 	s.NextID = max(s.NextID, 1)
+	if err := raiseNextIDPastDirs(dir, &s); err != nil {
+		return Store{}, err
+	}
 	return s, nil
+}
+
+// raiseNextIDPastDirs raises s.NextID past the highest job directory under
+// dir: a directory named by a job ID in decimal (what JobDir builds). A file,
+// a name that is not such a number and a dir that does not exist count for
+// nothing; any other failure to list dir is an error, since a counter that
+// can't see the directories could hand a new job an old job's files.
+func raiseNextIDPastDirs(dir string, s *Store) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n, err := strconv.ParseInt(e.Name(), 10, 64)
+		if err != nil || n < 1 || strconv.FormatInt(n, 10) != e.Name() {
+			continue
+		}
+		s.NextID = max(s.NextID, JobID(n)+1)
+	}
+	return nil
 }
 
 // SaveStore writes s as dir's jobs.json atomically (mode 0600), making dir

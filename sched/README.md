@@ -37,7 +37,7 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 
 | Path | Holds |
 |---|---|
-| `jobs.json` | `Store`: `{"version": 1, "next_id": N, "jobs": [...]}`. `LoadStore` never writes, leaves a file that fails to load alone, reports a newer version as `ErrNewerStore`, and raises `next_id` past every ID on disk |
+| `jobs.json` | `Store`: `{"version": 1, "next_id": N, "jobs": [...]}`. `LoadStore` never writes, leaves a file that fails to load alone, reports a newer version as `ErrNewerStore`, and raises `next_id` past every ID in the file and past every numeric directory under the jobs dir (a missing `jobs.json` included), failing the load when the dir can't be listed |
 | `<id>/spec.json` | `Spec`: argv, cwd, the submitter's environment, and the parallelism the start hints |
 | `<id>/output.log` | the command's stdout and stderr |
 | `<id>/run.lock` | the shim's lock, held while the job runs |
