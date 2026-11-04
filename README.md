@@ -53,6 +53,7 @@ Available Commands:
   reset       Delete a workspace's instances, tmux sessions, worktrees, and their branches (destructive)
   serve       Run the loom daemon for this global config dir (loom starts it when needed)
   session     Create, list and drive a workspace's sessions
+  sweep       Delete idle and paused sessions' unused Rust binaries
   version     Print the version number of loom
   web         Serve loom's fleet to a paired phone: enable, disable, pair, devices, revoke, status
   workspace   Manage workspaces
@@ -63,7 +64,7 @@ Flags:
       --no-scripts         Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.
   -p, --program string     Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
   -v, --version            version for loom
-  -w, --workspace string   Select workspace by name (bypasses auto-detection)
+  -w, --workspace string   Open the named workspace (instead of the saved tabs or the startup picker)
 ```
 
 Run the application with:

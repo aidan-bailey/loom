@@ -101,27 +101,27 @@ All under `loom workspace`. Each is a client of the loom daemon (it joins the da
 | `workspace use <name>` | Set the default workspace (`LastUsed`) for future invocations. |
 | `workspace rename <old> <new>` | Rename a workspace. The daemon renames it in place, keeping its ID and sessions, and an open loom's tab shows the new name. Refused for a name already registered. |
 | `workspace status [name]` | Show instance counts for a workspace (defaults to cwd-matched workspace), as the daemon serves its sessions. |
-| `workspace migrate` | Move global instances to their matching workspaces (see [Migration](#migration)). Refused while the loom daemon runs (`loom serve stop` first). |
+| `workspace migrate` | Move global instances to their matching workspaces (see [Migration](#migration)). Refused while the loom daemon runs (`loom serve stop` first). Flags `--dry-run` (print the plan, change nothing) and `--backup` (default true: copy each `state.json` to `state.json.bak` before overwriting it). |
 
-The root command also accepts `--workspace <name>` (`-w`) to select a workspace by name, bypassing cwd auto-detection.
+The root command also accepts `--workspace <name>` (`-w`) to start on a workspace by name, and a directory argument (see [Startup Behavior](#startup-behavior)); the TUI never picks a workspace from the current directory.
 
 Source: `internal/cli/workspace.go`, `cmd/workspace_migrate.go`, `main.go`.
 
 ### `workspace add` Details
 
 1. Resolves path to absolute.
-2. Validates it's a git repo (checks for `.git`).
+2. Validates it's a git repo (`git.IsGitRepo`: `git rev-parse --show-toplevel` succeeds there).
 3. Ensures name and path are both unique in the registry.
 4. Calls `EnsureGitignore()` to add `.loom/` to the repo's `.gitignore`.
 5. Saves to `~/.loom/workspaces.json`.
 
-The command asks the daemon (`Register`), which writes the registry and serves the workspace at once.
+The command does the first two itself, then asks the daemon (`Register`), whose `WorkspaceRegistry.Add` does the rest on a fresh read of the file; the daemon then serves the workspace at once.
 
 ### `workspace remove` Details
 
 1. Finds workspace by name.
 2. Removes from registry slice.
-3. Clears `LastUsed` if this was the last-used workspace.
+3. Clears `LastUsed` if this was the last-used workspace, and drops it from the [open list](#the-open-list).
 4. Saves registry. Does **not** delete on-disk data.
 
 The command is the `Unregister` request. The daemon refuses the global workspace, an unknown name and a workspace with a busy session (Loading or Deleting), then saves the workspace, removes the entry and stops serving it (`core.Model.Unregister`). Its tmux sessions are not touched, so its agents run on, and registering the directory again serves them under the same IDs, which derive from the disk. An entry that is another name for a directory still registered (a twin) only leaves the registry, and the workspace stays served under a name still registered. A workspace removed by editing `workspaces.json` is unloaded the same way at the next reread (`ReloadRegistry`; one with a busy session waits for the next); a rename made there is applied in place.
@@ -146,7 +146,7 @@ Source: `main.go`, `daemon_client.go` (`joinDaemon`), `app/app_init.go` (`startH
    - otherwise the startup workspace is opened in the classic (no-tab) slot. If it fails to load, loom exits with the error.
 4. **Startup overlays**: the registration prompt for a directory awaiting it, else, when starting in global mode with workspaces registered and no tabs restored, the startup workspace picker (one workspace, or Global).
 
-Path matching uses `FindByPath()`, which matches exact paths or parent directories (with separator check to avoid `/repo` matching `/repo-fork`).
+Path matching uses `FindByPath()`, which matches exact paths or parent directories (with separator check to avoid `/repo` matching `/repo-fork`), the deepest registered path winning.
 
 ## Tabs and Switching
 
@@ -225,23 +225,24 @@ Source: `cmd/workspace_migrate.go`.
 
 1. Load all instances from the global state file.
 2. For each instance, match its `worktree.repo_path` to a registered workspace via `FindByPath()`.
-3. Group matched instances by workspace.
-4. For each workspace:
-   - Load existing workspace state (if any).
+3. Group matched instances by workspace, rewriting the worktree path of each whose worktree lies under the global dir (see [Path Rewriting](#path-rewriting)).
+4. Move every rewritten worktree directory on the filesystem (one already gone is skipped).
+5. For each workspace:
+   - Back up and load existing workspace state (if any).
    - Skip instances that already exist (by title) to avoid duplicates.
-   - Update worktree paths: `~/.loom/worktrees/{name}` becomes `{workspace_path}/.loom/worktrees/{name}`.
-   - Move the worktree directories on the filesystem.
    - Merge and save to workspace state.
-5. Update global state to contain only unmatched (orphan) instances.
-6. Print a summary of what was migrated.
+6. Back up the global state and rewrite it to contain only unmatched (orphan) instances.
+7. Print a summary of what was migrated.
+
+`--dry-run` stops after printing the plan (step 3), and `--backup=false` skips the `.bak` copies.
 
 ### Path Rewriting
 
-The migration rewrites the `worktree_path` field on each instance:
+The migration rewrites the `worktree_path` field on each instance whose path starts with the global dir, keeping only its last element:
 
 ```
 Before: ~/.loom/worktrees/alice/my_feature_abc123
-After:  /home/alice/repos/myproject/.loom/worktrees/alice/my_feature_abc123
+After:  /home/alice/repos/myproject/.loom/worktrees/my_feature_abc123
 ```
 
 The actual directories are moved on disk via `os.Rename()`.

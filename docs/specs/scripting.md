@@ -6,7 +6,7 @@ The implementation is Lua 5.1 via [`github.com/yuin/gopher-lua`](https://github.
 
 ## Canonical keymap
 
-`script/defaults.lua` is the source of truth for the stock keymap. Every built-in hotkey is declared there as a `cs.bind` call. Reading that file is the fastest way to see exactly what keys do what — the [TUI Keybindings table in CLAUDE.md](../../CLAUDE.md) is a human-friendly summary, not the specification.
+`script/defaults.lua` is the source of truth for the stock keymap. Every built-in hotkey is declared there as a `cs.bind` call. Reading that file is the fastest way to see exactly what keys do what — the [Keyboard Reference in USAGE.md](../../USAGE.md#keyboard-reference) is a human-friendly summary, not the specification.
 
 ## Concepts
 
@@ -31,7 +31,7 @@ type Engine struct {
     cancel        context.CancelFunc              // cancels the LState's context (Shutdown)
     curHost       Host                            // Host active for the current dispatch
     coroutines    map[IntentID]coroutineSlot      // parked coroutines awaiting a resume
-    waitingIn     map[IntentID]string             // the yielding method each parked lifecycle call waits in
+    waitingIn     map[IntentID]waiting            // the yielding method each parked call waits in, and a lifecycle call's instance
     lastEnqueued  IntentID                        // most recent intent id for bare cs.await()
     logs          []LogEntry                      // bounded test capture; real sink is log.For("script")
 }
@@ -162,7 +162,7 @@ Source: `main.go` wires the flag (`noScriptsFlag`) through `app.Run`, `app/app_i
 
 The reservation operates at two layers:
 
-1. **Binding-API layer (global, load time).** `buildReservedKeys()` puts `ctrl+c` and `ctrl+q` in the reserved set passed to `script.NewEngine`. `cs.bind` / `cs.unbind` silently refuse calls for those keys — a user script cannot register a handler for them, period.
+1. **Binding-API layer (global, load time).** `buildReservedKeys()` puts `ctrl+c` and `ctrl+q` in the reserved set passed to `script.NewEngine`. `cs.bind` / `cs.unbind` refuse calls for those keys, logging a warning (`reserved_key_bind_skipped`, `reserved_key_unbind_skipped`) — a user script cannot register a handler for them, period.
 2. **Dispatch layer (default state only).** `state_default.go#handleStateDefaultKey` checks `msg.String() == "ctrl+c"` **before** ever calling `dispatchScript` and returns `tea.Quit` unconditionally. Even if the binding layer were bypassed, the pre-dispatch check still wins in the default state.
 
 Scope caveat: the script engine is only consulted from `stateDefault`. Other states (e.g. `stateQuickInteract`) never call `dispatchScript`, so `ctrl+c` / `ctrl+q` in those states are handled by the state's own widget (the textinput's line editor, the attach overlay's detach handler). That is by design — the hard-reserve prevents a user script from *stealing* those keys from the default state, not from overriding widget behavior in other states.
@@ -294,7 +294,7 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.actions.merge_selected()` | — | | `MergeSessionsIntent` |
 | `cs.actions.new_from_issue()` | — | | `NewFromIssueIntent` |
 
-These open the same flows the keys do; the lifecycle calls on an instance itself (`inst:kill()`, …) are [instance methods](#instance-methods), not `cs.actions`.
+These open the same flows the keys do (`new_instance` accepts `title` but ignores it: the flow opens with an empty title field, `handleScriptIntent`); the lifecycle calls on an instance itself (`inst:kill()`, …) are [instance methods](#instance-methods), not `cs.actions`.
 
 Source of truth: `script/api_actions.go` (primitives + Lua wiring), `script/intent.go` (Intent types).
 
@@ -362,7 +362,7 @@ Wraps `*git.GitWorktree`. Obtained from `inst:worktree()`.
 
 | Collision | Behavior |
 |-----------|----------|
-| Against a reserved key (`ctrl+c`) | Registration skipped, warning logged. `ctrl+c` always means quit. |
+| Against a reserved key (`ctrl+c`, `ctrl+q`) | Registration skipped, warning logged. `ctrl+c` always means quit. |
 | Against a previously loaded binding (default or earlier script) | **Overwrites** silently. This is how user scripts customize defaults. |
 
 This is a behavioral change from the pre-migration spec: `cs.bind` is overwrite-semantics because overriding a default is the common case. If you need to know whether a key is already taken, call `cs.unbind(key)` first (it's a no-op for reserved keys) and then `cs.bind`.
@@ -459,6 +459,9 @@ app/app.go: handleKeyPress
 app/state_default.go: handleStateDefaultKey
      │
      ├── ctrl+c → tea.Quit (hard-reserved, pre-engine)
+     │
+     ├── offline gate, workbench and overview keys (offlineKeyRefused,
+     │   handleWorkbenchKey, overviewKeyAllowed) → handled or dropped
      │
      ├── Esc → dismiss diff / exit scroll mode (state-specific)
      │
