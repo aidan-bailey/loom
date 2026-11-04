@@ -302,7 +302,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
 }
 
 // SessionHead is the context row and the tabs of a session's views (session,
-// conversation, changes): back to the fleet, its title, and the way to
+// conversation, changes, mockup): back to the fleet, its title, and the way to
 // Claude while the session doesn't wait on you (the needs-you box has its
 // own button).
 export function SessionHead({ snap, route, pending }) {

@@ -56,6 +56,14 @@ export function nextInGroup(groups, group, currentId) {
   return list[(at + 1) % list.length];
 }
 
+// opensMockup reports whether the session's row opens its mockup tab: its
+// brainstorm companion's screen changed in the latest turn and no dialog
+// waits on the session view, where it is answered (the daemon's push
+// follows the same rule: opensMockup in internal/web/triggers.go).
+export function opensMockup(s) {
+  return Boolean(s.mockup && s.mockup.fresh && !(s.asks && s.asks.length));
+}
+
 // sessionOf is the session the snapshot lists under id, or undefined.
 export function sessionOf(snap, id) {
   return snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
@@ -149,7 +157,7 @@ function Row({ s, chip, fresh }) {
   if (s.pr) meta.push(html`<span>PR #${s.pr.number} <${PrMark} pr=${s.pr} /></span>`);
   if (chip && !waiting) meta.push(html`<span class="sc-ws">${chip}</span>`);
   return html`
-    <a class="sc-row-s" href=${"#s/" + s.id}>
+    <a class="sc-row-s" href=${"#s/" + s.id + (opensMockup(s) ? "/mockup" : "")}>
       <div class="sc-row-top">
         <span class=${"sc-glyph sc-glyph-" + s.group} aria-hidden="true">${glyphOf(s.group)}</span>
         <span class="sc-row-title">${s.title}</span>
