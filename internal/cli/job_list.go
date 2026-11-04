@@ -65,7 +65,7 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 			waits = j.Waiting
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j.Claim), rounded(elapsed(j, now)), oneLine(waits))
+			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), j.Claim.String(), rounded(elapsed(j, now)), oneLine(waits))
 	}
 	return tw.Flush()
 }
@@ -78,17 +78,6 @@ func ownerText(j core.JobView) string {
 		return fmt.Sprintf("#%d", j.Owner)
 	}
 	return j.OwnerTitle
-}
-
-func claimText(c sched.Claim) string {
-	if c.Exclusive {
-		return "exclusive"
-	}
-	s := fmt.Sprintf("%dc/%dG", c.CPUs, c.MemoryGB)
-	if c.IO {
-		s += " io"
-	}
-	return s
 }
 
 // elapsed is how long a job has waited (queued), has run (running), or ran
