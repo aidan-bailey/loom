@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 
@@ -58,6 +59,7 @@ func (m *Model) admitJobs() {
 	}
 	now := time.Now()
 	q.lastPass = now
+	m.reprobeHeld()
 	policy, paused := m.refreshPolicy()
 	waiting := map[sched.JobID]string{}
 	var start []sched.JobID
@@ -68,7 +70,20 @@ func (m *Model) admitJobs() {
 			}
 		}
 	} else {
-		dec := sched.Admit(q.store.Jobs, policy, now)
+		// A queued record whose lock could not be tested stays out of the
+		// walk (a shim may be behind it, and it would run the command again
+		// after it): it claims nothing and starts nothing.
+		jobs := q.store.Jobs
+		if len(q.unprobed) > 0 {
+			jobs = slices.DeleteFunc(slices.Clone(jobs), func(r sched.Record) bool {
+				err, held := q.unprobed[r.ID]
+				if held && r.State == sched.Queued {
+					waiting[r.ID] = "its lock could not be tested: " + err.Error()
+				}
+				return held
+			})
+		}
+		dec := sched.Admit(jobs, policy, now)
 		maps.Copy(waiting, dec.Waiting)
 		start = dec.Start
 	}

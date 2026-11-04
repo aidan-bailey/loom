@@ -393,6 +393,15 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		if ob.signalErr != nil {
 			log.For("core").Warn("queue.signal_failed", "job", int64(ob.id), "err", ob.signalErr)
 		}
+		if ob.queued {
+			// Boot's probe, and reprobeHeld's: a failed one holds the record
+			// out of admission, any answer releases it.
+			if ob.err != nil {
+				q.unprobed[ob.id] = ob.err
+			} else {
+				delete(q.unprobed, ob.id)
+			}
+		}
 		switch {
 		case ob.err != nil:
 			log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)

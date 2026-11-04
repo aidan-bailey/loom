@@ -1155,3 +1155,139 @@ func TestJobQueue_SetSchedulerCapsOnAGarbledConfigRefusesAndLeavesIt(t *testing.
 	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8}))
 	assert.Equal(t, 8, config.LoadConfigFrom(dir).GetScheduler().CPUs)
 }
+
+// wqUnreadableLock makes job id's lock file fail the lock test (an open that
+// is denied) and returns the undo. The test is skipped as root, which reads
+// everything.
+func wqUnreadableLock(t *testing.T, m *Model, id sched.JobID) (restore func()) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root opens an unreadable file")
+	}
+	path := filepath.Join(m.queue.jobDir(id), sched.LockFile)
+	if _, err := os.Stat(path); err != nil {
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+	}
+	require.NoError(t, os.Chmod(path, 0))
+	_, err := sched.Probe(m.queue.jobDir(id))
+	require.Error(t, err, "the lock test must fail")
+	return func() { require.NoError(t, os.Chmod(path, 0o600)) }
+}
+
+// A queued record whose boot probe failed is not admitted: a shim may be
+// behind it, and a second would run the command again after it (spec §5.6).
+// It waits with the reason; once the probe answers, it is treated as boot
+// adoption would have treated it.
+func TestJobQueue_AQueuedRecordWhoseLockCouldNotBeTestedIsNotStartedUntilItCan(t *testing.T) {
+	t.Run("a held lock is adopted as running", func(t *testing.T) {
+		dir := t.TempDir()
+		gate := filepath.Join(t.TempDir(), "go")
+		old := wqModelAt(t, dir)
+		id := wqLaunch(t, old, wqGated(gate, 0)...)
+		old.queue.store.Jobs[0].State, old.queue.store.Jobs[0].PID, old.queue.store.Jobs[0].Started = sched.Queued, 0, time.Time{}
+		require.NoError(t, old.saveQueue())
+		restore := wqUnreadableLock(t, old, id)
+
+		m := wqRestart(t, dir)
+
+		assert.Equal(t, sched.Queued, wqRecord(t, m, id).State, "not adopted, not started")
+		assert.Contains(t, m.queue.waiting[id], "its lock could not be tested: ")
+		assert.Empty(t, m.queue.starting)
+		assert.Empty(t, m.Drain().Jobs, "no start job: a second shim would run the command again")
+		m.queue.lastPass = time.Now().Add(-queueInterval)
+		m.tickQueue()
+		assert.Empty(t, m.Drain().Jobs, "and the tick starts none either")
+
+		restore()
+		m.queue.lastPass = time.Now().Add(-queueInterval)
+		m.tickQueue()
+
+		got := wqRecord(t, m, id)
+		assert.Equal(t, sched.Running, got.State, "adopted once the probe answers")
+		assert.Greater(t, got.PID, 1)
+		assert.NotContains(t, m.queue.waiting, id)
+		assert.Empty(t, m.Drain().Jobs, "and never started twice")
+		require.NoError(t, os.WriteFile(gate, nil, 0o600))
+		assert.Equal(t, sched.Done, wqSettle(t, m, id).State)
+	})
+	t.Run("a free lock with an exit.json is settled from it", func(t *testing.T) {
+		dir := t.TempDir()
+		old := wqModelAt(t, dir)
+		id := wqLaunch(t, old, "sh", "-c", "exit 3")
+		wqShimDone(t, old, id)
+		old.queue.store.Jobs[0].State, old.queue.store.Jobs[0].PID, old.queue.store.Jobs[0].Started = sched.Queued, 0, time.Time{}
+		require.NoError(t, old.saveQueue())
+		restore := wqUnreadableLock(t, old, id)
+
+		m := wqRestart(t, dir)
+
+		assert.Equal(t, sched.Queued, wqRecord(t, m, id).State)
+		assert.Contains(t, m.queue.waiting[id], "its lock could not be tested: ")
+		assert.Empty(t, m.Drain().Jobs)
+
+		restore()
+		m.admitJobs()
+
+		got := wqRecord(t, m, id)
+		assert.Equal(t, sched.Failed, got.State)
+		require.NotNil(t, got.Exit)
+		assert.Equal(t, 3, got.Exit.Code)
+		assert.Empty(t, m.Drain().Jobs, "it is never started")
+	})
+	t.Run("a free lock without a result is released to the queue and admitted", func(t *testing.T) {
+		dir := t.TempDir()
+		old := wqModelAt(t, dir)
+		wqSeed(t, old, wqQueuedRecord(t, 1))
+		require.NoError(t, old.saveQueue())
+		restore := wqUnreadableLock(t, old, 1)
+
+		m := wqRestart(t, dir)
+
+		assert.Equal(t, sched.Queued, wqRecord(t, m, 1).State, "not started on an unanswered probe")
+		assert.Contains(t, m.queue.waiting[1], "its lock could not be tested: ")
+		assert.Empty(t, m.Drain().Jobs)
+
+		restore()
+		m.admitJobs()
+
+		assert.Equal(t, sched.Running, wqRecord(t, m, 1).State, "an ordinary queued job again")
+		assert.True(t, m.queue.starting[1])
+		assert.Empty(t, m.queue.unprobed)
+		jobs := m.Drain().Jobs
+		require.Len(t, jobs, 1, "with one start job")
+		m.Deliver(jobs[0]())
+	})
+	t.Run("a record that is cancelled meanwhile leaves the set", func(t *testing.T) {
+		dir := t.TempDir()
+		old := wqModelAt(t, dir)
+		wqSeed(t, old, wqQueuedRecord(t, 1))
+		require.NoError(t, old.saveQueue())
+		restore := wqUnreadableLock(t, old, 1)
+		defer restore()
+
+		m := wqRestart(t, dir)
+		require.Contains(t, m.queue.unprobed, sched.JobID(1))
+		require.NoError(t, m.cancelJob(1, "by the test"))
+		m.admitJobs()
+
+		assert.Empty(t, m.queue.unprobed)
+		assert.Equal(t, sched.Cancelled, wqRecord(t, m, 1).State)
+	})
+}
+
+// The held record does not stand in the way of the others: they are admitted
+// as usual, and it counts against nothing.
+func TestJobQueue_ARecordWhoseLockCouldNotBeTestedDoesNotBlockTheOthers(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	wqSeed(t, old, wqQueuedRecord(t, 1))
+	wqSeed(t, old, wqQueuedRecord(t, 2))
+	require.NoError(t, old.saveQueue())
+	restore := wqUnreadableLock(t, old, 1)
+	defer restore()
+
+	m := wqRestart(t, dir)
+
+	assert.Equal(t, sched.Queued, wqRecord(t, m, 1).State)
+	assert.Equal(t, sched.Running, wqRecord(t, m, 2).State)
+}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -104,6 +105,14 @@ type queueState struct {
 	// sampleFailing is set while the last sample failed (ps), so a run of
 	// failures is logged once.
 	sampleFailing bool
+	// unprobed holds the queued records whose lock test failed, with its
+	// error: a shim may be behind one, so admission leaves it out and
+	// reprobeHeld tests it again before every pass, until the lock answers.
+	// In memory only.
+	unprobed map[sched.JobID]error
+	// reprobing is set while reprobeHeld runs, so the pass its settles bring
+	// does not test again.
+	reprobing bool
 }
 
 func newQueueState() *queueState {
@@ -113,6 +122,7 @@ func newQueueState() *queueState {
 		starting: map[sched.JobID]bool{},
 		silent:   map[sched.JobID]silentShim{},
 		cpuMarks: map[sched.JobID]cpuMark{},
+		unprobed: map[sched.JobID]error{},
 	}
 }
 
@@ -338,6 +348,35 @@ func (m *Model) markPendingNotices() {
 		q.moved()
 		m.saveQueueQuiet("boot")
 	}
+}
+
+// reprobeHeld tests again the lock of each queued record whose last test
+// failed (queueState.unprobed) and applies the answer as boot adoption does,
+// through the same pass: a held lock is adopted as running, a free one with an
+// exit.json settles from it, a free one without releases the record to the
+// queue as an ordinary job. The test does not block (sched.Probe), so it runs
+// here, on the loop. A record whose test fails again stays held, and
+// admitJobs leaves it out of its walk.
+func (m *Model) reprobeHeld() {
+	q := m.queue
+	if q.reprobing {
+		return
+	}
+	pass := queuePass{dir: q.dir, now: time.Now(), escalate: q.escalateAfter()}
+	for id := range q.unprobed {
+		if i := q.index(id); i < 0 || q.store.Jobs[i].State != sched.Queued {
+			delete(q.unprobed, id)
+			continue
+		}
+		pass.jobs = append(pass.jobs, passJob{id: id, queued: true})
+	}
+	if len(pass.jobs) == 0 {
+		return
+	}
+	slices.SortFunc(pass.jobs, func(a, b passJob) int { return cmp.Compare(a.id, b.id) })
+	q.reprobing = true
+	defer func() { q.reprobing = false }()
+	m.deliverQueuePass(runQueuePass(pass))
 }
 
 // adoptJobs settles what ran while no daemon was up (spec §5.6): each running
