@@ -324,7 +324,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `Enter` | Open the session workbench for the selected session |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |
+| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences; Build Sweep, which applies to all workspaces) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
@@ -1077,7 +1077,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
-| `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off). See [Build Sweep](#build-sweep) |
+| `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off). Set it in Settings (`S`) → Build Sweep. See [Build Sweep](#build-sweep) |
 
 ### Example config.json
 
@@ -1179,7 +1179,7 @@ Claude Code keeps each session's conversation in `~/.claude/projects/<the sessio
 
 ### Build Sweep
 
-Cargo builds into each session's own `<worktree>/target/` and never deletes a test binary it has replaced: a new feature set, profile or flag writes a new copy under a new hash. Over a few days of agents running `cargo test` that reaches tens of gigabytes per session. With `build_sweep_after_hours` set in the global `~/.loom/config.json`, the daemon deletes those copies once they have gone unused that long:
+Cargo builds into each session's own `<worktree>/target/` and never deletes a test binary it has replaced: a new feature set, profile or flag writes a new copy under a new hash. Over a few days of agents running `cargo test` that reaches tens of gigabytes per session. Set a threshold in Settings (`S`) → Build Sweep, a whole number of hours (0 turns it off), and the daemon deletes those copies once they have gone unused that long. The row sets one threshold for every workspace, whichever is focused; it is `build_sweep_after_hours` in the global `~/.loom/config.json`, which you can also edit by hand:
 
 ```json
 { "build_sweep_after_hours": 12 }

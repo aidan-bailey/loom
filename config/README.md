@@ -12,8 +12,8 @@ Loom's on-disk configuration, app state, profile catalog and workspace registry,
 
 ## Files
 
-- `settings.go` — `Settings`, the plain struct of every persisted field and its getters, and `Clone`, `FromSettings`, `Snapshot`, `ReplaceSettings`.
-- `config.go` — `Config` (embeds `Settings` beside the mutex that guards a shared `Config`; JSON flattens the embedded struct), `Mutate`, the locked getters, `DefaultConfig`, `LoadConfigFrom`, `SaveConfigTo` (marshals under the read lock), and the cycle lists `ClaudePermissionModes`, `ClaudeModels` (`ClaudeModel`: an alias and its `Supports1M`), `ClaudeEfforts`.
+- `settings.go` — `Settings`, the plain struct of every persisted field and its getters, and `Clone`, `FromSettings`, `Snapshot`, `ReplaceSettings`; `ValidateBuildSweepAfterHours` and `MaxBuildSweepAfterHours`, the build sweep threshold's range.
+- `config.go` — `Config` (embeds `Settings` beside the mutex that guards a shared `Config`; JSON flattens the embedded struct), `Mutate`, the locked getters, `DefaultConfig`, `LoadConfigFrom`, `ReadConfigFrom` (strict: a file that can't be read or parsed is an error, never quarantined), `SaveConfigTo` (marshals under the read lock), and the cycle lists `ClaudePermissionModes`, `ClaudeModels` (`ClaudeModel`: an alias and its `Supports1M`), `ClaudeEfforts`.
 - `state.go` — `State` (with its own mutex), `UIPrefs`, `LoadStateFrom`, `SaveStateTo`, and the interfaces `InstanceStorage`, `AppState`, `StateManager`. A save is skipped when nothing changed.
 - `workspace.go` — `WorkspaceRegistry` (no mutex: its writes go through the model), `WorkspaceContext`, `GetGlobalConfigDir`.
 - `atomic.go`, `quarantine.go` — `AtomicWriteFile` (temp file and rename) and the quarantine that moves a file that fails to parse aside rather than overwrite it.

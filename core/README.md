@@ -24,7 +24,7 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `github.go` | the GitHub poller (`maybeGHQuery`, `ghPollJob`, `deliverGH`, `openedRepos`, `ghRepoKey`, `baseBranchByRepo`), `ExpediteGitHub`, `WatchGitHub` |
 | `accounts.go`, `usage.go` | the account registry, auth, sync and reload (`InitAccounts`, `ReloadAccounts`, `maybeReloadAccounts`, `publishAccounts`, `accountsRefreshJob`), usage probes (`maybeUsageProbe`, `deliverUsage`) |
 | `claude_tmp.go` | `requestClaudeTmpSweep`, `maybeClaudeTmpSweep` |
-| `build_sweep.go` | `maybeBuildSweep`, `SweepBuilds`, `buildSweepTargets`, `buildSweepJob`, `deliverBuildSweep` |
+| `build_sweep.go` | `maybeBuildSweep`, `SweepBuilds`, `buildSweepTargets`, `buildSweepJob`, `deliverBuildSweep`, `BuildSweep`, `ConfigureBuildSweep` |
 | `settings.go` | `SaveSettings`, `SetUIPrefs`, `SetHelpScreensSeen` |
 | `web.go`, `web_store.go` | the web settings and devices: `WebView`, `WebDevice`, `NotifySettings`, `Pairing`, `PushSubscription`, `PushState`, the validators (`ValidateWebListen`, `ValidateWebOrigin`, `ValidateDeviceName`, `NormalizePairingCode`), the requests `ConfigureWeb`, `PairDevice` and `RevokeDevice`, and `web.json` (read, atomic write, the VAPID key) |
 | `web_host.go`, `loop_web.go` | `core.WebHost`, the web layer's host (never on the wire), and `ValidatePushSubscription`; `*Loop` implements it |
