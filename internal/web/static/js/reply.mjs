@@ -55,7 +55,7 @@ export function ReplyBox({ snap, off, run, id }) {
       : null}
     <div class="sc-reply-row">
       <textarea
-        rows="2"
+        rows="1"
         placeholder="reply, or /command…"
         aria-label="Reply"
         value=${text}
