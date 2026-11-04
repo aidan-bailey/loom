@@ -249,7 +249,7 @@ If the follower is interrupted (SIGINT, SIGTERM or SIGHUP, for example a Bash ti
   - `enter` opens the full log in a scrolling pager (`esc` back);
   - `x` cancels the selected job after a confirm (`Cancel job 14 "polyoxide tests"?`);
   - `t` moves a queued job to the front;
-  - `o` focuses the owner's session in focus mode, opening its workspace's tab if it isn't open;
+  - `o` focuses the owner's session in focus mode, opening its workspace's tab if it isn't open. An owner in the global workspace that no open slot shows is left alone: the global workspace is never a tab, and entering global mode would close every tab. `o` then changes nothing and says on the info line that the session is in the global workspace, which no open tab shows (the owner, 2026-11-04);
   - `e` opens the caps form.
 - Offline (daemon lost), the view shows the last replica, and its actions are refused like every model key.
 
