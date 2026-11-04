@@ -208,7 +208,8 @@ The follower reads the job from its replica and its output from `output.log` on 
 Its exit code is:
 - the job's exit code;
 - 128 + N for a job killed by signal N;
-- 125 for a job that was lost, could not start, or was cancelled, with a stderr line saying which.
+- 125 for a job that was lost, could not start, or was cancelled, with a stderr line saying which;
+- 125 also when the follower itself can't go on: it lost the daemon, or the daemon doesn't know the job. Its stderr line says so, and, when the job may still be running, how to follow it again (`loom: lost the daemon; job 14 may still be running (loom job wait 14 follows it again)`). Exit 1 is left to the job's own code (the owner, 2026-11-04).
 
 If the follower is interrupted (SIGINT, SIGTERM or SIGHUP, for example a Bash timeout), it sends `NotifyJob` when the job has an owner and hasn't ended, prints `loom: job 14 continues; a message will bring its result (loom job wait 14 follows it again)`, and exits 130, 143 or 129. The job itself is never cancelled by a follower's end.
 
