@@ -68,6 +68,11 @@ func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// mockupCSP is the policy the web layer serves a mockup under
+// (internal/web/mockup.go's mockupCSP, which TestWebshotFixture_IsTheJSONTheLayerServes
+// holds this copy to), so a screenshot shows the frame a phone would.
+const mockupCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src data: https:; font-src data: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+
 // apiRoutes maps each GET route the screens read on load to its fixture: a
 // JSON one with its relative times filled, or the mockup's page as it is.
 var apiRoutes = []struct {
@@ -92,6 +97,7 @@ func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Header().Set("Content-Security-Policy", mockupCSP)
 					_, _ = w.Write(page)
 					return
 				}
