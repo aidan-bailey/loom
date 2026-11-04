@@ -840,6 +840,11 @@ func TestWorkDefaults_AnInvalidBlockKeepsTheDefaultsThatDoNotDependOnTheFault(t 
 	want.ClaimCPUs = 0 // the claim follows the cpus cap, which is the fault
 	assert.Equal(t, want, got, "a fault in cpus takes the claim's cpu default, which follows it, and nothing else")
 
+	got = workDefaults(host, config.SchedulerSettings{MemoryGB: 70000})
+	want = normal
+	want.ClaimMemoryGB = 0 // the claim's memory follows memory_gb, which is the fault
+	assert.Equal(t, want, got, "a fault in memory_gb takes the claim's memory default, which follows it, and not its cores")
+
 	got = workDefaults(host, config.SchedulerSettings{DefaultClaim: &config.ClaimSettings{CPUs: 5000, MemoryGB: 3}})
 	assert.Equal(t, normal, got, "a bad claim half hides neither a cap's default nor the other half's")
 }

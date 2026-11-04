@@ -83,12 +83,12 @@ func handleStateWorkCapsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // would otherwise take every other field's default with it. So cpus, io_jobs,
 // starve and keep resolve against a block holding only a placeholder memory
 // (Resolve refuses a block with no memory on a host whose RAM can't be read);
-// memory_gb against an empty one; and each half of the default claim against
-// the one configured cap it follows (cpus, or memory_gb), the other half at its
-// default. A field whose
-// resolve fails has no default and stays 0: a host whose RAM could not be read
-// with no memory_gb set has no memory default, nor a claim's memory, while
-// the fields that do not depend on memory keep theirs.
+// memory_gb against an empty one; the default claim's cores against the
+// configured cpus and the placeholder memory; and its memory against the
+// configured memory_gb alone. A field whose resolve fails has no default and
+// stays 0: a host whose RAM could not be read with no memory_gb set has no
+// memory default, nor a claim's memory, while the fields that do not depend
+// on memory keep theirs.
 func workDefaults(h sched.Host, s config.SchedulerSettings) overlay.WorkCapsValues {
 	// The placeholder only has to pass the claim's bound; no field read
 	// through it is a memory one.
@@ -102,15 +102,11 @@ func workDefaults(h sched.Host, s config.SchedulerSettings) overlay.WorkCapsValu
 		return field(p)
 	}
 	independent := config.SchedulerSettings{MemoryGB: placeholder}
-	claimMem := s.MemoryGB
-	if claimMem == 0 {
-		claimMem = placeholder
-	}
 	return overlay.WorkCapsValues{
 		CPUs:          of(independent, func(p sched.Policy) int { return p.Caps.CPUs }),
 		MemoryGB:      of(config.SchedulerSettings{}, func(p sched.Policy) int { return p.Caps.MemoryGB }),
 		IOJobs:        of(independent, func(p sched.Policy) int { return p.Caps.IOJobs }),
-		ClaimCPUs:     of(config.SchedulerSettings{CPUs: s.CPUs, MemoryGB: claimMem}, func(p sched.Policy) int { return p.DefaultClaim.CPUs }),
+		ClaimCPUs:     of(config.SchedulerSettings{CPUs: s.CPUs, MemoryGB: placeholder}, func(p sched.Policy) int { return p.DefaultClaim.CPUs }),
 		ClaimMemoryGB: of(config.SchedulerSettings{MemoryGB: s.MemoryGB}, func(p sched.Policy) int { return p.DefaultClaim.MemoryGB }),
 		StarveMinutes: of(independent, func(p sched.Policy) int { return int(p.StarveAfter / time.Minute) }),
 		KeepFinished:  of(independent, func(p sched.Policy) int { return p.KeepFinished }),
