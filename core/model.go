@@ -489,6 +489,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverBuildSweep(msg)
 	case jobNoticeBuilt:
 		m.deliverJobNotice(msg)
+	case queuePassResult:
+		m.deliverQueuePass(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:
@@ -501,9 +503,11 @@ func (m *Model) Deliver(msg any) {
 }
 
 // Begin starts the model's first background jobs, each when due: an
-// accounts refresh and a usage probe. Its loop runs it when it starts
+// accounts refresh, a usage probe and a look at the work queue's running jobs
+// (the shims a restarted daemon adopted). Its loop runs it when it starts
 // serving (Loop.Begin).
 func (m *Model) Begin() {
 	m.maybeAccountsRefresh()
 	m.maybeUsageProbe()
+	m.maybeQueue()
 }

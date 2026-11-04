@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
@@ -225,6 +226,11 @@ func (m *Model) saveQueue() error {
 		return fmt.Errorf("write jobs.json: %w", err)
 	}
 	q.saveFailed = false
+	if len(q.doomed) > 0 {
+		// jobs.json no longer lists these jobs: now their directories may go.
+		m.spawnBackground(removeJobDirsJob(q.dir, q.doomed))
+		q.doomed = nil
+	}
 	return nil
 }
 
@@ -247,4 +253,51 @@ func (m *Model) saveQueueQuiet(after string) bool {
 		m.notifyErr(fmt.Errorf("work queue: %w; the change is kept in memory and written with the next save", err))
 	}
 	return false
+}
+
+// retainFinished drops the oldest finished jobs beyond keep_finished from the
+// store, oldest end first (spec §5.9). Their directories are queued in doomed
+// and removed once a write of the shorter jobs.json succeeds (saveQueue).
+// While admission is paused the limit is unknown (the policy is zero) and
+// nothing is dropped. The counter never goes back.
+func (m *Model) retainFinished() {
+	q := m.queue
+	keep := q.policy.KeepFinished
+	if keep <= 0 {
+		return
+	}
+	var finished []int
+	for i := range q.store.Jobs {
+		if q.store.Jobs[i].State.Finished() {
+			finished = append(finished, i)
+		}
+	}
+	if len(finished) <= keep {
+		return
+	}
+	slices.SortStableFunc(finished, func(a, b int) int {
+		return q.store.Jobs[a].Ended.Compare(q.store.Jobs[b].Ended)
+	})
+	drop := map[sched.JobID]bool{}
+	for _, i := range finished[:len(finished)-keep] {
+		drop[q.store.Jobs[i].ID] = true
+		q.doomed = append(q.doomed, q.store.Jobs[i].ID)
+	}
+	q.store.Jobs = slices.DeleteFunc(q.store.Jobs, func(r sched.Record) bool { return drop[r.ID] })
+	q.moved()
+}
+
+// removeJobDirsJob removes the directories of dropped jobs off the loop, each
+// through sched.RemoveJobDir, the one removal: it builds the path from the
+// job's ID, never from a path read from a file.
+func removeJobDirsJob(dir string, ids []sched.JobID) Job {
+	ids = slices.Clone(ids)
+	return func() any {
+		for _, id := range ids {
+			if err := sched.RemoveJobDir(dir, id); err != nil {
+				log.For("core").Warn("queue.remove_job_dir_failed", "job", int64(id), "err", err)
+			}
+		}
+		return nil
+	}
 }

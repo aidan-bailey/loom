@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 
@@ -257,6 +258,15 @@ func TestProductionGatedJobsYieldOneResult(t *testing.T) {
 		m := sweepModel(t, sweepInst(t, "idle", session.Paused, false))
 		result := inner(t, m, m.maybeBuildSweep(), gateBuildSweep)
 		assert.IsType(t, buildSweepResult{}, result)
+	})
+
+	t.Run("queue", func(t *testing.T) {
+		m := wqModel(t)
+		rec := wqEnded(1, 0)
+		rec.State, rec.Exit, rec.Ended = sched.Running, nil, time.Time{}
+		wqSeed(t, m, rec)
+		result := inner(t, m, m.maybeQueue(), gateQueue)
+		assert.IsType(t, queuePassResult{}, result)
 	})
 }
 

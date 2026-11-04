@@ -124,6 +124,11 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// runs.
 	m.maybeBuildSweep()
 
+	// The work queue's running jobs: their locks, usage and ends, on the
+	// queue's own 3-second cadence (see maybeQueue). Nothing when no job
+	// runs and no failed start's shim is owed a kill, or a pass is in flight.
+	m.maybeQueue()
+
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()

@@ -190,5 +190,7 @@ func (m *Model) redispatch(kind gateKind) {
 		m.maybeAccountsRefresh()
 	case gateClaudeTmp:
 		m.maybeClaudeTmpSweep()
+	case gateQueue:
+		m.maybeQueue()
 	}
 }
