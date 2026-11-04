@@ -194,7 +194,7 @@ loom job cancel ID
 - `logs` prints `output.log` (all of it, or the last N lines). With `-f` it follows until the job ends.
 - `list` prints the running and queued jobs, and with `--all` the finished ones kept, as a table: ID, state, description, owner, claim, and wait time or duration. Waiting jobs show why they wait (§5.2).
 - `cancel` sends `CancelJob`.
-- A refused submission (over a cap, admission paused, `jobs.json` failed to load) prints the refusal and exits 1.
+- A refused submission (over a cap, admission paused, `jobs.json` failed to load) prints the refusal and exits 1 from `submit`, or 125 from `run` (§6.3).
 
 ### 6.2 Owner
 
@@ -211,7 +211,10 @@ Its exit code is:
 - the job's exit code;
 - 128 + N for a job killed by signal N;
 - 125 for a job that was lost, could not start, or was cancelled, with a stderr line saying which;
-- 125 also when the follower itself can't go on: it lost the daemon, or the daemon doesn't know the job. Its stderr line says so, and, when the job may still be running, how to follow it again (`loom: lost the daemon; job 14 may still be running (loom job wait 14 follows it again)`). Exit 1 is left to the job's own code (the owner, 2026-11-04).
+- 125 also when the follower itself can't go on: it lost the daemon, the daemon doesn't know the job or never reported it, or `output.log` can't be read. Its stderr line says so, and, when the job may still be running, how to follow it again (`loom: lost the daemon; job 14 may still be running (loom job wait 14 follows it again)`);
+- 125 also when `run` submits nothing: a bad submission, no daemon or a failed join, the daemon lost before the submit's reply, or a refused submit. Its stderr line says that nothing was submitted.
+
+Exit 1 is left to the job's own code (the owner, 2026-11-04). Only cobra's usage errors, rejected before the command does anything, exit 1 as they do for every loom command. The help for `run` and `wait` lists every exit code, the interrupts' 130, 143 and 129 included.
 
 If the follower is interrupted (SIGINT, SIGTERM or SIGHUP, for example a Bash timeout), it sends `NotifyJob` when the job has an owner and hasn't ended, prints `loom: job 14 continues; a message will bring its result (loom job wait 14 follows it again)`, and exits 130, 143 or 129. The job itself is never cancelled by a follower's end.
 
