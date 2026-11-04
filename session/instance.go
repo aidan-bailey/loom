@@ -1369,8 +1369,12 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 
 	_ = i.TransitionTo(Paused)
 	if saveState != nil {
+		// The agent is stopped and its files archived: the pause has
+		// happened. A failed save now is the user's to hear about, not a
+		// failure to revert, which would show a dead agent as Running. The
+		// record on disk still reads Loading, which reconcile marks Paused.
 		if err := saveState(); err != nil {
-			return fmt.Errorf("pause checkpoint save: %w", err)
+			return NewNotice(fmt.Errorf("paused %s, but could not save it: %w", i.Title, err))
 		}
 	}
 	return nil

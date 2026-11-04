@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +122,35 @@ func TestPause_AFailedPauseRevertsToTheStatusItHad(t *testing.T) {
 	assert.Equal(t, ReqID(6), rs[0].Req)
 	assert.Error(t, rs[0].Err)
 	assert.Equal(t, session.Ready, inst.GetStatus(), "reverted to the status it had, not to Loading")
+}
+
+// TestPause_AFailedFinalSaveFinishesThePause: Instance.Pause reports a
+// final save that failed after the agent was stopped as a Notice. The
+// pause is done: the reply carries no error, the session stays Paused (a
+// revert showed a dead agent as Running and gave the TUI a client for it),
+// and the save's failure is shown.
+func TestPause_AFailedFinalSaveFinishesThePause(t *testing.T) {
+	rec := &recordingInstanceStorage{failOn: 2, failErr: errors.New("no space left on device")}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	ws := NewWorkspace(WorkspaceParts{Storage: storage})
+	inst := startedInst(t, "p", "claude")
+	ws.add(inst)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+
+	m.Pause(m.idOf(inst), 6)
+	out := run(m, m.Drain())
+
+	rs := replies(out)
+	require.Len(t, rs, 1)
+	assert.NoError(t, rs[0].Err)
+	assert.Equal(t, session.Paused, inst.GetStatus())
+	assert.NotContains(t, out.Events, Event(Reactivated{ID: m.idOf(inst)}))
+	assert.True(t, slices.ContainsFunc(out.Events, func(e Event) bool {
+		n, ok := e.(Notice)
+		return ok && n.Err != nil && strings.Contains(n.Err.Error(), "no space left on device")
+	}), "the failed save is shown")
 }
 
 // TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes: Resume moves the

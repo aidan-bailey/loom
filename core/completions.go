@@ -69,9 +69,11 @@ type KillResult struct {
 	Notice   error
 }
 
-// PauseResult is a finished pause (Pause).
+// PauseResult is a finished pause (Pause). Notice is what the pause could
+// not finish but the user must see (a final save that failed).
 type PauseResult struct {
-	Title string
+	Title  string
+	Notice error
 }
 
 // OpFailed is a kill, discard, pause or resume that failed: the instance
@@ -258,8 +260,10 @@ func (m *Model) deliverKill(r KillResult) {
 	m.emit(ClientsStale{})
 }
 
-// deliverPause finishes a pause; Pause already killed the session and saved.
-func (m *Model) deliverPause(PauseResult) {
+// deliverPause finishes a pause; Pause already killed the session and saved,
+// or reported the save it could not make (Notice).
+func (m *Model) deliverPause(r PauseResult) {
+	m.notifyErr(r.Notice)
 	m.emit(InstancesChanged{})
 	m.emit(ClientsStale{})
 }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,31 @@ func TestInstance_PauseKeepsTheWorktree(t *testing.T) {
 	launches := srv.launchArgs()
 	require.Len(t, launches, 1, "resume relaunches the agent")
 	assert.Equal(t, dir, argAfter(launches[0], "-c"), "in the kept worktree")
+}
+
+// TestPause_AFailedFinalSaveIsANotice: once the agent is stopped and its
+// files archived, the pause has happened; a final save that fails then
+// (disk full, a transient I/O error) is something to tell the user, not a
+// failed pause. As a failure, core reverted the row to Running over a dead
+// agent and the TUI attached a client to it.
+func TestPause_AFailedFinalSaveIsANotice(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	require.NoError(t, inst.TransitionTo(Loading), "as core.Model.Pause does")
+	saves := 0
+	save := func() error {
+		saves++
+		if saves == 2 {
+			return errors.New("no space left on device")
+		}
+		return nil
+	}
+
+	err := inst.Pause(save)
+
+	n, ok := OnlyNotice(err)
+	require.True(t, ok, "the pause happened, with something to report: %v", err)
+	assert.Contains(t, n.Error(), "no space left on device")
+	assert.Equal(t, Paused, inst.GetStatus())
 }
 
 // TestPause_SavesLoadingBeforeItStopsTheAgent: with the worktree kept, a

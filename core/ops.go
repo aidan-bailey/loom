@@ -167,6 +167,10 @@ func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	saveFunc := m.saveSnapshot(ws)
 	return func() any {
 		if err := selected.Pause(saveFunc); err != nil {
+			// A Notice alone: the agent is stopped and the pause done.
+			if n, only := session.OnlyNotice(err); only {
+				return PauseResult{Title: pauseTitle, Notice: n}
+			}
 			return OpFailed{Instance: selected, Title: pauseTitle, Op: "pause", Previous: previousStatus, Err: err}
 		}
 		return PauseResult{Title: pauseTitle}

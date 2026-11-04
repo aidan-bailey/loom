@@ -97,6 +97,8 @@ func outcome(result any) (err, notice error) {
 		return r.Err, nil
 	case KillResult:
 		return nil, r.Notice
+	case PauseResult:
+		return nil, r.Notice
 	case ResumeResult:
 		return nil, r.Notice
 	case RecoverResult:
@@ -293,8 +295,8 @@ func (m *Model) Kill(id InstanceID, req ReqID) {
 
 // Pause pauses the session id: it moves to Loading at once (a refused
 // transition is logged and the pause runs anyway, as the TUI's path always
-// did), then the job stashes, kills the session and removes the worktree
-// (pauseInst). pauseInst is called before the transition, as the TUI's
+// did), then the job stops the agent and keeps its worktree (pauseInst,
+// Instance.Pause). pauseInst is called before the transition, as the TUI's
 // path does, so a failed pause reverts to the status the session had, not
 // to Loading. Refused for a workspace terminal and a busy session
 // (precondition).
