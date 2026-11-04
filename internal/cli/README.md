@@ -11,7 +11,9 @@ The `loom workspace`, `loom account`, `loom session`, `loom web` and `loom job` 
 | `session.go` | `SessionCmd` (built by `newSessionCmd`) and `list`, `new`, `kill`, `pause`, `resume`; `findSession`, `client.launchOptions`, `sessionJSON` (the `--json` row) |
 | `account.go` | `AccountCmd` and `add`, `login`, `list`, `use`, `sync`, `remove`; the environment guards and credential warnings |
 | `web.go` | `WebCmd` (built by `newWebCmd`) and `enable`, `disable`, `pair`, `devices`, `revoke`, `status`; `client.awaitServing`, `servesAlready`, `webSettled`, `sameAddr`, `webDeviceJSON` (the `devices --json` row), `webWait` |
-| `job.go` | `JobCmd` (built by `newJobCmd`) and `submit`, `run`, `wait`, `logs`, `list`, `cancel`; `claimFlags` (`submission`: the argv, directory, environment and `$LOOM_LAUNCH` a job is sent with), `client.submitJob`, `client.awaitJob`, `jobFollower` (the follower of `run`, `wait` and `logs -f`), `jobOutcome` (a job's last line and exit code), `ExitError` (a command's exit code, which `main.go` honours), `interruptible` and `notifySignals` (the interrupt), `tailOffset` |
+| `job.go` | `JobCmd` (built by `newJobCmd`) and `submit`, `cancel`; `claimFlags` (`submission`: the argv, directory, environment and `$LOOM_LAUNCH` a job is sent with), `client.submitJob`, `client.awaitJob`, `ExitError` (a command's exit code, which `main.go` honours), the helpers the other files share |
+| `job_follow.go` | `run`, `wait`, `logs`; `jobFollower` (the follower of `run`, `wait` and `logs -f`), `jobOutcome` (a job's last line and exit code), `interruptible` and `notifySignals` (the interrupt), `tailOffset` |
+| `job_list.go` | `list` and `writeJobList` |
 | `job_unix.go`, `job_windows.go` | `signalExit` (the name of the signal that killed a job to the exit code 128 + its number, through `unix.SignalNum`, or the n of a `SIG<n>` name; the Windows stub maps none) |
 | `reset.go` | `Reset`, the client half of `loom reset` while a daemon runs |
 
