@@ -153,3 +153,47 @@ func TestCheckClaim(t *testing.T) {
 		})
 	}
 }
+
+// TestClaim_ExceedsAgreesWithCheckClaim pins that the over-cap test is written
+// once: Admit's skip and the submission check cannot disagree.
+func TestClaim_ExceedsAgreesWithCheckClaim(t *testing.T) {
+	caps := Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}
+	p := Policy{Caps: caps}
+	tests := []struct {
+		name  string
+		claim Claim
+		over  bool
+	}{
+		{"zero claim", Claim{}, false},
+		{"at both caps", Claim{CPUs: 14, MemoryGB: 22}, false},
+		{"cores one over", Claim{CPUs: 15, MemoryGB: 22}, true},
+		{"memory one over", Claim{CPUs: 14, MemoryGB: 23}, true},
+		{"both over", Claim{CPUs: 15, MemoryGB: 23}, true},
+		{"io at the caps", Claim{CPUs: 14, MemoryGB: 22, IO: true}, false},
+		{"exclusive", Claim{Exclusive: true}, false},
+		{"exclusive with stray numbers", Claim{Exclusive: true, CPUs: 99, MemoryGB: 99}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.over, tc.claim.exceeds(caps))
+			assert.Equal(t, tc.claim.exceeds(caps), CheckClaim(tc.claim, p) != nil)
+		})
+	}
+}
+
+func TestClaim_String(t *testing.T) {
+	tests := []struct {
+		claim Claim
+		want  string
+	}{
+		{Claim{CPUs: 4, MemoryGB: 6}, "4c/6G"},
+		{Claim{CPUs: 4, MemoryGB: 6, IO: true}, "4c/6G io"},
+		{Claim{CPUs: 1, MemoryGB: 1}, "1c/1G"},
+		{Claim{}, "0c/0G"},
+		{Claim{Exclusive: true}, "exclusive"},
+		{Claim{Exclusive: true, IO: true, CPUs: 2}, "exclusive"},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, tc.claim.String())
+	}
+}

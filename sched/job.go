@@ -212,7 +212,7 @@ func (s Submit) Validate() error {
 // of p: the cores first, then the GB. An exclusive claim is never over, and
 // an I/O job takes one of at least one slot.
 func CheckClaim(c Claim, p Policy) error {
-	if c.Exclusive {
+	if !c.exceeds(p.Caps) {
 		return nil
 	}
 	if c.CPUs > p.Caps.CPUs {
@@ -222,4 +222,17 @@ func CheckClaim(c Claim, p Policy) error {
 		return fmt.Errorf("claims %d GB; this host's cap is %d GB", c.MemoryGB, p.Caps.MemoryGB)
 	}
 	return nil
+}
+
+// String is the claim as one short word or "4c/6G io": the cores and GB, and
+// io when it takes an I/O slot; "exclusive" for a claim on the whole host.
+func (c Claim) String() string {
+	if c.Exclusive {
+		return "exclusive"
+	}
+	s := fmt.Sprintf("%dc/%dG", c.CPUs, c.MemoryGB)
+	if c.IO {
+		s += " io"
+	}
+	return s
 }
