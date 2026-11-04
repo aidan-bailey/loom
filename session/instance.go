@@ -1054,15 +1054,16 @@ func (i *Instance) Kill() (err error) {
 	// what is this record's: its own agent cannot be running, since the one
 	// session with its name started elsewhere. When tmux does not answer,
 	// whose the session is cannot be told: refuse, changing nothing.
+	// From the snapshot: i.gitWorktree is already cleared.
+	wtPath := ""
+	if gitWT != nil {
+		wtPath = gitWT.GetWorktreePath()
+	}
+	home := sessionHome(isWorkspaceTerm, i.Path, wtPath)
 	closeSessions := tmuxSess != nil
 	nameHeld := false
 	if closeSessions {
-		// From the snapshot: i.gitWorktree is already cleared.
-		wtPath := ""
-		if gitWT != nil {
-			wtPath = gitWT.GetWorktreePath()
-		}
-		held, dir, err := sessionHeldElsewhere(tmuxSess, sessionHome(isWorkspaceTerm, i.Path, wtPath))
+		held, dir, err := sessionHeldElsewhere(tmuxSess, home)
 		if err != nil {
 			restore()
 			return fmt.Errorf("cannot kill %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, tmuxSess.SessionName(), err)
@@ -1092,13 +1093,14 @@ func (i *Instance) Kill() (err error) {
 				errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
 			}
 		}
-		// See the matching comment in Pause: the terminal pane's tmux
-		// session is untracked by Instance and must be killed alongside
-		// the agent session, or it leaks until the next app-startup
-		// orphan sweep. Best-effort: "no such session" is the common case.
-		if err := tmuxSess.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
-			log.For("session").Debug("kill_close_terminal_tmux_failed", "title", i.Title, "err", err)
-		}
+	}
+	// See the matching comment in Pause: the terminal pane's tmux session
+	// is untracked by Instance and must be killed alongside the agent
+	// session, or it leaks until the next app-startup orphan sweep. Its
+	// name is per server too, so it is judged on its own: the record's
+	// shell goes even when another session holds the agent's name.
+	if tmuxSess != nil {
+		closeOwnTerminal(tmuxSess, i.Title, home)
 	}
 
 	// After the agent's tmux session is gone, so a SessionEnd hook firing
@@ -1324,6 +1326,18 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	}
 	defer end()
 
+	// The name is unique per tmux server, not per workspace (see Kill): a
+	// session another workspace started under it is not this record's agent,
+	// which cannot be running under a name another session holds, so it is
+	// left running and the record paused. When tmux does not answer, whose
+	// the session is cannot be told: refuse before the checkpoint, changing
+	// nothing.
+	home := sessionHome(false, i.Path, gw.GetWorktreePath())
+	held, dir, err := sessionHeldElsewhere(ts, home)
+	if err != nil {
+		return fmt.Errorf("cannot pause %s: could not tell whether tmux session %s is its own, so nothing was changed; retry once the machine is less busy: %w", i.Title, ts.SessionName(), err)
+	}
+
 	// Checkpoint before anything stops (see the doc comment). A failed save
 	// stops the pause with the agent still running.
 	if saveState != nil {
@@ -1336,7 +1350,9 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// Kill the tmux session so the agent process actually stops. Resume
 	// relaunches it with BuildRecoveryCommand, so --continue (or its
 	// equivalent) restores the conversation for agents that support it.
-	if err := ts.Close(); err != nil {
+	if held {
+		i.getLogger().Warn("instance.pause.session_held_elsewhere", "session", ts.SessionName(), "dir", dir)
+	} else if err := ts.Close(); err != nil {
 		log.For("session").Warn("pause_close_tmux_failed", "err", err)
 		// A Close failure usually just means the session was already dead,
 		// which is harmless — carry on. Only an answered "no such session"
@@ -1353,11 +1369,9 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// The terminal pane (ui.TerminalPane) runs its own tmux session for this
 	// instance, keyed by the same title but tracked outside Instance and
 	// TmuxSession. A pause stops everything the session runs, and a shell
-	// kept alive under a Paused row has no client to show it. Best-effort:
-	// "no such session" (never opened) is the common case.
-	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
-		log.For("session").Debug("pause_close_terminal_tmux_failed", "err", err)
-	}
+	// kept alive under a Paused row has no client to show it. Only the
+	// record's own shell (closeOwnTerminal).
+	closeOwnTerminal(ts, i.Title, home)
 
 	// Before the status reads Paused: the app can start a resume the moment
 	// it does, and a resume that began while this slow step was still

@@ -679,6 +679,19 @@ func tmuxNeverAnswered(err error) bool {
 // included. A session's name is unique per server, not per workspace, so the
 // directory is what says whose session holds the name.
 func (s *Session) StartDir() (dir string, found bool, err error) {
+	return s.startDirOf(s.sanitizedName)
+}
+
+// RelatedStartDir is StartDir for another session on s's server, named
+// rawName as CloseRelatedSession names it: the terminal pane's shell, whose
+// start directory says whose it is before it is closed.
+func (s *Session) RelatedStartDir(rawName string) (dir string, found bool, err error) {
+	return s.startDirOf(ToLoomTmuxName(rawName))
+}
+
+// startDirOf lists the server's sessions and returns the start directory of
+// the one named name (see StartDir).
+func (s *Session) startDirOf(name string) (dir string, found bool, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
 	out, err := s.cmdExec.Output(Command(ctx, "ls", "-F", "#{session_name}\t#{session_path}"))
@@ -686,8 +699,8 @@ func (s *Session) StartDir() (dir string, found bool, err error) {
 		return "", false, err
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		name, d, _ := strings.Cut(line, "\t")
-		if name == s.sanitizedName {
+		n, d, _ := strings.Cut(line, "\t")
+		if n == name {
 			return d, true, nil
 		}
 	}

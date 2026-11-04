@@ -143,10 +143,12 @@ func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 // terminalKills puts inst on a mock tmux session that records the
 // kill-session of its terminal pane's shell (loom_term_<title>), counting
 // them in *kills and noting in *worktreeThere whether wtPath existed when
-// the last one ran. No tmux server is contacted.
+// the last one ran. Its listing shows the shell started in wtPath, as
+// ui.TerminalPane starts it. No tmux server is contacted.
 func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *int, worktreeThere *bool) {
 	t.Helper()
-	target := tmux.SessionTarget(tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title)))
+	name := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title))
+	target := tmux.SessionTarget(name)
 	rec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
 			if slices.Contains(c.Args, "kill-session") && slices.Contains(c.Args, target) {
@@ -156,7 +158,7 @@ func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *i
 			}
 			return nil
 		},
-		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(name + "\t" + wtPath + "\n"), nil },
 	}
 	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(inst.Title, "claude", fakePtyFactory{t: t}, rec))
 }
