@@ -280,7 +280,15 @@ func (m *Model) saveQueueQuiet(after string) bool {
 	log.For("core").Warn("queue.save_failed", "after", after, "err", err)
 	if !q.saveFailed {
 		q.saveFailed = true
+		// The failure belongs to every client, not to the request this save
+		// may run inside (a kill's delivery cancelling the owner's jobs, an
+		// admission pass a request began): a Notice carrying the request's
+		// cause would reach the requester alone, and saveFailed then
+		// suppresses every later one, so no other client would ever hear it.
+		cause := m.cause
+		m.cause = 0
 		m.notifyErr(fmt.Errorf("work queue: %w; the change is kept in memory and written with the next save", err))
+		m.cause = cause
 	}
 	return false
 }

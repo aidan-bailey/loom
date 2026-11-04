@@ -573,6 +573,41 @@ func TestJobQueue_ASettleWhoseWriteFailsStaysInMemoryAndIsWrittenWithTheNextSave
 	assert.False(t, m.queue.saveFailed)
 }
 
+// A failed quiet save raised while the model works on a request's behalf is
+// for every client: its Notice carries no request, while the request's own
+// Reply keeps it.
+func TestJobQueue_AQuietSaveFailureIsNoticedForEveryClient(t *testing.T) {
+	m := wqLiveModel(t)
+	wqSeed(t, m, wqQueuedRecord(t, 1))
+	unblock := wqBlockJobsJSON(t, m)
+	t.Cleanup(unblock)
+
+	m.causedBy(7, func() {
+		m.admitJobs() // starts job 1 and saves quietly
+		m.reply(7, Reply{})
+	})
+
+	require.Equal(t, sched.Running, wqRecord(t, m, 1).State, "fixture: the pass started the job")
+	var notices []Notice
+	events := wqPump(t, m)
+	for _, ev := range events {
+		if n, ok := ev.(Notice); ok && n.Err != nil {
+			notices = append(notices, n)
+		}
+	}
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Err.Error(), "kept in memory")
+	assert.Zero(t, notices[0].Req, "the notice is for every client")
+	r := replyTo(events, 7)
+	require.NotNil(t, r, "the request's own reply")
+	assert.Equal(t, ReqID(7), r.Req)
+	assert.Equal(t, ReqID(0), m.cause, "fixture: the cause is back to none")
+	m.causedBy(8, func() { m.notifyErr(errors.New("another")) })
+	n, ok := wqPump(t, m)[0].(Notice)
+	require.True(t, ok)
+	assert.Equal(t, ReqID(8), n.Req, "an ordinary notice inside a request keeps its cause")
+}
+
 func TestJobQueue_AWatchRequestedMidFlightRunsAgainWhenItLands(t *testing.T) {
 	m := wqLiveModel(t)
 	wqLaunch(t, m, "sh", "-c", "sleep 30")
