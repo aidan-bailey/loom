@@ -246,7 +246,7 @@ func TestKill_AFailedKillKeepsTheRowAndTheRecord(t *testing.T) {
 	assert.Equal(t, session.Paused, inst.GetStatus(), "reverted to what it was")
 	assert.Empty(t, killed, "no session closed")
 	assert.DirExists(t, wt.GetWorktreePath(), "the worktree is untouched")
-	require.NoError(t, ws.Storage().DeleteInstance("api"), "the record is on disk")
+	require.NoError(t, ws.Storage().DeleteInstance("api", inst.CreatedAt), "the record is on disk")
 }
 
 // When tmux does not answer whose the session under a record's name is, a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 )
 
 // syncMockStorage is a trivially thread-safe InstanceStorage: it never
@@ -49,7 +50,7 @@ func TestStorage_ConcurrentSaveAndDelete(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			_ = s.DeleteInstance("Target") // writes s.unrecovered via dropUnrecovered
+			_ = s.DeleteInstance("Target", time.Time{}) // writes s.unrecovered via dropUnrecovered
 		}
 	}()
 	wg.Wait()

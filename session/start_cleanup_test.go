@@ -125,6 +125,42 @@ func TestKill_ADirectoryGitNoLongerTracksIsANotice(t *testing.T) {
 	assert.False(t, inst.Started(), "the instance is not put back for a retry")
 }
 
+// TestKill_KeepsTheHooksFolderOfASessionHoldingTheName: hooks folders are
+// keyed by tmux name, which two titles of one workspace can share. When a
+// session started elsewhere holds the name, the kill leaves that session
+// running, and must leave the folder it is writing its hook events to as
+// well. The record's own session (absent here) still has its folder
+// removed.
+func TestKill_KeepsTheHooksFolderOfASessionHoldingTheName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		listing string
+		kept    bool
+	}{
+		{"held elsewhere", "loom_held\t/somewhere/else\n", true},
+		{"its own", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fakeTmuxServer{}
+			inst, _, _ := newStartFixtureOn(t, "held", srv)
+			require.NoError(t, inst.Start(true))
+			runner := srv.runner()
+			runner.OutputFunc = func(*exec.Cmd) ([]byte, error) { return []byte(tc.listing), nil }
+			inst.setTmuxSession(tmux.NewSessionWithDeps("held", "claude", srv, runner))
+			hooks := SubagentHooksDir(inst.ConfigDir, inst.Title)
+			require.NoError(t, os.MkdirAll(filepath.Join(hooks, "events"), 0o755))
+
+			require.NoError(t, inst.Kill())
+
+			if tc.kept {
+				assert.DirExists(t, hooks, "the holder's hook events keep their folder")
+			} else {
+				assert.NoDirExists(t, hooks)
+			}
+		})
+	}
+}
+
 // TestStart_FailedStartRemovesWhatItCreated: when Start created the branch
 // itself, a failed launch removes both it and the worktree.
 func TestStart_FailedStartRemovesWhatItCreated(t *testing.T) {

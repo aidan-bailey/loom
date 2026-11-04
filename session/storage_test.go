@@ -54,7 +54,7 @@ func TestDeleteInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	s, err := NewStorage(mock, "")
 	assert.NoError(t, err)
 
-	err = s.DeleteInstance("Target")
+	err = s.DeleteInstance("Target", time.Time{})
 	assert.NoError(t, err)
 
 	assert.Len(t, mock.saved, 1)
@@ -62,6 +62,30 @@ func TestDeleteInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(mock.saved[0], &remaining))
 	assert.Len(t, remaining, 1)
 	assert.Equal(t, "", remaining[0].Title)
+}
+
+// TestDeleteInstance_DeletesOnlyTheRecordItNames: two records can share a
+// title (a branch picked, or a prefix edited, gives the second its own
+// branch). Deleting one by title dropped both, and the survivor came back
+// only at its workspace's next save, so a daemon stopped first lost it. A
+// record is its title and creation time.
+func TestDeleteInstance_DeletesOnlyTheRecordItNames(t *testing.T) {
+	mock := &trackingMockStorage{
+		data: json.RawMessage(`[
+			{"title":"foo","created_at":"2026-11-01T10:00:00Z","status":3,"program":"claude","worktree":{"repo_path":"/tmp/a","worktree_path":"/tmp/wt-a","branch_name":"u/foo"}},
+			{"title":"foo","created_at":"2026-11-02T10:00:00Z","status":3,"program":"claude","worktree":{"repo_path":"/tmp/a","worktree_path":"/tmp/wt-b","branch_name":"v/foo"}}
+		]`),
+	}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteInstance("foo", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)))
+
+	require.Len(t, mock.saved, 1)
+	var remaining []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[0], &remaining))
+	require.Len(t, remaining, 1)
+	assert.Equal(t, "v/foo", remaining[0].Worktree.BranchName, "the other record stays")
 }
 
 // TestDeleteInstance_NotFound preserves the existing error path: removing a
@@ -72,7 +96,7 @@ func TestDeleteInstance_NotFound(t *testing.T) {
 	}
 	s, err := NewStorage(mock, "")
 	assert.NoError(t, err)
-	err = s.DeleteInstance("NoSuchInstance")
+	err = s.DeleteInstance("NoSuchInstance", time.Time{})
 	assert.Error(t, err)
 	assert.Empty(t, mock.saved)
 }
@@ -364,7 +388,7 @@ func TestStorage_UndecodableRecord_SurvivesDelete(t *testing.T) {
 	_, err := s.LoadAndReconcile(noopExec())
 	require.NoError(t, err)
 
-	require.NoError(t, s.DeleteInstance("alive"))
+	require.NoError(t, s.DeleteInstance("alive", time.Time{}))
 	assertFutureRecordPreserved(t, mock)
 
 	var persisted []json.RawMessage
@@ -464,7 +488,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		s, err := NewStorage(mock, "")
 		require.NoError(t, err)
 
-		err = s.DeleteInstance("fresh")
+		err = s.DeleteInstance("fresh", time.Time{})
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
 		assert.Empty(t, mock.saved)

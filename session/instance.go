@@ -1055,6 +1055,7 @@ func (i *Instance) Kill() (err error) {
 	// session with its name started elsewhere. When tmux does not answer,
 	// whose the session is cannot be told: refuse, changing nothing.
 	closeSessions := tmuxSess != nil
+	nameHeld := false
 	if closeSessions {
 		// From the snapshot: i.gitWorktree is already cleared.
 		wtPath := ""
@@ -1069,6 +1070,7 @@ func (i *Instance) Kill() (err error) {
 		if held {
 			lg.Warn("instance.kill.session_held_elsewhere", "session", tmuxSess.SessionName(), "dir", dir)
 			closeSessions = false
+			nameHeld = true
 		}
 	}
 
@@ -1100,8 +1102,12 @@ func (i *Instance) Kill() (err error) {
 	}
 
 	// After the agent's tmux session is gone, so a SessionEnd hook firing
-	// on exit finds no folder and exits harmlessly.
-	i.removeSubagentHooks()
+	// on exit finds no folder and exits harmlessly. Not while a session
+	// started elsewhere holds the name: the folder is keyed by that name,
+	// and its agent is writing its hook events there.
+	if !nameHeld {
+		i.removeSubagentHooks()
+	}
 
 	// Then clean up git worktree (workspace terminals don't have one)
 	if gitWT != nil && !isWorkspaceTerm {

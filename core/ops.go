@@ -43,6 +43,7 @@ func (m *Model) startInst(inst *session.Instance, fallback *Workspace) Job {
 func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(), job Job) {
 	previousStatus := selected.GetStatus()
 	title := selected.Title
+	createdAt := selected.CreatedAt
 	// The owning workspace's storage, captured here on the model's
 	// goroutine: killAction runs for seconds in a job, and reading the
 	// TUI's focused workspace there would race a focus change and, after a
@@ -129,7 +130,7 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 		// regardless so the TUI matches reality.
 		// ErrInstanceNotFound just means storage already agreed, so it's a
 		// debug-level note rather than an error.
-		if err := storage.DeleteInstance(selected.Title); err != nil {
+		if err := storage.DeleteInstance(title, createdAt); err != nil {
 			if errors.Is(err, session.ErrInstanceNotFound) {
 				log.For("core").Debug("kill.storage_already_absent", "title", title)
 			} else {

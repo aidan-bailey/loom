@@ -299,10 +299,13 @@ func (s *Storage) UndecodableCount() int {
 	return len(s.undecodable)
 }
 
-// DeleteInstance removes an instance from storage.
+// DeleteInstance removes the record of the instance titled title and
+// created at createdAt from storage. A record is its title and creation
+// time: two records can share a title (each on its own branch), and
+// deleting by title alone dropped both.
 // Operates on raw InstanceData so it does not construct live Instance objects
 // (which would open tmux attach PTYs for every remaining running instance).
-func (s *Storage) DeleteInstance(title string) error {
+func (s *Storage) DeleteInstance(title string, createdAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := s.loadForWriteLocked()
@@ -313,7 +316,7 @@ func (s *Storage) DeleteInstance(title string) error {
 	found := false
 	filtered := make([]InstanceData, 0, len(data))
 	for _, d := range data {
-		if d.Title == title {
+		if isRecord(d, title, createdAt) {
 			found = true
 			continue
 		}
@@ -326,7 +329,7 @@ func (s *Storage) DeleteInstance(title string) error {
 
 	// Also drop any matching entry from the in-memory unrecovered cache so
 	// a follow-up SaveInstances does not resurrect the just-deleted record.
-	s.dropUnrecovered(title)
+	s.dropUnrecovered(title, createdAt)
 
 	return s.writeLocked(filtered)
 }
@@ -445,17 +448,24 @@ func (s *Storage) PreservedWorktreePaths() map[string]bool {
 	return out
 }
 
-// dropUnrecovered removes any entry from the unrecovered cache whose
-// Title matches the given title. Used by DeleteInstance so a
-// user-initiated delete is not silently undone on the next save.
+// isRecord reports whether d is the record of the instance titled title
+// and created at createdAt. Equal, not ==: a time read back from JSON has
+// no monotonic reading.
+func isRecord(d InstanceData, title string, createdAt time.Time) bool {
+	return d.Title == title && d.CreatedAt.Equal(createdAt)
+}
+
+// dropUnrecovered removes the entry for the instance titled title and
+// created at createdAt from the unrecovered cache. Used by DeleteInstance
+// so a user-initiated delete is not silently undone on the next save.
 // The caller must hold s.mu (DeleteInstance does).
-func (s *Storage) dropUnrecovered(title string) {
+func (s *Storage) dropUnrecovered(title string, createdAt time.Time) {
 	if len(s.unrecovered) == 0 {
 		return
 	}
 	filtered := s.unrecovered[:0]
 	for _, d := range s.unrecovered {
-		if d.Title == title {
+		if isRecord(d, title, createdAt) {
 			continue
 		}
 		filtered = append(filtered, d)
