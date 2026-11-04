@@ -51,7 +51,8 @@ The caps live in a `scheduler` block of the global `config.json` (`~/.loom/confi
 ```
 
 - A field that is absent or 0 takes the host's default: `cpus` = max(1, cores − 2); `memory_gb` = max(1, ⌊0.75 × RAM in GB⌋); `io_jobs` = 2; `default_claim` = {min(4, cpus), min(6, memory_gb)}; `starve_after_minutes` = 10; `keep_finished` = 50. A GB is 2^30 bytes throughout. On fresco (30.2 GB of RAM) that is 14 cores and 22 GB, so three jobs of the default claim run at once. Cores come from `runtime.NumCPU()`; RAM from `/proc/meminfo` (`MemTotal`) on Linux and `sysctl hw.memsize` on macOS.
-- A negative value, or a default claim larger than a cap, makes the block invalid. Admission then pauses (§5.2) and the view says why. No cap is guessed.
+- Bounds, once a 0 has taken its default: `cpus` 1–1024, `memory_gb` 1–65536, `io_jobs` 1–64, `starve_after_minutes` 1–1440, `keep_finished` 1–10000, and each default claim value 1 up to its cap. A value outside its bounds (a negative one included), or a default claim larger than a cap, makes the block invalid. Admission then pauses (§5.2) and the view says why. No cap is guessed.
+- The host's cores and RAM are detected once per daemon process and kept; `sysctl` gets 5 s. When the RAM can't be read, `memory_gb` has no default: a block that doesn't set it is invalid, with the reason "this host's RAM could not be read: set scheduler.memory_gb".
 - The block is read from the global `config.json` at every admission pass, so a hand edit applies without a restart.
 - A claim is `--cpus N` (whole cores, at least 1) and `--mem N` (whole GB, at least 1), each defaulting to the default claim, plus `--io` for an I/O-heavy job, which takes one of the `io_jobs` slots. `--exclusive` claims every cap: all the cores, all the memory and every I/O slot, as the caps stand when it is admitted. It is stored as a flag, so it follows a cap edit. It can't be combined with `--cpus`, `--mem` or `--io`.
 - **Hints.** The CPU claim is the job's parallelism. The shim adds each of these to the job's environment unless the submitter's environment already sets it: `CARGO_BUILD_JOBS=N`, `RUST_TEST_THREADS=N`, `MAKEFLAGS=-jN`, `NIX_BUILD_CORES=N`, `CMAKE_BUILD_PARALLEL_LEVEL=N`, `GOFLAGS=-p=N`. For an exclusive job, N is the CPU cap. `LOOM_JOB=<id>` is always set.
@@ -66,7 +67,7 @@ An admission pass runs when a job is submitted, when one ends, on `SetSchedulerC
 
 For each job still waiting, the pass records why, for the view and `loom job list`: "needs 8 cores (6 free)", "needs 12 GB (8 free)", "needs an I/O slot", "waits for job 16, which has waited past 10m", "over this host's caps", or "admission paused: <reason>".
 
-While admission is paused (an invalid `scheduler` block, §5.1, or an unreadable `jobs.json`, §5.9), nothing new starts, and running jobs are left alone.
+While admission is paused (an invalid `scheduler` block, §5.1, or an unreadable `jobs.json`, §5.9), nothing new starts, running jobs are left alone, and `SubmitJob` is refused with the reason.
 
 Lowering a cap never touches running jobs. It only changes what starts next.
 
@@ -90,9 +91,9 @@ It **tests each running job's lock** without blocking. If the lock is held, the 
 - `cancelled` if a cancel was requested;
 - otherwise `done` for exit 0, and `failed` for a non-zero exit, a signal, or a start error.
 
-A missing or unreadable `exit.json` makes the job `lost` (or `cancelled`, when a cancel was requested). In that case its process group is sent SIGKILL, so nothing it started runs on unaccounted.
+A missing or unreadable `exit.json` makes the job `lost` (or `cancelled`, when a cancel was requested). In that case its process group is sent SIGKILL, so nothing it started runs on unaccounted. The kill goes ahead only when the latest sample shows processes in the group and no process with the shim's pid. A live process with that pid that doesn't hold the lock is a reused pid, and its group is never signalled.
 
-It also **samples usage** by running `ps -A -o pgid=,rss=,time=` once, a command Linux (procps) and macOS (BSD) both accept, though they format `time` differently and the parser reads both. For each running job it sums RSS and CPU time over its process group:
+It also **samples usage** by running `ps -A -o pid=,pgid=,rss=,time=` once, with a 5 s timeout, a command Linux (procps) and macOS (BSD) both accept, though they format `time` differently and the parser reads both. A sample that fails or times out is skipped: usage keeps its last values, and the lock tests and settling go ahead without it. For each running job it sums RSS and CPU time over its process group:
 - current memory is the RSS sum, and peak memory is the largest sum seen;
 - current CPU is the change in summed CPU time divided by the time between samples, in cores.
 
@@ -109,13 +110,13 @@ Cancelling a finished job is refused, saying it has finished.
 
 A stopping daemon does nothing to jobs. Running ones keep running, since their shims are in their own sessions, and the queue is on disk.
 
-A booting daemon (`Model.Boot`) loads `jobs.json`, settles every running job through the lock test of §5.4, and only then runs its first admission pass, so the caps count the jobs it adopted. A job that was mid-start (no `started.json`) is settled the same way: if its lock is held it runs, otherwise it settles from `exit.json` or is `lost`.
+A booting daemon (`Model.Boot`) loads `jobs.json`, settles every running job through the lock test of §5.4, and only then runs its first admission pass, so the caps count the jobs it adopted. A job that was mid-start (no `started.json`) is settled the same way: if its lock is held it runs, otherwise it settles from `exit.json` or is `lost`. A job the record calls queued is probed too, since a start whose save failed (§5.9) leaves a running shim behind a queued record. If its lock is held, it is adopted as running; if it has an `exit.json`, it settles from it. Either way it is never started twice.
 
 The systemd unit in `USAGE.md` gains `KillMode=process`. Under the default (`control-group`), `systemctl --user restart loom` would kill every shim in the unit's cgroup.
 
 ### 5.7 Session lifecycle
 
-- Pausing or killing a job's owner cancels its queued and running jobs first (§5.5), with the reason "the session was paused" or "the session was killed". The pause or kill then goes ahead without waiting for the jobs to exit. A paused agent can't take a result, and a kill removes the worktree the job runs in. No notice is sent for these cancellations.
+- Pausing or killing a job's owner cancels its queued and running jobs first (§5.5), with the reason "because the session was paused" or "because the session was killed". The pause or kill then goes ahead without waiting for the jobs to exit. A paused agent can't take a result, and a kill removes the worktree the job runs in. No notice is sent for these cancellations.
 - Resuming a session doesn't restart its jobs.
 - A job whose owner is no longer served (unregistered, or gone when the daemon boots) keeps its place, and its notice is recorded as undelivered. A job whose cwd is gone fails when it starts (§5.3).
 - Jobs without an owner are never touched by a session's lifecycle.
@@ -156,7 +157,9 @@ A job's `spec.json` is written at submit, so a queued job survives a restart. `j
 
 A `jobs.json` that fails to load (unreadable, invalid, or a newer `version`) is left untouched. Submissions are then refused, saying why, admission pauses, and a notice tells the next TUI. Running shims carry on.
 
-After a job settles, finished jobs beyond `keep_finished` are dropped from `jobs.json`, oldest end first, and their directories removed. The ID counter never goes back.
+After a job settles, finished jobs beyond `keep_finished` are dropped from `jobs.json`, oldest end first, and their directories removed. The path removed is always `<globalDir>/jobs/<id>`, built from the job's ID, never a path read from a file. The ID counter never goes back.
+
+`SubmitJob` replies only once the job's `spec.json` and `jobs.json` are written. A failed write refuses the request with the error and changes nothing. A change the model makes on its own (a start, a settle, a usage peak) stays in memory when its write fails, raises a notice, and is written with the next save.
 
 ## 6. The CLI: `loom job`
 
@@ -174,6 +177,14 @@ loom job cancel ID
 `internal/cli/job.go` holds these. They are daemon clients joined through `cli.Join` like `loom session`, so they spawn a daemon when none runs.
 
 - `-d` defaults to the command line, shell-quoted and cut to 60 characters.
+- Bounds, checked by the model so every client meets them:
+  - a description of 1–200 characters after trimming;
+  - `--cpus` and `--mem` at least 1 (on the wire, 0 means the default claim);
+  - `--tail` 0–200;
+  - a non-empty argv of at most 64 KiB in all, and an environment of at most 1 MiB;
+  - a cwd that is absolute and exists.
+
+  `logs --tail N` takes any N ≥ 0.
 - `submit` sends the argv, `os.Getwd()`, `os.Environ()`, the claim, notify, tail and `$LOOM_LAUNCH`. It prints `job 14 queued (3rd in line, 2 running)` or `job 14 started` and exits 0.
 - `run` submits without notify, with the default tail (used if an interrupted follower later sets notify), then follows the job (§6.3).
 - `wait` follows an existing job.
@@ -262,7 +273,7 @@ The claim figures in the paragraph are the defaults' wording. The file is static
 
 - **Requests** (`core/iface.go`, request kind):
   - `SubmitJob(spec sched.Submit, req ReqID)`, where `sched.Submit` holds the argv, cwd, environment, description, claim, notify, tail and launch;
-  - `CancelJob(id sched.JobID, req ReqID)`;
+  - `CancelJob(id sched.JobID, from CancelFrom, req ReqID)`, where `from` says whether the cancel came from the CLI or the work view, for the notice's wording;
   - `MoveJobToFront(id sched.JobID, req ReqID)`;
   - `NotifyJob(id sched.JobID, req ReqID)`;
   - `SetSchedulerCaps(s config.SchedulerSettings, req ReqID)`.
@@ -296,6 +307,10 @@ All of these fail closed: nothing is guessed, and each says why.
 | Situation | Result |
 |---|---|
 | A claim over a cap | `SubmitJob` refused, naming the cap: `claims 32 GB; this host's cap is 22 GB` |
+| A submission outside the bounds of §6.1 | `SubmitJob` refused, naming the bound |
+| A failed write of `spec.json` or `jobs.json` | A request is refused with the error, changing nothing; a change the model made on its own stays in memory, raises a notice, and is written with the next save |
+| `ps` fails or takes over 5 s | That sample is skipped; settling goes on |
+| On Windows | `SubmitJob` refused: "the work queue isn't available on Windows" |
 | `--exclusive` with `--cpus`/`--mem`/`--io` | Refused by the CLI |
 | An invalid `scheduler` block | Admission paused; running jobs untouched; the view and `list` give the reason |
 | `jobs.json` fails to load | Left untouched; submissions refused; admission paused; a notice |
@@ -316,6 +331,7 @@ All of these fail closed: nothing is guessed, and each says why.
   - Store round trips, and a newer `version` left untouched.
   - Real-process shim tests: exit codes; signals; a cancel's SIGTERM reaching a grandchild through the group while the shim writes `exit.json`; the SIGKILL path; the lock held while running and free after; hints set only where the submitter didn't; nice applied (`getpriority`); ioprio on Linux.
   - `ps` parser tables for the procps and BSD formats; host detection.
+- **The shim in tests.** A test binary has no `job-shim` command, so packages whose tests start real shims (`sched`, `core`, `internal/cli`) re-execute their own test binary as the shim: their `TestMain` hands over to the shim first when an environment variable marks the process as one, and a test runner points the daemon's shim command at the test binary.
 - **`core`, through the production path** (a temp global dir under `IsolateLoomDirs`, a real shim):
   - submit, admit, run, settle;
   - cancel queued and running jobs;
