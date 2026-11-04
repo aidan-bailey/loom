@@ -20,7 +20,7 @@ The owner kept everything else on the page (status-row counts, workspace chips, 
    - Only a Claude session (`s.claude`) shows it: another program records no account, and `usageFor` would read its `""` as the default account's.
    - No entry, or an entry with neither window, shows nothing.
    - Colour: dim like the age; amber (`--attention`) at 80% or more of a window that has not reset; a stale sample (`isStale` against `usage_stale_after_s`) stays dim whatever its share.
-4. **The session screen's Account tile carries what the fleet dropped.** Its figure stays the 5h share (7d when there is no 5h). Its sub becomes two lines: the account, the shown window and its reset (`default 5h · 1h40m`), then the other window's share and reset when it has one (`7d 31% · Sat`). A reset part is left out when `resetText` is empty or the window has reset.
+4. **The session screen's Account tile carries what the fleet dropped.** Its figure stays the 5h share (7d when there is no 5h). Its legend is the account's name (a tile is about 14 characters wide inside, too narrow for `default 5h · 1h40m`), and its sub is two lines: the shown window and its reset (`5h · 1h40m`), then the other window's share and reset when it has one (`7d 31% · Sat`). A reset part is left out when `resetText` is empty or the window has reset.
 5. **Accepted loss:** an account no Claude session runs on shows its usage nowhere in the app. The TUI's usage strip and Settings → Accounts still show it.
 
 ## Styling

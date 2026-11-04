@@ -635,21 +635,20 @@ and answers only phones you have paired.
   and are working (◐) in the workspaces it shows. Tap a count to open that
   group's next session, and again for the one after. The second row is the
   screen's own: the way back, its title, its actions.
-- **The fleet.** Tiles count the sessions that **need you** (with the
-  oldest wait), are **your turn** (with how many ended since this phone
-  last opened them) and are **working** (with their running subagents); a
-  tap jumps to the group. Below them, each account's plan usage: the
-  5-hour and 7-day windows, how much is used and when each resets, dimmed
-  once the sample is old. Sessions are listed by group: **Needs you**
-  (longest wait first, with the reason and, for a permission request, the
-  command, file or address), **Your turn** (marked NEW when the turn ended
-  after this phone last opened the session), **Working**, and **Paused**
-  (folded away). The workspace chips are the workspaces open as tabs in
-  loom, in tab order, plus any with a session that isn't paused (all of
-  them while no tab is open); the phone remembers the chip. A session
-  leads with why it waits, then tiles for its changes, its pull request
-  (which opens on GitHub) and its account's usage, its last message as
-  Claude formatted it, its subagents by name, the actions, and a reply box.
+- **The fleet.** Sessions are listed by group: **Needs you** (longest wait
+  first, with the reason and, for a permission request, the command, file
+  or address), **Your turn** (marked NEW when the turn ended after this
+  phone last opened the session), **Working**, and **Paused** (folded
+  away). Each Claude session's row shows its account's plan usage beside
+  its age (the 5-hour share, or the weekly one for an account without a
+  5-hour limit), amber from 80%; the counts are in the status row. The
+  workspace chips are the workspaces open as tabs in loom, in tab order,
+  plus any with a session that isn't paused (all of them while no tab is
+  open); the phone remembers the chip. A session leads with why it waits,
+  then tiles for its changes, its pull request (which opens on GitHub) and
+  its account's usage (both windows, and when each resets), its last
+  message as Claude formatted it, its subagents by name, the actions, and
+  a reply box.
 - **The conversation and the changes.** A session's screen has tabs under
   its title: **session**, **conversation** on a Claude session (also
   **conversation ›** beside its last message) and **changes** while the
