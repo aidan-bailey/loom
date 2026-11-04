@@ -146,6 +146,7 @@ func (r *replica) RCAuth() session.RemoteControlAuth { return r.model.RCAuth }
 
 // Queue is the work queue as last published.
 func (r *replica) Queue() core.QueueView { return r.queue.Clone() }
+
 func (r *replica) GitHubSnapshot(repo string) (github.Snapshot, bool) {
 	return r.github.GitHubSnapshot(repo)
 }

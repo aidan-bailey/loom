@@ -740,6 +740,22 @@ func TestReplica_QueueAnswersAsTheModel(t *testing.T) {
 	assert.Equal(t, normalize(loop.Queue()), normalize(c.Queue()))
 }
 
+// TestReplica_QueueHandsOutCopies: nothing a caller does to the view Queue
+// returns reaches the replica.
+func TestReplica_QueueHandsOutCopies(t *testing.T) {
+	loop := core.StartForTest(queueModel(t))
+	c := pair(t, loop)
+	before := normalize(c.Queue())
+	require.NotEmpty(t, c.Queue().Jobs[0].Argv, "fixture: the first job has an argv")
+
+	got := c.Queue()
+	got.Jobs[0].Argv[0] = "edited"
+	got.Jobs[len(got.Jobs)-1].Exit.Code = 99
+	got.Settings.DefaultClaim.CPUs = 99
+
+	assert.Equal(t, before, normalize(c.Queue()), "the replica is unchanged")
+}
+
 // TestQueueRequests_ThroughTheClient: the work queue's requests over the
 // wire. A submission's Reply carries the new ID and the owner warning, and
 // its effect is in the replica when it returns, with no trace of the
