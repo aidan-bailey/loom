@@ -815,6 +815,7 @@ func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
 // being made or read.
 type apiAnswer struct {
 	status int
+	header http.Header
 	body   []byte
 	err    error
 }
@@ -861,7 +862,7 @@ func (e *apiEnv) exchange(method, path string, body any) apiAnswer {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
-	return apiAnswer{status: resp.StatusCode, body: data, err: err}
+	return apiAnswer{status: resp.StatusCode, header: resp.Header, body: data, err: err}
 }
 
 // heldJob waits for the loop to hold a job, the handler's request having

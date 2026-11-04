@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/mockup"
 	"github.com/aidan-bailey/loom/session/transcript"
 )
 
@@ -195,9 +196,9 @@ func (ViewsChanged) coreEvent() {}
 // concerns (for Create the new one, for Recover the adopted one). Err is
 // the failure. Notice is what a success must still show (a stash it could
 // not drop). Issue is FetchIssue's result, Turns ReadTurns' page, Diff
-// ReadDiff's patch and Sweep SweepBuilds' report. The notices the TUI
-// shows for an operation are emitted as usual; the Reply is for the
-// requester that waits on it.
+// ReadDiff's patch, Mockup ReadMockup's page and Sweep SweepBuilds'
+// report. The notices the TUI shows for an operation are emitted as usual;
+// the Reply is for the requester that waits on it.
 type Reply struct {
 	Req    ReqID
 	ID     InstanceID
@@ -206,6 +207,7 @@ type Reply struct {
 	Issue  github.Issue
 	Turns  transcript.Page
 	Diff   git.Patch
+	Mockup mockup.Page
 	Sweep  buildsweep.Report
 }
 

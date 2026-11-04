@@ -35,6 +35,8 @@ type pushJob struct {
 	Title   string
 	Body    string
 	Badge   int
+	// Mockup: the push opens the session's mockup tab (opensMockup).
+	Mockup bool
 }
 
 // pushPayload is the JSON the service worker reads (sw.js: data.<key>).
@@ -49,13 +51,17 @@ type pushPayload struct {
 
 // payload is the job as the service worker receives it, before encryption.
 func (j pushJob) payload() ([]byte, error) {
+	url := fmt.Sprintf("/#s/%d", j.Session)
+	if j.Mockup {
+		url += "/mockup"
+	}
 	return json.Marshal(pushPayload{
 		Kind:    j.Kind,
 		Session: j.Session,
 		Title:   j.Title,
 		Body:    j.Body,
 		Badge:   j.Badge,
-		URL:     fmt.Sprintf("/#s/%d", j.Session),
+		URL:     url,
 	})
 }
 
@@ -162,9 +168,9 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		}
 		switch {
 		case entering || changed:
-			jobs = append(jobs, pushJob{Kind: pushWaiting, Session: v.ID, Title: pushTitle(v), Body: pushWaitBody(v)})
+			jobs = append(jobs, pushJob{Kind: pushWaiting, Session: v.ID, Title: pushTitle(v), Body: pushWaitBody(v), Mockup: opensMockup(v)})
 		case known && before.status == session.Running && now.status == session.Ready && v.Started:
-			jobs = append(jobs, pushJob{Kind: pushFinished, Session: v.ID, Title: pushTitle(v), Body: pushFinishedBody})
+			jobs = append(jobs, pushJob{Kind: pushFinished, Session: v.ID, Title: pushTitle(v), Body: pushFinishedBody, Mockup: opensMockup(v)})
 		}
 	}
 	w.seen[ws], w.needs[ws] = next, needs
@@ -176,6 +182,14 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		jobs[i].Badge = badge
 	}
 	return jobs
+}
+
+// opensMockup reports whether a push for v opens its mockup tab: its
+// brainstorm companion's screen changed in the session's latest turn and
+// no dialog waits on the session view, where it is answered. The app's
+// fleet row follows the same rule (opensMockup in static/js/fleet.mjs).
+func opensMockup(v core.InstanceView) bool {
+	return v.Mockup.Screen != "" && v.Mockup.Fresh && len(v.Asks) == 0
 }
 
 // pushTitle is the notification's title: the session's.

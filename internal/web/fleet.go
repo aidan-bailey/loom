@@ -114,6 +114,18 @@ type sessionJSON struct {
 	// Claude says the session runs Claude, whose conversation the app can
 	// read (GET …/turns).
 	Claude bool `json:"claude"`
+	// Mockup is the screen the session's brainstorm companion serves (GET
+	// …/mockup reads its page), null for none.
+	Mockup *mockupJSON `json:"mockup"`
+}
+
+// mockupJSON is a session's brainstorm companion's screen: its file name,
+// its mtime in RFC 3339, and whether it changed in the session's latest
+// turn (core.MockupView).
+type mockupJSON struct {
+	Screen  string `json:"screen"`
+	Changed string `json:"changed"`
+	Fresh   bool   `json:"fresh"`
 }
 
 // notifyJSON is a device's notification settings. PausedUntil is an RFC 3339
@@ -247,6 +259,9 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 	}
 	if v.HasDiff {
 		s.Diff = diffJSON{Added: v.Diff.Added, Removed: v.Diff.Removed}
+	}
+	if v.Mockup.Screen != "" {
+		s.Mockup = &mockupJSON{Screen: v.Mockup.Screen, Changed: stamp(v.Mockup.Changed), Fresh: v.Mockup.Fresh}
 	}
 	if v.ParityKnown {
 		s.Ahead, s.Behind = v.Ahead, v.Behind
