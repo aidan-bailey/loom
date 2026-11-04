@@ -1,7 +1,11 @@
 package core
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/aidan-bailey/loom/config"
 )
@@ -18,10 +22,25 @@ import (
 // client's drafts default to is the client's to follow. An unknown id is
 // an error. Moved from app/state_settings.go, which did this to the
 // model's own config.
+//
+// Saving the global workspace never writes a "scheduler" block it was
+// handed or holds: the block is the work queue's, which a hand edit or
+// another client's SetSchedulerCaps changes in the file, while ws.cfg and
+// an overlay's copy of the settings go stale. So the block is re-read from
+// the global config.json (as refreshPolicy does), written, and set as
+// ws.cfg's. A file that can't be read or parsed refuses the save and
+// changes nothing; a missing file reads as no block.
 func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.cfg == nil {
 		return fmt.Errorf("save settings: workspace %d is not served", id)
+	}
+	if isGlobalWS(ws) {
+		block, err := diskSchedulerBlock(ws.configDir())
+		if err != nil {
+			return fmt.Errorf("save settings: %w", err)
+		}
+		s.Scheduler = block // s is this call's copy: the caller's is not changed
 	}
 	ws.cfg.ReplaceSettings(s)
 	dir := ""
@@ -84,4 +103,27 @@ func isGlobalWS(ws *Workspace) bool {
 	}
 	global, err := config.GetGlobalConfigDir()
 	return err == nil && canonicalDir(dir) == canonicalDir(global)
+}
+
+// diskSchedulerBlock reads the "scheduler" block of dir's config.json as the
+// file holds it: nil for a file without the block or a missing file. A file
+// that can't be read or parsed is an error, and is left as it is
+// (config.LoadConfigFrom would quarantine an unparseable one and fall back to
+// defaults, which would make the save write a block nobody chose).
+func diskSchedulerBlock(dir string) (*config.SchedulerSettings, error) {
+	path := filepath.Join(dir, config.ConfigFileName)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the scheduler block from %s: %w", path, err)
+	}
+	var file struct {
+		Scheduler *config.SchedulerSettings `json:"scheduler"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return file.Scheduler, nil
 }
