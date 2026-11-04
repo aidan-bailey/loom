@@ -758,3 +758,28 @@ func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 		}
 	}
 }
+
+// submit's last line says a job that has already ended ended, not that it
+// started: a start that failed or a cancel can land before the command
+// returns.
+func TestJobPrintPlacement_SaysHowAnEndedJobEnded(t *testing.T) {
+	d := &client{}
+	for _, tc := range []struct {
+		name string
+		view core.JobView
+		want string
+	}{
+		{"running", core.JobView{ID: 4, State: sched.Running}, "job 4 started\n"},
+		{"done", core.JobView{ID: 4, State: sched.Done, Exit: &sched.Exit{}}, "job 4 done\n"},
+		{"cancelled", core.JobView{ID: 4, State: sched.Cancelled}, "job 4 cancelled\n"},
+		{"lost", core.JobView{ID: 4, State: sched.Lost}, "job 4 lost\n"},
+		{"failed", core.JobView{ID: 4, State: sched.Failed, Exit: &sched.Exit{Code: 3}}, "job 4 failed (exit 3)\n"},
+		{"failed to start", core.JobView{ID: 4, State: sched.Failed, Failure: "its folder is gone"}, "job 4 failed (not started)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			d.printPlacement(&out, tc.view)
+			assert.Equal(t, tc.want, out.String())
+		})
+	}
+}

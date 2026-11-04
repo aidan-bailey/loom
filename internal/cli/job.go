@@ -251,9 +251,13 @@ func (d *client) awaitJob(id sched.JobID) (core.JobView, error) {
 }
 
 // printPlacement writes the line `submit` ends with: where a queued job
-// stands, or that it started.
+// stands, how a job that has already ended ended, or that it started.
 func (d *client) printPlacement(out io.Writer, v core.JobView) {
-	if v.State != sched.Queued {
+	switch {
+	case v.State.Finished():
+		fmt.Fprintf(out, "job %d %s\n", v.ID, stateText(v))
+		return
+	case v.State != sched.Queued:
 		fmt.Fprintf(out, "job %d started\n", v.ID)
 		return
 	}
