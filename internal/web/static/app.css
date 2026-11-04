@@ -400,6 +400,14 @@ details.sc-group[open] > summary::before { content: "▾"; }
   background: var(--panel);
 }
 .sc-foot:has(.sc-off) { border-top-color: var(--error-border); }
+/* While the reply box has focus the keyboard is up, so the footer hides to
+   give the text the room, and the reply box takes the bottom (and the home
+   indicator's inset) itself, as it did before the footer. */
+.shell:has(.sc-reply textarea:focus) .sc-foot { display: none; }
+.shell:has(.sc-reply textarea:focus) .sc-reply {
+  bottom: 0;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
 .sc-pill { flex: none; margin-right: 4px; padding: 0 6px; font-weight: 700; color: var(--bg); background: var(--dim); }
 .sc-pill-live { background: var(--ok); }
 .sc-pill-offline { background: var(--error); }
