@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1197,6 +1198,40 @@ func wqUnreadableLock(t *testing.T, m *Model, id sched.JobID) (restore func()) {
 	_, err := sched.Probe(m.queue.jobDir(id))
 	require.Error(t, err, "the lock test must fail")
 	return func() { require.NoError(t, os.Chmod(path, 0o600)) }
+}
+
+// A queued record whose lock test keeps failing is logged when the failure is
+// new, not at every pass (3 s).
+func TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce(t *testing.T) {
+	dir := t.TempDir()
+	old := wqModelAt(t, dir)
+	wqSeed(t, old, wqQueuedRecord(t, 1))
+	require.NoError(t, old.saveQueue())
+	restore := wqUnreadableLock(t, old, 1)
+	defer restore()
+	// The log file is shared by the package's tests: the temp dir in the
+	// lock's path picks out this test's records.
+	logged := func() int {
+		data, err := os.ReadFile(log.LogFilePath())
+		require.NoError(t, err)
+		n := 0
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "queue.lock_test_failed") && strings.Contains(line, dir) {
+				n++
+			}
+		}
+		return n
+	}
+
+	m := wqRestart(t, dir)
+	require.Contains(t, m.queue.unprobed, sched.JobID(1))
+	assert.Equal(t, 1, logged(), "the first failure is logged")
+
+	m.reprobeHeld()
+	m.reprobeHeld()
+
+	require.Contains(t, m.queue.unprobed, sched.JobID(1), "the record is still held")
+	assert.Equal(t, 1, logged(), "the same failure at the next passes is not")
 }
 
 // A queued record whose boot probe failed is not admitted: a shim may be

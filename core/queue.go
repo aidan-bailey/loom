@@ -38,6 +38,9 @@ var queueGOOS = runtime.GOOS
 type silentShim struct {
 	pid   int       // the shim's pid, which leads its group
 	since time.Time // when the start failed
+	// lastErr is the text of the lock test's last failure that was logged, so
+	// a run of the same failure is logged once.
+	lastErr string
 }
 
 // jobUsage is what a running job's process group uses, as the last sample

@@ -393,10 +393,15 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		if ob.signalErr != nil {
 			log.For("core").Warn("queue.signal_failed", "job", int64(ob.id), "err", ob.signalErr)
 		}
+		repeated := false
 		if ob.queued {
 			// Boot's probe, and reprobeHeld's: a failed one holds the record
-			// out of admission, any answer releases it.
+			// out of admission, any answer releases it. A failure the record
+			// already held with the same text is not logged again: it comes
+			// at every pass.
 			if ob.err != nil {
+				prev, held := q.unprobed[ob.id]
+				repeated = held && prev != nil && prev.Error() == ob.err.Error()
 				q.unprobed[ob.id] = ob.err
 			} else {
 				delete(q.unprobed, ob.id)
@@ -404,7 +409,9 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		}
 		switch {
 		case ob.err != nil:
-			log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+			if !repeated {
+				log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+			}
 		case ob.gone && ob.queued && ob.exit == nil:
 			// A queued record whose shim never ran: it stays queued.
 		case ob.gone:
@@ -437,8 +444,17 @@ func (m *Model) noteSilent(ob jobObs) {
 		log.For("core").Warn("queue.signal_failed", "job", int64(ob.id), "err", ob.signalErr)
 	}
 	if ob.err != nil {
-		log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+		// At every pass until the entry goes: say it when the text is new.
+		if sh := q.silent[ob.id]; sh.lastErr != ob.err.Error() {
+			log.For("core").Warn("queue.lock_test_failed", "job", int64(ob.id), "err", ob.err)
+			sh.lastErr = ob.err.Error()
+			q.silent[ob.id] = sh
+		}
 		return
+	}
+	if sh := q.silent[ob.id]; sh.lastErr != "" {
+		sh.lastErr = "" // the test answered: a later failure is news again
+		q.silent[ob.id] = sh
 	}
 	if ob.killed {
 		log.For("core").Warn("queue.silent_shim_killed", "job", int64(ob.id), "pgid", ob.pid)
