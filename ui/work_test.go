@@ -297,6 +297,41 @@ func TestRenderWorkPager_ShowsTheWindowAndClampsTheTop(t *testing.T) {
 	assert.Contains(t, omitted, "earlier output not shown")
 }
 
+func TestRenderWorkPager_TitleShowsTheCommandAndFolder(t *testing.T) {
+	job := workRunning(14, "polyoxide tests", time.Minute)
+	job.Argv = []string{"cargo", "test", "--release"}
+	job.Cwd = "/home/me/polyoxide"
+	lines := []string{"a", "b"}
+
+	out := ansi.Strip(RenderWorkPager(120, 12, WorkPagerData{Job: job, Lines: lines}))
+	title := strings.Split(out, "\n")[0]
+	assert.Contains(t, title, "job 14 · polyoxide tests · lines 1–2 of 2 · cargo test --release · in /home/me/polyoxide")
+	assert.Contains(t, title, "esc back", "the hint keeps the right edge")
+
+	job.Argv = []string{"echo", "a\x1b[31mred\x1b[0m\x07b\nc"}
+	job.Cwd = "/d\x1b]0;evil\x07ir"
+	raw := RenderWorkPager(120, 12, WorkPagerData{Job: job, Lines: lines})
+	title = strings.Split(ansi.Strip(raw), "\n")[0]
+	assert.Contains(t, title, "echo ared b c · in /dir")
+	assert.NotContains(t, raw, "\x07")
+	assert.NotContains(t, raw, "evil")
+	assert.Equal(t, 12, lipgloss.Height(raw))
+
+	job.Argv = []string{"cargo", "test", "--release", "--", strings.Repeat("x", 300)}
+	for _, width := range []int{120, 70, 50, 30} {
+		out := RenderWorkPager(width, 12, WorkPagerData{Job: job, Lines: lines})
+		title := strings.Split(ansi.Strip(out), "\n")[0]
+		assert.LessOrEqual(t, ansi.StringWidth(title), width, "the title is cut to the width at %d", width)
+		assert.Equal(t, 12, lipgloss.Height(out))
+	}
+	narrow := strings.Split(ansi.Strip(RenderWorkPager(70, 12, WorkPagerData{Job: job, Lines: lines})), "\n")[0]
+	assert.Contains(t, narrow, "…", "a command that does not fit is cut with an ellipsis")
+	assert.Contains(t, narrow, "esc back", "and the hint is kept")
+
+	bare := workRunning(15, "bare", time.Minute)
+	assert.NotContains(t, ansi.Strip(RenderWorkPager(120, 12, WorkPagerData{Job: bare, Lines: lines})), "· in ")
+}
+
 func TestRenderWorkPager_NothingToShow(t *testing.T) {
 	job := workRunning(14, "polyoxide tests", time.Minute)
 	assert.Contains(t, ansi.Strip(RenderWorkPager(80, 12, WorkPagerData{Job: job})), "(no output yet)")

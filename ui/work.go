@@ -242,8 +242,30 @@ func RenderWork(width, height int, d WorkData) string {
 // lines tall: all but its title line.
 func WorkPagerBody(height int) int { return max(1, height-1) }
 
+// workPagerHint is the pager title's right-hand hint.
+const workPagerHint = "esc back "
+
+// workPagerCommand is the job's command and folder as the tail of the pager's
+// title, cleaned of escapes and control characters like every string an agent
+// wrote, and cut to the room columns the rest of the title leaves; nothing
+// when the job carries neither or the room is under a few columns.
+func workPagerCommand(room int, j core.JobView) string {
+	var parts []string
+	if cmd := CleanText(strings.Join(j.Argv, " ")); strings.TrimSpace(cmd) != "" {
+		parts = append(parts, cmd)
+	}
+	if cwd := CleanText(j.Cwd); strings.TrimSpace(cwd) != "" {
+		parts = append(parts, "in "+cwd)
+	}
+	if len(parts) == 0 || room < 8 {
+		return ""
+	}
+	return ansi.Truncate(" · "+strings.Join(parts, " · "), room, "…")
+}
+
 // RenderWorkPager draws the log pager in a width by height box: a title
-// line naming the job and the lines shown, then the window of the log.
+// line naming the job, the lines shown and the job's command and folder,
+// then the window of the log.
 func RenderWorkPager(width, height int, d WorkPagerData) string {
 	if width <= 0 || height <= 0 {
 		return ""
@@ -259,7 +281,8 @@ func RenderWorkPager(width, height int, d WorkPagerData) string {
 			title += " (earlier output not shown)"
 		}
 	}
-	out := []string{workTitleStyle.Render(title) + workRightHint(width, title, "esc back ")}
+	title += workPagerCommand(width-ansi.StringWidth(title)-ansi.StringWidth(workPagerHint)-1, d.Job)
+	out := []string{workTitleStyle.Render(title) + workRightHint(width, title, workPagerHint)}
 	switch {
 	case d.Err != "":
 		out = append(out, " "+workErrStyle.Render("cannot read the log: "+CleanText(d.Err)))
