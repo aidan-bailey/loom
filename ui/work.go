@@ -123,17 +123,19 @@ func JobLabel(j core.JobView) string {
 // sequences stripped, tabs four spaces, other controls dropped, and a line
 // a progress bar rewrote with carriage returns reduced to its last state.
 // partial says the bytes start mid-file, so their first line is cut and is
-// dropped. A final newline ends the last line rather than starting another.
+// dropped, unless it is the only line: a log whose whole window is one
+// line (a progress bar redrawn with carriage returns) shows that line. A
+// final newline ends the last line rather than starting another.
 func LogLines(data []byte, partial bool) []string {
 	if len(data) == 0 {
 		return nil
 	}
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	if partial {
-		lines = lines[1:]
-	}
-	if n := len(lines); n > 0 && lines[n-1] == "" {
+	if n := len(lines); lines[n-1] == "" {
 		lines = lines[:n-1]
+	}
+	if partial && len(lines) > 1 {
+		lines = lines[1:]
 	}
 	if len(lines) == 0 {
 		return nil

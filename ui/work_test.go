@@ -316,6 +316,8 @@ func TestLogLines(t *testing.T) {
 		{"no final newline", "a\nb", false, []string{"a", "b"}},
 		{"crlf", "a\r\nb\r\n", false, []string{"a", "b"}},
 		{"a cut head drops its first line", "half\nfull\n", true, []string{"full"}},
+		{"a cut head with one line keeps it", "10%\r50%\r100%", true, []string{"100%"}},
+		{"a cut head with one line and a final newline keeps it", "10%\r50%\r100%\n", true, []string{"100%"}},
 		{"a whole head keeps its first line", "whole\nfull\n", false, []string{"whole", "full"}},
 		{"colors", "\x1b[31mred\x1b[0m\n", false, []string{"red"}},
 		{"a progress bar keeps its last state", "10%\r50%\r100%\ndone\n", false, []string{"100%", "done"}},
