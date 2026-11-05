@@ -85,8 +85,12 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	}
 
 	owner, unknown := m.jobOwner(s.Launch)
+	call := m.attribution(s.Launch, s.Argv)
 	id = max(q.store.NextID, 1)
 	rec.ID, rec.Order, rec.Owner = id, int64(id), uint64(owner)
+	if call != nil {
+		rec.Agent = call.Agent
+	}
 	prev := q.store
 	// The directory is made exclusively: NextID is past every directory the
 	// load saw, but a directory that appeared since (or a counter that went
@@ -118,6 +122,9 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		return 0, "", err
 	}
 	q.moved()
+	if call != nil {
+		call.uses-- // spent only by a job that was saved
+	}
 	if sig != nil && q.beliefsErr == nil {
 		q.beliefs.Ensure(*sig, now)
 		m.saveBeliefsQuiet("submit")

@@ -85,7 +85,8 @@ The process half of the package: it starts a job's runner, tests whether the run
 | `shim_unix.go` | `RunShim`, `Runner.Start`, `Probe`, `SignalGroup` |
 | `shim_windows.go` | the same four names, each answering `ErrUnsupported` |
 | `prio_linux.go`, `prio_other.go` | the shim's nice value and, on Linux, its I/O class |
-| `sample.go` | `Sample`, `ParsePS`, `Snapshot.Group` |
+| `sample.go` | `Proc`, `Snapshot`, `ParsePS`, `parseProcStat`, `Snapshot.Group`, `Snapshot.Session` |
+| `sample_linux.go`, `sample_other.go` | `Sample`: from `/proc` on Linux, from `ps` elsewhere |
 | `host.go`, `host_linux.go`, `host_darwin.go`, `host_other.go` | `DetectHost` and the RAM readers |
 | `testshim.go` | `ShimTestEnv`, `MaybeRunTestShim`, `TestRunner()` |
 
@@ -93,7 +94,7 @@ The process half of the package: it starts a job's runner, tests whether the run
 1. refuses to run unless it leads its group;
 2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, so the command and its children inherit both;
 3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock, and writes `started.json`;
-4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the parallelism hints (`Hints`), found on that environment's `PATH`;
+4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the hints (`Hints`: the parallelism variables, and `SCCACHE_CLIENT_SIDE=1`, so sccache runs each compile in its client, inside the job's tree, rather than in its shared daemon), found on that environment's `PATH`;
 5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; a SIGTERM that arrives before the command starts is not checked for, since Go delivers signals asynchronously and no check is reliable; the command starts anyway and the daemon's SIGKILL escalation, 10 s after the cancel, ends it and the job settles as cancelled;
 6. writes `exit.json` (a signal ends a job with code -1 and the name `unix.SignalName` gives it, a command that cannot be executed with code 127 and the error) and returns, which releases the lock.
 
@@ -101,7 +102,7 @@ A shim that cannot run the job writes an `exit.json` with code 127 and the reaso
 
 **Asking about a job.** `Probe` is a non-blocking `flock` test of `run.lock`, released at once: held means the shim lives, free means it is gone, and no `run.lock` yet also reads free, since no shim has taken it. `SignalGroup(pgid, sig)` is `kill(-pgid, sig)`; it refuses a pgid of 1 or below and the caller's own group, and answers `ESRCH` for a group that is gone. Neither proves that a group is still the job's: the caller does, with the lock held, or with a `Sample` showing members in the group and no process holding the shim's pid.
 
-**Usage.** `Sample` runs `ps -A -o pid=,pgid=,rss=,time=` once. `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), and fails the whole sample on a line it cannot read. `Snapshot.Group(pgid)` sums a group's memory and CPU time, counts its members, and says whether any process has the group's id as its pid. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or the sysctl `hw.memsize` through `unix.SysctlUint64`); a RAM it cannot read stays 0.
+**Usage.** On Linux `Sample` reads `/proc/<pid>/stat` for every process (`parseProcStat`): its group, its session, its resident memory, and its CPU time with its waited-for children's, so a session's sum keeps the processes reaped inside it and a short-lived compile still counts ([spec](../docs/superpowers/specs/2026-11-05-sccache-measurement-design.md)). Elsewhere it runs `ps -A -o pid=,pgid=,rss=,time=` once, and `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), with a process's session taken to be its group. A record it cannot read fails the whole sample. `Snapshot.Session(sid)` sums a session's memory and CPU time and counts its members: a job's usage, since the shim leads its session and a child that changes group (coreutils `timeout`) stays in it. `Snapshot.Group(pgid)` does the same for a group and says whether any process has the group's id as its pid: the lost-job proof, since a signal reaches the group. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or the sysctl `hw.memsize` through `unix.SysctlUint64`); a RAM it cannot read stays 0.
 
 **Windows.** The stubs answer `ErrUnsupported`: sessions, process groups and `flock` have no counterpart here.
 

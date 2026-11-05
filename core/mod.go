@@ -192,6 +192,11 @@ type ModHello struct {
 	// ($.command.list()), with their sources. nil from an older mod, which
 	// can't run one, so the model hands it none (commandRefusal).
 	Commands []ModCommand `json:"commands,omitempty"`
+	// Agents says the mod reports `loom job` Bash calls (ModCall) and can
+	// send a message to a subagent (ModMessage.Agent). false from an older
+	// mod, which gets a subagent's job notice as the session's (subagent job
+	// results spec §5.3).
+	Agents bool `json:"agents,omitempty"`
 }
 
 // ModCommand is one slash command a mod's hello lists: its name, without the
@@ -210,6 +215,10 @@ type ModMessage struct {
 	// Args ($.command.run) in place of submitting Text.
 	Command string `json:"command,omitempty"`
 	Args    string `json:"args,omitempty"`
+	// Agent, when set, is the subagent (its agentId) the mod sends Text to
+	// ($.session.send) in place of submitting it (subagent job results spec
+	// §5.3).
+	Agent string `json:"agent,omitempty"`
 }
 
 // ModEvent is one thing a mod reports about a message: queued (handed to
@@ -248,6 +257,9 @@ type ModHost interface {
 	ModAsk(launch, poller string, ask ModAsk) error
 	ModAnswer(launch, poller, ask string) (json.RawMessage, <-chan struct{}, error)
 	ModAskClosed(launch, poller, ask, how string) error
+	// ModCall records a Bash call the mod reports starting, or forgets it
+	// once ended; poller is as ModInbox's.
+	ModCall(launch, poller string, c ModCall, ended bool) error
 	// ModsServing says the server listens from now, so every launch's
 	// grace runs from here at the earliest.
 	ModsServing()
@@ -293,6 +305,10 @@ type modMessage struct {
 	// job is the queue job a job notice (OriginJob) reports on: its fate is
 	// recorded there (noteNotice).
 	job sched.JobID
+	// agent is the subagent a job notice goes to (sched.Record.Agent). The
+	// inbox hands it to a mod that can send to subagents (modLink.agents),
+	// and gives anything else the session's copy (ModInbox).
+	agent string
 }
 
 // modLink is what the model knows of one instance's current launch and its
@@ -316,6 +332,11 @@ type modLink struct {
 	// true for a built-in (commandsOf). nil before a hello, or after one
 	// that listed none (an older mod).
 	commands map[string]bool
+	// agents is the recorded hello's ModHello.Agents: the mod can send to a
+	// subagent. calls are the `loom job` Bash calls it reports in flight,
+	// oldest first (core/mod_calls.go).
+	agents bool
+	calls  []*reportedCall
 	// since is when the link was made: the model met the launch then, as a
 	// start or relaunch delivered or a message or mod named it. A launch
 	// that reports no SessionStart is still starting only up to
@@ -531,7 +552,7 @@ func (m *Model) endLink(inst *session.Instance, l *modLink, why string) {
 		m.endTurns(inst, l, why)
 		m.dropAsks(inst, l, why)
 	})
-	l.outbox, l.turning = nil, map[string]*modMessage{}
+	l.outbox, l.turning, l.calls = nil, map[string]*modMessage{}, nil
 	l.poke()
 }
 
@@ -693,6 +714,7 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	l.heard = time.Now()
 	l.poller, l.loaded = h.Poller, h.Loaded
 	l.commands = commandsOf(h.Commands)
+	l.agents = h.Agents
 	return nil
 }
 
@@ -724,7 +746,13 @@ func (m *Model) ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, 
 	out := make([]ModMessage, 0, len(l.outbox))
 	for _, msg := range l.outbox {
 		msg.offered = true
-		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser, Command: msg.command, Args: msg.args})
+		if msg.agent != "" && !l.agents {
+			// A mod that can't send to a subagent gets the session's copy,
+			// naming the subagent (spec §5.3). Decided here, not at enqueue:
+			// the hello that says what the mod can do may come later.
+			msg.text, msg.agent = withSubmitter(msg.text, oldModLine(msg.agent)), ""
+		}
+		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser, Command: msg.command, Args: msg.args, Agent: msg.agent})
 	}
 	return out, l.wake, nil
 }
@@ -807,6 +835,14 @@ func (m *Model) modComplete(inst *session.Instance, l *modLink, ev ModEvent) {
 // never pasted (offered, modGone) does not apply here.
 func (m *Model) modFailed(inst *session.Instance, l *modLink, ev ModEvent) {
 	if msg := l.take(ev.ID); msg != nil {
+		if msg.origin == OriginJob && msg.agent != "" {
+			// The subagent could not take it: the session gets it, naming
+			// the subagent and why (spec §5.3). Its fate is recorded when
+			// that copy is queued.
+			log.For("core").Info("mod.agent_unreachable", "instance", inst.Title, "job", msg.job, "agent", msg.agent, "why", ev.Error)
+			m.enqueue(inst, &modMessage{text: withSubmitter(msg.text, unreachableLine(msg.agent, ev.Error)), origin: OriginJob, job: msg.job})
+			return
+		}
 		m.withoutMod(inst, msg, "the loom mod could not submit it: "+ev.Error)
 		return
 	}

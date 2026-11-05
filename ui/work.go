@@ -512,10 +512,15 @@ func workOwner(j core.JobView) string {
 		return "no owner"
 	case j.OwnerTitle == "":
 		return "session gone"
-	case j.OwnerWorkspace == "":
-		return j.OwnerTitle
 	}
-	return j.OwnerTitle + " · " + j.OwnerWorkspace
+	owner := j.OwnerTitle
+	if j.Agent != "" {
+		owner += " › " + core.ShortAgent(j.Agent)
+	}
+	if j.OwnerWorkspace != "" {
+		owner += " · " + j.OwnerWorkspace
+	}
+	return owner
 }
 
 // workRowFacts is what a row shows besides the job's name: the claim cell

@@ -34,6 +34,7 @@ Loom runs `git add -N .` in every session worktree on each diff probe (`session/
 
 - Put scratch files, backups and tool output in the scratchpad, never in the worktree.
 - If one lands in the worktree, delete it and `git rm --cached` it.
+- Claude Code's Edit and Write tools write `<file>.tmp.<pid>.<hash>` beside the file and rename it into place, so a probe that runs mid-edit leaves a ` D <file>.tmp.…` entry. Check `git status --short` after editing and before committing; it happened twice in one session on 2026-11-05.
 - Commit with explicit `git commit -m … -- <paths>`, never `-a`, `git add -A` or `git add .`; check `git status` before every commit.
 - Several agents in one worktree share one index: `git commit -- <file>` commits the whole working-tree file, another agent's uncommitted hunks included, so check the committed diff. Never amend, rebase or `git stash` there: the stash stack is shared by every worktree of the repo.
 

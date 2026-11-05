@@ -205,8 +205,8 @@ func newJobSubmitCmd() *cobra.Command {
 				out := c.OutOrStdout()
 				d.printPlacement(out, v)
 				d.printSizing(out, id)
-				if sub.Launch == "" {
-					fmt.Fprintf(out, "no session to notify: follow it with loom job wait %d\n", id)
+				if line := resultRoute(sub, v); line != "" {
+					fmt.Fprintln(out, line)
 				}
 				return nil
 			})
@@ -271,6 +271,22 @@ func (d *client) printPlacement(out io.Writer, v core.JobView) {
 	}
 	n, running := queuePlace(d.Queue(), v.ID)
 	fmt.Fprintf(out, "job %d queued (%s in line, %d running)\n", v.ID, ordinal(n), running)
+}
+
+// resultRoute says where a submitted job's result will go (subagent job
+// results spec §5.5): to the subagent that submitted it, to the session, or,
+// from a plain shell, nowhere. "" when the submit asked for no message, or
+// its launch is unknown (the daemon's warning says so).
+func resultRoute(sub sched.Submit, v core.JobView) string {
+	switch {
+	case sub.Launch == "":
+		return fmt.Sprintf("no session to notify: follow it with loom job wait %d", v.ID)
+	case !sub.Notify || v.Owner == 0:
+		return ""
+	case v.Agent != "":
+		return fmt.Sprintf("its result comes back to this subagent (%s)", core.ShortAgent(v.Agent))
+	}
+	return "its result comes to this session"
 }
 
 // jobOf is job id among q's jobs.

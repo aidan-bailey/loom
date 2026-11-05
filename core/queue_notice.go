@@ -28,6 +28,7 @@ const (
 type jobNoticeBuilt struct {
 	id    sched.JobID
 	owner InstanceID
+	agent string // the subagent that submitted the job (sched.Record.Agent)
 	text  string
 }
 
@@ -48,7 +49,7 @@ func (m *Model) sendJobNotice(rec sched.Record) {
 		return
 	}
 	logPath := filepath.Join(m.queue.jobDir(rec.ID), sched.LogFile)
-	m.spawnBackground(buildNoticeJob(rec.ID, owner, noticeHead(rec), logPath, rec.Tail))
+	m.spawnBackground(buildNoticeJob(rec.ID, owner, rec.Agent, noticeHead(rec), logPath, rec.Tail))
 }
 
 // noticeTarget is the session a notice for owner would go to, and why it
@@ -132,9 +133,9 @@ func (m *Model) noteNotice(id sched.JobID, fate sched.Notice, why string) {
 
 // buildNoticeJob reads the log's tail off the loop and returns the notice's
 // text. It reads no model state: head, logPath and tail are copies.
-func buildNoticeJob(id sched.JobID, owner InstanceID, head, logPath string, tail int) Job {
+func buildNoticeJob(id sched.JobID, owner InstanceID, agent, head, logPath string, tail int) Job {
 	return func() any {
-		return jobNoticeBuilt{id: id, owner: owner, text: composeNotice(head, logPath, tail)}
+		return jobNoticeBuilt{id: id, owner: owner, agent: agent, text: composeNotice(head, logPath, tail)}
 	}
 }
 
@@ -146,7 +147,7 @@ func (m *Model) deliverJobNotice(r jobNoticeBuilt) {
 		m.noteNotice(r.id, sched.NoticeUndelivered, why)
 		return
 	}
-	m.enqueue(inst, &modMessage{text: r.text, origin: OriginJob, job: r.id})
+	m.enqueue(inst, &modMessage{text: r.text, origin: OriginJob, job: r.id, agent: r.agent})
 }
 
 // noticeHead is the notice's first line (spec §5.8): the job, then its outcome
@@ -212,6 +213,34 @@ func composeNotice(head, logPath string, tail int) string {
 		}
 	}
 	return b.String()
+}
+
+// withSubmitter is a notice's text with line after its head line: the
+// session's copy of a notice a subagent submitted (subagent job results spec
+// §5.4).
+func withSubmitter(text, line string) string {
+	head, rest, ok := strings.Cut(text, "\n")
+	if !ok {
+		return head + "\n" + line
+	}
+	return head + "\n" + line + "\n" + rest
+}
+
+// unreachableLine names the subagent that submitted a job, with why loom
+// could not reach it, for the session's copy. The full ID: SendMessage takes
+// it.
+func unreachableLine(agent, why string) string {
+	why = strings.TrimSuffix(strings.TrimSpace(why), ".")
+	if why == "" {
+		why = "no reason was given"
+	}
+	return fmt.Sprintf("(Submitted by your subagent %s; loom could not reach it: %s.)", agent, why)
+}
+
+// oldModLine names the subagent that submitted a job, for a session whose
+// loom mod can't message it.
+func oldModLine(agent string) string {
+	return fmt.Sprintf("(Submitted by your subagent %s; this session's loom mod is too old to message it, so pass this on with SendMessage if it still needs it.)", agent)
 }
 
 // plural is "1 line" or "N lines".

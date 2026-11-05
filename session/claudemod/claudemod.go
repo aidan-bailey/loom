@@ -33,6 +33,12 @@ const (
 	EnvLaunch = "LOOM_LAUNCH"
 )
 
+// JobCallPattern finds `loom job submit` or `loom job run` in a Bash command.
+// The module reports each call whose command matches it, and the daemon
+// counts its matches (core, attribution); register.ts carries the same source
+// as a JavaScript regex literal, which TestModule_SpeaksThisProtocol checks.
+const JobCallPattern = `\bloom\s+job\s+(submit|run)\b`
+
 // WriteTo writes the mod into dir, creating it. Each launch's hooks folder is
 // emptied before it (hooks.Prepare), so nothing older is left beside it.
 // Claude itself writes tsconfig.json and .claude-plugin/types/ into the

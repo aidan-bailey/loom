@@ -15,14 +15,22 @@
 // --plugin-dir. LOOM_MOD_SOCKET names the daemon's mod socket and LOOM_LAUNCH
 // this launch; without both the module does nothing.
 
-import type { CommandRunResult, EngineInterface, PromptSubmitResult, Register } from 'claude-code'
+import type { CommandRunResult, EngineInterface, PromptSubmitResult, Register, SessionSendResult } from 'claude-code'
 
 const MOD_VERSION = 1
 const BASE = 'http://loom/v1'
 const MAX_BACKOFF_MS = 5000
 const KEEP_SUBMITTED = 200
+// JOB_CALL finds `loom job submit` or `loom job run` in a Bash command: the
+// module reports each call whose command matches it, from a subagent or the
+// main loop, so the daemon can send a job's result back to the subagent that
+// submitted it (claudemod.JobCallPattern carries the same source; spec
+// docs/superpowers/specs/2026-11-05-subagent-job-results-design.md).
+const JOB_CALL = /\bloom\s+job\s+(submit|run)\b/
+// CALL_REPORT_MS bounds the wait for a call's report before its command runs.
+const CALL_REPORT_MS = 2000
 
-type Message = { id: string; text: string; asUser: boolean; command?: string; args?: string }
+type Message = { id: string; text: string; asUser: boolean; command?: string; args?: string; agent?: string }
 type ModEvent = {
   kind: 'queued' | 'started' | 'complete' | 'failed'
   id: string
@@ -98,6 +106,7 @@ async function hello($: EngineInterface): Promise<number> {
     session,
     poller: POLLER,
     loaded: LOADED,
+    agents: true,
     commands: await commandList($),
   })
   return r.status
@@ -202,6 +211,46 @@ async function run($: EngineInterface, m: Message) {
   await queued
 }
 
+// sendToAgent hands a message for a subagent to it ($.session.send), which
+// resumes one that has finished: queued once delivered, failed with the
+// reason when it can't be, and the daemon then gives it to the session. It
+// starts no main-loop turn, so it reports no started or complete.
+async function sendToAgent($: EngineInterface, m: Message) {
+  if (submitted.includes(m.id)) {
+    await report($, [{ kind: 'queued', id: m.id }])
+    return
+  }
+  let r: SessionSendResult
+  try {
+    r = await $.session.send({ to: { agentId: m.agent ?? '' }, text: m.text })
+  } catch (err) {
+    await report($, [{ kind: 'failed', id: m.id, error: String(err) }])
+    return
+  }
+  if (!r.isDelivered) {
+    await report($, [{ kind: 'failed', id: m.id, error: r.reason }])
+    return
+  }
+  submitted.push(m.id)
+  if (submitted.length > KEEP_SUBMITTED) submitted.shift()
+  await reportInOrder($, [{ kind: 'queued', id: m.id }])
+}
+
+// reportCall posts a Bash call's start or end (/calls), giving up after
+// CALL_REPORT_MS: a slow or absent daemon must not hold the command. A
+// failure goes to the debug log, and the job then reports to the session.
+async function reportCall($: EngineInterface, c: { id: string; agent?: string; command: string }, ended: boolean) {
+  try {
+    const r = await Promise.race([
+      call($, 'POST', '/calls', { launch, poller: POLLER, call: c, ended }),
+      $.clock.sleep(CALL_REPORT_MS).then(() => undefined),
+    ])
+    if (r === undefined) $.ui.log('loom: a call report timed out', { to: 'debug' })
+  } catch (err) {
+    $.ui.log(`loom: call report: ${String(err)}`, { to: 'debug' })
+  }
+}
+
 function backoff(ms: number): number {
   return Math.min(ms === 0 ? 1000 : ms * 2, MAX_BACKOFF_MS)
 }
@@ -231,7 +280,7 @@ async function pump($: EngineInterface) {
       }
       if (r.status === 200) {
         const { messages } = JSON.parse(r.text) as { messages: Message[] }
-        for (const m of messages) await (m.command ? run($, m) : submit($, m))
+        for (const m of messages) await (m.command ? run($, m) : m.agent ? sendToAgent($, m) : submit($, m))
         delay = 0
       } else if (r.status === 204) {
         delay = 0
@@ -435,6 +484,23 @@ export const register: Register = on => {
       if (rest.length > 0) inFlight.set(key, rest)
       else inFlight.delete(key)
       c.settle()
+    }
+  })
+
+  // A Bash call that runs `loom job submit` or `loom job run` is reported
+  // while it runs, so the daemon can match each submit to the call that
+  // made it. The report is awaited, briefly, before the command runs. The
+  // command is never changed: a rewrite would fail the person's allow
+  // rules.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = typeof e.command === 'string' ? e.command : ''
+    if (!JOB_CALL.test(command) || !(await ready($))) return next(e)
+    const c = { id: e.tool_use_id ?? '', agent: e.agentId, command }
+    await reportCall($, c, false)
+    try {
+      return await next(e)
+    } finally {
+      void reportCall($, c, true)
     }
   })
 
