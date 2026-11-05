@@ -202,8 +202,9 @@ func (f *jobFollower) run() (core.JobView, error) {
 	}
 }
 
-// report writes the queue line when the job's place changes, and the start
-// line when a job seen waiting starts.
+// report writes the held line when what a held job waits on changes, the
+// queue line when the job's place changes, and the start line when a job
+// seen waiting starts.
 func (f *jobFollower) report(v core.JobView) {
 	if f.quiet {
 		return
@@ -213,6 +214,12 @@ func (f *jobFollower) report(v core.JobView) {
 		f.queued = true
 		n, running := queuePlace(f.d.Queue(), v.ID)
 		if line := fmt.Sprintf("job %d queued (%s in line, %d running)", v.ID, ordinal(n), running); line != f.last {
+			f.d.say("%s", line)
+			f.last = line
+		}
+	case sched.Held:
+		f.queued = true // its start is reported
+		if line := fmt.Sprintf("job %d held: runs %s", v.ID, v.Waiting); line != f.last {
 			f.d.say("%s", line)
 			f.last = line
 		}

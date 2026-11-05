@@ -1405,3 +1405,30 @@ func TestApplyUIPrefs_OutsideTheWorkViewStillChoosesTheMode(t *testing.T) {
 		}
 	}
 }
+
+// heldWorkJob is a job held after job after.
+func heldWorkJob(id, after sched.JobID, desc string) core.JobView {
+	j := queueJob(id, sched.Held, desc)
+	j.Started, j.After = time.Time{}, after
+	return j
+}
+
+func TestWorkCancelPrompt_NamesTheJobsHeldAfterIt(t *testing.T) {
+	jobs := []core.JobView{
+		queueJob(14, sched.Running, "build"),
+		heldWorkJob(15, 14, "tests"),
+		heldWorkJob(16, 15, "bench"),
+		heldWorkJob(17, 99, "other"),
+	}
+	assert.Equal(t, `Cancel job 14 "build" and jobs 15 and 16 that wait on it?`, cancelPrompt(jobs[0], jobs))
+	assert.Equal(t, `Cancel job 15 "tests" and job 16 that waits on it?`, cancelPrompt(jobs[1], jobs))
+	assert.Equal(t, `Cancel job 16 "bench"?`, cancelPrompt(jobs[2], jobs))
+}
+
+func TestWorkFront_AHeldJobCanMoveToo(t *testing.T) {
+	m := workHome(t, queueJob(14, sched.Running, "a"), heldWorkJob(16, 14, "b"))
+	w := watchWork(t, m)
+	pressWork(t, m, "j") // job 16, held
+	assert.Nil(t, pressWork(t, m, "t"))
+	assert.Equal(t, []sched.JobID{16}, w.fronts)
+}

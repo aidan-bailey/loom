@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
@@ -323,6 +324,7 @@ func (m *home) workOfflineRefused(key string) bool {
 // ID whatever is selected when the answer comes: the queue may change under
 // the dialog, and the model re-validates (a job that has finished by then
 // is refused). A finished job has nothing to cancel, so it asks nothing.
+// The prompt names the jobs held down its chain, which the cancel ends too.
 func (m *home) askCancelWorkJob() tea.Cmd {
 	job, ok := m.workSelected()
 	if !ok {
@@ -333,19 +335,54 @@ func (m *home) askCancelWorkJob() tea.Cmd {
 		return nil
 	}
 	id := job.ID
-	return m.confirmTask("Cancel "+ui.JobLabel(job)+"?", overlay.ConfirmationTask{Sync: func() {
+	return m.confirmTask(cancelPrompt(job, m.queue.Jobs), overlay.ConfirmationTask{Sync: func() {
 		m.core.CancelJob(id, core.CancelFromView, m.newReq(pendingReq{work: &pendingWork{}}))
 	}})
 }
 
-// frontWorkJob is t: the selected queued job goes to the front of the line.
-// Only a queued job can; the model re-validates it.
+// cancelPrompt is x's question for job (dependent jobs spec §7): it names
+// the jobs held down its chain in jobs, which the cancel ends with it.
+func cancelPrompt(job core.JobView, jobs []core.JobView) string {
+	held := heldChain(jobs, job.ID)
+	switch len(held) {
+	case 0:
+		return "Cancel " + ui.JobLabel(job) + "?"
+	case 1:
+		return fmt.Sprintf("Cancel %s and job %d that waits on it?", ui.JobLabel(job), held[0])
+	}
+	words := make([]string, len(held))
+	for i, id := range held {
+		words[i] = strconv.FormatInt(int64(id), 10)
+	}
+	return fmt.Sprintf("Cancel %s and jobs %s that wait on it?", ui.JobLabel(job), sched.JoinAnd(words))
+}
+
+// heldChain is the IDs of the jobs held down job id's chain in jobs: those
+// that wait on it, those that wait on them, and so on, in ID order.
+func heldChain(jobs []core.JobView, id sched.JobID) []sched.JobID {
+	var out []sched.JobID
+	for next := []sched.JobID{id}; len(next) > 0; {
+		var more []sched.JobID
+		for _, j := range jobs {
+			if j.State == sched.Held && slices.Contains(next, j.After) {
+				more = append(more, j.ID)
+			}
+		}
+		out = append(out, more...)
+		next = more
+	}
+	slices.Sort(out)
+	return out
+}
+
+// frontWorkJob is t: the selected waiting job goes to the front of the line.
+// Only a waiting job (queued or held) can; the model re-validates it.
 func (m *home) frontWorkJob() {
 	job, ok := m.workSelected()
 	if !ok {
 		return
 	}
-	if job.State != sched.Queued {
+	if !job.State.Waiting() {
 		m.errBox.SetInfo(fmt.Sprintf("job %d isn't waiting", job.ID))
 		return
 	}

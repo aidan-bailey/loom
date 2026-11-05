@@ -64,3 +64,8 @@ func TestQueueChanged_PublishesTheJobBadges(t *testing.T) {
 	assert.Equal(t, "", ui.JobBadge(9), "a finished job's badge is gone")
 	assert.Equal(t, "⚙ job 15", ui.JobBadge(10), "a started job's badge changes")
 }
+
+func TestOwnerJobBadges_AHeldJobCountsAsQueued(t *testing.T) {
+	q := core.QueueView{Jobs: []core.JobView{{ID: 5, State: sched.Held, Owner: 2}}}
+	assert.Equal(t, map[core.InstanceID]string{2: "⚙ queued"}, ownerJobBadges(q))
+}

@@ -1001,7 +1001,7 @@ func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 		assert.Contains(t, para, "subagent", name)
 		assert.Contains(t, para, "even after it has finished", name)
 		flags := flagName.FindAllString(para, -1)
-		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive"}, flags, name)
+		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive", "--after"}, flags, name)
 		for _, flag := range flags {
 			for _, command := range []*cobra.Command{newJobSubmitCmd(), newJobRunCmd()} {
 				assert.NotNil(t, command.Flags().Lookup(strings.TrimPrefix(flag, "--")), "%s: loom job %s has no %s", name, command.Name(), flag)
@@ -1069,4 +1069,82 @@ func TestResultRoute(t *testing.T) {
 func TestContinuesLine_NamesTheSubagent(t *testing.T) {
 	assert.Equal(t, "job 4 continues; a message will bring its result (loom job wait 4 follows it again)", continuesLine(core.JobView{ID: 4}))
 	assert.Equal(t, "job 4 continues; a message will bring its result to this subagent (ab91bd4) (loom job wait 4 follows it again)", continuesLine(core.JobView{ID: 4, Agent: "ab91bd4b710780552"}))
+}
+
+func TestJobSubmission_TheAfterFlag(t *testing.T) {
+	f, c, args := parsedSubmit(t, "--after", "14", "--", "true")
+	sub, err := f.submission(c, args, true, defaultTail)
+	require.NoError(t, err)
+	assert.Equal(t, sched.JobID(14), sub.After)
+
+	f, c, args = parsedSubmit(t, "--", "true")
+	sub, err = f.submission(c, args, true, defaultTail)
+	require.NoError(t, err)
+	assert.Zero(t, sub.After, "none")
+
+	f, c, args = parsedSubmit(t, "--after", "0", "--", "true")
+	_, err = f.submission(c, args, true, defaultTail)
+	assert.EqualError(t, err, "--after is 0: it must be a job ID")
+}
+
+func TestJobStartedLine_AReleasedJobCountsFromItsPrerequisitesEnd(t *testing.T) {
+	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	v := core.JobView{ID: 15, After: 14, Submitted: t0, Ready: t0.Add(3 * time.Minute), Started: t0.Add(3*time.Minute + 2*time.Second)}
+	assert.Equal(t, "job 15 started 2s after job 14 ended", startedLine(v))
+	v.Ready = t0 // queued at once after a job already done
+	assert.Equal(t, "job 15 started after 3m2s", startedLine(v))
+	v.After, v.Ready = 0, time.Time{} // a record from an earlier build
+	assert.Equal(t, "job 15 started after 3m2s", startedLine(v))
+}
+
+func TestJobList_ShowsAHeldJobAndWhatItRunsAfter(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	q := core.QueueView{Jobs: []core.JobView{
+		{ID: 4, State: sched.Running, Description: "build", Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Submitted: now.Add(-5 * time.Minute), Started: now.Add(-3 * time.Minute)},
+		{ID: 5, State: sched.Held, Description: "tests", After: 4, Claim: sched.Claim{CPUs: 2, MemoryGB: 2}, Submitted: now.Add(-2 * time.Minute), Waiting: "after job 4 (running)"},
+	}}
+	var out bytes.Buffer
+	require.NoError(t, writeJobList(&out, q, false, now))
+	assert.Regexp(t, `(?m)^5 +held +tests +- +2c/2G +2m0s +- +after job 4 \(running\)$`, out.String())
+}
+
+func TestJobBeliefCommand_NamesWhatItRunsAfter(t *testing.T) {
+	v := sched.BeliefView{Belief: sched.Belief{Signature: sched.Signature{Command: []string{"cargo", "test"}}}}
+	assert.Equal(t, "cargo test", beliefCommand(v))
+	v.After = []string{"cargo", "test", "--no-run"}
+	assert.Equal(t, "cargo test (after cargo test --no-run)", beliefCommand(v))
+}
+
+// The whole path through a daemon: a job submitted --after a running one is
+// held, and its follower says so, then counts its start from the end of the
+// job it waited on.
+func TestJobSubmit_AfterHoldsTheJobUntilItsPrerequisiteIsDone(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "build", "--no-notify", "--", "sh", "-c", "echo up; sleep 3")
+	require.NoError(t, err)
+
+	out, _, err := runJob(t, "submit", "-d", "tests", "--after", "1", "--", "sh", "-c", "echo ran")
+	require.NoError(t, err)
+	assert.Regexp(t, `^job 2 held: runs after job 1 \((queued|running)\)\n`, out)
+
+	out, errOut, err := runJob(t, "wait", "2")
+	require.NoError(t, err)
+	assert.Equal(t, "ran\n", out)
+	assert.Regexp(t, `(?s)loom: job 2 held: runs after job 1 \(running\)\n.*loom: job 2 started \d+s after job 1 ended\n.*loom: job 2 done in \S+ \(exit 0\)\n`, errOut)
+	d.waitFinished(t, 1)
+}
+
+func TestJobRun_AJobWhosePrerequisiteFailsExits125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	serveDaemon(t, "true")
+	_, _, err := runJob(t, "submit", "-d", "build", "--no-notify", "--", "sh", "-c", "sleep 1; exit 3")
+	require.NoError(t, err)
+
+	_, errOut, err := runJob(t, "run", "-d", "tests", "--after", "1", "--", "true")
+
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Contains(t, errOut, "loom: job 2 was cancelled because job 1 failed (exit 3)\n")
 }

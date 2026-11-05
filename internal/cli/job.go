@@ -66,12 +66,13 @@ func checkPlatform(goos string) error {
 	return nil
 }
 
-// claimFlags are the flags `submit` and `run` share: what the job is and what
-// it claims.
+// claimFlags are the flags `submit` and `run` share: what the job is, what it
+// claims, and the job it runs after.
 type claimFlags struct {
 	desc          string
 	cpus, mem     int
 	io, exclusive bool
+	after         int64
 }
 
 // add registers the flags on c.
@@ -82,6 +83,7 @@ func (f *claimFlags) add(c *cobra.Command) {
 	fl.IntVar(&f.mem, "mem", 0, "GB of memory to claim, at least 1 (default: the host's default claim)")
 	fl.BoolVar(&f.io, "io", false, "I/O-heavy: takes one of the host's I/O slots")
 	fl.BoolVar(&f.exclusive, "exclusive", false, "Claim every cap, for a benchmark (not with --cpus, --mem or --io)")
+	fl.Int64Var(&f.after, "after", 0, "Run after job N ends done: held until then, and cancelled if it ends any other way")
 }
 
 // claim is the claim the flags ask for. The daemon applies the default claim
@@ -114,6 +116,9 @@ func (f *claimFlags) submission(c *cobra.Command, args []string, notify bool, ta
 	if err != nil {
 		return sched.Submit{}, err
 	}
+	if c.Flags().Changed("after") && f.after < 1 {
+		return sched.Submit{}, fmt.Errorf("--after is %d: it must be a job ID", f.after)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return sched.Submit{}, fmt.Errorf("the working directory: %w", err)
@@ -124,7 +129,7 @@ func (f *claimFlags) submission(c *cobra.Command, args []string, notify bool, ta
 	}
 	return sched.Submit{
 		Argv: slices.Clone(args), Cwd: cwd, Env: os.Environ(), Description: desc, Claim: claim,
-		Notify: notify, Tail: tail, Launch: os.Getenv(claudemod.EnvLaunch),
+		Notify: notify, Tail: tail, Launch: os.Getenv(claudemod.EnvLaunch), After: sched.JobID(f.after),
 	}, nil
 }
 
@@ -259,11 +264,15 @@ func (d *client) awaitJob(id sched.JobID) (core.JobView, error) {
 }
 
 // printPlacement writes the line `submit` ends with: where a queued job
-// stands, how a job that has already ended ended, or that it started.
+// stands, what a held job runs after, how a job that has already ended
+// ended, or that it started.
 func (d *client) printPlacement(out io.Writer, v core.JobView) {
 	switch {
 	case v.State.Finished():
 		fmt.Fprintf(out, "job %d %s\n", v.ID, stateText(v))
+		return
+	case v.State == sched.Held:
+		fmt.Fprintf(out, "job %d held: runs %s\n", v.ID, v.Waiting)
 		return
 	case v.State != sched.Queued:
 		fmt.Fprintf(out, "job %d started\n", v.ID)

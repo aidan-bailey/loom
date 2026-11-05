@@ -2175,3 +2175,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- internal/cli ui app 
 - §5.7 load: Steps 2.1 (`resolveHeld`), 2.3; test `…ABootResolves…`.
 - §6 CLI, §7 work view, §8 context: Package 3.
 - §9 wire: the fields of Steps 1.2, 1.5, 1.8, 2.3; the protocol check in Step 2.6.
+
+## Execution notes (2026-11-05)
+
+- **Package 1** went as planned (7fbc52b3). Since the branch was cut, main had added `Record.Spare`, so `After` and `Ready` follow it.
+- **Main was merged before Package 2** (8c0b99d4, no conflicts). It brought the subagent job results work (`Record.Agent`, `m.attribution` in `submitJob`, and an `agent` argument to `buildNoticeJob`) and the sccache measurement work. `sendNotice` passes `rec.Agent`, so a chain's message goes to the subagent that submitted the reporting job. In `submitJob`, `m.attribution` stays where main put it, and only `jobOwner` moved up.
+- **The guide's rule is 11, not 10**: main had added rule 10 (subagents) to `docs/claude/the-work-queue.md`.
+- **The mutation pairings were corrected**:
+  - Dropping the submit-time `Order` doesn't turn `TestJobQueue_ADoneJobReleasesItsDependentsAtItsPlace` red, because the release's lower-of rule restores the place.
+  - That mutation is caught instead by `TestJobQueue_AJobAfterAWaitingOrRunningOneIsHeldAtItsPlace` and `TestJobQueue_TheViewListsHeldJobsAmongTheWaiting`.
+  - `TestJobQueue_AReleaseTakesTheLowerOfTheTwoOrders` was added to pin both sides of the release rule. It goes red when the release keeps the dependent's own order and when it takes the prerequisite's outright.
+  - The other planned mutations went red as written: no `resolveHeld`, no first pass over cancel requests, and ending inside `cancelOwnerJobs`' marking loop.
+- **Package 2's 19 tests** passed on their first run.
+- **Package 3's gates.** The full suite and the race suite ran as concurrent jobs alongside another session's suite. Both failed only in `core`'s log-counting tests, because every test process shares `/tmp/loom.log`, and another process rotated it at 5 MB mid-run (`loom.log.1` written at 14:36:04). Run alone, `core` passed under both. Every other package passed in both suites; e2e, vet, the Windows build and the CLAUDE.md lint passed too. The trap is now in `docs/claude/testing-pitfalls.md`.
