@@ -1,4 +1,4 @@
-# Debugging a frozen TUI or daemon
+# Debugging a frozen or busy TUI or daemon
 
 **Symptom:** "loom is unresponsive but the cursor still blinks" (the blink is the host terminal's, not loom's): keys do nothing and `q` doesn't quit. Or the TUI navigates, but the first action (`n`, `D`, `s`, `r`) hangs it.
 
@@ -61,6 +61,19 @@ EOF
 chmod +x "$S/bells.sh"
 go run ./tools/loomdev run -- --program "$S/bells.sh" 2>"$S/tui.stderr"
 ```
+
+## 6. Busy, not frozen: profile it
+
+The installed loom is a stripped Nix build with no pprof endpoint, and `kernel.yama.ptrace_scope=1` keeps strace and dlv off any process your shell didn't start. perf still samples your own processes at `perf_event_paranoid` 2 when the event is user-space only, and the strip keeps Go's pclntab, which names the frames.
+
+1. **Pick the process.** The TUI is `loom`; its child `.loom-wrapped serve` is the daemon. `ps -o time,pcpu -p PID` gives the lifetime average; fields 14 and 15 of `/proc/PID/stat`, read 10 s apart, give the current use in ticks (100 a second is one core).
+2. **Record.** `perf record -e cpu-clock:u -F 499 -g -p PID -o <scratchpad>/out.perf -- sleep 20`. perf may not be on PATH; `ls -d /nix/store/*-perf-linux-*` finds one. Sampling is read-only and doesn't pause the process.
+3. **Name the frames.** `perf report` shows bare offsets for a stripped binary. Instead, run `perf script -i out.perf -F ip,dso`, which prints each sample's stack as absolute addresses, and resolve the binary's addresses in one batch with `go tool addr2line <binary>` (path from `readlink /proc/PID/exe`), which reads the pclntab. Count self time by the first frame of each stack and inclusive time by any frame.
+4. **Rates without a debugger.** Counting calls with uprobes needs root. `/proc/PID/io`'s `syscr` and `rchar` over an interval give read calls and bytes per second instead, and every PTY read can be a pane event.
+
+What it has found:
+
+- **2026-11-05, the TUI at 0.25–0.55 of a core while agents worked.** 79% of its CPU was `home.View`, mostly lipgloss and `x/ansi` measuring string widths (`SplitPane.String`, `List.String` building a card per row from that row's whole emulator screen). Parsing the PTYs took about 2%. Bubble Tea v2 calls `View()` after every message, and each of the 23 pane clients sent `paneDirtyMsg` up to every 16 ms (311 PTY reads a second), whether its pane was on screen or not. So the cost is the number of busy panes times the cost of a frame, and the frame's cost itself grows with the rail's rows. The frame gate (3ab8dd74, `app/frame_gate.go`) lets pane output share one frame and skip panes off screen. In a loomdev sandbox with 9 sessions printing 10 lines a second, all of them rail rows, the TUI went from 47–59% to 16–18% of a core. What remains is the frame itself: `render` was 87% of that, and 22% of it went to each rail card rendering its session's whole emulator screen.
 
 ## Traps
 
