@@ -1,6 +1,6 @@
 # One frame for all pane output: the TUI's frame gate
 
-Status: design approved 2026-11-05.
+Status: design approved 2026-11-05; §4, §5 and §10 refined while planning ([plan](../plans/2026-11-05-tui-frame-gate.md)).
 
 ## 1. Problem
 
@@ -29,31 +29,34 @@ So the TUI rendered a few hundred frames a second while the terminal shows 60. T
 
 ## 4. The frame gate
 
-A unit in `app/frame_gate.go`, owned by `home` and touched only on the Update goroutine (Bubble Tea calls `View` on the same goroutine):
+A unit in `app/frame_gate.go`, owned by `home` and touched only on the Update goroutine (Bubble Tea calls `View` on the same goroutine). Its zero value is ready.
+
+Reuse is opt-in for each Update. Only pane output can ask for it, and only for the one `View` that follows its Update. Every other path renders, including a `View` with no Update before it, as in tests that change `home` directly. A message the gate doesn't know can therefore never reuse a frame.
 
 - **State:**
   - the last rendered `tea.View`, and whether there is one;
-  - `stale`;
   - the time of the last render;
+  - `reuse`, which says the next `View` may return the last frame;
   - whether a `frameTickMsg` is pending.
-- **`invalidate()`:** the next `view` call renders.
-- **`frame() tea.Cmd`:** pane output asks for a frame.
-  - If 16 ms or more have passed since the last render, it invalidates and returns nil. This is the leading edge: a single keystroke's echo renders at once.
-  - Otherwise it arms one trailing `frameTickMsg` for the rest of the 16 ms, unless one is pending, and returns that tick's Cmd.
-- **`view(render func() tea.View) tea.View`:** returns the cached view unless it is stale or there is none. Otherwise it calls `render`, caches the result, records the time and clears `stale`.
-- **The clock** is a field (`now func() time.Time`), so tests drive it. The 16 ms interval is `frameInterval`, matching Bubble Tea's default 60 fps and the coalescer's interval.
+- **`fresh()`:** the next `View` renders, whatever output asked.
+- **`output(drawn bool) tea.Cmd`:** pane output, where `drawn` comes from the filter (§5).
+  - Undrawn output sets `reuse`.
+  - Drawn output with 16 ms or more since the last render returns nil and leaves `reuse` false, so the `View` renders at once. This is the leading edge: a keystroke's echo renders at once.
+  - Otherwise drawn output sets `reuse` and arms one trailing `frameTickMsg` for the rest of the 16 ms, unless one is pending.
+- **`ticked()`:** clears the pending flag.
+- **`view(render func() tea.View) tea.View`:** returns the last frame when `reuse` is set and there is one, and clears `reuse` either way. Otherwise it renders, keeps the result and records the time.
+- **The clock** is a field (`now func() time.Time`, nil meaning `time.Now`), so tests drive it. The 16 ms interval is `frameInterval`, matching Bubble Tea's default 60 fps and the coalescer's interval.
 
 **Wiring:**
 
 - `home.View()` becomes `return m.gate.view(m.render)`, where `render` is today's `View` body, unchanged.
-- `home.Update()` (the wrapper around `update`) invalidates in each of these cases:
-  - every message that is neither `paneDirtyMsg` nor `frameTickMsg`;
-  - when `drainCore` applied any event: a model change that lands during a pane message's Update must not wait for its wake message;
-  - when `checkLink` changed the link's state.
-- `frameTickMsg` clears the pending flag and invalidates.
-- `paneDirtyMsg` invalidates nothing itself; its handler's return value decides (§5).
+- `home.Update()` (the wrapper around `update`) calls `fresh()` before the message switch. It handles `frameTickMsg` there too (`ticked()`), so no state's key routing can swallow the tick and leave one pending forever.
+- After the switch and the drain, it calls `fresh()` again in either case:
+  - `drainCore` applied any event: a model change that lands during a pane message's Update must not wait for its wake message;
+  - the link is offline (`m.offline()`): every change of link state during an Update leaves it offline, and a rejoin is a message of its own.
+- `paneDirtyMsg`'s handler returns `m.gate.output(drawn)` (§5).
 
-The renderer already skips a flush when the view equals the last one (`viewEquals`, `vendor/charm.land/bubbletea/v2/cursed_renderer.go`), so a cached view also saves most of the flush work.
+The renderer already skips a flush when the view equals the last one (`viewEquals`, `vendor/charm.land/bubbletea/v2/cursed_renderer.go`), so a reused frame also saves most of the flush work.
 
 ## 5. The on-screen filter
 
@@ -63,44 +66,44 @@ The `paneDirtyMsg` handler keeps all of today's bookkeeping for every session:
 - the Ready→Running promotion (`setLadder`, `updateTabBarStatuses`);
 - `UpdateAgent` for the selected agent, and `UpdateTerminal` for the current terminal session.
 
-It returns `m.gate.frame()` when either holds, and nil otherwise:
+It returns `m.gate.output(drawn)`, with `drawn` true when either holds:
 
 - **It promoted the row:** the status shown on rail cards, overview cards and the tab bar changed.
 - **`m.drawsPane(session)`:** the session's output could be on screen in the current view mode. This covers the selected agent's and the current terminal's pane content, which the handler updates, wherever those panes are drawn.
 
 | View mode | Panes it draws |
 |---|---|
-| `viewFocus` | the selected agent; the current terminal (`SplitPane.CurrentTerminalSessionName`); with the rail shown, every row of the focused slot's list, including rows scrolled out of the rail's window |
+| `viewFocus` (also the file explorer's layout over overview and the workbench) | the selected agent; the current terminal (`SplitPane.CurrentTerminalSessionName`); with the rail shown, every row of the focused slot's list, including rows scrolled out of the rail's window |
 | `viewOverview` | every agent session in an open workspace |
-| `viewWorkbench` | the selected agent |
+| `viewWorkbench` | the selected agent; the current terminal, which the workbench's terminal tab (`ui.WbTabTerminal`) shows |
 | `viewWork` | none |
 
-The filter leans toward drawing: a wrong `true` costs one shared frame, while a wrong `false` would freeze a visible pane. The spinner's ticks still invalidate about 12 times a second, so a pane the filter misses degrades to 12 fps rather than freezing. That is a backstop, not something the filter relies on.
+The filter leans toward drawing: a wrong `true` costs one shared frame, while a wrong `false` would freeze a visible pane. The spinner's ticks still render about 12 times a second, so a pane the filter misses degrades to 12 fps rather than freezing. That is a backstop, not something the filter relies on.
 
 ## 6. Edge cases
 
-- **The first frame, a resize, overlays, keys, mouse:** there is no cached view yet, or the message invalidates, so all of these render as today.
+- **The first frame, a resize, overlays, keys, mouse:** none of these is pane output, so all of them render as today.
 - **Side effects during render:**
   - `overviewData` heals the overview cursor (`normalizeOverviewCursor`);
   - the rail windows its rows from `scrollOffset`.
 
-  They now run only on rendered frames. Pane output changes neither, since selection, collapse and slot changes come from keys or model events, which invalidate. The plan audits every side effect reachable from `render` for this.
+  They now run only on rendered frames. Pane output changes neither, since selection, collapse and slot changes come from keys or model events, which render. The plan audits every side effect reachable from `render` for this.
 - **Cursor and window title:** both are part of the cached `tea.View`, so they stay consistent with its content.
 - **Inline attach:** the first echo renders at once (the leading edge), and a burst renders at most once per 16 ms, the renderer's own flush rate.
-- **A stray `frameTickMsg`:** one arriving after a burst, or after quit, only invalidates.
+- **A stray `frameTickMsg`:** one arriving after a burst, or after quit, only renders a frame.
 
 ## 7. Testing
 
 - **`frameGate` with a fake clock:**
-  - a first `frame()` renders at once;
+  - a first drawn `output` renders at once;
   - a burst within 16 ms gives exactly one trailing tick;
   - at most one tick is pending;
-  - `view` returns the cached view until `invalidate`;
-  - a tick invalidates.
+  - `view` reuses only for the View after the ask, and only with a frame;
+  - the tick clears the pending flag.
 - **`app`, pinning both sides of each guard:**
   - for each view mode, output from a drawn pane asks for a frame, and output from an undrawn one (a cached terminal that isn't current, another tab's session in focus mode, anything in the work view) returns nil and leaves the cached view;
   - the Ready→Running promotion asks for a frame;
-  - keys, a wake whose drain applied an event, and a link change invalidate;
+  - keys, a drain that applied an event, the link offline, and the frame tick render;
   - a mutation check of each term of `drawsPane` on its own.
 - **The full and `-race` suites.** The gate is touched only on the Update goroutine.
 
@@ -111,7 +114,7 @@ The filter leans toward drawing: a wrong `true` costs one shared frame, while a 
 
 ## 9. Docs
 
-- `app/CLAUDE.md` holds the rule, in the room it has (about 380 bytes): pane output asks for a frame through `m.gate.frame()`, and only from a pane the screen draws (`drawsPane`); everything else invalidates in `Update`. The best fit is extending the "Periodic work and status" rule that sends output to the pane event messages.
+- `app/CLAUDE.md` holds the rule, in the room it has (about 380 bytes): pane output asks through `m.gate.output(drawn)`, and only `paneDirtyMsg`'s case may let `View` reuse a frame. The best fit is extending the "Periodic work and status" rule that sends output to the pane event messages.
 - `docs/claude/debugging-freezes.md` §6: the finding gets the fix's commit and the measured result.
 - `app/README.md`: the frame gate in the package's structure.
 
@@ -121,8 +124,7 @@ The filter leans toward drawing: a wrong `true` costs one shared frame, while a 
 |---|---|
 | `app/frame_gate.go` | new: the gate and `frameTickMsg` |
 | `app/frame_gate_test.go` | new: the gate's tests |
-| `app/app.go` | `View` → `render` behind `m.gate.view`; `Update` invalidates; the `paneDirtyMsg` handler returns `m.gate.frame()` or nil; `drawsPane` |
-| `app/core_glue.go` | `drainCore` reports whether it applied any event |
-| `app/link.go` | `checkLink` reports a change of link state |
-| `app/app_init.go` | the gate's construction |
-| `app/events_test.go` | the filter's and the wiring's tests |
+| `app/app.go` | `View` → `render` behind `m.gate.view`; `layout`, shared by `render` and the filter; `Update` calls `fresh` and handles the tick; the `paneDirtyMsg` handler returns `m.gate.output(drawn)` |
+| `app/frame_draws.go` | new: `drawsPane`, `listShows` |
+| `app/core_glue.go` | `drainCoreApplied`, which also reports whether it applied any event; `drainCore` built on it |
+| `app/frame_draws_test.go` | new: the filter's and the wiring's tests |

@@ -97,10 +97,12 @@ func TestFrameGate_NoFrameYetRenders(t *testing.T) {
 	now := time.Unix(1000, 0)
 	g := gateAt(&now)
 	n := 0
+	assert.Nil(t, g.output(true), "drawn output with no frame yet renders at once: no tick")
+	assert.False(t, g.pending)
+	g.fresh()
 	assert.Nil(t, g.output(false))
 	assert.Equal(t, "frame 1", g.view(counting(&n)).Content, "there is no frame to reuse")
-	g.fresh()
-	assert.Nil(t, g.output(true), "drawn output with no frame yet renders at once")
+	assert.Equal(t, "frame 2", g.view(counting(&n)).Content, "the ask ended with the View after it")
 }
 
 func TestFrameGate_DrawnOutputRendersAtOnceAfterAFrame(t *testing.T) {
@@ -230,7 +232,7 @@ func (g *frameGate) output(drawn bool) tea.Cmd {
 		return nil
 	}
 	wait := frameInterval - g.clock().Sub(g.rendered)
-	if !g.has || wait <= 0 {
+	if wait <= 0 { // also with no frame yet: rendered is the zero time
 		return nil
 	}
 	g.reuse = true
