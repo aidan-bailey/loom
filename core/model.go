@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
@@ -45,6 +46,9 @@ type Options struct {
 	// GHExec replaces the executor FetchIssue runs gh with: a test seam
 	// (a daemon test holds a request's job with it). nil in production.
 	GHExec cmd2.Executor
+	// Build names the daemon's binary (main's version and rpc.Build(), as
+	// loom serve sets it); each feedback note records it.
+	Build string
 }
 
 // Model is the session model (see the package doc). Methods must be
@@ -245,6 +249,13 @@ type Model struct {
 	// queuePub is the work queue as last published (publishQueue).
 	queuePub queuePublication
 
+	// feedback is the feedback inbox (feedback.go), feedbackPub what
+	// publishFeedback last published, and build this daemon's version and
+	// build, which each note records (Options.Build).
+	feedback    *feedbackState
+	feedbackPub feedbackPublication
+	build       string
+
 	// out holds the events and the jobs queued since the last take; bgJobs
 	// the background jobs (spawnBackground), kept apart so a loop stopping
 	// can wait for the others alone (takeJobsSplit).
@@ -276,6 +287,8 @@ func newModel(o Options) *Model {
 		published: make(map[*Workspace][]InstanceView),
 		wsIDs:     make(map[*Workspace]WorkspaceID),
 		queue:     newQueueState(),
+		feedback:  &feedbackState{inbox: feedback.Empty()},
+		build:     o.Build,
 	}
 }
 
@@ -504,6 +517,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverJobStarted(msg)
 	case advisorResult:
 		m.deliverAdvisor(msg)
+	case groupResult:
+		m.deliverFeedbackGroup(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:

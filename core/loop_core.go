@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
@@ -243,6 +244,24 @@ func (l *Loop) ReadBeliefs(q sched.BeliefQuery, req ReqID) {
 // ReadAgent runs Model.ReadAgent on the loop.
 func (l *Loop) ReadAgent(limit int, req ReqID) {
 	l.do(func(m *Model) { m.ReadAgent(limit, req) })
+}
+
+// Feedback runs Model.Feedback on the loop.
+func (l *Loop) Feedback() FeedbackView { return get(l, (*Model).Feedback) }
+
+// FileFeedback runs Model.FileFeedback on the loop.
+func (l *Loop) FileFeedback(note FeedbackNote, req ReqID) {
+	l.do(func(m *Model) { m.FileFeedback(note, req) })
+}
+
+// CloseThread runs Model.CloseThread on the loop.
+func (l *Loop) CloseThread(thread feedback.ThreadID, req ReqID) {
+	l.do(func(m *Model) { m.CloseThread(thread, req) })
+}
+
+// FixThread runs Model.FixThread on the loop.
+func (l *Loop) FixThread(thread feedback.ThreadID, workspace string, req ReqID) {
+	l.do(func(m *Model) { m.FixThread(thread, workspace, req) })
 }
 
 // ForgetBelief runs Model.ForgetBelief on the loop.

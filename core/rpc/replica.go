@@ -17,14 +17,15 @@ type replica struct {
 	accounts   core.AccountsView
 	github     core.GitHubView
 	queue      core.QueueView
+	feedback   core.FeedbackView
 	views      map[core.WorkspaceID][]core.InstanceView
 }
 
 // state is what changed in the replica since the client's last Sync: the
 // state events to hand the TUI next, newest state only.
 type state struct {
-	workspaces, model, accounts, github, queue bool
-	views                                      map[core.WorkspaceID]bool
+	workspaces, model, accounts, github, queue, feedback bool
+	views                                                map[core.WorkspaceID]bool
 }
 
 // apply takes a state event into r, marking it in changed, and reports
@@ -51,6 +52,8 @@ func (r *replica) apply(ev core.Event, changed *state) bool {
 		r.github, changed.github = ev.View, true
 	case core.QueueChanged:
 		r.queue, changed.queue = ev.View, true
+	case core.FeedbackChanged:
+		r.feedback, changed.feedback = ev.View, true
 	case core.ViewsChanged:
 		// A workspace the replica does not hold has no views to keep. The
 		// queue coalesces a WorkspacesChanged in place, so one that drops a
@@ -96,6 +99,9 @@ func (r *replica) events(changed state) []core.Event {
 	}
 	if changed.queue {
 		out = append(out, core.QueueChanged{View: r.queue.Clone()})
+	}
+	if changed.feedback {
+		out = append(out, core.FeedbackChanged{View: r.feedback.Clone()})
 	}
 	for _, w := range r.workspaces.Views {
 		if changed.views[w.ID] {
@@ -149,6 +155,9 @@ func (r *replica) RCAuth() session.RemoteControlAuth { return r.model.RCAuth }
 
 // Queue is the work queue as last published.
 func (r *replica) Queue() core.QueueView { return r.queue.Clone() }
+
+// Feedback is the feedback inbox as last published.
+func (r *replica) Feedback() core.FeedbackView { return r.feedback.Clone() }
 
 func (r *replica) GitHubSnapshot(repo string) (github.Snapshot, bool) {
 	return r.github.GitHubSnapshot(repo)

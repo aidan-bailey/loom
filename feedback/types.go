@@ -56,6 +56,8 @@ type Session struct {
 	Agent         string `json:"agent,omitempty"`          // the subagent's agentId, "" for the main loop or unknown
 	ClaudeSession string `json:"claude_session,omitempty"` // Claude's session ID
 	Transcript    string `json:"transcript,omitempty"`     // its transcript's path as Claude reported it
+	Model         string `json:"model,omitempty"`          // the session's model, as Claude's session info gives it
+	Effort        string `json:"effort,omitempty"`         // the turn's effort ($CLAUDE_EFFORT)
 }
 
 // Note is one filed note.

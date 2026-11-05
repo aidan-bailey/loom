@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/aidan-bailey/loom/feedback"
 	"testing"
 	"time"
 
@@ -141,7 +142,7 @@ func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := NewForTest(Options{})
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh, gateBuildSweep, gateQueue} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh, gateBuildSweep, gateQueue, gateFeedback} {
 		m.gate(kind).inFlight = true
 		// A result no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
@@ -267,6 +268,19 @@ func TestProductionGatedJobsYieldOneResult(t *testing.T) {
 		wqSeed(t, m, rec)
 		result := inner(t, m, m.maybeQueue(), gateQueue)
 		assert.IsType(t, queuePassResult{}, result)
+	})
+
+	t.Run("feedback", func(t *testing.T) {
+		m, _ := fbModel(t, "")
+		fbGrouper(t, m, `{"thread":0,"title":"t","why":"new"}`)
+		m.FileFeedback(FeedbackNote{Kind: feedback.KindBug, Title: "t", Text: "x", Launch: "L1"}, 5)
+		m.out.Events = nil
+		jobs := m.Drain().Jobs
+		require.Len(t, jobs, 1, "the note's grouping call")
+		gr, ok := jobs[0]().(gatedResult)
+		require.True(t, ok, "a gated job must deliver a gatedResult")
+		require.Equal(t, gateFeedback, gr.kind)
+		assert.IsType(t, groupResult{}, gr.result)
 	})
 }
 

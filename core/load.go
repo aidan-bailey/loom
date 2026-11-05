@@ -223,6 +223,7 @@ func (m *Model) Boot() []Event {
 	}
 	m.boot()
 	m.bootQueue()
+	m.bootFeedback()
 	events := m.out.Events
 	m.out.Events = nil
 	return events

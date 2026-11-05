@@ -1,6 +1,6 @@
 # feedback
 
-The inbox loom's session agents write to ([spec](../docs/superpowers/specs/2026-11-05-session-feedback-design.md)). An agent that hits a loom problem (a failing or surprising `loom` command, a missing capability, a loom context sentence that isn't true) runs `loom feedback add`; the daemon stamps who filed it, a headless Haiku files it into a thread, and the owner reads the threads ranked by how many sessions hit each and starts a fix session from one. The model in `core` owns the inbox; this package is the logic it calls.
+The inbox loom's session agents write to ([spec](../docs/superpowers/specs/2026-11-05-session-feedback-design.md)). An agent that hits a loom problem (a failing or surprising `loom` command, a missing capability, a loom context sentence that isn't true) runs `loom feedback add`; the daemon stamps who filed it, a headless Haiku files it into a thread, and the owner reads the threads ranked by how many sessions hit each and starts a fix session from one. The model in `core` (`core/feedback*.go`) owns the inbox; this package is the logic it calls.
 
 ## Files
 

@@ -62,7 +62,7 @@ func (m *Model) Views(id WorkspaceID) []InstanceView {
 // Create builds an instance in the workspace id (CreateWS), which refuses
 // a workspace that is not loaded.
 func (m *Model) Create(id WorkspaceID, spec NewInstance, req ReqID) {
-	m.createWS(m.wsLookup(id), spec, req)
+	_, _ = m.createWS(m.wsLookup(id), spec, req)
 }
 
 // Registry is a copy of the workspace registry: the registered

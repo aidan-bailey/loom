@@ -51,6 +51,9 @@ func FixPrompt(in Inbox, t Thread) string {
 			continue
 		}
 		fmt.Fprintf(&b, "\n## Note %d (%s), from %q in %s, %s\n", n.ID, n.Kind, n.From.Title, n.From.Workspace, n.At.Format("2006-01-02 15:04"))
+		if n.From.Model != "" || n.From.Effort != "" {
+			fmt.Fprintf(&b, "Ran on: %s\n", ModelEffort(n.From))
+		}
 		if n.Build != "" {
 			fmt.Fprintf(&b, "Loom build: %s\n", n.Build)
 		}
@@ -64,4 +67,16 @@ func FixPrompt(in Inbox, t Thread) string {
 		fmt.Fprintf(&b, "\n%s\n\n%s\n", n.Title, n.Text)
 	}
 	return b.String()
+}
+
+// ModelEffort is "<model> at <effort> effort", either part alone when the
+// other is unknown, "" when both are.
+func ModelEffort(s Session) string {
+	switch {
+	case s.Model != "" && s.Effort != "":
+		return s.Model + " at " + s.Effort + " effort"
+	case s.Effort != "":
+		return s.Effort + " effort"
+	}
+	return s.Model
 }

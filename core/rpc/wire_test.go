@@ -128,7 +128,7 @@ func TestProtocolReference(t *testing.T) {
 			stateEvents = append(stateEvents, reflect.TypeOf(ev).Name())
 		}
 	}
-	order := []core.Event{core.WorkspacesChanged{}, core.ModelChanged{}, core.AccountsChanged{}, core.GitHubChanged{}, core.QueueChanged{}, core.ViewsChanged{}}
+	order := []core.Event{core.WorkspacesChanged{}, core.ModelChanged{}, core.AccountsChanged{}, core.GitHubChanged{}, core.QueueChanged{}, core.FeedbackChanged{}, core.ViewsChanged{}}
 	require.Len(t, order, len(stateEvents), "a state event was added: say where it goes in the order below")
 	p("## State events\n\n")
 	p("The events that make up the published state, which a client's replica keeps, in the order the model\n")

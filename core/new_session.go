@@ -68,6 +68,14 @@ func CheckPreservedTitle(title string, ws WorkspaceView) error {
 	return nil
 }
 
+// LaunchAccounts is what ChooseLaunchAccount reads of the accounts: a Core
+// (the TUI's and the CLI's clients), or the model itself (FixThread).
+type LaunchAccounts interface {
+	AccountNames() AccountNames
+	AccountsLoaded() bool
+	Account(name string) (account.Account, bool)
+}
+
 // ChooseLaunchAccount is opts with the account a launch of program runs
 // on, as the Session Launch Options modal pre-fills it, and the notice to
 // show when it moved the launch off a removed account ("" otherwise). The
@@ -81,7 +89,7 @@ func CheckPreservedTitle(title string, ws WorkspaceView) error {
 // move the session to a subscription the user never saw chosen; kept, its
 // launch fails closed (session.RegistryLoadError). Any other program, or
 // a model with no account registry, records no account.
-func ChooseLaunchAccount(c Core, opts launch.Options, program string) (launch.Options, string) {
+func ChooseLaunchAccount(c LaunchAccounts, opts launch.Options, program string) (launch.Options, string) {
 	names := c.AccountNames()
 	switch {
 	case !session.IsClaudeProgram(program) || !names.Present:

@@ -62,7 +62,7 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 
 	m.notifyInfo("hello")
 	out := m.Sync()
-	require.Len(t, out.Events, 7)
+	require.Len(t, out.Events, 8)
 	_, ok := out.Events[0].(WorkspacesChanged)
 	require.True(t, ok, "workspace views first")
 	_, ok = out.Events[1].(ModelChanged)
@@ -73,10 +73,12 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 	require.True(t, ok, "and the GitHub state, each published the first time")
 	_, ok = out.Events[4].(QueueChanged)
 	require.True(t, ok, "then the work queue's")
-	vc, ok := out.Events[5].(ViewsChanged)
+	_, ok = out.Events[5].(FeedbackChanged)
+	require.True(t, ok, "and the feedback inbox's")
+	vc, ok := out.Events[6].(ViewsChanged)
 	require.True(t, ok, "instance views next")
 	assert.Equal(t, m.wsIDOf(ws), vc.WS)
-	assert.Equal(t, Notice{Info: "hello"}, out.Events[6])
+	assert.Equal(t, Notice{Info: "hello"}, out.Events[7])
 
 	assert.Empty(t, m.Sync().Events, "nothing changed")
 
@@ -160,7 +162,7 @@ func instanceEvents(events []Event) []Event {
 	var out []Event
 	for _, ev := range events {
 		switch ev.(type) {
-		case WorkspacesChanged, ModelChanged, AccountsChanged, GitHubChanged, QueueChanged:
+		case WorkspacesChanged, ModelChanged, AccountsChanged, GitHubChanged, QueueChanged, FeedbackChanged:
 		default:
 			out = append(out, ev)
 		}

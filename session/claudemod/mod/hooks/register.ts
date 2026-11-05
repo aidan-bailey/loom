@@ -21,12 +21,15 @@ const MOD_VERSION = 1
 const BASE = 'http://loom/v1'
 const MAX_BACKOFF_MS = 5000
 const KEEP_SUBMITTED = 200
-// JOB_CALL finds `loom job submit` or `loom job run` in a Bash command: the
-// module reports each call whose command matches it, from a subagent or the
-// main loop, so the daemon can send a job's result back to the subagent that
-// submitted it (claudemod.JobCallPattern carries the same source; spec
-// docs/superpowers/specs/2026-11-05-subagent-job-results-design.md).
-const JOB_CALL = /\bloom\s+job\s+(submit|run)\b/
+// JOB_CALL finds `loom job submit`, `loom job run` or `loom feedback add`
+// in a Bash command: the module reports each call whose command matches it,
+// from a subagent or the main loop, with the session's model, so the daemon
+// can send a job's result back to the subagent that submitted it and stamp a
+// feedback note with its subagent and model (claudemod.JobCallPattern
+// carries the same source; specs
+// docs/superpowers/specs/2026-11-05-subagent-job-results-design.md and
+// docs/superpowers/specs/2026-11-05-session-feedback-design.md).
+const JOB_CALL = /\bloom\s+(job\s+(submit|run)|feedback\s+add)\b/
 // CALL_REPORT_MS bounds the wait for a call's report before its command runs.
 const CALL_REPORT_MS = 2000
 
@@ -239,7 +242,7 @@ async function sendToAgent($: EngineInterface, m: Message) {
 // reportCall posts a Bash call's start or end (/calls), giving up after
 // CALL_REPORT_MS: a slow or absent daemon must not hold the command. A
 // failure goes to the debug log, and the job then reports to the session.
-async function reportCall($: EngineInterface, c: { id: string; agent?: string; command: string }, ended: boolean) {
+async function reportCall($: EngineInterface, c: { id: string; agent?: string; command: string; model?: string }, ended: boolean) {
   try {
     const r = await Promise.race([
       call($, 'POST', '/calls', { launch, poller: POLLER, call: c, ended }),
@@ -248,6 +251,19 @@ async function reportCall($: EngineInterface, c: { id: string; agent?: string; c
     if (r === undefined) $.ui.log('loom: a call report timed out', { to: 'debug' })
   } catch (err) {
     $.ui.log(`loom: call report: ${String(err)}`, { to: 'debug' })
+  }
+}
+
+// sessionModel is the session's model as Claude's session info gives it
+// ($.session.model(): the main loop's, as /model shows it), "" when it
+// can't be read within CALL_REPORT_MS.
+async function sessionModel($: EngineInterface): Promise<string> {
+  try {
+    const m = await Promise.race([$.session.model(), $.clock.sleep(CALL_REPORT_MS).then(() => '')])
+    return typeof m === 'string' ? m : ''
+  } catch (err) {
+    $.ui.log(`loom: session model: ${String(err)}`, { to: 'debug' })
+    return ''
   }
 }
 
@@ -487,15 +503,15 @@ export const register: Register = on => {
     }
   })
 
-  // A Bash call that runs `loom job submit` or `loom job run` is reported
-  // while it runs, so the daemon can match each submit to the call that
-  // made it. The report is awaited, briefly, before the command runs. The
-  // command is never changed: a rewrite would fail the person's allow
-  // rules.
+  // A Bash call that runs `loom job submit`, `loom job run` or `loom
+  // feedback add` is reported while it runs, with the session's model, so
+  // the daemon can match each submit or note to the call that made it. The
+  // report is awaited, briefly, before the command runs. The command is
+  // never changed: a rewrite would fail the person's allow rules.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const command = typeof e.command === 'string' ? e.command : ''
     if (!JOB_CALL.test(command) || !(await ready($))) return next(e)
-    const c = { id: e.tool_use_id ?? '', agent: e.agentId, command }
+    const c = { id: e.tool_use_id ?? '', agent: e.agentId, command, model: await sessionModel($) }
     await reportCall($, c, false)
     try {
       return await next(e)

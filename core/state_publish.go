@@ -113,6 +113,7 @@ func (m *Model) publishState() []Event {
 		events = append(events, GitHubChanged{View: m.githubView()})
 	}
 	events = append(events, m.publishQueue()...)
+	events = append(events, m.publishFeedback()...)
 	return events
 }
 
@@ -162,6 +163,7 @@ func (m *Model) Snapshot() []Event {
 		AccountsChanged{View: m.accountsView()},
 		GitHubChanged{View: m.githubView()},
 		QueueChanged{View: m.queueView()},
+		FeedbackChanged{View: m.feedbackView()},
 	}
 	for _, w := range m.workspaces {
 		views := make([]InstanceView, len(w.insts))

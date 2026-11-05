@@ -22,7 +22,7 @@ func TestFixTitle(t *testing.T) {
 func TestFixPrompt_HoldsEveryNote(t *testing.T) {
 	in := Empty()
 	a := note(1, "--after refused", 0)
-	a.From = Session{ID: 1, Title: "builder", Workspace: "loom", ClaudeSession: "c-123", Transcript: "/t/c-123.jsonl"}
+	a.From = Session{ID: 1, Title: "builder", Workspace: "loom", ClaudeSession: "c-123", Transcript: "/t/c-123.jsonl", Model: "claude-opus-5-5", Effort: "xhigh"}
 	a.Build = "0.15.0 abc123"
 	th, _ := in.OpenThread(in.Add(a), "loom job: --after refused")
 	b := note(2, "after again", 3)
@@ -31,8 +31,15 @@ func TestFixPrompt_HoldsEveryNote(t *testing.T) {
 	thread, _ := in.Thread(th)
 	p := FixPrompt(in, thread)
 	for _, want := range []string{"feedback thread 1, bug", "loom job: --after refused", "First check whether the base branch already fixes this",
-		`from "builder" in loom`, "Loom build: 0.15.0 abc123", "Claude session c-123 at /t/c-123.jsonl", "--after refused: what happened",
+		`from "builder" in loom`, "Loom build: 0.15.0 abc123", "Ran on: claude-opus-5-5 at xhigh effort", "Claude session c-123 at /t/c-123.jsonl", "--after refused: what happened",
 		`from "tester" in loom`, "after again: what happened"} {
 		assert.Contains(t, p, want)
 	}
+}
+
+func TestModelEffort(t *testing.T) {
+	assert.Equal(t, "opus at high effort", ModelEffort(Session{Model: "opus", Effort: "high"}))
+	assert.Equal(t, "opus", ModelEffort(Session{Model: "opus"}))
+	assert.Equal(t, "high effort", ModelEffort(Session{Effort: "high"}))
+	assert.Empty(t, ModelEffort(Session{}))
 }

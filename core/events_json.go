@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"github.com/aidan-bailey/loom/feedback"
 
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session/buildsweep"
@@ -49,11 +50,12 @@ type replyJSON struct {
 	Job     sched.JobID
 	Beliefs sched.BeliefsPage
 	Agent   AgentPage
+	Note    feedback.NoteID
 }
 
 // MarshalJSON encodes r with its errors as WireErrors.
 func (r Reply) MarshalJSON() ([]byte, error) {
-	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Mockup: r.Mockup, Sweep: r.Sweep, Job: r.Job, Beliefs: r.Beliefs, Agent: r.Agent})
+	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Mockup: r.Mockup, Sweep: r.Sweep, Job: r.Job, Beliefs: r.Beliefs, Agent: r.Agent, Note: r.Note})
 }
 
 // UnmarshalJSON decodes a Reply MarshalJSON encoded.
@@ -62,6 +64,6 @@ func (r *Reply) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &j); err != nil {
 		return err
 	}
-	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Mockup: j.Mockup, Sweep: j.Sweep, Job: j.Job, Beliefs: j.Beliefs, Agent: j.Agent}
+	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Mockup: j.Mockup, Sweep: j.Sweep, Job: j.Job, Beliefs: j.Beliefs, Agent: j.Agent, Note: j.Note}
 	return nil
 }

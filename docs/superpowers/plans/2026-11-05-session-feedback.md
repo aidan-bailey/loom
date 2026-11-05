@@ -1358,6 +1358,15 @@ type fbState struct {
 - [ ] **Try it in a dev build** (the `loom-dev` skill): file a note from a sandbox session with `loom feedback add`, see it in `F`, close it. Take a screenshot of the view.
 - [ ] **Execution notes:** append to this plan what changed while building, and update the memory note `loom-session-feedback`.
 
+## Amendment: the session's model and effort (the owner, mid-execution)
+
+The owner asked, while Package 1 was being committed, that each note carry the model and effort of the session that filed it, read from the session info. Package 2 does this:
+
+- `feedback.Session` gains `Model` and `Effort`. `FixPrompt` names them, and so do `show` and the TUI's expanded note.
+- `core.ModCall` gains `Model` (`json:"model,omitempty"`). The mod's `tool.call` hook for a reported Bash call sets it from `await $.session.model()`; a failure leaves it empty and the call is still reported. `FileFeedback` takes `From.Model` from the attributed call.
+- `core.FeedbackNote` gains `Effort`, which the CLI fills from `$CLAUDE_EFFORT`. `FileFeedback` keeps it only when it is one of `low`, `medium`, `high`, `xhigh` and `max`.
+- Tests: `TestFileFeedback_TheSubagentComesFromTheReportedCall` also asserts the model, and a case shows that a bad effort is dropped. The CLI test asserts that `CLAUDE_EFFORT` reaches the note.
+
 ## Self-review against the spec
 
 - §3 capture: Steps 1.3 (`ValidateNote`), 2.3, 2.6, 3.1 and 3.2.

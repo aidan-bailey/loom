@@ -32,6 +32,7 @@ loom feedback add --kind … --title "…" --file <path>
 - It prints `[loom] feedback nN filed` and returns at once. Grouping happens later, so filing never blocks the agent.
 - **Fail closed:** with no daemon, no `$LOOM_LAUNCH` or a launch the daemon can't resolve, the command errors with the reason and nothing is stored. A note is never attributed to a guessed session.
 - **The subagent** comes from the mod's call reports, as a job's does: `claudemod.JobCallPattern` widens to `loom feedback add`, and the daemon matches the one in-flight call on the launch whose command holds `feedback` and `add`. None, or more than one, records no subagent (amended while planning).
+- **The model and effort** the session ran at (the owner's addition, 2026-11-05): the model from Claude's session info, which the mod reads with `$.session.model()` (the main loop's model, as `/model` shows it) and sends with its call report, so the daemon stamps it from the matched call; the effort from `$CLAUDE_EFFORT`, which Claude Code sets in every Bash call's environment (the turn's effort after any downgrade), sent by the CLI. No matched call records no model; an effort that isn't one of Claude's levels records none.
 - **The build** is the daemon's: `core.Options.Build`, which `serve.go` sets from main's `version` and `rpc.Build()` (amended while planning; `core` can't import `rpc`).
 - **The limits:** a kind from the four, a title of 1–120 characters on one line, a text of 1–20,000 bytes, checked by the model (`feedback.ValidateNote`).
 
@@ -54,7 +55,7 @@ loom feedback add --kind … --title "…" --file <path>
 **A note** has:
 - `N`, counted per host (like job numbers);
 - kind, title, text;
-- the session: instance ID, title, workspace name, branch, subagent ID or empty;
+- the session: instance ID, title, workspace name, branch, subagent ID or empty, the model and effort;
 - the loom version and commit, and the Claude session ID;
 - `at`;
 - `thread` (0 while ungrouped), and a grouping state: `pending`, `grouped`, or `ungrouped` (failed, will retry).

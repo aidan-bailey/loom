@@ -142,6 +142,13 @@ func (m *Model) SetAdvisorForTest(program string, timeout time.Duration) {
 	m.queue.advisor.program, m.queue.advisor.timeout = program, timeout
 }
 
+// SetFeedbackGrouperForTest makes the feedback grouper run program (a fake
+// claude) with timeout per call; "" and 0 keep Model.ClaudeProgram and the
+// default.
+func (m *Model) SetFeedbackGrouperForTest(program string, timeout time.Duration) {
+	m.feedback.program, m.feedback.timeout = program, timeout
+}
+
 // InstancesForTest returns w's instances, in display order (the model's own
 // slice; a test must not modify it).
 func (w *Workspace) InstancesForTest() []*session.Instance { return w.instances() }

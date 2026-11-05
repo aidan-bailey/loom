@@ -117,19 +117,32 @@ func isGlobalWS(ws *Workspace) bool {
 // (config.LoadConfigFrom would quarantine an unparseable one and fall back to
 // defaults, which would make the save write a block nobody chose).
 func diskSchedulerBlock(dir string) (*config.SchedulerSettings, error) {
+	return diskConfigBlock[config.SchedulerSettings](dir, "scheduler")
+}
+
+// diskConfigBlock reads the block under key from dir's config.json: nil
+// when the file or the key is absent, an error when the file can't be read
+// or parsed.
+func diskConfigBlock[T any](dir, key string) (*T, error) {
 	path := filepath.Join(dir, config.ConfigFileName)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read the scheduler block from %s: %w", path, err)
+		return nil, fmt.Errorf("read the %s block from %s: %w", key, path, err)
 	}
-	var file struct {
-		Scheduler *config.SchedulerSettings `json:"scheduler"`
-	}
+	var file map[string]json.RawMessage
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return file.Scheduler, nil
+	raw, ok := file[key]
+	if !ok || string(raw) == "null" {
+		return nil, nil
+	}
+	var block T
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return nil, fmt.Errorf("parse %s: the %s block: %w", path, key, err)
+	}
+	return &block, nil
 }

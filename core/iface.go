@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
@@ -171,6 +172,15 @@ type Core interface {
 	// The agent's state and its last limit calls, newest first: the
 	// Reply's Agent (smart scheduler spec §16).
 	ReadAgent(limit int, req ReqID)
+
+	// Feedback from sessions (session feedback spec): the inbox, which a
+	// replica answers, and the requests that change it. FileFeedback's
+	// Reply carries the new note (Note); FixThread's Reply and Started are
+	// a Create's.
+	Feedback() FeedbackView // rpc:local
+	FileFeedback(note FeedbackNote, req ReqID)
+	CloseThread(thread feedback.ThreadID, req ReqID)
+	FixThread(thread feedback.ThreadID, workspace string, req ReqID)
 }
 
 var _ Core = (*Loop)(nil)

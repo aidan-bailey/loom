@@ -33,11 +33,14 @@ const (
 	EnvLaunch = "LOOM_LAUNCH"
 )
 
-// JobCallPattern finds `loom job submit` or `loom job run` in a Bash command.
-// The module reports each call whose command matches it, and the daemon
-// counts its matches (core, attribution); register.ts carries the same source
-// as a JavaScript regex literal, which TestModule_SpeaksThisProtocol checks.
-const JobCallPattern = `\bloom\s+job\s+(submit|run)\b`
+// JobCallPattern finds `loom job submit`, `loom job run` or `loom feedback
+// add` in a Bash command. The module reports each call whose command matches
+// it, with the session's model, and the daemon counts its matches (core,
+// attribution: a job's result goes back to the subagent that submitted it,
+// and a feedback note records its subagent and model); register.ts carries
+// the same source as a JavaScript regex literal, which
+// TestModule_SpeaksThisProtocol checks.
+const JobCallPattern = `\bloom\s+(job\s+(submit|run)|feedback\s+add)\b`
 
 // WriteTo writes the mod into dir, creating it. Each launch's hooks folder is
 // emptied before it (hooks.Prepare), so nothing older is left beside it.

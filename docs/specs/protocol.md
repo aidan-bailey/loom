@@ -66,6 +66,7 @@ publishes them and a client's Sync hands them out, newest state only and ahead o
 - AccountsChanged
 - GitHubChanged
 - QueueChanged
+- FeedbackChanged
 - ViewsChanged (one per workspace, by its `WS`)
 
 A server queues at most one of each (one per workspace for `ViewsChanged`) for a connection: a newer
@@ -82,7 +83,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""}}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}}`
 
 ## Methods
 
@@ -560,6 +561,30 @@ Params: `{"limit":0,"req":0}`
 
 Result: `{}`
 
+### Feedback (local)
+
+Params: `{}`
+
+Result: `{"value":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":""}}`
+
+### FileFeedback (request)
+
+Params: `{"note":{"Kind":"","Title":"","Text":"","Launch":"","Effort":""},"req":0}`
+
+Result: `{}`
+
+### CloseThread (request)
+
+Params: `{"thread":0,"req":0}`
+
+Result: `{}`
+
+### FixThread (request)
+
+Params: `{"thread":0,"workspace":"","req":0}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged
@@ -602,6 +627,10 @@ Result: `{}`
 
 `{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
+### FeedbackChanged
+
+`{"View":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":""}}`
+
 ### Reactivated
 
 `{"ID":0}`
@@ -612,7 +641,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""}}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}`
 
 ### SessionLaunched
 

@@ -590,6 +590,8 @@ func coalesceKey(ev core.Event) string {
 		return "github"
 	case core.QueueChanged:
 		return "queue"
+	case core.FeedbackChanged:
+		return "feedback"
 	case core.ViewsChanged:
 		return fmt.Sprintf("views:%d", ev.WS)
 	}
