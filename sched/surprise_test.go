@@ -32,6 +32,15 @@ func TestSurprise(t *testing.T) {
 	assert.Equal(t, "it was killed by SIGKILL, which nobody asked for (the out-of-memory killer?)", Surprise(prev, killed, SourceDefault))
 	assert.Equal(t, "it took 10m0s, where it usually takes 1m0s", Surprise(prev, slow, SourceLearned))
 	assert.Equal(t, "", Surprise(belief(done(1<<20, 1, 60)), slow, SourceLearned), "fewer than three durations")
+
+	vitest := at(4, 7.81)
+	assert.Equal(t, "it kept 7.8 cores busy on a 4-core claim: the hint variables don't reach it",
+		Surprise(&Belief{}, vitest, SourceLearned), "on a first run too")
+	assert.Equal(t, "", Surprise(belief(at(4, 7.81)), vitest, SourceLearned), "a belief that already overruns")
+	wide := at(12, 10)
+	wide.WallSeconds, wide.CPUSeconds = 30, 300
+	assert.Equal(t, "", Surprise(belief(at(3, 2.74), at(3, 2.74), at(3, 2.74)), wide, SourceLearned),
+		"30 s at 12 cores is about what 100 s at 3 scales to (35 s)")
 }
 
 func TestScorePrior(t *testing.T) {

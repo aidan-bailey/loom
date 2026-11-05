@@ -19,11 +19,13 @@ func (q BeliefQuery) Matches(b Belief) bool {
 }
 
 // BeliefView is a belief with what follows from it now: its repo's name,
-// the claim a job of it that claims nothing would get, and its durations.
+// the claim a job of it that claims nothing would get, how its command
+// scales, and its durations at that claim's cores.
 type BeliefView struct {
 	Belief         Belief
 	RepoName       string
 	Sized          Sized
+	Scaling        Scaling
 	Usual          time.Duration
 	P90            time.Duration
 	DurationRuns   int
@@ -33,11 +35,11 @@ type BeliefView struct {
 // ViewBelief is b's view under p; with no caps (admission paused) the
 // claim is left zero.
 func ViewBelief(b Belief, p Policy) BeliefView {
-	v := BeliefView{Belief: b, RepoName: RepoName(b.Repo)}
+	v := BeliefView{Belief: b, RepoName: RepoName(b.Repo), Scaling: ScalingOf(&b)}
 	if p.usable() {
 		v.Sized = Size(Claim{}, &b, p)
 	}
-	v.Usual, v.P90, v.DurationRuns, v.UsualFromPrior = Usual(&b)
+	v.Usual, v.P90, v.DurationRuns, v.UsualFromPrior = Usual(&b, v.Sized.Claim.CPUs)
 	return v
 }
 

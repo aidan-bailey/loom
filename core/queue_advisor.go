@@ -300,7 +300,7 @@ func (m *Model) known(b sched.Belief) advisor.Known {
 		s := sched.Size(sched.Claim{}, &b, q.policy)
 		k.Claim, k.Sources = s.Claim, s.Sources
 	}
-	if u, p90, n, _ := sched.Usual(&b); n > 0 {
+	if u, p90, n, _ := sched.Usual(&b, 0); n > 0 {
 		k.UsualSeconds, k.P90Seconds = int(u.Seconds()), int(p90.Seconds())
 	}
 	for _, n := range b.Notes {
@@ -442,7 +442,7 @@ func (m *Model) priorOf(ans advisor.PriorAnswer, r advisorResult, now time.Time)
 		if s.Sources.IO == sched.SourceLearned {
 			p.IO = s.Claim.IO
 		}
-		if u, _, n, _ := sched.Usual(like); n > 0 {
+		if u, _, n, _ := sched.Usual(like, 0); n > 0 {
 			p.DurationSeconds = max(1, int(u.Seconds()))
 		}
 	}

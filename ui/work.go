@@ -22,7 +22,7 @@ const workBarCells = 14
 // The fixed columns of a job row.
 const (
 	workIDW    = 4
-	workClaimW = 11
+	workClaimW = 12 // 4+10c/16G io
 	workSrcW   = 10 // the claim's source: learned·N, agent, yours, default
 	workTimeW  = 13 // elapsed/~usual, with ⚠ when overdue
 )
@@ -624,13 +624,15 @@ func workStarts(at, now time.Time) string {
 	return "starts ~" + sched.RoughDuration(at.Sub(now))
 }
 
-// workClaim is a running or queued job's claim, with a "!" after a memory
-// held to the cap.
+// workClaim is a running or queued job's claim, its spare cores apart
+// ("4+2c/3G", job scaling spec §7), with a "!" after a memory held to the
+// cap.
 func workClaim(j core.JobView) string {
+	text := j.Claim.Spared(j.Spare)
 	if j.AboveCap {
-		return strings.Replace(j.Claim.String(), "G", "G!", 1)
+		return strings.Replace(text, "G", "G!", 1)
 	}
-	return j.Claim.String()
+	return text
 }
 
 // workResult is a finished job's outcome, and the style it is drawn in.

@@ -328,7 +328,7 @@ Three packages, each leaving the build green with its docs:
 
 ## 15. Known limits and later work
 
-- **Elastic cores.** Learned cores never exceed the default claim's, so a parallel build that could use 12 cores gets 4 unless it claims more. Later: grant more cores when the host is idle, and learn how a job's time scales with them.
+- **Elastic cores.** Learned cores never exceed the default claim's, so a parallel build that could use 12 cores gets 4 unless it claims more. Later: grant more cores when the host is idle, and learn how a job's time scales with them. Designed in [job scaling](2026-11-05-job-scaling-design.md).
 - **Time-aware admission.** Durations only inform. Later: reserve resources for the waiting head and backfill jobs expected to end before it can start, replacing the starvation guard.
 - **Sampled memory.** The 3 s sample can miss a short spike, and `max_rss` covers one process; the 15% margin absorbs this. Later, on Linux: each job in its own cgroup, read for an exact `memory.peak` and, with the confinement of the work scheduler's §13, held to its claim.
 - **Warm and cold builds share a belief.** A build after the build sweep, or after a lockfile change, is slower than a warm one; the max-based memory and median-based durations absorb it, and notes explain it. Later: a cold-build feature in the signature or the run.

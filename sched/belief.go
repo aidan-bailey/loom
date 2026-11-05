@@ -36,6 +36,7 @@ type Run struct {
 	WallSeconds float64   `json:"wall_seconds"`
 	ReadBytes   *int64    `json:"read_bytes,omitempty"`
 	WriteBytes  *int64    `json:"write_bytes,omitempty"`
+	Spare       int       `json:"spare,omitempty"` // the cores it had past its base claim (job scaling spec §5.3)
 }
 
 // FullPeak reports whether r's peak is the job's whole peak: a done run's,
@@ -84,7 +85,7 @@ func RunOf(rec Record) (Run, bool) {
 	}
 	run := Run{
 		Job: rec.ID, Ended: rec.Ended, Outcome: out, Adopted: rec.Adopted, Claim: rec.Claim,
-		PeakKB: rec.PeakRSSKB, WallSeconds: rec.Ended.Sub(rec.Started).Seconds(),
+		PeakKB: rec.PeakRSSKB, WallSeconds: rec.Ended.Sub(rec.Started).Seconds(), Spare: rec.Spare.CPUs,
 	}
 	if e := rec.Exit; e != nil {
 		run.Signal = e.Signal

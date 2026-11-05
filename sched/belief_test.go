@@ -132,3 +132,13 @@ func TestBeliefsStore_RoundTripAndRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestRunOf_KeepsItsSpareCores(t *testing.T) {
+	t0 := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	rec := Record{ID: 3, State: Done, Started: t0, Ended: t0.Add(time.Minute), Claim: Claim{CPUs: 8, MemoryGB: 4},
+		Spare: Claim{CPUs: 4, MemoryGB: 2}, Exit: &Exit{Ended: t0.Add(time.Minute)}}
+	run, ok := RunOf(rec)
+	require.True(t, ok)
+	assert.Equal(t, 4, run.Spare)
+	assert.Equal(t, Claim{CPUs: 8, MemoryGB: 4}, run.Claim, "the claim it ran with: the total")
+}
