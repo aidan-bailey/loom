@@ -984,7 +984,7 @@ func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
 // has finished (subagent job results spec §9).
 func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, session.WriteLoomContextFiles(dir))
+	require.NoError(t, session.WriteLoomContextFiles(dir, false))
 	flagName := regexp.MustCompile(`--[a-z]+`)
 
 	for _, name := range []string{"claude-loom-context.md", "claude-loom-context-workspace.md"} {

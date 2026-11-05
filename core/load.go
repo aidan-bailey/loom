@@ -185,18 +185,20 @@ func applySessionConfig(cfg *config.Config, cfgDir string) {
 	if cfgDir == "" {
 		return
 	}
-	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
+	if err := session.WriteLoomContextFiles(cfgDir, cfg.FlowEnabled()); err != nil {
 		log.For("core").Warn("loom_context.write_failed", "err", err.Error())
 	}
 }
 
 // syncSessionFlags sets the session flags (loom-context injection,
-// subagent tracking) of the sessions whose config dir is cfgDir from cfg.
+// subagent tracking, the agent flow) of the sessions whose config dir is
+// cfgDir from cfg.
 // They are kept per config dir: every loaded workspace launches with its
 // own config's.
 func syncSessionFlags(cfg *config.Config, cfgDir string) {
 	session.SetLoomContextEnabled(cfgDir, cfg.LoomContextEnabled())
 	session.SetSubagentTrackingEnabled(cfgDir, cfg.SubagentTrackingEnabled())
+	session.SetFlowEnabled(cfgDir, cfg.FlowEnabled())
 }
 
 // Boot readies the model to serve, before its loop starts (the model is

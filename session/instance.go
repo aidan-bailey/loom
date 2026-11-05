@@ -277,6 +277,9 @@ type Instance struct {
 	// modEnvVars is the current launch's mod environment (prepareMod), nil
 	// when it got no mod. Guarded by mu.
 	modEnvVars []string
+	// flowEnvVars is the current launch's flow environment (prepareFlow),
+	// nil when it got no flow. Guarded by mu.
+	flowEnvVars []string
 
 	// launches counts this instance's real launches (launchProgram with
 	// launching set), so a caller can tell a resume that relaunched the

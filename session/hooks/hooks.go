@@ -68,7 +68,16 @@ func briefCommand(briefPath string) string {
 type hookCommand struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
+	Timeout int    `json:"timeout,omitempty"`
 }
+
+// The git guard's entry (flow in loom spec §5.3): a PreToolUse hook on
+// Bash, Write and Edit, with the 10 s timeout flow's agents' own hook had.
+const (
+	eventPreToolUse = "PreToolUse"
+	guardMatcher    = "Bash|Write|Edit"
+	guardTimeout    = 10
+)
 
 type hookMatcher struct {
 	Matcher string        `json:"matcher,omitempty"`
@@ -85,8 +94,11 @@ type settingsDoc struct {
 // non-empty autoMemoryDir also sets Claude's autoMemoryDirectory, which
 // outranks the user's own settings for this launch. A non-empty briefPath
 // adds a second SubagentStart entry, for every agent type but a fork
-// (briefMatcher), running briefCommand on it.
-func SettingsJSON(eventsDir, autoMemoryDir, briefPath string) ([]byte, error) {
+// (briefMatcher), running briefCommand on it. A non-empty guardCommand adds
+// a PreToolUse entry on Bash, Write and Edit running it: loom's git guard for
+// flow's agents (`loom flow guard`), the one hook here that may exit
+// non-zero, to block a call.
+func SettingsJSON(eventsDir, autoMemoryDir, briefPath, guardCommand string) ([]byte, error) {
 	cmd := HookCommand(eventsDir)
 	doc := settingsDoc{Hooks: make(map[string][]hookMatcher, len(HookEvents)), AutoMemoryDirectory: autoMemoryDir}
 	for _, name := range HookEvents {
@@ -96,6 +108,12 @@ func SettingsJSON(eventsDir, autoMemoryDir, briefPath string) ([]byte, error) {
 		doc.Hooks[EventSubagentStart] = append(doc.Hooks[EventSubagentStart], hookMatcher{
 			Matcher: briefMatcher,
 			Hooks:   []hookCommand{{Type: "command", Command: briefCommand(briefPath)}},
+		})
+	}
+	if guardCommand != "" {
+		doc.Hooks[eventPreToolUse] = append(doc.Hooks[eventPreToolUse], hookMatcher{
+			Matcher: guardMatcher,
+			Hooks:   []hookCommand{{Type: "command", Command: guardCommand, Timeout: guardTimeout}},
 		})
 	}
 	var buf bytes.Buffer
@@ -117,6 +135,12 @@ func SettingsJSON(eventsDir, autoMemoryDir, briefPath string) ([]byte, error) {
 // nothing is kept. launch-id is written last, so a concurrent scan never
 // sees a new ID without its settings.
 func Prepare(dir, autoMemoryDir, brief string) (string, error) {
+	return PrepareGuarded(dir, autoMemoryDir, brief, "")
+}
+
+// PrepareGuarded is Prepare with flow's git guard: a non-empty guardCommand
+// is registered as SettingsJSON's PreToolUse entry.
+func PrepareGuarded(dir, autoMemoryDir, brief, guardCommand string) (string, error) {
 	if !SafePath(dir) {
 		return "", fmt.Errorf("hooks: hooks folder %q contains a single quote", dir)
 	}
@@ -133,7 +157,7 @@ func Prepare(dir, autoMemoryDir, brief string) (string, error) {
 			return "", err
 		}
 	}
-	settings, err := SettingsJSON(EventsDir(dir), autoMemoryDir, briefPath)
+	settings, err := SettingsJSON(EventsDir(dir), autoMemoryDir, briefPath, guardCommand)
 	if err != nil {
 		return "", err
 	}

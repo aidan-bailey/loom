@@ -272,3 +272,30 @@ func TestSaveSettings_KeepsTheBuildSweepThreshold(t *testing.T) {
 	assert.Equal(t, "y/", ws.cfg.Snapshot().BranchPrefix, "fixture: the save landed")
 	assert.Zero(t, ws.cfg.Snapshot().BuildSweepAfterHours)
 }
+
+func TestSaveSettings_TheFlowSettingRewritesTheContextFiles(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "")
+	t.Setenv(config.EnvGlobalDir, ws.ctx.ConfigDir)
+	m.SetWorkspacesForTest(ws)
+	id := m.wsIDOf(ws)
+	dir := ws.ctx.ConfigDir
+	worktreeContext := filepath.Join(dir, "claude-loom-context.md")
+
+	s := ws.cfg.Snapshot()
+	on := true
+	s.Flow = &on
+	require.NoError(t, m.SaveSettings(id, s))
+	assert.True(t, session.FlowEnabled(dir))
+	data, err := os.ReadFile(worktreeContext)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "## The agent flow")
+
+	off := false
+	s.Flow = &off
+	require.NoError(t, m.SaveSettings(id, s))
+	assert.False(t, session.FlowEnabled(dir), "the workspace's flow toggle follows")
+	data, err = os.ReadFile(worktreeContext)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "## The agent flow", "the context files drop the fragment at once")
+}

@@ -465,7 +465,7 @@ func (f recordingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 // relaunched with no hooks and no loom context at all.
 func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	configDir := t.TempDir()
-	require.NoError(t, WriteLoomContextFiles(configDir))
+	require.NoError(t, WriteLoomContextFiles(configDir, false))
 	SetLoomContextEnabled(configDir, true)
 
 	var hasSessionCalls int
