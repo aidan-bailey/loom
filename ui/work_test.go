@@ -464,3 +464,10 @@ func TestRenderWork_ShowsWhatTheAgentIsDoing(t *testing.T) {
 	assert.Contains(t, render(core.AgentView{On: true, Today: core.AgentDay{Calls: 1, CostUSD: 0.01}}), "agent: idle · today 1 call, $0.01")
 	assert.NotContains(t, render(core.AgentView{On: true}), "agent:", "nothing before its first call of the day")
 }
+
+func TestWorkClaim_ShowsSpareCores(t *testing.T) {
+	j := core.JobView{Claim: sched.Claim{CPUs: 6, MemoryGB: 3}, Spare: sched.Claim{CPUs: 2, MemoryGB: 1}}
+	assert.Equal(t, "4+2c/3G", workClaim(j))
+	j.AboveCap = true
+	assert.Equal(t, "4+2c/3G!", workClaim(j))
+}

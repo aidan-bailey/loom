@@ -30,6 +30,10 @@ func TestSizingLine(t *testing.T) {
 		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}}, ""},
 		{core.JobView{Claim: sched.Claim{CPUs: 8, MemoryGB: 16, IO: true}, Sources: srcs(L, L, L), Learned: 5, Usual: 2 * time.Minute}, "sized 8c/16G io (learned from 5 runs); usually 2m"},
 		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Sources: srcs(A, A, A), Usual: 5 * time.Minute, UsualFromPrior: true}, "sized 4c/6G (the agent's estimate); about 5m"},
+		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 2}, Sources: srcs(L, L, D), Learned: 1, Usual: 34 * time.Second, Ideal: 6},
+			"sized 4c/2G (cores and memory learned from 1 run, I/O default); usually 34s; up to 6 cores when idle"},
+		{core.JobView{Claim: sched.Claim{CPUs: 8, MemoryGB: 4}, Spare: sched.Claim{CPUs: 4, MemoryGB: 2}, Sources: srcs(L, L, D), Learned: 1},
+			"sized 4+4c/4G (cores and memory learned from 1 run, I/O default)"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, sizingLine(c.v))
@@ -54,4 +58,16 @@ func TestClaimText(t *testing.T) {
 	assert.Equal(t, "—", claimText(core.JobView{Sizing: sched.SizingAsking}))
 	assert.Equal(t, "exclusive", claimText(core.JobView{Claim: sched.Claim{Exclusive: true}}))
 	assert.Equal(t, "4c/6G", claimText(core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}}), "a job from before sizing")
+	assert.Equal(t, "4+2c/3G learned·1", claimText(core.JobView{Claim: sched.Claim{CPUs: 6, MemoryGB: 3}, Spare: sched.Claim{CPUs: 2, MemoryGB: 1},
+		Sources: srcs(sched.SourceLearned, sched.SourceLearned, sched.SourceDefault), Learned: 1}))
+}
+
+func TestStartedLine(t *testing.T) {
+	t0 := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	v := core.JobView{ID: 21, Submitted: t0, Started: t0.Add(6 * time.Second), Claim: sched.Claim{CPUs: 4, MemoryGB: 2}}
+	assert.Equal(t, "job 21 started after 6s", startedLine(v))
+	v.Claim, v.Spare = sched.Claim{CPUs: 6, MemoryGB: 3}, sched.Claim{CPUs: 2, MemoryGB: 1}
+	assert.Equal(t, "job 21 started after 6s with 2 spare cores (4+2c/3G)", startedLine(v))
+	v.Claim, v.Spare = sched.Claim{CPUs: 5, MemoryGB: 3}, sched.Claim{CPUs: 1, MemoryGB: 1}
+	assert.Equal(t, "job 21 started after 6s with 1 spare core (4+1c/3G)", startedLine(v))
 }

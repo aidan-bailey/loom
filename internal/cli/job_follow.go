@@ -218,7 +218,7 @@ func (f *jobFollower) report(v core.JobView) {
 		}
 	case sched.Running:
 		if f.queued && !f.started {
-			f.d.say("job %d started after %s", v.ID, rounded(v.Started.Sub(v.Submitted)))
+			f.d.say("%s", startedLine(v))
 		}
 		f.started = true
 		if ran := time.Since(v.Started); !f.overdue && v.OverdueAfter > 0 && ran > v.OverdueAfter {

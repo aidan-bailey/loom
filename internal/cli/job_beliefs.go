@@ -121,18 +121,30 @@ func writeBeliefs(w io.Writer, page sched.BeliefsPage, now time.Time) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tREPO\tFOLDER\tCOMMAND\tRUNS\tCLAIM\tUSUAL\tLAST SEEN")
+	fmt.Fprintln(tw, "ID\tREPO\tFOLDER\tCOMMAND\tRUNS\tCLAIM\tSCALES\tUSUAL\tLAST SEEN")
 	for _, v := range page.Beliefs {
 		usual := "-"
 		if v.Usual > 0 {
 			usual = "~" + sched.RoughDuration(v.Usual)
 		}
 		claim := claimText(core.JobView{Claim: v.Sized.Claim, Sources: v.Sized.Sources, Learned: v.Sized.Learned, AboveCap: v.Sized.AboveCap})
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", v.Belief.ID, v.RepoName, v.Belief.Folder,
-			cutTo(oneLine(strings.Join(v.Belief.Command, " ")), 40), len(v.Belief.Runs), claim, usual,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", v.Belief.ID, v.RepoName, v.Belief.Folder,
+			cutTo(oneLine(strings.Join(v.Belief.Command, " ")), 40), len(v.Belief.Runs), claim, scalesText(v.Scaling), usual,
 			sched.RoughDuration(now.Sub(v.Belief.LastSeen))+" ago")
 	}
 	_ = tw.Flush()
+}
+
+// scalesText is the SCALES column (job scaling spec §6): the parallel
+// fraction as a percentage, "overruns", or "-" while it is unknown.
+func scalesText(s sched.Scaling) string {
+	switch {
+	case s.Overruns:
+		return "overruns"
+	case s.Known:
+		return fmt.Sprintf("%.0f%%", 100*s.Parallel)
+	}
+	return "-"
 }
 
 // cutTo cuts s to n characters, with an ellipsis.

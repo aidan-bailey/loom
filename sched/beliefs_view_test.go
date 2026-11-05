@@ -65,7 +65,24 @@ func TestFormatBelief(t *testing.T) {
 		"memory ×1.15",
 		"the wasm build and chromium overlap",
 		"13.8G",
+		"94% parallel over 1 run · efficient up to 16 cores",
 	} {
 		assert.Contains(t, text, want)
 	}
+}
+
+func TestFormatBelief_Scaling(t *testing.T) {
+	line := func(b *Belief) string {
+		for _, l := range FormatBelief(ViewBelief(*b, szPolicy)) {
+			if strings.HasPrefix(l, "scaling") {
+				return l
+			}
+		}
+		return ""
+	}
+	wasm := at(3, 2.74)
+	wasm.WallSeconds, wasm.CPUSeconds = 43, 43*2.74
+	assert.Equal(t, "scaling   95% parallel over 1 run · efficient up to 6 cores · ~34s at 4, ~24s at 6", line(belief(wasm)))
+	assert.Equal(t, "scaling   ignores the hint variables · keeps 7.8 cores busy, claims 10", line(belief(at(4, 7.81))))
+	assert.Equal(t, "scaling   unknown until a run with 2 cores or more", line(belief(at(1, 1.0))))
 }

@@ -23,7 +23,16 @@ func TestWriteBeliefs(t *testing.T) {
 	writeBeliefs(&out, page, now)
 	text := out.String()
 	assert.Contains(t, text, "agent priors: 12 scored · memory within 25%: 9 · under on memory: 2 · duration ×1.4")
-	assert.Regexp(t, `(?m)^3f9a1c2b7d10 +polyoxide +\. +bash scripts/web-smoke\.sh +0 +8c/16G io learned·5 +~2m +2h00m ago$`, text)
+	assert.Regexp(t, `(?m)^3f9a1c2b7d10 +polyoxide +\. +bash scripts/web-smoke\.sh +0 +8c/16G io learned·5 +- +~2m +2h00m ago$`, text)
+
+	page.Beliefs[0].Scaling = sched.Scaling{Known: true, Parallel: 0.72, Runs: 1, Ideal: 4}
+	out.Reset()
+	writeBeliefs(&out, page, now)
+	assert.Regexp(t, `learned·5 +72% +~2m`, out.String())
+	page.Beliefs[0].Scaling = sched.Scaling{Overruns: true, Busy: 7.8}
+	out.Reset()
+	writeBeliefs(&out, page, now)
+	assert.Regexp(t, `learned·5 +overruns +~2m`, out.String())
 
 	out.Reset()
 	writeBeliefs(&out, sched.BeliefsPage{}, now)

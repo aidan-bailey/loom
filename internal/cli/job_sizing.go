@@ -64,12 +64,28 @@ func sizingLine(v core.JobView) string {
 	if text == "default" && v.AgentWhy != "" {
 		text += ": " + v.AgentWhy
 	}
-	line := fmt.Sprintf("sized %s (%s)", v.Claim, text)
+	line := fmt.Sprintf("sized %s (%s)", v.Claim.Spared(v.Spare), text)
 	switch {
 	case v.Usual > 0 && v.UsualFromPrior:
 		line += "; about " + sched.RoughDuration(v.Usual)
 	case v.Usual > 0:
 		line += "; usually " + sched.RoughDuration(v.Usual)
+	}
+	if v.Ideal > 0 {
+		line += fmt.Sprintf("; up to %d cores when idle", v.Ideal)
+	}
+	return line
+}
+
+// startedLine is the follower's line when a job starts (job scaling spec
+// §6): how long it waited, and the spare cores it was lent.
+func startedLine(v core.JobView) string {
+	line := fmt.Sprintf("job %d started after %s", v.ID, rounded(v.Started.Sub(v.Submitted)))
+	switch n := v.Spare.CPUs; {
+	case n == 1:
+		line += fmt.Sprintf(" with 1 spare core (%s)", v.Claim.Spared(v.Spare))
+	case n > 1:
+		line += fmt.Sprintf(" with %d spare cores (%s)", n, v.Claim.Spared(v.Spare))
 	}
 	return line
 }
@@ -89,7 +105,7 @@ func claimText(v core.JobView) string {
 	if v.Sizing != "" {
 		return "—"
 	}
-	text := v.Claim.String()
+	text := v.Claim.Spared(v.Spare)
 	if v.AboveCap {
 		text = strings.Replace(text, "G", "G!", 1)
 	}

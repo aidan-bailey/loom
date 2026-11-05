@@ -7,8 +7,8 @@ import (
 )
 
 // FormatBelief is a belief as `loom job beliefs show` and the work view's
-// belief pager print it: its signature, claim, durations, prior, notes and
-// runs, one line each, with no styling.
+// belief pager print it: its signature, claim, durations, how it scales,
+// prior, notes and runs, one line each, with no styling.
 func FormatBelief(v BeliefView) []string {
 	b := v.Belief
 	lines := []string{fmt.Sprintf("belief %s · %s · %s", b.ID, v.RepoName, b.Folder)}
@@ -26,6 +26,7 @@ func FormatBelief(v BeliefView) []string {
 	case v.UsualFromPrior:
 		lines = append(lines, fmt.Sprintf("about     %s (the agent's estimate)", RoughDuration(v.Usual)))
 	}
+	lines = append(lines, scalingLine(v))
 	if p := b.Prior; p != nil {
 		io := ""
 		if p.IO {
@@ -75,6 +76,40 @@ func FormatBelief(v BeliefView) []string {
 			r.Job, r.Ended.Local().Format("2006-01-02 15:04"), r.Outcome, r.Claim, peak, busy, RoughDuration(seconds(r.WallSeconds)), written))
 	}
 	return lines
+}
+
+// scalingLine is the belief text's line on how its command scales (job
+// scaling spec §6): an overrunner's busy cores and claim; or p, the runs it
+// came from, the ideal width and the usual duration at the claim's cores
+// and at the ideal width; or that it is unknown.
+func scalingLine(v BeliefView) string {
+	s, base := v.Scaling, v.Sized.Claim.CPUs
+	switch {
+	case s.Overruns:
+		line := fmt.Sprintf("scaling   ignores the hint variables · keeps %.1f cores busy", s.Busy)
+		if base > 0 {
+			line += fmt.Sprintf(", claims %d", base)
+		}
+		return line
+	case !s.Known:
+		return "scaling   unknown until a run with 2 cores or more"
+	}
+	runs := "1 run"
+	if s.Runs != 1 {
+		runs = fmt.Sprintf("%d runs", s.Runs)
+	}
+	line := fmt.Sprintf("scaling   %.0f%% parallel over %s · efficient up to %d cores", 100*s.Parallel, runs, s.Ideal)
+	if v.DurationRuns == 0 || base < 1 {
+		return line
+	}
+	at := func(c int) string {
+		u, _, _, _ := Usual(&v.Belief, c)
+		return fmt.Sprintf("~%s at %d", RoughDuration(u), c)
+	}
+	if s.Ideal > base {
+		return line + " · " + at(base) + ", " + at(s.Ideal)
+	}
+	return line + " · " + at(base)
 }
 
 // RoughDuration is a duration as an ETA says it: 40s, 3m, 1h05m.
