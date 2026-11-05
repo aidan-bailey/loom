@@ -124,3 +124,20 @@ Nothing changes. `loom job beliefs --json` carries each run's checkout.
 - A checkout's build goes stale as its code changes: a run here hours ago, before a rebase, may not have left a warm build. `minutes_ago` is all the request says.
 - An adopted run's peak is a floor (sampled from the daemon's restart) and is shown like a full one.
 - Sizing from the checkout (§2), once runs carry it.
+
+## 13. A replay before the daemon ran it (added 2026-11-05, after the build)
+
+The 26 priors whose job records were still kept were replayed through `advisor.Run` at Haiku 5.5 low effort, each request rebuilt from `beliefs.json` as it stood at the call. No run had a checkout yet, so each was rebuilt from its job's record: 160 of the known beliefs' recent runs were `here`, 66 were elsewhere and 451 unknown, their records gone. One run per arm, so a difference of a call or two is noise:
+
+| Arm | Within 2× of the duration | Median duration score | Memory under-estimated |
+|---|---|---|---|
+| without recent runs and pairs | 8 of 26 | 0.33 | 1 of 22 (1.09×) |
+| with them (as built) | 7 of 26 | 0.28 | 0 of 22 |
+| with them and the `env` line below | 7 of 22 | 0.39 | 1 of 21 (1.02×) |
+| with them, the `env` line, and the duration as "your best estimate, not an upper bound" | 8 of 22 | 0.47 | 3 of 20 (one at 3.1×, through a `like` to a warm belief) |
+
+- The model reads the new fields: its notes cite runs here and what they wrote. Durations didn't improve on this sample; the shipped prompt is the one built.
+- **Haiku pads durations** (median score near 0.3: a job ran in a third of the time it was given). Saying "not an upper bound" halved the padding but loosened memory too, the risky direction, so it was not kept.
+- **The job's environment has no counterpart on the beliefs' side.** The job's `environment` lists the shell's build variables (`RUSTFLAGS`, `RUSTC_WRAPPER`), which on fresco every job has, while a belief's `env` holds only its command line's pairs. The model reads the absence as a difference and expects a cold build ("RUSTFLAGS differ from every belief's"): in 7 notes without the pairs and 11 with them. A prompt line saying so didn't change it (11 notes). Recording each run's allowed environment, so beliefs show what they ran with, is the fix, and a decision for later.
+- **A `like` can still copy a warm belief's memory onto a cold job** (job 149 here, and Opus once in the model replay). A floor for memory under a `like` (the larger of the answer's and the belief's) would close it; it changes the smart scheduler's §5.6, so it is the owner's to decide.
+- The success measure in §1 stands: it is read from a week of runs that carry their checkouts.
