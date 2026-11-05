@@ -109,13 +109,20 @@ var maxLogSize int64 = 5 * 1024 * 1024 // 5 MB
 var (
 	logFilePath   string
 	globalRotator *rotatingWriter
+	// ownDir is the directory Initialize("") made for this process, which
+	// Close removes; "" when there is none.
+	ownDir string
 )
 
 // Initialize should be called once at the beginning of the program to set up logging.
 // defer Close() after calling this function.
 //
-// logDir specifies the directory for the log file. If empty, os.TempDir() is used.
-// When non-empty, the directory is created if it does not exist.
+// logDir specifies the directory for the log file. When non-empty, the
+// directory is created if it does not exist (os.TempDir() is used when it
+// can't be). Empty is for test binaries: the log goes in a directory of this
+// process's own under os.TempDir() (processDir), which Close removes, since a
+// log shared by every test process is rotated by one under another's line
+// counts.
 //
 // daemon is set for `loom serve`: it writes serve.log instead of loom.log,
 // tags its records, and has no terminal to fall back to.
@@ -128,11 +135,9 @@ var (
 // like the previous implementation.
 func Initialize(logDir string, daemon bool) error {
 	if logDir == "" {
+		logDir = processDir()
+	} else if err := os.MkdirAll(logDir, 0755); err != nil {
 		logDir = os.TempDir()
-	} else {
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			logDir = os.TempDir()
-		}
 	}
 
 	name := logFileName
@@ -231,10 +236,32 @@ func newStructured(w io.Writer, daemon bool) *slog.Logger {
 	return logger
 }
 
-// Close closes the log file.
+// processDir is the directory of this process's own that Initialize("")
+// logs to: the one it made before, while it exists, or a new one under
+// os.TempDir() (os.TempDir() itself when none can be made).
+func processDir() string {
+	if ownDir != "" {
+		if info, err := os.Stat(ownDir); err == nil && info.IsDir() {
+			return ownDir
+		}
+	}
+	dir, err := os.MkdirTemp("", "loom-log-")
+	if err != nil {
+		return os.TempDir()
+	}
+	ownDir = dir
+	return dir
+}
+
+// Close closes the log file, and removes the directory Initialize("") made
+// for this process; a directory Initialize was given is left.
 func Close() {
 	if globalRotator != nil {
 		_ = globalRotator.Close()
+	}
+	if ownDir != "" {
+		_ = os.RemoveAll(ownDir)
+		ownDir = ""
 	}
 }
 

@@ -4,8 +4,9 @@
 // once to loom.log.1 at startup when it exceeds 5 MB. The daemon's
 // (loom serve) land in <globalDir>/logs/serve.log instead, which is
 // rotated as it grows but not at startup, since a loom serve that
-// finds another daemon running would rotate the live one's. Two logger
-// families share a file:
+// finds another daemon running would rotate the live one's. A test binary
+// passes no directory and logs to a directory of its own under the temp
+// dir, which Close removes. Two logger families share a file:
 //
 //   - Structured (slog-backed): [For], [InfoKV], [WarnKV], [ErrorKV],
 //     [DebugKV]. Records carry a subsystem tag plus component=daemon

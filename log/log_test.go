@@ -556,3 +556,33 @@ func TestInitialize_TheDaemonsLogIsNotRotatedAtStartup(t *testing.T) {
 		}
 	}
 }
+
+// Test binaries pass "": each process gets a log of its own, so one test
+// process's rotation never empties the file another is counting lines in.
+func TestInitialize_AnEmptyDirIsThisProcesssOwn(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	require.NoError(t, Initialize("", false))
+	path := LogFilePath()
+	dir := filepath.Dir(path)
+	assert.NotEqual(t, os.TempDir(), dir, "not the directory every test process shares")
+	assert.Equal(t, os.TempDir(), filepath.Dir(dir), "a directory of its own under it")
+	assert.Equal(t, "loom.log", filepath.Base(path))
+
+	require.NoError(t, Initialize("", false))
+	assert.Equal(t, path, LogFilePath(), "a second Initialize keeps it")
+
+	Close()
+	assert.NoDirExists(t, dir, "Close removes it")
+	require.NoError(t, Initialize("", false))
+	assert.DirExists(t, filepath.Dir(LogFilePath()), "an Initialize after Close makes another")
+	Close()
+	assert.NoDirExists(t, filepath.Dir(LogFilePath()))
+}
+
+// A directory given is the caller's: Close leaves it.
+func TestClose_LeavesADirectoryItWasGiven(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Initialize(dir, false))
+	Close()
+	assert.FileExists(t, filepath.Join(dir, "loom.log"))
+}
