@@ -68,7 +68,7 @@ The subagent cut (`subagentContextFile`) is the subagent head, then the parent's
 
 After the merge, the paragraph in `session/loom_context_shared.md` reads correctly to the parent and to a subagent alike. The sentence the routing branch's §9 adds is replaced by one along these lines:
 
-> Submit from a foreground Bash call: a job's `[loom] job N` message goes back to whoever submitted it, a subagent included, which gets it even after it has finished and so can end its turn; a result loom can't place goes to the session's main conversation, naming the subagent.
+> Run `loom job submit` in a foreground Bash call: its `[loom] job N` message goes back to whoever submitted it, a subagent included, which gets it even after it has finished and so can end its turn; a result loom can't place goes to the session's main conversation, naming the subagent.
 
 `TestJobContext_NamesOnlyFlagsTheCommandsHave` keeps asserting that the paragraph names subagents.
 
