@@ -23,7 +23,7 @@ Success:
 - **A subagent cut composed from the parent's fragments** (the owner, 2026-11-05): a short subagent head, then the parent's head and "Loom itself". "Other sessions" stays the parent's: messaging and starting sessions is its job. Rejected: the parent's file verbatim (about 6.1 KB per spawn, with lines phrased for the parent); the work-queue paragraph alone (leaves out the guardrails).
 - **Build on the job-routing branch** (the owner, 2026-11-05). This branch merges `aidanb/loom-doesnt-know-subagents` once its Package D (display, context and docs) lands, so the brief says from the start that a subagent's `loom job submit` reports back to it.
 - **Skip forks with the matcher `^(?!fork$)`.** Claude Code evaluates a matcher holding any character beyond letters, digits, `_`, `-`, spaces, `,` and `|` as an unanchored JavaScript regex, so this matches every agent type but exactly `fork`.
-- **Brief subagents exactly when the parent got loom's context flag.** The `claude_loom_context` toggle, a user's own `--append-system-prompt-file` and a non-Claude program then decide both alike.
+- **Brief subagents exactly when the parent got loom's context flag.** The `claude_loom_context` toggle, a missing prompt file and a non-Claude program then decide both alike. (Loom adds its flag beside a user's own `--append-system-prompt-file`, so that one changes neither.)
 
 ## 3. Scope
 
@@ -88,7 +88,7 @@ The recorder's entry for `SubagentStart` is unchanged and has no matcher, so the
 
 ### 5.4 The gate
 
-`loomContextProgram` also reports whether it applied the flag (`(string, bool)`). `launchProgram` passes `prepareHooks` the subagent cut of the same variant when it did, and an empty brief otherwise. `prepareHooks`' own conditions (a config dir, not Windows, a Claude program, no user `--settings`) still decide whether hooks are prepared at all.
+`loomContextPath` answers whether a launch gets loom's prompt file; `loomContextProgram` adds the flag from it and `subagentBrief` the subagent cut of the same variant, so the two can't disagree. `launchProgram` passes the brief, or an empty one, to `prepareHooks`. `prepareHooks`' own conditions (a config dir, not Windows, a Claude program, no user `--settings`) still decide whether hooks are prepared at all.
 
 ## 6. Components
 
@@ -97,7 +97,7 @@ The recorder's entry for `SubagentStart` is unchanged and has no matcher, so the
 | `session/loom_context_shared.md` | keeps "Loom itself"; the work-queue sentence of §5.2 |
 | `session/loom_context_sessions.md` | new: "Other sessions", moved from the shared fragment |
 | `session/loom_context_subagent.md` | new: the subagent head |
-| `session/loom_context.go` | embeds the new fragments; `loomContextFile` joins three; `subagentContextFile`; `loomContextProgram` reports whether it applied |
+| `session/loom_context.go` | embeds the new fragments; `loomContextFile` joins three; `subagentContextFile`; `loomContextPath`, shared by `loomContextProgram` and `subagentBrief` |
 | `session/subagent_hooks.go` | `launchProgram` picks the brief; `prepareHooks` passes it to `hooks.Prepare` |
 | `session/hooks/hooks.go` | `Prepare` and `SettingsJSON` take the brief; the brief's file, command and matcher |
 | `session/hooks/CLAUDE.md` | new: the brief's rule (§8) |
@@ -120,11 +120,11 @@ The recorder's entry for `SubagentStart` is unchanged and has no matcher, so the
 - `session` (opt-in, `LOOM_TEST_REAL_CLAUDE=1`): `TestRealClaude_SubagentBrief`. A real `claude -p` under `hooks.Prepare`'s settings, with a marker brief: a general-purpose subagent reports the marker, and the brief entry doesn't fire for a fork.
 - `internal/cli`: `TestLoomContext_NamesRealSessionFlags` reads `session/loom_context_shared.md` by path, so it moves to the sessions fragment, which now holds the `loom session` text. `TestJobContext_NamesOnlyFlagsTheCommandsHave` reads the composed prompt files, so the split leaves it alone; the subagent cuts carry the same paragraph through the shared fragment, which `TestSubagentContext_IsTheParentsWithoutOtherSessions` pins.
 
-The package rule (`session/hooks/CLAUDE.md`): **give subagents the brief only through the hooks settings, with the fork-excluding matcher, and only when the parent got loom's context.** A fork already holds the parent's prompt, so it would read loom's rules twice; and a user who turned the context off, or passed a prompt file of their own, has turned it off for the session's subagents too. Enforced by the tests above. `session/CLAUDE.md` is 8 bytes under its 20,000-byte budget, so the rule goes in the new file, and the loom-context rule refers to the `loom_context_*.md` fragments by pattern instead of listing them.
+The package rule (`session/hooks/CLAUDE.md`): **give subagents the brief only through the hooks settings, with the fork-excluding matcher, and only when the parent got loom's context.** A fork already holds the parent's prompt, so it would read loom's rules twice; and a user who turned the context off has turned it off for the session's subagents too. Enforced by the tests above. `session/CLAUDE.md` is 8 bytes under its 20,000-byte budget, so the rule goes in the new file, the loom-context rule refers to the `loom_context_*.md` fragments by pattern, and the `session/buildsweep` rule moves, verbatim, into a new `session/buildsweep/CLAUDE.md`, which loads when that package is edited.
 
 ## 9. Known limits and later work
 
 - No brief where loom installs no hooks: Windows, and a launch whose program already passes `--settings`.
 - Teammates and workflow agents: unverified whether `SubagentStart` fires for them, and so whether they are briefed.
 - A subagent resumed after a loom upgrade keeps the brief of the launch it started under, since Claude adds no second copy.
-- `USAGE.md` still doesn't describe the Loom Context toggle; when it does, it says the toggle covers subagents too.
+- `USAGE.md`'s config table names the toggle; it now says the toggle covers subagents too.
