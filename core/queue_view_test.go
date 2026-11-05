@@ -27,6 +27,7 @@ var qvPolicy = sched.Policy{
 	StarveAfter:      10 * time.Minute,
 	KeepFinished:     50,
 	ReleasePastPeaks: true,
+	AgentJobs:        4,
 }
 
 // qvRecord is a record of the given state, ordered by its ID, with the
