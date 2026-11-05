@@ -92,11 +92,16 @@ func TestModCall_AnEndedCallMatchesNothing(t *testing.T) {
 }
 
 // A command that runs no submit is not kept: `loom job list` submits nothing,
-// so it can't take a submit that a script made.
+// so it takes no room under the cap from a call that does, and can't take a
+// submit that a script made.
 func TestModCall_ACommandThatSubmitsNothingIsNotKept(t *testing.T) {
 	m := callModel(t)
-	reportCall(t, m, ModCall{ID: "c1", Agent: "a1", Command: "loom job list && true"})
-	assert.Equal(t, "", submitFromL1(t, m, "true"))
+	reportCall(t, m, ModCall{ID: "c0", Agent: "a0", Command: "loom job submit -- true"})
+	for i := range maxModCalls {
+		reportCall(t, m, ModCall{ID: fmt.Sprint(i), Agent: "a1", Command: "loom job list && true"})
+	}
+	assert.Equal(t, "a0", submitFromL1(t, m, "true"), "the calls that submit nothing left the one that does")
+	assert.Equal(t, "", submitFromL1(t, m, "true"), "and take no submit themselves")
 }
 
 func TestModCall_ARetriedReportChangesNothing(t *testing.T) {

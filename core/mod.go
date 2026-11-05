@@ -215,6 +215,10 @@ type ModMessage struct {
 	// Args ($.command.run) in place of submitting Text.
 	Command string `json:"command,omitempty"`
 	Args    string `json:"args,omitempty"`
+	// Agent, when set, is the subagent (its agentId) the mod sends Text to
+	// ($.session.send) in place of submitting it (subagent job results spec
+	// §5.3).
+	Agent string `json:"agent,omitempty"`
 }
 
 // ModEvent is one thing a mod reports about a message: queued (handed to
@@ -301,6 +305,10 @@ type modMessage struct {
 	// job is the queue job a job notice (OriginJob) reports on: its fate is
 	// recorded there (noteNotice).
 	job sched.JobID
+	// agent is the subagent a job notice goes to (sched.Record.Agent). The
+	// inbox hands it to a mod that can send to subagents (modLink.agents),
+	// and gives anything else the session's copy (ModInbox).
+	agent string
 }
 
 // modLink is what the model knows of one instance's current launch and its
@@ -738,7 +746,13 @@ func (m *Model) ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, 
 	out := make([]ModMessage, 0, len(l.outbox))
 	for _, msg := range l.outbox {
 		msg.offered = true
-		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser, Command: msg.command, Args: msg.args})
+		if msg.agent != "" && !l.agents {
+			// A mod that can't send to a subagent gets the session's copy,
+			// naming the subagent (spec §5.3). Decided here, not at enqueue:
+			// the hello that says what the mod can do may come later.
+			msg.text, msg.agent = withSubmitter(msg.text, oldModLine(msg.agent)), ""
+		}
+		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser, Command: msg.command, Args: msg.args, Agent: msg.agent})
 	}
 	return out, l.wake, nil
 }
@@ -821,6 +835,14 @@ func (m *Model) modComplete(inst *session.Instance, l *modLink, ev ModEvent) {
 // never pasted (offered, modGone) does not apply here.
 func (m *Model) modFailed(inst *session.Instance, l *modLink, ev ModEvent) {
 	if msg := l.take(ev.ID); msg != nil {
+		if msg.origin == OriginJob && msg.agent != "" {
+			// The subagent could not take it: the session gets it, naming
+			// the subagent and why (spec §5.3). Its fate is recorded when
+			// that copy is queued.
+			log.For("core").Info("mod.agent_unreachable", "instance", inst.Title, "job", msg.job, "agent", msg.agent, "why", ev.Error)
+			m.enqueue(inst, &modMessage{text: withSubmitter(msg.text, unreachableLine(msg.agent, ev.Error)), origin: OriginJob, job: msg.job})
+			return
+		}
 		m.withoutMod(inst, msg, "the loom mod could not submit it: "+ev.Error)
 		return
 	}
