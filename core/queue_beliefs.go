@@ -23,19 +23,38 @@ func (m *Model) loadBeliefs() {
 		return
 	}
 	q.beliefs = b
-	// A profile that fails validation is ignored for holds (past-peak holds
-	// spec §5.2): say so once per signature, and leave the file as it is.
+	// A profile or curve that fails validation is ignored (past-peak holds
+	// spec §5.2, cgroup spec §6.2): say so once per signature and kind, and
+	// leave the file as it is.
 	for _, b := range q.beliefs.Beliefs {
+		profileSaid, curveSaid := false, false
 		for _, r := range b.Runs {
-			if r.Profile == nil {
-				continue
-			}
-			if err := r.Profile.Validate(); err != nil {
+			if err := validProfile(r.Profile); err != nil && !profileSaid {
 				log.For("core").Warn("queue.profile_invalid", "signature", string(b.ID), "job", int64(r.Job), "err", err)
-				break
+				profileSaid = true
+			}
+			if err := validCurve(r.Curve); err != nil && !curveSaid {
+				log.For("core").Warn("queue.curve_invalid", "signature", string(b.ID), "job", int64(r.Job), "err", err)
+				curveSaid = true
 			}
 		}
 	}
+}
+
+// validProfile is why p can't be trusted, nil for none or a sound one.
+func validProfile(p *sched.Profile) error {
+	if p == nil {
+		return nil
+	}
+	return p.Validate()
+}
+
+// validCurve is why c can't be trusted, nil for none or a sound one.
+func validCurve(c *sched.Curve) error {
+	if c == nil {
+		return nil
+	}
+	return c.Validate()
 }
 
 // learningWhy is why a beliefs.json load error turns learning off.
@@ -201,6 +220,9 @@ func (m *Model) recordRun(rec sched.Record, trace *sched.Trace) {
 	if run.FullPeak() {
 		if p, ok := sched.BuildProfile(trace); ok {
 			run.Profile = p
+		}
+		if c, ok := sched.BuildCurve(trace, rec.Started); ok {
+			run.Curve = c
 		}
 	}
 	now := time.Now()

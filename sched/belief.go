@@ -40,6 +40,7 @@ type Run struct {
 	Checkout    string    `json:"checkout,omitempty"`   // the working tree's top it ran in (Record.Checkout); "" for a run recorded before 2026-11-05
 	Profile     *Profile  `json:"profile,omitempty"`    // its usage over its progress (past-peak holds spec §5.2); only the newest ProfiledRuns keep one
 	HoldBroke   bool      `json:"hold_broke,omitempty"` // its usage passed its lowered hold (past-peak holds spec §5.4)
+	Curve       *Curve    `json:"curve,omitempty"`      // its usage over its progress, rising and falling (cgroup spec §6); only the newest ProfiledRuns keep one
 }
 
 // FullPeak reports whether r's peak is the job's whole peak: a done run's,
@@ -158,15 +159,15 @@ type Belief struct {
 	Advisor   AdvisorMarks `json:"advisor,omitzero"`
 }
 
-// AddRun records r as b's newest run, keeping MaxRuns, and profiles on the
-// newest ProfiledRuns only.
+// AddRun records r as b's newest run, keeping MaxRuns, and profiles and
+// curves on the newest ProfiledRuns only.
 func (b *Belief) AddRun(r Run) {
 	b.Runs = slices.Insert(b.Runs, 0, r)
 	if len(b.Runs) > MaxRuns {
 		b.Runs = b.Runs[:MaxRuns]
 	}
 	for i := ProfiledRuns; i < len(b.Runs); i++ {
-		b.Runs[i].Profile = nil
+		b.Runs[i].Profile, b.Runs[i].Curve = nil, nil
 	}
 }
 

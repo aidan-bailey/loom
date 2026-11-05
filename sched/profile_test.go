@@ -19,6 +19,17 @@ func tracePts(t0 time.Time, pts ...TracePoint) *Trace {
 	return tr
 }
 
+func TestTrace_KeepsEachPointsTime(t *testing.T) {
+	t0 := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	var tr Trace
+	for i := range tracePoints + 2 {
+		tr.Add(t0.Add(time.Duration(i)*3*time.Second), TracePoint{X: float64(i)})
+	}
+	require.Len(t, tr.Points, tracePoints/2+2, "the pairs merged at 257 points, and one more came")
+	assert.Equal(t, t0.Add(3*time.Second), tr.Points[0].At, "a merged pair keeps the later time")
+	assert.Equal(t, t0.Add(time.Duration(tracePoints+1)*3*time.Second), tr.Points[len(tr.Points)-1].At)
+}
+
 func TestTrace_Add(t *testing.T) {
 	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	tr := tracePts(t0, TracePoint{X: 5, RSSKB: 10}, TracePoint{X: 3, RSSKB: 20})
@@ -40,7 +51,7 @@ func TestTrace_Add(t *testing.T) {
 		full.Add(t0.Add(time.Duration(i)*time.Second), p)
 	}
 	require.Len(t, full.Points, (tracePoints+2)/2, "past 256 points, pairs merge")
-	assert.Equal(t, TracePoint{X: 1, RSSKB: 1000, Cores: 1}, full.Points[0], "the later progress, the higher usage")
+	assert.Equal(t, TracePoint{X: 1, RSSKB: 1000, Cores: 1, At: t0.Add(time.Second)}, full.Points[0], "the later progress and time, the higher usage")
 	var rss int64
 	var cores float64
 	for _, p := range full.Points {

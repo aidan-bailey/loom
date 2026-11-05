@@ -18,12 +18,14 @@ const (
 )
 
 // TracePoint is one sample of a running job (past-peak holds spec §5.1):
-// its progress (X, the CPU-seconds its session has used), its memory, and
-// the cores it kept busy since the sample before.
+// its progress (X, the CPU-seconds its session has used), its memory, the
+// cores it kept busy since the sample before, and when it was taken (At,
+// which Trace.Add sets; cgroup spec §6.1).
 type TracePoint struct {
 	X     float64
 	RSSKB int64
 	Cores float64
+	At    time.Time
 }
 
 // Trace is a running job's samples. The model keeps it in memory only.
@@ -37,8 +39,9 @@ type Trace struct {
 // before (a process that left the session took its CPU time with it); a gap
 // over traceGap since the last point leaves the trace incomplete; past
 // tracePoints points, adjacent pairs merge into one with the later progress
-// and the higher memory and cores, so every peak stays.
+// and time and the higher memory and cores, so every peak stays.
 func (t *Trace) Add(at time.Time, p TracePoint) {
+	p.At = at
 	if n := len(t.Points); n > 0 {
 		if at.Sub(t.Last) > traceGap {
 			t.Incomplete = true
@@ -55,7 +58,7 @@ func (t *Trace) Add(at time.Time, p TracePoint) {
 		a := t.Points[i]
 		if i+1 < len(t.Points) {
 			b := t.Points[i+1]
-			a = TracePoint{X: b.X, RSSKB: max(a.RSSKB, b.RSSKB), Cores: max(a.Cores, b.Cores)}
+			a = TracePoint{X: b.X, RSSKB: max(a.RSSKB, b.RSSKB), Cores: max(a.Cores, b.Cores), At: b.At}
 		}
 		merged = append(merged, a)
 	}

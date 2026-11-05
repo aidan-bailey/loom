@@ -134,6 +134,13 @@ func TestJobQueue_ADoneRunsTraceBecomesItsProfile(t *testing.T) {
 	assert.Equal(t, int64(6<<20), p.Mem.Peak())
 	assert.Equal(t, 7.0, p.Mem.PeakAt)
 	assert.Nil(t, m.queue.traces[1], "the settle drops the trace")
+
+	c := b.Runs[0].Curve
+	require.NotNil(t, c, "and its curve, rise and fall (cgroup spec §6)")
+	assert.Equal(t, p.End, c.End)
+	require.NoError(t, c.Validate())
+	assert.Equal(t, int64(4<<20), c.Mem[0].Level, "the curve keeps the low start the staircase hides")
+	assert.Positive(t, c.Mem[len(c.Mem)-1].Wall, "with the run's wall times")
 }
 
 func TestJobQueue_AnAdoptedRunGetsNoProfile(t *testing.T) {
