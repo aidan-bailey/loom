@@ -184,8 +184,11 @@ func RenderWork(width, height int, d WorkData) string {
 	default:
 		out = append(out, workBars(q)...)
 	}
-	if reported && q.Learning != "" {
+	switch {
+	case reported && q.Learning != "":
 		out = append(out, " "+workErrStyle.Render("learning off: "+CleanText(q.Learning)))
+	case reported && q.Agent.Why != "":
+		out = append(out, " "+workDimStyle.Render("agent off: "+CleanText(q.Agent.Why)))
 	}
 
 	rows := WorkRows(q.Jobs)

@@ -29,6 +29,7 @@ The work scheduler's package: the job, claim, caps and policy types, `Resolve` (
 
 ## Pointers
 
+- [`advisor/CLAUDE.md`](advisor/CLAUDE.md) — the scheduler's agent and its lockdown.
 - [`README.md`](README.md) — the package's facts: files, states, the policy, admission and the job directory.
 - [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — where this package sits.
 - [`../docs/claude/the-work-queue.md`](../docs/claude/the-work-queue.md) — the model's side of the queue: boot adoption and settling, the lock-before-signal rule, retention, notices and the shim re-exec the tests use.

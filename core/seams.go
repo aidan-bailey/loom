@@ -132,6 +132,16 @@ func (m *Model) SetJobRunnerForTest(r sched.Runner) {
 	m.queue.runner, m.queue.runnerErr = r, nil
 }
 
+// SetAdvisorForTest makes the work queue's advisor run program, a fake
+// claude, with each call bounded by timeout (0 keeps the default), whatever
+// Claude program the model has.
+func (m *Model) SetAdvisorForTest(program string, timeout time.Duration) {
+	if m.queue == nil {
+		m.queue = newQueueState()
+	}
+	m.queue.advisor.program, m.queue.advisor.timeout = program, timeout
+}
+
 // InstancesForTest returns w's instances, in display order (the model's own
 // slice; a test must not modify it).
 func (w *Workspace) InstancesForTest() []*session.Instance { return w.instances() }

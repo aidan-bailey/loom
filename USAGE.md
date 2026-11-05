@@ -1334,6 +1334,28 @@ An absent or `0` field takes the host's default:
 
 A value outside its bounds, or a default claim larger than a cap, makes the block invalid: admission pauses, running jobs are left alone, `loom job submit` is refused, and the work view says why. No cap is guessed. If the RAM cannot be read, `memory_gb` has no default and must be set. Lowering a cap never touches running jobs; it changes only what starts next.
 
+#### The scheduler's agent
+
+A command the queue has never measured is sized by an agent: a headless `claude -p` the daemon runs in the job's folder, with read-only file tools and none of your settings, hooks, plugins, MCP servers or CLAUDE.md files. It reads the command, its description, the job's build variables (never a variable whose name holds `TOKEN`, `SECRET`, `PASSW`, `KEY`, `CRED` or `AUTH`, and no others) and what the queue has learned of similar commands, and answers with an estimate, which the command's first done run replaces. A job waits for it at most `wait_seconds`, then takes the default claim. When a run surprises what was learned (a peak above its claim, a SIGKILL nobody asked for, a duration far off the usual), the agent writes a note on it, shown with the command's history. It is called one job at a time, not again for 10 minutes for a command whose call failed, not at all for 30 minutes after three failed calls in a row, and not while its account has used 90% or more of its 5-hour window. It is on by default whenever loom has a Claude program; set it in the `scheduler` block's `agent` object (the caps form leaves it alone):
+
+```json
+{
+  "scheduler": {
+    "agent": { "enabled": true, "model": "opus", "effort": "low", "account": "", "wait_seconds": 60 }
+  }
+}
+```
+
+| Field | Default | Bounds |
+|-------|---------|--------|
+| `enabled` | `true` | |
+| `model` | `opus` | any `--model` value, 1–100 characters, no spaces |
+| `effort` | `low` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `account` | `""` (the default account) | a registered account's name |
+| `wait_seconds` | `60` | 1–600 |
+
+A block outside its bounds turns the agent off (the work view's header and `loom job list` say why); jobs are still sized from what was measured.
+
 ### Claude Fullscreen Renderer
 
 Every Claude session Loom starts runs Claude's fullscreen renderer (Loom sets `CLAUDE_CODE_NO_FLICKER=1` in the session's environment), regardless of your `/tui` setting. Scrolling the agent pane then scrolls Claude's own transcript. Claude's classic inline renderer can't be scrolled inside Loom: it draws every frame as a synchronized update, which tmux relays to Loom as a full repaint, so no scroll-back ever builds up. Mouse-wheeling over it shows the "scrolled" footer but the content doesn't move.

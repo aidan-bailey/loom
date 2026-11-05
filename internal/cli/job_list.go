@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -39,6 +40,8 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 	}
 	if q.Learning != "" {
 		fmt.Fprintf(w, "learning off: %s\n", q.Learning)
+	} else if q.Agent.Why != "" && slices.ContainsFunc(q.Jobs, func(j core.JobView) bool { return j.State == sched.Queued }) {
+		fmt.Fprintf(w, "agent off: %s\n", q.Agent.Why)
 	}
 	var rows []core.JobView
 	finished := 0

@@ -510,7 +510,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
+Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":""},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
 ### SubmitJob (request)
 
@@ -582,7 +582,7 @@ Result: `{}`
 
 ### QueueChanged
 
-`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
+`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":""},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
 ### Reactivated
 

@@ -13,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/sched/advisor"
 )
 
 // queueInterval is gateQueue's cadence: how often the running jobs' locks are
@@ -133,6 +134,8 @@ type queueState struct {
 	// beliefsSaveFailed is set while the last save of beliefs.json failed,
 	// so a run of failures raises one notice.
 	beliefsSaveFailed bool
+	// advisor is the scheduler's agent (smart scheduler spec §5.6).
+	advisor advisorState
 }
 
 func newQueueState() *queueState {
@@ -229,6 +232,15 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	m.markPendingNotices()
 	m.adoptJobs()
 	m.admitJobs()
+	m.resumeAsks()
+}
+
+// errText is err's text, "" for none.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // refreshPolicy reads the scheduler block from the global config.json, which
@@ -261,6 +273,11 @@ func (m *Model) refreshPolicy() (sched.Policy, string) {
 		q.moved()
 	}
 	q.settings, q.policy, q.paused = settings, policy, reason
+	agent, agentErr := advisor.Resolve(settings.Agent)
+	if agent != q.advisor.settings || errText(agentErr) != errText(q.advisor.settingsErr) {
+		q.moved()
+	}
+	q.advisor.settings, q.advisor.settingsErr = agent, agentErr
 	return policy, reason
 }
 

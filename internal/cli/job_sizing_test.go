@@ -2,6 +2,7 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/sched"
@@ -31,6 +32,11 @@ func TestSizingLine(t *testing.T) {
 	for _, c := range cases {
 		assert.Equal(t, c.want, sizingLine(c.v))
 	}
+}
+
+func TestAskingLine(t *testing.T) {
+	assert.Equal(t, "being sized: asking the agent (up to 60s)", askingLine(time.Minute))
+	assert.Equal(t, "being sized: asking the agent", askingLine(0))
 }
 
 func TestMemoryWarning(t *testing.T) {

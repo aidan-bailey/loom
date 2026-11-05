@@ -128,6 +128,18 @@ type SchedulerSettings struct {
 	DefaultClaim       *ClaimSettings `json:"default_claim,omitempty"`
 	StarveAfterMinutes int            `json:"starve_after_minutes,omitempty"`
 	KeepFinished       int            `json:"keep_finished,omitempty"`
+	Agent              *AgentSettings `json:"agent,omitempty"`
+}
+
+// AgentSettings is the scheduler block's "agent": the advisor, a headless
+// Claude that estimates a job no run has measured (sched/advisor). An
+// absent or 0 field takes its default (advisor.Resolve).
+type AgentSettings struct {
+	Enabled     *bool  `json:"enabled,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	Account     string `json:"account,omitempty"`
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
 }
 
 // ClaimSettings is the default claim of a job that names none: whole cores
@@ -141,6 +153,11 @@ type ClaimSettings struct {
 func (s SchedulerSettings) clone() SchedulerSettings {
 	out := s
 	out.DefaultClaim = clonePtr(s.DefaultClaim)
+	if s.Agent != nil {
+		a := *s.Agent
+		a.Enabled = clonePtr(s.Agent.Enabled)
+		out.Agent = &a
+	}
 	return out
 }
 

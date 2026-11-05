@@ -28,12 +28,25 @@ func (d *client) printSizing(out io.Writer, id sched.JobID) {
 	if !found {
 		return
 	}
-	if line := sizingLine(v); line != "" {
+	line := sizingLine(v)
+	if v.Sizing != "" {
+		line = askingLine(d.Queue().Agent.Wait)
+	}
+	if line != "" {
 		fmt.Fprintln(out, line)
 	}
 	if w := memoryWarning(v); w != "" {
 		fmt.Fprintln(out, w)
 	}
+}
+
+// askingLine is `submit`'s line for a job still waiting for the agent's
+// prior, with how long it waits at most.
+func askingLine(wait time.Duration) string {
+	if wait <= 0 {
+		return "being sized: asking the agent"
+	}
+	return fmt.Sprintf("being sized: asking the agent (up to %ds)", int(wait.Seconds()))
 }
 
 // sizingLine says how a job was sized: "" for an exclusive job and one

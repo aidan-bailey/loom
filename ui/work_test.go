@@ -422,4 +422,8 @@ func TestRenderWork_ShowsEachClaimsSourceAndWhyLearningIsOff(t *testing.T) {
 	assert.Contains(t, out, "learning off: beliefs.json could not be loaded: bad")
 	assert.Contains(t, out, "learned·5")
 	assert.Contains(t, out, "sizing")
+
+	q.Learning, q.Agent = "", core.AgentView{Why: "no Claude program is configured"}
+	out = ansi.Strip(RenderWork(120, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "agent off: no Claude program is configured")
 }

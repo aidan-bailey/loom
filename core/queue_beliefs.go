@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
@@ -123,6 +124,13 @@ func (m *Model) recordRun(rec sched.Record) {
 	if !ok {
 		return
 	}
+	now := time.Now()
+	sched.ScorePrior(b, run)
+	surprise := sched.Surprise(b, run, rec.Sources.Memory)
 	b.AddRun(run)
+	if surprise != "" && now.Sub(b.Advisor.ReconciledAt) >= reconcileEvery && m.advisorOff(now) == "" {
+		b.Advisor.ReconciledAt = now
+		m.queueAdvice(advisorCall{kind: adviseReconcile, sig: b.ID, job: rec.ID, queued: now, surprise: surprise, run: run})
+	}
 	m.saveBeliefsQuiet("settle")
 }

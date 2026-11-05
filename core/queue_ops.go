@@ -80,6 +80,9 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 		return 0, "", err
 	}
+	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), now) {
+		rec.Sizing = sched.SizingAsking
+	}
 
 	owner, unknown := m.jobOwner(s.Launch)
 	id = max(q.store.NextID, 1)
@@ -118,6 +121,9 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	if sig != nil && q.beliefsErr == nil {
 		q.beliefs.Ensure(*sig, now)
 		m.saveBeliefsQuiet("submit")
+	}
+	if rec.Sizing != "" {
+		m.queueAdvice(advisorCall{kind: advisePrior, sig: rec.Signature, job: id, queued: now})
 	}
 	if unknown {
 		warning = fmt.Sprintf("this shell's loom session (launch %s) isn't one the daemon serves: job %d has no owner, so no message will come", s.Launch, id)
@@ -251,6 +257,9 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	if err != nil {
 		return fmt.Errorf("config.json could not be read, so the caps were not saved: %w", err)
 	}
+	// The caps form never edits the agent block: keep the file's (smart
+	// scheduler spec §6).
+	s.Agent = cfg.GetScheduler().Agent
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)

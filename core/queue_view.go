@@ -19,11 +19,22 @@ type QueueView struct {
 	Policy    sched.Policy             // in effect; zero while Paused != ""
 	Paused    string                   // why admission is paused; "" when it isn't
 	Learning  string                   // why learning is off; "" while it is on (smart scheduler spec §5.3)
+	Agent     AgentView                // the advisor (smart scheduler spec §5.6)
 	Claimed   sched.Need               // what the running jobs' claims take
 	UsedCPU   float64                  // cores the running jobs use, last sampled
 	UsedRSSKB int64                    // memory they use, last sampled
 	Dir       string                   // <globalDir>/jobs
 	Jobs      []JobView                // running (by start), queued (queue order), then finished (newest end first)
+}
+
+// AgentView is the work queue's advisor as a client sees it (smart
+// scheduler spec §5.6).
+type AgentView struct {
+	On     bool
+	Model  string
+	Effort string
+	Wait   time.Duration
+	Why    string // why it is off or paused; "" while on
 }
 
 // JobView is one job of the queue as a client sees it.
@@ -87,6 +98,14 @@ func cloneSchedulerSettings(s config.SchedulerSettings) config.SchedulerSettings
 	if s.DefaultClaim != nil {
 		c := *s.DefaultClaim
 		s.DefaultClaim = &c
+	}
+	if s.Agent != nil {
+		a := *s.Agent
+		if a.Enabled != nil {
+			on := *a.Enabled
+			a.Enabled = &on
+		}
+		s.Agent = &a
 	}
 	return s
 }
@@ -179,6 +198,7 @@ func (m *Model) queueView() QueueView {
 		Policy:   q.policy,
 		Paused:   q.paused,
 		Learning: q.learningOff(),
+		Agent:    m.agentView(time.Now()),
 		Dir:      q.dir,
 	}
 	var running, queued, finished []sched.Record
