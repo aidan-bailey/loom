@@ -2193,3 +2193,29 @@ git commit -m "feat(flow): the verifier runs loom flow gates, developers' waits 
 - [ ] **Step 4: Flow's own gate.** `bash flow/lib/test.sh` (after P3, again on the final tree).
 - [ ] **Step 5: Execution notes.** Append `## Execution notes` to this plan: deviations, mutation results, gate results. Commit with `docs(plans): flow in loom part 2's execution notes`.
 - [ ] **Step 6: Handoff.** Report: the commits, the gates, what wasn't run (golangci-lint, a live supervised run, which waits for part 1's cutover), and ask whether to fast-forward local `main`.
+
+## Execution notes
+
+- **P1, 85ef8f4d.** Built as planned.
+  - Mutation checks: each of the four poll-rule terms and the name guard turned its test red.
+  - The scratchpad went away mid-run, so later mutations were applied and restored inside one Python process.
+- **P2, a285cb80.** Built as planned. All six mutations turned red:
+  - the active-run guard;
+  - `ended()` ignoring a cancel;
+  - no lock in `advance` (`-count=5`);
+  - no rollback cancel;
+  - a vacuous-check error as PASS;
+  - a done prerequisite counted as a cascade.
+
+  Mutation (e) first failed to compile and was rewritten to discard the error.
+- **P3, e645f276.**
+  - `dispatch.md`'s profile paragraph also named `conf gates`. It now says the verifier's `gates start` expands `{packages}`.
+  - `flow/PROVENANCE.md` keeps its history as it is.
+  - `bash flow/lib/test.sh`: 333 tests and the agent lint passed.
+- **P4, gates:**
+  - `gofmt` clean; `go vet ./...` clean; the Windows build passed.
+  - Job 680, `go test ./...`: exit 0, 46 packages ok, no FAIL.
+  - Job 681, race over `internal/cli` and `flow`: exit 0.
+  - The CLAUDE.md lint passed.
+  - golangci-lint was skipped: the dev shell's v2 rejects the repo's config.
+  - No live supervised run: that waits for part 1's cutover.
