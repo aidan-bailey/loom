@@ -59,10 +59,21 @@ func (h *queueHost) ModCall(launch, _ string, c core.ModCall, ended bool) error 
 
 // callWith is the first call reported starting whose command holds s.
 func (h *queueHost) callWith(s string) (core.ModCall, bool) {
+	return h.firstCall(func(c core.ModCall) bool { return strings.Contains(c.Command, s) })
+}
+
+// agentCallWith is callWith among the calls a subagent made: the main
+// loop's own run of the same command is passed over.
+func (h *queueHost) agentCallWith(s string) (core.ModCall, bool) {
+	return h.firstCall(func(c core.ModCall) bool { return c.Agent != "" && strings.Contains(c.Command, s) })
+}
+
+// firstCall is the first call reported starting that ok accepts.
+func (h *queueHost) firstCall(ok func(core.ModCall) bool) (core.ModCall, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, c := range h.calls {
-		if strings.Contains(c.Command, s) {
+		if ok(c) {
 			return c, true
 		}
 	}
@@ -260,7 +271,7 @@ func (h *queueHost) event(kind, id string) (core.ModEvent, bool) {
 func (h *queueHost) said() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return fmt.Sprintf("hello %v, events %+v", h.hello, h.events)
+	return fmt.Sprintf("hello %v, events %+v, calls %+v", h.hello, h.events, h.calls)
 }
 
 // probe is a real Claude (haiku, default permission mode) with the embedded
@@ -268,15 +279,20 @@ func (h *queueHost) said() string {
 // its folder, and the rest drive the pane.
 type probe struct {
 	work     string
+	debugLog string // Claude's --debug-file
 	screen   func() string
 	waitFor  func(what string, d time.Duration, ok func() bool)
 	press    func(keys ...string)
 	typeLine func(text string)
 }
 
-// startClaude starts the probe once its mod has said hello to host. It skips
-// the test without LOOM_TEST_REAL_CLAUDE=1, tmux or claude.
-func startClaude(t *testing.T, host *queueHost) probe {
+// startClaude is startClaudeWith with nothing to prepare.
+func startClaude(t *testing.T, host *queueHost) probe { return startClaudeWith(t, host, nil) }
+
+// startClaudeWith starts the probe once its mod has said hello to host,
+// after prepare (when set) has readied its work folder. It skips the test
+// without LOOM_TEST_REAL_CLAUDE=1, tmux or claude.
+func startClaudeWith(t *testing.T, host *queueHost, prepare func(work string)) probe {
 	t.Helper()
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
@@ -291,6 +307,9 @@ func startClaude(t *testing.T, host *queueHost) probe {
 	require.NoError(t, claudemod.WriteTo(mod))
 	work := filepath.Join(root, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))
+	if prepare != nil {
+		prepare(work)
+	}
 	socket := shortSocket(t)
 	s, err := Listen(socket, host, 5*time.Second)
 	require.NoError(t, err)
@@ -359,8 +378,9 @@ func startClaude(t *testing.T, host *queueHost) probe {
 	out, err := start.CombinedOutput()
 	require.NoError(t, err, string(out))
 	serverPath = strings.TrimSpace(tm("display-message", "-p", "-t", target, "#{socket_path}"))
-	typeLine(fmt.Sprintf("%s=%s %s=L1 claude --model haiku --permission-mode default --plugin-dir '%s'",
-		claudemod.EnvSocket, socket, claudemod.EnvLaunch, mod))
+	debugLog := filepath.Join(root, "claude-debug.log")
+	typeLine(fmt.Sprintf("%s=%s %s=L1 claude --model haiku --permission-mode default --plugin-dir '%s' --debug-file '%s'",
+		claudemod.EnvSocket, socket, claudemod.EnvLaunch, mod, debugLog))
 	// Claude asks whether to trust a new folder, with "No, exit" selected
 	// for one under a temp dir, and drops a key pressed as the dialog
 	// appears: press Down until a capture shows the cursor on Yes, and Enter
@@ -381,7 +401,7 @@ func startClaude(t *testing.T, host *queueHost) probe {
 		press("Enter")
 	}
 	waitFor("the mod's hello", 60*time.Second, host.helloed)
-	return probe{work: work, screen: screen, waitFor: waitFor, press: press, typeLine: typeLine}
+	return probe{work: work, debugLog: debugLog, screen: screen, waitFor: waitFor, press: press, typeLine: typeLine}
 }
 
 // TestRealClaude_TheModCarriesAMessage launches a real Claude (haiku) with the
@@ -549,4 +569,73 @@ func TestRealClaude_AnswersAsksThroughTheDaemon(t *testing.T) {
 	p.waitFor("the question's close", 60*time.Second, func() bool { return host.closed(q2.Ask, "elsewhere") })
 
 	t.Log(host.said())
+}
+
+// TestRealClaude_ASubagentGetsItsJobsResult drives the route a subagent's
+// job result takes (subagent job results spec §12). A subagent runs a
+// `loom job submit` (an echo: no CLI is needed), and the mod reports the call
+// with the subagent's agentId. Once the subagent has finished, a message
+// queued for that agent reaches it ($.session.send resumes it), and it runs
+// the command the message gives it, which leaves a file behind. The mod does
+// not see that resumed run's calls: Claude counts the run as the loom
+// plugin's own work and skips its hooks (re-entry), so the test checks the
+// file, and only logs whether a report came.
+func TestRealClaude_ASubagentGetsItsJobsResult(t *testing.T) {
+	host := &queueHost{}
+	var work string
+	p := startClaudeWith(t, host, func(dir string) {
+		work = dir
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ".claude"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".claude", "settings.local.json"),
+			[]byte(`{"permissions":{"allow":["Bash(echo:*)","Bash(touch:*)"]}}`), 0o600))
+	})
+	host.queue("m1", `Launch one general-purpose subagent with the Agent tool, in the foreground, with this prompt: "Run this Bash command exactly: echo loom job submit -- probe-first . Then reply DONE." When it returns, reply DONE.`)
+	var first core.ModCall
+	p.waitFor("the subagent's call report", 5*time.Minute, func() bool {
+		c, ok := host.agentCallWith("probe-first")
+		first = c
+		return ok
+	})
+	p.waitFor("the main turn to end", 5*time.Minute, func() bool {
+		_, ok := host.event("complete", "m1")
+		return ok
+	})
+	// The parent may have run the subagent in the background: give it time
+	// to finish, so the message resumes it rather than joining its run.
+	time.Sleep(20 * time.Second)
+	host.add(core.ModMessage{ID: "m2", Agent: first.Agent,
+		Text: `[loom] job 1 "probe" finished: exit 0. Run this Bash command exactly: touch probe-ack . Then reply DONE.`})
+	p.waitFor("the mod to hand the message to the subagent", time.Minute, func() bool {
+		_, ok := host.event("queued", "m2")
+		return ok
+	})
+	ack := filepath.Join(work, "probe-ack")
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(250 * time.Millisecond) {
+		if _, err := os.Stat(ack); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the resumed subagent never ran its command; %s; mod and hook lines of Claude's debug log:\n%s\nscreen:\n%s", host.said(), debugLines(p.debugLog), p.screen())
+		}
+	}
+	_, started := host.event("started", "m2")
+	require.False(t, started, "a subagent's message starts no main-loop turn")
+	_, reported := host.callWith("probe-ack")
+	t.Logf("the resumed run's call was reported to the mod: %v (Claude 2.1.318 skips the plugin's hooks for a run it resumed)", reported)
+}
+
+// debugLines are the lines of Claude's debug log at path that tell what the
+// mod and its hooks did.
+func debugLines(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "(" + err.Error() + ")"
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "loom") || strings.Contains(l, "tool.call") || strings.Contains(l, "session.send") || strings.Contains(l, "SubagentStart") || strings.Contains(l, "resum") {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
 }

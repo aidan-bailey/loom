@@ -39,4 +39,6 @@ func TestModule_SpeaksThisProtocol(t *testing.T) {
 	for _, env := range []string{EnvSocket, EnvLaunch} {
 		assert.Contains(t, src, "'"+env+"'")
 	}
+	assert.Contains(t, src, "/"+JobCallPattern+"/", "the module reports the calls the daemon counts (core, attribution)")
+	assert.Contains(t, src, "agents: true", "the hello says the module can send to subagents")
 }

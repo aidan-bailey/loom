@@ -54,6 +54,8 @@ Live, on Claude Code 2.1.318, 2026-11-05. Each probe ran a `claude -p` with loom
 
 These last two are §12's gate, run 2026-11-05 after the spec was first written. Both passed, and nothing in §5 changed.
 
+- **Found while building (2026-11-05):** a run that the mod starts by resuming a finished subagent counts as the loom plugin's own work. `$.session.send` is the plugin's `$.tool.call(SendMessage)`, so Claude Code 2.1.318 skips every loom hook for that run ("tool.call skipped: re-entry (the plugin's own code raised it; origin loom)"), though the API's docs say only the calling hook is skipped. The message is delivered and the subagent acts on it; the mod just doesn't see that run's calls. A message that reaches a subagent still running joins its own run, whose calls the mod still sees.
+
 ## 5. Behaviour
 
 ### 5.1 The mod reports `loom job` calls
@@ -219,6 +221,7 @@ Opt-in, real Claude (`LOOM_TEST_REAL_CLAUDE=1`):
 ## 13. Known limits and later work
 
 - A submit loom can't see go to the parent as today: one inside a script, a background shell or the passes of a loop beyond its pattern matches.
+- A subagent the mod resumed is invisible to loom's hooks for the rest of that run (§4). A job it submits then goes to the session, unlabelled, as today, and its permission dialogs and questions don't reach the phone. A second plugin acting as the sender would avoid the re-entry skip, but that means a second poller per launch, and the protocol allows one.
 - Agent-team teammates carry an `agentId` the mod sees, and `$.session.send` reaches a live one, but this design is untested with them.
 - Resuming a finished subagent costs a subagent turn and then a parent turn. A subagent still running takes the message in its current turn, at no extra cost (§4). The owner chose this over the parent taking results once the subagent has finished.
 - The phone app's job views, if it gains any, should show `Agent` as §8 does.
