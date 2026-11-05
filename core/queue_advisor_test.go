@@ -85,7 +85,7 @@ func TestAdvisor_AnUnseenCommandIsSizedByItsPrior(t *testing.T) {
 	assert.Equal(t, advisor.KindPrior, c.Kind)
 	assert.Equal(t, id, c.Job)
 	assert.Equal(t, "true", c.Command)
-	assert.Equal(t, "opus", c.Model)
+	assert.Equal(t, advisor.DefaultModel, c.Model)
 	assert.Equal(t, "claude-opus-5-5", c.Usage.Model)
 	assert.Equal(t, 0.0125, c.Usage.CostUSD)
 	assert.Equal(t, int64(40), c.Usage.OutputTokens)
@@ -101,7 +101,7 @@ func TestAdvisor_AnUnseenCommandIsSizedByItsPrior(t *testing.T) {
 	assert.NotEqual(t, sched.Queued, rec.State, "admitted once sized")
 	p := m.queue.beliefOf(rec.Signature).Prior
 	require.NotNil(t, p)
-	assert.Equal(t, "opus", p.Model)
+	assert.Equal(t, advisor.DefaultModel, p.Model)
 	assert.Equal(t, "low", p.Effort)
 	assert.Equal(t, "a tiny job", p.Note)
 	got := wqCalls(t, calls)

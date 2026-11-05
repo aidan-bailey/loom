@@ -12,7 +12,7 @@ import (
 func TestResolve(t *testing.T) {
 	s, err := Resolve(nil)
 	require.NoError(t, err)
-	assert.Equal(t, Settings{Enabled: true, Model: "opus", Effort: "low", Wait: time.Minute}, s)
+	assert.Equal(t, Settings{Enabled: true, Model: "haiku", Effort: "low", Wait: time.Minute}, s)
 
 	off := false
 	s, err = Resolve(&config.AgentSettings{Enabled: &off, Model: "sonnet", Effort: "high", Account: "work", WaitSeconds: 30})

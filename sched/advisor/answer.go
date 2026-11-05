@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/aidan-bailey/loom/sched"
 )
@@ -27,13 +28,15 @@ type PriorAnswer struct {
 // ParsePrior decodes a prior and checks it (spec §5.6): cores 1–maxCPUs
 // (the default claim's), memory 1–maxMemoryGB (the cap), a duration of
 // 1–86,400 s, and a like that is empty or a belief known says it was given.
-// Any other answer is an error, and the call counts as failed. The note is
-// trimmed and cut to MaxNote characters.
+// Quotes and spaces around the like are dropped first: models write "no
+// like" as the literal string "". Any other answer is an error, and the call
+// counts as failed. The note is trimmed and cut to MaxNote characters.
 func ParsePrior(raw []byte, maxCPUs, maxMemoryGB int, known func(sched.SignatureID) bool) (PriorAnswer, error) {
 	var a PriorAnswer
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return PriorAnswer{}, fmt.Errorf("the agent's estimate is not the expected JSON: %w", err)
 	}
+	a.Like = sched.SignatureID(strings.TrimFunc(string(a.Like), func(r rune) bool { return r == '"' || unicode.IsSpace(r) }))
 	switch {
 	case a.CPUs < 1 || a.CPUs > maxCPUs:
 		return PriorAnswer{}, fmt.Errorf("the agent's estimate claims %d cores: it must be 1–%d", a.CPUs, maxCPUs)

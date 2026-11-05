@@ -7,7 +7,7 @@ For "prior", estimate what the job under "job" needs on the host under "host":
 - cpus: the parallelism the job can use, at most host.default_claim.cpus. Do not err high here.
 - duration_seconds: how long the job takes on this host at that many cores.
 - io: true when the job writes 2 GiB or more, as a full build does.
-- like: when one of "beliefs" is the same job with other flags or a narrower scope, its "id", whose measurements are then used in place of your numbers; otherwise "".
+- like: when one of "beliefs" is the same job with other flags or a narrower scope, its "id", whose measurements are then used in place of your numbers; otherwise the empty string.
 - note: one or two sentences on what the job does and what drives the estimate.
 Reason from the measurements in "beliefs" (claims learned from runs, usual durations, notes) before general knowledge. You may read files in the job's folder to see what a script or a build runs; keep it to a few reads.
 

@@ -1348,7 +1348,7 @@ A command the queue has never measured is sized by an agent: a headless `claude 
 ```json
 {
   "scheduler": {
-    "agent": { "enabled": true, "model": "opus", "effort": "low", "account": "", "wait_seconds": 60 }
+    "agent": { "enabled": true, "model": "haiku", "effort": "low", "account": "", "wait_seconds": 60 }
   }
 }
 ```
@@ -1356,7 +1356,7 @@ A command the queue has never measured is sized by an agent: a headless `claude 
 | Field | Default | Bounds |
 |-------|---------|--------|
 | `enabled` | `true` | |
-| `model` | `opus` | any `--model` value, 1–100 characters, no spaces |
+| `model` | `haiku` | any `--model` value, 1–100 characters, no spaces |
 | `effort` | `low` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `account` | `""` (the default account) | a registered account's name |
 | `wait_seconds` | `60` | 1–600 |

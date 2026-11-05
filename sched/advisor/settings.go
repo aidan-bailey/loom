@@ -13,7 +13,7 @@ import (
 
 // The agent block's defaults (smart scheduler spec §6).
 const (
-	DefaultModel  = "opus"
+	DefaultModel  = "haiku"
 	DefaultEffort = "low"
 	DefaultWait   = time.Minute
 )

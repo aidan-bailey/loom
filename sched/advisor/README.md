@@ -5,12 +5,12 @@ The work scheduler's agent ([spec](../../docs/superpowers/specs/2026-11-05-smart
 ## Files
 
 - `doc.go` — the package comment.
-- `settings.go` — `Settings`, `Resolve` (the `scheduler.agent` block: `enabled` true, `model` `opus`, `effort` `low`, `account` the default, `wait_seconds` 60) and its bounds.
+- `settings.go` — `Settings`, `Resolve` (the `scheduler.agent` block: `enabled` true, `model` `haiku`, `effort` `low`, `account` the default, `wait_seconds` 60) and its bounds.
 - `env.go` — `AllowedEnv`: the build variables the advisor may see (`CARGO_*` build and profile settings, `RUSTFLAGS`, `GOFLAGS`, `CGO_ENABLED`, `MAKEFLAGS`, `CC`, the `*FLAGS`, …), less any whose name holds `TOKEN`, `SECRET`, `PASSW`, `KEY`, `CRED` or `AUTH`, each cut to 512 bytes.
 - `request.go` — `PriorRequest` and `ReconcileRequest`, the JSON the call reads on stdin: the job (argv, normalized command, description, repo, folder, the allowed environment), the host (cores, RAM, caps, default claim), known beliefs, and for a reconcile the runs, the prior, the surprising run and the log's last lines.
 - `prompt.go`, `prompt.md` — `SystemPrompt`.
 - `schema.go` — `PriorSchema` and `NoteSchema`, passed to `--json-schema`.
-- `answer.go` — `PriorAnswer`, `ParsePrior` (cores 1 to the default claim's, memory 1 to the cap, a duration of 1 s to a day, a `like` it was given) and `ParseNote`.
+- `answer.go` — `PriorAnswer`, `ParsePrior` (cores 1 to the default claim's, memory 1 to the cap, a duration of 1 s to a day, a `like` it was given) and `ParseNote`. `ParsePrior` drops quotes and spaces around a `like` first.
 - `run.go` — `Call`, `Run`, and `Result` with its `Usage` (the call's wall time and the CLI's model, turns, tokens, cost and denied tool uses).
 - `calllog.go` — `CallRecord`, `LoadCalls`, `SaveCalls`: the call log.
 
@@ -19,7 +19,7 @@ The work scheduler's agent ([spec](../../docs/superpowers/specs/2026-11-05-smart
 `Run` builds the command through `account.Command` (which refuses a missing account dir) and runs, in the job's folder, with the request on stdin and a 90 s timeout:
 
 ```
-claude -p --model opus --effort low --system-prompt <prompt> --tools Read,Glob,Grep --restricted --safe-mode
+claude -p --model haiku --effort low --system-prompt <prompt> --tools Read,Glob,Grep --restricted --safe-mode
   --strict-mcp-config --no-session-persistence --permission-mode dontAsk --output-format json --json-schema <schema>
 ```
 
