@@ -429,6 +429,7 @@ func init() {
 	rootCmd.AddCommand(cli.SweepCmd)
 	rootCmd.AddCommand(cli.JobCmd)
 	rootCmd.AddCommand(cli.FeedbackCmd)
+	rootCmd.AddCommand(cli.FlowCmd)
 }
 
 func main() {
