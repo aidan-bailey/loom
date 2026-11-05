@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 
+	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/git"
@@ -157,6 +158,16 @@ type QueueChanged struct {
 
 func (QueueChanged) coreEvent() {}
 
+// FeedbackChanged carries the feedback inbox whenever it changed (a note
+// filed or grouped, a thread closed or fixed, the grouper's state) and on
+// the first Sync: the TUI keeps it for the feedback view (home.feedback),
+// and a replica answers Feedback from it.
+type FeedbackChanged struct {
+	View FeedbackView
+}
+
+func (FeedbackChanged) coreEvent() {}
+
 // AccountsChanged carries the account state whenever the registry, an
 // account's auth, sync report or usage, or the Claude program changed
 // (and on the first Sync): the TUI refreshes every view showing accounts
@@ -226,6 +237,8 @@ type Reply struct {
 	Job     sched.JobID
 	Beliefs sched.BeliefsPage
 	Agent   AgentPage
+	// Note is the note FileFeedback filed.
+	Note feedback.NoteID
 }
 
 func (Reply) coreEvent() {}
@@ -250,7 +263,7 @@ func EventTypes() []Event {
 	return []Event{
 		AccountsChanged{}, Alive{}, Answered{}, ClientsStale{}, GitHubChanged{},
 		HealthChecked{}, InstancesChanged{}, ModelChanged{}, Notice{},
-		QueueChanged{}, Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
+		QueueChanged{}, FeedbackChanged{}, Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
 		StatusesChanged{}, ViewsChanged{}, WorkspacesChanged{},
 	}
 }

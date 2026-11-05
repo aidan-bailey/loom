@@ -30,3 +30,12 @@ func TestResolve(t *testing.T) {
 		assert.Error(t, err, "%+v", b)
 	}
 }
+
+// TestResolveBlock_NamesItsKey: another agent block gets the same bounds,
+// its errors naming its own key, and Resolve's stay the scheduler's.
+func TestResolveBlock_NamesItsKey(t *testing.T) {
+	_, err := ResolveBlock("feedback.grouper", &config.AgentSettings{Effort: "huge"})
+	assert.EqualError(t, err, `feedback.grouper.effort "huge": it must be one of low, medium, high, xhigh, max`)
+	_, err = Resolve(&config.AgentSettings{Model: "two words"})
+	assert.ErrorContains(t, err, `scheduler.agent.model "two words"`)
+}

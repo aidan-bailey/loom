@@ -113,7 +113,7 @@ global config dir.`,
 					registry = nil
 				}
 				program := config.LoadConfigFrom(globalDir).GetProgram()
-				return core.New(core.Options{Registry: registry, Program: program}), notices, nil
+				return core.New(core.Options{Registry: registry, Program: program, Build: version + " " + rpc.Build()}), notices, nil
 			},
 		})
 		if errors.Is(err, daemon.ErrRunning) {

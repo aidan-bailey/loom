@@ -214,6 +214,12 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		}
 		return 0
 	}))
+	actions.RawSetString("toggle_feedback_view", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ToggleFeedbackView()
+		}
+		return 0
+	}))
 	actions.RawSetString("resize_split_up", L.NewFunction(func(L *lua.LState) int {
 		if e.curHost != nil {
 			e.curHost.ResizeSplitUp()

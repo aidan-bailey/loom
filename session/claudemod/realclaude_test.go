@@ -19,7 +19,7 @@ import (
 var allowedCalls = map[string]bool{
 	"$.clock.sleep": true, "$.env.get": true, "$.http.fetch": true, "$.prompt.submit": true,
 	"$.command.list": true, "$.command.run": true,
-	"$.session.id": true, "$.session.send": true, "$.session.version": true, "$.ui.log": true,
+	"$.session.id": true, "$.session.model": true, "$.session.send": true, "$.session.version": true, "$.ui.log": true,
 }
 
 // viaCallers is the " (via pump, report)" the validator puts after a call

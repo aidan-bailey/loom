@@ -143,7 +143,7 @@ func TestLoop_SyncAndSnapshotIsOneCall(t *testing.T) {
 	for _, ev := range snapshot {
 		kinds = append(kinds, reflect.TypeOf(ev).Name())
 	}
-	assert.Equal(t, []string{"WorkspacesChanged", "ModelChanged", "AccountsChanged", "GitHubChanged", "QueueChanged"}, kinds, "the whole state")
+	assert.Equal(t, []string{"WorkspacesChanged", "ModelChanged", "AccountsChanged", "GitHubChanged", "QueueChanged", "FeedbackChanged"}, kinds, "the whole state")
 	assert.Equal(t, []string{"b"}, reasonsOf(snapshot), "as it stands after the change")
 	assert.Empty(t, reasonsOf(l.Sync()), "the baseline moved with the snapshot")
 }

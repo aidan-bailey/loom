@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/buildsweep"
@@ -785,6 +786,46 @@ type ReadAgentParams struct {
 type ReadAgentResult struct {
 }
 
+// FeedbackParams are Feedback's parameters on the wire.
+type FeedbackParams struct {
+}
+
+// FeedbackResult is Feedback's result on the wire; an error travels in the reply.
+type FeedbackResult struct {
+	Value core.FeedbackView `json:"value"`
+}
+
+// FileFeedbackParams are FileFeedback's parameters on the wire.
+type FileFeedbackParams struct {
+	Note core.FeedbackNote `json:"note"`
+	Req  core.ReqID        `json:"req"`
+}
+
+// FileFeedbackResult is FileFeedback's result on the wire; an error travels in the reply.
+type FileFeedbackResult struct {
+}
+
+// CloseThreadParams are CloseThread's parameters on the wire.
+type CloseThreadParams struct {
+	Thread feedback.ThreadID `json:"thread"`
+	Req    core.ReqID        `json:"req"`
+}
+
+// CloseThreadResult is CloseThread's result on the wire; an error travels in the reply.
+type CloseThreadResult struct {
+}
+
+// FixThreadParams are FixThread's parameters on the wire.
+type FixThreadParams struct {
+	Thread    feedback.ThreadID `json:"thread"`
+	Workspace string            `json:"workspace"`
+	Req       core.ReqID        `json:"req"`
+}
+
+// FixThreadResult is FixThread's result on the wire; an error travels in the reply.
+type FixThreadResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -867,6 +908,10 @@ var methods = []methodInfo{
 	{Name: "ReadBeliefs", Kind: kindRequest, Params: ReadBeliefsParams{}, Result: ReadBeliefsResult{}},
 	{Name: "ForgetBelief", Kind: kindRequest, Params: ForgetBeliefParams{}, Result: ForgetBeliefResult{}},
 	{Name: "ReadAgent", Kind: kindRequest, Params: ReadAgentParams{}, Result: ReadAgentResult{}},
+	{Name: "Feedback", Kind: kindLocal, Params: FeedbackParams{}, Result: FeedbackResult{}},
+	{Name: "FileFeedback", Kind: kindRequest, Params: FileFeedbackParams{}, Result: FileFeedbackResult{}},
+	{Name: "CloseThread", Kind: kindRequest, Params: CloseThreadParams{}, Result: CloseThreadResult{}},
+	{Name: "FixThread", Kind: kindRequest, Params: FixThreadParams{}, Result: FixThreadResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1485,6 +1530,42 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadAgent(p.Limit, p.Req)
 		return ReadAgentResult{}, nil, true
+	case "Feedback":
+		var p FeedbackParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return FeedbackResult{Value: b.Feedback()}, nil, true
+	case "FileFeedback":
+		var p FileFeedbackParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.FileFeedback(p.Note, p.Req)
+		return FileFeedbackResult{}, nil, true
+	case "CloseThread":
+		var p CloseThreadParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.CloseThread(p.Thread, p.Req)
+		return CloseThreadResult{}, nil, true
+	case "FixThread":
+		var p FixThreadParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.FixThread(p.Thread, p.Workspace, p.Req)
+		return FixThreadResult{}, nil, true
 	}
 	return nil, nil, false
 }
@@ -1991,4 +2072,29 @@ func (c *Client) ForgetBelief(id sched.SignatureID, req core.ReqID) {
 func (c *Client) ReadAgent(limit int, req core.ReqID) {
 	var r ReadAgentResult
 	c.noteRefused(c.requestNoErr("ReadAgent", ReadAgentParams{Limit: limit, Req: req}, &r), req)
+}
+
+// Feedback is core.Core's Feedback (local).
+func (c *Client) Feedback() core.FeedbackView {
+	var v0 core.FeedbackView
+	c.local(func(r *replica) { v0 = r.Feedback() })
+	return v0
+}
+
+// FileFeedback is core.Core's FileFeedback (request).
+func (c *Client) FileFeedback(note core.FeedbackNote, req core.ReqID) {
+	var r FileFeedbackResult
+	c.noteRefused(c.requestNoErr("FileFeedback", FileFeedbackParams{Note: note, Req: req}, &r), req)
+}
+
+// CloseThread is core.Core's CloseThread (request).
+func (c *Client) CloseThread(thread feedback.ThreadID, req core.ReqID) {
+	var r CloseThreadResult
+	c.noteRefused(c.requestNoErr("CloseThread", CloseThreadParams{Thread: thread, Req: req}, &r), req)
+}
+
+// FixThread is core.Core's FixThread (request).
+func (c *Client) FixThread(thread feedback.ThreadID, workspace string, req core.ReqID) {
+	var r FixThreadResult
+	c.noteRefused(c.requestNoErr("FixThread", FixThreadParams{Thread: thread, Workspace: workspace, Req: req}, &r), req)
 }

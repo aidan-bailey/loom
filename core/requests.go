@@ -454,15 +454,16 @@ type NewInstance struct {
 // configures and starts it: the owner is stamped now, and the start's
 // completion is a StartResult as before. The Reply comes at once and names
 // the new instance. A ws the model does not serve (an unknown ID) is
-// refused, and so is one being reset, whose job removes every worktree.
-func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
+// refused, and so is one being reset, whose job removes every worktree. It
+// returns the new instance's ID, false when it refused.
+func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) (InstanceID, bool) {
 	if !m.isLoadedWS(ws) {
 		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is not served", spec.Title))
-		return
+		return 0, false
 	}
 	if ws.resetting {
 		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is being reset", spec.Title))
-		return
+		return 0, false
 	}
 	cfgDir := ""
 	if ws.ctx != nil {
@@ -478,7 +479,7 @@ func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
 	})
 	if err != nil {
 		m.refuse(req, 0, err)
-		return
+		return 0, false
 	}
 	if spec.Issue != 0 {
 		inst.SetIssue(spec.Issue)
@@ -501,6 +502,7 @@ func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
 	if spec.Start {
 		m.causedBy(req, func() { m.spawn(m.startInst(inst, ws)) })
 	}
+	return id, true
 }
 
 // applyLaunch records chosen launch options on inst: the program composed

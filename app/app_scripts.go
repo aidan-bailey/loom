@@ -397,6 +397,11 @@ func (s *scriptHost) ToggleWorkView() {
 	s.deferFocusMutation(func(m *home) { m.toggleWorkView() })
 }
 
+// ToggleFeedbackView implements script.Host, as ToggleWorkView does.
+func (s *scriptHost) ToggleFeedbackView() {
+	s.deferFocusMutation(func(m *home) { m.toggleFeedbackView() })
+}
+
 // ResizeSplitUp implements script.Host (divider up = agent shrinks).
 func (s *scriptHost) ResizeSplitUp() {
 	s.deferModelMutation(func(m *home) { m.resizeSplit(-0.05) })

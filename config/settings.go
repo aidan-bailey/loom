@@ -117,6 +117,30 @@ type Settings struct {
 	// workspace's config.json never holds it. nil is the block absent: every
 	// field takes the host's default. Read it through GetScheduler.
 	Scheduler *SchedulerSettings `json:"scheduler,omitempty"`
+	// Feedback holds the feedback inbox's settings (session feedback spec
+	// §5, §7): the workspace a fix session starts in, and the grouper. Read
+	// from the global config.json only, by the model, which rereads it from
+	// disk; it is a field here so a settings save keeps it. nil is the block
+	// absent. Read it through GetFeedback.
+	Feedback *FeedbackSettings `json:"feedback,omitempty"`
+}
+
+// FeedbackSettings is the global config.json's "feedback" block: the
+// workspace a fix session starts in, and the grouper, a headless Claude
+// shaped like the scheduler's agent (feedback.Resolve).
+type FeedbackSettings struct {
+	Workspace string         `json:"workspace,omitempty"`
+	Grouper   *AgentSettings `json:"grouper,omitempty"`
+}
+
+// clone deep-copies s: its grouper block is its own.
+func (s FeedbackSettings) clone() FeedbackSettings {
+	if s.Grouper != nil {
+		g := *s.Grouper
+		g.Enabled = clonePtr(s.Grouper.Enabled)
+		s.Grouper = &g
+	}
+	return s
 }
 
 // SchedulerSettings is the global config.json's "scheduler" block. A 0 or
@@ -178,6 +202,10 @@ func (s Settings) Clone() Settings {
 		block := s.Scheduler.clone()
 		out.Scheduler = &block
 	}
+	if s.Feedback != nil {
+		block := s.Feedback.clone()
+		out.Feedback = &block
+	}
 	return out
 }
 
@@ -233,6 +261,15 @@ func ValidateBuildSweepAfterHours(hours int) error {
 		return fmt.Errorf("the build sweep threshold must be 0 (off) to %d hours, not %d", MaxBuildSweepAfterHours, hours)
 	}
 	return nil
+}
+
+// GetFeedback returns a deep copy of the feedback block, or the zero value
+// when it is absent (every field takes its default).
+func (s Settings) GetFeedback() FeedbackSettings {
+	if s.Feedback == nil {
+		return FeedbackSettings{}
+	}
+	return s.Feedback.clone()
 }
 
 // GetScheduler returns a deep copy of the scheduler block, or the zero value

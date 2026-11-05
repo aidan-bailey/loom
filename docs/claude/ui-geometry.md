@@ -16,6 +16,7 @@
 
 - **Backgrounds don't survive embedded SGR resets.** `bg.Render(line)` over text holding inner `Render` calls paints the background only outside the inner spans, since each ends with a reset and lipgloss doesn't re-inject the outer background. Put `.Background(...)` on each inner style and use the outer style only for width padding (`RenderCard`'s selected branch, `ui/card.go`; `TestRenderCard_SelectedRailBackgroundIsSolid`).
 - **`runewidth.Truncate(s, w, tail)` already reserves the tail's width.** Passing `w-1` under-fills by one cell.
+- **A full-screen view's lines must each fill the width.** `home.View` joins `mainContent` with the status line through `lipgloss.JoinVertical(lipgloss.Center, …)`, so a line shorter than the widest is centered: a status line under a header padded to the right edge sat in the middle of the feedback view. Pad every line (`fbBox`, `ui/feedback.go`) and test for equal widths, not at most the width; `TestRenderFeedback_FitsItsBox` is red without the padding.
 
 ## Mouse hit-tests
 

@@ -116,7 +116,13 @@ func (m *Model) advisorProgram() string {
 // advisorEnv is the environment entries of the account the advisor runs
 // as: none for the default account.
 func (m *Model) advisorEnv() ([]string, error) {
-	name := m.queue.advisor.settings.Account
+	return m.accountEnv(m.queue.advisor.settings.Account)
+}
+
+// accountEnv is the environment entries of account name for a headless
+// call (the advisor, the feedback grouper): none for the default account,
+// an error for one the registry doesn't hold.
+func (m *Model) accountEnv(name string) ([]string, error) {
 	if name == "" || name == account.DefaultName {
 		return nil, nil
 	}

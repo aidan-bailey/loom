@@ -26,6 +26,10 @@ type ModCall struct {
 	ID      string `json:"id"`
 	Agent   string `json:"agent,omitempty"`
 	Command string `json:"command"`
+	// Model is the session's model as Claude's session info gives it
+	// ($.session.model(): the main loop's, as /model shows it); "" from an
+	// older mod or when the mod couldn't read it. A feedback note records it.
+	Model string `json:"model,omitempty"`
 }
 
 // reportedCall is a call in flight on a link: uses is how many submits it

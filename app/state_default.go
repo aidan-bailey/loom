@@ -50,7 +50,7 @@ var offlineKeyAllowed = map[string]bool{
 	"shift+up": true, "shift+down": true, "alt+pgup": true, "alt+pgdown": true,
 	"K": true, "J": true, "g": true, "G": true,
 	"1": true, "2": true, "3": true, "4": true, "5": true,
-	"ctrl+left": true, "ctrl+right": true, "w": true,
+	"ctrl+left": true, "ctrl+right": true, "w": true, "F": true,
 }
 
 // offlineKeyRefused reports whether the offline gate refuses key, saying so
@@ -120,6 +120,9 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.viewMode == viewWork {
 		return m.handleWorkKey(msg)
+	}
+	if m.viewMode == viewFeedback {
+		return m.handleFeedbackKey(msg)
 	}
 	if m.viewMode == viewOverview {
 		switch msg.String() {

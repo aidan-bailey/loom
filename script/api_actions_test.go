@@ -359,6 +359,20 @@ func TestSyncActions_FleetPrimitivesReachHost(t *testing.T) {
 	assert.Equal(t, 1, h.resizeSplitDownCalls)
 }
 
+func TestSyncActions_ToggleFeedbackViewReachesTheHost(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	h := &fakeHost{}
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("Q", function() cs.actions.toggle_feedback_view() end)`))
+	e.EndLoad()
+
+	matched, err := e.Dispatch(context.Background(), "Q", h)
+	require.NoError(t, err)
+	assert.True(t, matched)
+	assert.Equal(t, 1, h.toggleFeedbackViewCalls)
+}
+
 func TestSyncActions_ToggleWorkViewReachesTheHost(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

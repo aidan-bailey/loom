@@ -28,6 +28,9 @@ const (
 	// gateQueue throttles the work queue's watch of its running jobs
 	// (maybeQueue).
 	gateQueue
+	// gateFeedback keeps one feedback grouping call in flight
+	// (maybeGroupFeedback).
+	gateFeedback
 
 	numGateKinds
 )
@@ -51,6 +54,8 @@ func (k gateKind) String() string {
 		return "build_sweep"
 	case gateQueue:
 		return "queue"
+	case gateFeedback:
+		return "feedback"
 	}
 	return "unknown"
 }
@@ -68,6 +73,8 @@ var gateIntervals = [numGateKinds]time.Duration{
 	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
 	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.
+	// gateFeedback stays 0: a call starts when a note is due, and its
+	// delivery dispatches the next.
 }
 
 // pollGate throttles one background job: at most one dispatch in flight,
@@ -192,5 +199,7 @@ func (m *Model) redispatch(kind gateKind) {
 		m.maybeClaudeTmpSweep()
 	case gateQueue:
 		m.maybeQueue()
+	case gateFeedback:
+		m.maybeGroupFeedback()
 	}
 }

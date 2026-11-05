@@ -133,6 +133,10 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// at most every queue interval (see tickQueue): a hand edit applies.
 	m.tickQueue()
 
+	// The feedback grouper: a call for the next due note (a retry whose
+	// time has come), one at a time (see maybeGroupFeedback).
+	m.maybeGroupFeedback()
+
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()
