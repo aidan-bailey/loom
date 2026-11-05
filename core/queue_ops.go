@@ -292,9 +292,10 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	if err != nil {
 		return fmt.Errorf("config.json could not be read, so the caps were not saved: %w", err)
 	}
-	// The caps form never edits the agent block: keep the file's (smart
-	// scheduler spec §6).
+	// The caps form never edits the agent block (smart scheduler spec §6)
+	// nor release_past_peaks (past-peak holds spec §8): keep the file's.
 	s.Agent = cfg.GetScheduler().Agent
+	s.ReleasePastPeaks = cfg.GetScheduler().ReleasePastPeaks
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)

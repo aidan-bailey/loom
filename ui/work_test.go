@@ -502,3 +502,28 @@ func TestRenderWork_AHeldJobSaysWhatItRunsAfter(t *testing.T) {
 	assert.Less(t, strings.Index(out, "run tests"), strings.Index(out, "RECENT"))
 	assert.Contains(t, out, "(held: no output yet)")
 }
+
+// A hold below its claim shows in the running job's row and in the bars,
+// which then draw what is held (past-peak holds spec §7).
+func TestRenderWork_ShowsHoldsBelowTheirClaims(t *testing.T) {
+	q := workBusy()
+	q.Held = sched.Need{CPUs: 7, MemoryGB: 8, IOSlots: 1}
+	for i := range q.Jobs {
+		if q.Jobs[i].ID == 14 {
+			q.Jobs[i].Holds = sched.Need{CPUs: 1, MemoryGB: 2}
+		}
+	}
+	out := ansi.Strip(RenderWork(148, 30, WorkData{Queue: q, Now: workNow}))
+	for _, want := range []string{
+		"CPU ███████░░░░░░░ 7/14 held · 10 claimed · 11.2 in use",
+		"MEM █████░░░░░░░░░ 8/22 GB held · 12 claimed · 9.8 GB in use",
+		"peak 5.1G  holds 1c/2G",
+	} {
+		assert.Contains(t, out, want)
+	}
+
+	q.Held = q.Claimed
+	out = ansi.Strip(RenderWork(148, 30, WorkData{Queue: q, Now: workNow}))
+	assert.Contains(t, out, "10/14 claimed · 11.2 in use", "holds at their claims read as claims")
+	assert.NotContains(t, out, "held ·")
+}

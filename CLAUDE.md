@@ -62,7 +62,7 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 
 ## Tests
 
-- testify (`testify/assert`, `require`); temp dirs for every file; `TestMain` initializes logging, runs, and calls `os.Exit`. Seams: `cmd.Executor`, `tmux.PtyFactory`, and the `NewSessionWithDeps()`, `NewAttachClientWithDeps()` and `NewTmuxSessionWithDeps()` constructors.
+- testify (`testify/assert`, `require`); temp dirs for every file; `TestMain` initializes logging (`log.Initialize("", false)`: a log of the process's own), runs, calls `log.Close()`, and calls `os.Exit`. Seams: `cmd.Executor`, `tmux.PtyFactory`, and the `NewSessionWithDeps()`, `NewAttachClientWithDeps()` and `NewTmuxSessionWithDeps()` constructors.
 - Build fixtures through the production path (real constructors, `ReconcileAndRestore`, a started instance), and give fakes the real component's geometry: a fixture that skips a step production runs has hidden a bug from every review, more than once.
 - Pin both sides of every guard (the case it spares and the ordinary case it must still act on), and mutation-check each term of a compound guard separately.
 - A long `TMPDIR` breaks tmux sockets (`sun_path` caps a socket path at 108 bytes); real-tmux tests keep their socket paths short.

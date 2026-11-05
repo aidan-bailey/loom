@@ -20,14 +20,15 @@ func policyHost(cores int, ramBytes uint64) Host {
 var policyFresco = policyHost(16, 30<<30+(1<<30)/5)
 
 // policyWant is the policy a host's defaults give: 2 I/O slots, a starvation
-// wait of 10 minutes, 50 finished jobs kept, and the caps and default claim
-// given.
+// wait of 10 minutes, 50 finished jobs kept, holds that may fall, and the
+// caps and default claim given.
 func policyWant(cpus, memoryGB, claimCPUs, claimMemoryGB int) Policy {
 	return Policy{
-		Caps:         Caps{CPUs: cpus, MemoryGB: memoryGB, IOJobs: 2},
-		DefaultClaim: Claim{CPUs: claimCPUs, MemoryGB: claimMemoryGB},
-		StarveAfter:  10 * time.Minute,
-		KeepFinished: 50,
+		Caps:             Caps{CPUs: cpus, MemoryGB: memoryGB, IOJobs: 2},
+		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMemoryGB},
+		StarveAfter:      10 * time.Minute,
+		KeepFinished:     50,
+		ReleasePastPeaks: true,
 	}
 }
 
@@ -71,7 +72,7 @@ func TestResolve_Explicit(t *testing.T) {
 			in: config.SchedulerSettings{
 				CPUs: 4, MemoryGB: 8, IOJobs: 1,
 				DefaultClaim:       &config.ClaimSettings{CPUs: 2, MemoryGB: 3},
-				StarveAfterMinutes: 30, KeepFinished: 5,
+				StarveAfterMinutes: 30, KeepFinished: 5, ReleasePastPeaks: &policyOff,
 			},
 			want: Policy{
 				Caps:         Caps{CPUs: 4, MemoryGB: 8, IOJobs: 1},
@@ -84,20 +85,22 @@ func TestResolve_Explicit(t *testing.T) {
 			name: "the largest values",
 			in:   config.SchedulerSettings{CPUs: 1024, MemoryGB: 65536, IOJobs: 64, StarveAfterMinutes: 1440, KeepFinished: 10000},
 			want: Policy{
-				Caps:         Caps{CPUs: 1024, MemoryGB: 65536, IOJobs: 64},
-				DefaultClaim: Claim{CPUs: 4, MemoryGB: 6},
-				StarveAfter:  1440 * time.Minute,
-				KeepFinished: 10000,
+				Caps:             Caps{CPUs: 1024, MemoryGB: 65536, IOJobs: 64},
+				DefaultClaim:     Claim{CPUs: 4, MemoryGB: 6},
+				StarveAfter:      1440 * time.Minute,
+				KeepFinished:     10000,
+				ReleasePastPeaks: true,
 			},
 		},
 		{
 			name: "the smallest values",
 			in:   config.SchedulerSettings{CPUs: 1, MemoryGB: 1, IOJobs: 1, StarveAfterMinutes: 1, KeepFinished: 1},
 			want: Policy{
-				Caps:         Caps{CPUs: 1, MemoryGB: 1, IOJobs: 1},
-				DefaultClaim: Claim{CPUs: 1, MemoryGB: 1},
-				StarveAfter:  time.Minute,
-				KeepFinished: 1,
+				Caps:             Caps{CPUs: 1, MemoryGB: 1, IOJobs: 1},
+				DefaultClaim:     Claim{CPUs: 1, MemoryGB: 1},
+				StarveAfter:      time.Minute,
+				KeepFinished:     1,
+				ReleasePastPeaks: true,
 			},
 		},
 		{
@@ -217,3 +220,17 @@ func TestResolve_LeavesTheSettingsAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.SchedulerSettings{DefaultClaim: &config.ClaimSettings{}}, s)
 }
+
+func TestResolve_ReleasePastPeaks(t *testing.T) {
+	h := Host{Cores: 16, RAMBytes: 32 << 30}
+	p, err := Resolve(config.SchedulerSettings{}, h)
+	require.NoError(t, err)
+	assert.True(t, p.ReleasePastPeaks, "on when absent")
+	off := false
+	p, err = Resolve(config.SchedulerSettings{ReleasePastPeaks: &off}, h)
+	require.NoError(t, err)
+	assert.False(t, p.ReleasePastPeaks)
+}
+
+// policyOff is a release_past_peaks of false.
+var policyOff = false

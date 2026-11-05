@@ -56,6 +56,16 @@ func shortfall(used, need Need, caps Caps) string {
 	return ""
 }
 
+// runningNeed is what running job r takes from p's caps: its hold, when
+// holds has one and its claim is not exclusive (past-peak holds spec §6),
+// else its claim.
+func runningNeed(r Record, p Policy, holds map[JobID]Need) Need {
+	if h, ok := holds[r.ID]; ok && !r.Claim.Exclusive {
+		return h
+	}
+	return r.Claim.Need(p.Caps)
+}
+
 // Admit decides which queued jobs start now (spec §5.2). It is a pure
 // function of its arguments. It walks the queued jobs in queue order (Order,
 // then ID):
@@ -72,16 +82,18 @@ func shortfall(used, need Need, caps Caps) string {
 //
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen; a Running exclusive
-// claim takes every cap as it stands. A policy without caps (the zero Policy) starts nothing. The jobs
-// slice is left as it is.
-func Admit(jobs []Record, p Policy, now time.Time) Decision {
+// claim takes every cap as it stands, and any other running job counts at
+// its hold in holds (past-peak holds spec §6), at its claim with none. A
+// policy without caps (the zero Policy) starts nothing. The jobs slice is
+// left as it is.
+func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
 	var used Need
 	var queued []Record
 	for _, r := range jobs {
 		switch r.State {
 		case Running:
-			used = used.plus(r.Claim.Need(p.Caps))
+			used = used.plus(runningNeed(r, p, holds))
 		case Queued:
 			queued = append(queued, r)
 		}

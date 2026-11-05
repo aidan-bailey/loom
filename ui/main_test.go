@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/internal/testenv"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -25,6 +26,9 @@ func TestMain(m *testing.M) {
 }
 
 func runTests(m *testing.M) int {
+	// Tests initialize logging themselves (log.Initialize("", false)): close
+	// it at the end, which removes this process's log directory.
+	defer log.Close()
 	// Unset TMUX first and point TMUX_TMPDIR at a throwaway directory so
 	// even a bare `tmux -L <socket>` (no explicit tmpdir) resolves its
 	// socket file under a directory this run owns and removes on exit —

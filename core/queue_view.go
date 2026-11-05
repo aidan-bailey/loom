@@ -22,6 +22,7 @@ type QueueView struct {
 	Learning  string                   // why learning is off; "" while it is on (smart scheduler spec §5.3)
 	Agent     AgentView                // the advisor (smart scheduler spec §5.6)
 	Claimed   sched.Need               // what the running jobs' claims take
+	Held      sched.Need               // what the running jobs' holds take (past-peak holds spec §7)
 	UsedCPU   float64                  // cores the running jobs use, last sampled
 	UsedRSSKB int64                    // memory they use, last sampled
 	Dir       string                   // <globalDir>/jobs
@@ -123,6 +124,10 @@ type JobView struct {
 	// queued job to (0 when none could).
 	Spare sched.Claim
 	Ideal int
+	// Past-peak holds (spec 2026-11-05-past-peak-holds §7): what a running
+	// job counts at when that is below its claim; zero while it holds its
+	// claim.
+	Holds sched.Need
 	// Dependent jobs (spec 2026-11-05-dependent-jobs §4): the job this one
 	// runs after (0 for none), and when it joined the queue (zero while
 	// held, and on a record from an earlier build).
@@ -164,6 +169,10 @@ func cloneSchedulerSettings(s config.SchedulerSettings) config.SchedulerSettings
 	if s.DefaultClaim != nil {
 		c := *s.DefaultClaim
 		s.DefaultClaim = &c
+	}
+	if s.ReleasePastPeaks != nil {
+		on := *s.ReleasePastPeaks
+		s.ReleasePastPeaks = &on
 	}
 	if s.Agent != nil {
 		a := *s.Agent
@@ -292,7 +301,7 @@ func (m *Model) queueView() QueueView {
 		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature), r.Claim.CPUs)
 		return u, n > 0 || fromPrior
 	}
-	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), usualOf, m.hostUsual())
+	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), q.holding, usualOf, m.hostUsual())
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
 		if r.State.Waiting() {
@@ -302,6 +311,13 @@ func (m *Model) queueView() QueueView {
 			v.Claimed.CPUs += jv.Need.CPUs
 			v.Claimed.MemoryGB += jv.Need.MemoryGB
 			v.Claimed.IOSlots += jv.Need.IOSlots
+			held := jv.Need
+			if jv.Holds != (sched.Need{}) {
+				held = jv.Holds
+			}
+			v.Held.CPUs += held.CPUs
+			v.Held.MemoryGB += held.MemoryGB
+			v.Held.IOSlots += held.IOSlots
 			v.UsedCPU += jv.CPU
 			v.UsedRSSKB += jv.RSSKB
 		}
@@ -375,6 +391,9 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 	case sched.Running:
 		u := q.usage[r.ID]
 		jv.RSSKB, jv.CPU = u.RSSKB, u.CPU
+		if h, ok := q.holding[r.ID]; ok && h != jv.Need {
+			jv.Holds = h
+		}
 	case sched.Held:
 		jv.Waiting = q.heldWaiting(r)
 	case sched.Queued:

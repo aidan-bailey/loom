@@ -104,7 +104,9 @@ func memoryWarning(v core.JobView) string {
 }
 
 // claimText is a claim with its memory source's tag, as `list` shows it:
-// "—" while the job is being sized, a "!" after a memory held to the cap.
+// "—" while the job is being sized, a "!" after a memory held to the cap,
+// and a running job's hold after it when that is below its claim
+// (past-peak holds spec §7).
 func claimText(v core.JobView) string {
 	if v.Sizing != "" {
 		return "—"
@@ -115,6 +117,9 @@ func claimText(v core.JobView) string {
 	}
 	if tag := v.Sources.Tag(v.Learned); tag != "" {
 		text += " " + tag
+	}
+	if v.State == sched.Running && v.Holds != (sched.Need{}) {
+		text += " " + v.Holds.HoldText()
 	}
 	return text
 }

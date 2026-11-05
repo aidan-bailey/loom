@@ -66,7 +66,7 @@ func runAdmitCases(t *testing.T, cases []admitCase) {
 			if tc.edit != nil {
 				tc.edit(&p)
 			}
-			got := Admit(tc.jobs, p, admitNow)
+			got := Admit(tc.jobs, p, admitNow, nil)
 			assert.Equal(t, tc.start, got.Start, "the jobs to start, in order")
 			want := tc.waiting
 			if want == nil {
@@ -345,7 +345,7 @@ func TestAdmit_LeavesItsInputAlone(t *testing.T) {
 		runningJob(3, admitSmall),
 	}
 	before := slices.Clone(jobs)
-	_ = Admit(jobs, admitPolicy(), admitNow)
+	_ = Admit(jobs, admitPolicy(), admitNow, nil)
 	assert.Equal(t, before, jobs)
 }
 
@@ -356,7 +356,7 @@ func TestAdmit_AJobBeingSizedWaitsAndIsNeverTheHead(t *testing.T) {
 		{ID: 1, Order: 1, State: Queued, Claim: Claim{CPUs: 4, MemoryGB: 6}, Sizing: SizingAsking, Submitted: now.Add(-time.Hour)},
 		{ID: 2, Order: 2, State: Queued, Claim: Claim{CPUs: 8, MemoryGB: 6}, Submitted: now},
 	}
-	d := Admit(jobs, p, now)
+	d := Admit(jobs, p, now, nil)
 	assert.Equal(t, []JobID{2}, d.Start, "the job being sized holds nothing back, starved or not")
 	assert.Equal(t, "being sized (asking the agent)", d.Waiting[1])
 }
@@ -407,4 +407,21 @@ func TestAdmit_StarvationCountsFromReady(t *testing.T) {
 			start: []JobID{2},
 		},
 	})
+}
+
+func TestAdmit_CountsARunningJobAtItsHold(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	p := Policy{Caps: Caps{CPUs: 4, MemoryGB: 8, IOJobs: 2}, StarveAfter: time.Hour}
+	running := Record{ID: 1, Order: 1, State: Running, Claim: Claim{CPUs: 4, MemoryGB: 8}}
+	queued := Record{ID: 2, Order: 2, State: Queued, Submitted: now, Claim: Claim{CPUs: 2, MemoryGB: 4}}
+	jobs := []Record{running, queued}
+
+	assert.Equal(t, "needs 2 cores (0 free)", Admit(jobs, p, now, nil).Waiting[2], "a job with no hold counts at its claim")
+	assert.Equal(t, []JobID{2}, Admit(jobs, p, now, map[JobID]Need{1: {CPUs: 2, MemoryGB: 2}}).Start)
+	assert.Equal(t, "needs 2 cores (1 free)", Admit(jobs, p, now, map[JobID]Need{1: {CPUs: 3, MemoryGB: 2}}).Waiting[2])
+	assert.Equal(t, "needs 4 GB (0 free)", Admit(jobs, p, now, map[JobID]Need{1: {CPUs: 2, MemoryGB: 9}}).Waiting[2], "a hold above what is free starts nothing")
+
+	running.Claim.Exclusive = true
+	jobs[0] = running
+	assert.Empty(t, Admit(jobs, p, now, map[JobID]Need{1: {CPUs: 1, MemoryGB: 1}}).Start, "an exclusive claim ignores a hold")
 }

@@ -915,6 +915,9 @@ func TestJobInterrupted_AJobThatEndedReportsItsOutcome(t *testing.T) {
 	d := serveDaemon(t, "true")
 	_, _, err := runJob(t, "run", "-d", "quick", "--", "true")
 	require.NoError(t, err)
+	// run followed the job on its own connection: the test's client sees
+	// the end only once synced (d.job flushes and syncs it).
+	require.Equal(t, sched.Done, d.job(1).State)
 	var errOut bytes.Buffer
 	c := &client{Client: d.client, errOut: &errOut, ctx: context.Background()}
 

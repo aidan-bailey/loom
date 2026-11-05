@@ -176,3 +176,27 @@ func TestBeliefsStore_VersionFollowsThePrerequisiteParts(t *testing.T) {
 	require.NoError(t, SaveBeliefs(dir, bs))
 	assert.Equal(t, 1, version(), "back to 1 once no belief has one")
 }
+
+func TestBelief_AddRunKeepsTheNewestProfiles(t *testing.T) {
+	var b Belief
+	for i := range ProfiledRuns + 2 {
+		b.AddRun(Run{Job: JobID(i + 1), Profile: &Profile{End: float64(i)}})
+	}
+	for i, r := range b.Runs {
+		assert.Equal(t, i < ProfiledRuns, r.Profile != nil, "run %d", r.Job)
+	}
+}
+
+func TestRunOf_CopiesABrokenHold(t *testing.T) {
+	rec := Record{ID: 1, State: Done, Started: time.Unix(10, 0), Ended: time.Unix(20, 0), HoldBroke: true}
+	run, ok := RunOf(rec)
+	require.True(t, ok)
+	assert.True(t, run.HoldBroke)
+}
+
+func TestBelief_CloneCopiesProfiles(t *testing.T) {
+	b := Belief{Runs: []Run{{Profile: &Profile{End: 1, Mem: Staircase{Steps: []Step{{Until: 1, Level: 2}}}}}}}
+	c := b.Clone()
+	c.Runs[0].Profile.Mem.Steps[0].Level = 9
+	assert.Equal(t, int64(2), b.Runs[0].Profile.Mem.Steps[0].Level)
+}

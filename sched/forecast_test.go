@@ -20,7 +20,7 @@ func TestForecast(t *testing.T) {
 		{ID: 6, Order: 6, State: Queued, Claim: Claim{CPUs: 9, MemoryGB: 1}, Submitted: now}, // over the caps: never
 	}
 	usual := map[JobID]time.Duration{1: 3 * time.Minute, 2: 10 * time.Minute, 3: 5 * time.Minute}
-	got := Forecast(jobs, p, now, func(r Record) (time.Duration, bool) { d, ok := usual[r.ID]; return d, ok }, time.Hour)
+	got := Forecast(jobs, p, now, nil, func(r Record) (time.Duration, bool) { d, ok := usual[r.ID]; return d, ok }, time.Hour)
 	assert.Equal(t, map[JobID]time.Time{3: now.Add(2 * time.Minute), 4: now.Add(10 * time.Minute)}, got)
 
 	t.Run("a job past its usual end ends a minute from now", func(t *testing.T) {
@@ -28,7 +28,7 @@ func TestForecast(t *testing.T) {
 			{ID: 1, State: Running, Claim: Claim{CPUs: 8, MemoryGB: 4}, Started: now.Add(-time.Hour)},
 			{ID: 2, Order: 2, State: Queued, Claim: four, Submitted: now},
 		}
-		got := Forecast(jobs, p, now, func(Record) (time.Duration, bool) { return time.Minute, true }, time.Minute)
+		got := Forecast(jobs, p, now, nil, func(Record) (time.Duration, bool) { return time.Minute, true }, time.Minute)
 		assert.Equal(t, now.Add(time.Minute), got[2])
 	})
 	t.Run("nothing past the horizon", func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestForecast(t *testing.T) {
 			{ID: 1, State: Running, Claim: Claim{CPUs: 8, MemoryGB: 4}, Started: now},
 			{ID: 2, Order: 2, State: Queued, Claim: four, Submitted: now},
 		}
-		got := Forecast(jobs, p, now, func(Record) (time.Duration, bool) { return 48 * time.Hour, true }, time.Minute)
+		got := Forecast(jobs, p, now, nil, func(Record) (time.Duration, bool) { return 48 * time.Hour, true }, time.Minute)
 		assert.Empty(t, got)
 	})
 }
@@ -53,7 +53,7 @@ func TestForecast_ReleasesHeldJobs(t *testing.T) {
 		{ID: 10, Order: 1, State: Held, After: 9, Claim: four, Submitted: now},         // released at +7m and starts
 	}
 	usual := map[JobID]time.Duration{1: 3 * time.Minute, 3: 10 * time.Minute, 7: 5 * time.Minute, 9: 5 * time.Minute, 10: 5 * time.Minute}
-	got := Forecast(jobs, p, now, func(r Record) (time.Duration, bool) { d, ok := usual[r.ID]; return d, ok }, time.Hour)
+	got := Forecast(jobs, p, now, nil, func(r Record) (time.Duration, bool) { d, ok := usual[r.ID]; return d, ok }, time.Hour)
 	assert.Equal(t, map[JobID]time.Time{
 		9:  now.Add(2 * time.Minute),
 		10: now.Add(7 * time.Minute),
@@ -65,6 +65,18 @@ func TestForecast_ReleasesHeldJobs(t *testing.T) {
 			{ID: 1, Order: 1, State: Queued, Claim: four, Sizing: SizingAsking, Submitted: now},
 			{ID: 2, Order: 1, State: Held, After: 1, Claim: four, Submitted: now},
 		}
-		assert.Empty(t, Forecast(jobs, p, now, func(Record) (time.Duration, bool) { return time.Minute, true }, time.Minute))
+		assert.Empty(t, Forecast(jobs, p, now, nil, func(Record) (time.Duration, bool) { return time.Minute, true }, time.Minute))
 	})
+}
+
+func TestForecast_CountsRunningJobsAtTheirHolds(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	p := Policy{Caps: Caps{CPUs: 4, MemoryGB: 8, IOJobs: 2}, StarveAfter: time.Hour}
+	jobs := []Record{
+		{ID: 1, Order: 1, State: Running, Started: now, Claim: Claim{CPUs: 4, MemoryGB: 8}},
+		{ID: 2, Order: 2, State: Queued, Submitted: now, Claim: Claim{CPUs: 2, MemoryGB: 4}},
+	}
+	usual := func(Record) (time.Duration, bool) { return 10 * time.Minute, true }
+	assert.Equal(t, now.Add(10*time.Minute), Forecast(jobs, p, now, nil, usual, time.Minute)[2])
+	assert.Equal(t, now, Forecast(jobs, p, now, map[JobID]Need{1: {CPUs: 2, MemoryGB: 2}}, usual, time.Minute)[2])
 }

@@ -23,6 +23,19 @@ func (m *Model) loadBeliefs() {
 		return
 	}
 	q.beliefs = b
+	// A profile that fails validation is ignored for holds (past-peak holds
+	// spec §5.2): say so once per signature, and leave the file as it is.
+	for _, b := range q.beliefs.Beliefs {
+		for _, r := range b.Runs {
+			if r.Profile == nil {
+				continue
+			}
+			if err := r.Profile.Validate(); err != nil {
+				log.For("core").Warn("queue.profile_invalid", "signature", string(b.ID), "job", int64(r.Job), "err", err)
+				break
+			}
+		}
+	}
 }
 
 // learningWhy is why a beliefs.json load error turns learning off.
@@ -175,7 +188,7 @@ func (m *Model) forgetBelief(id sched.SignatureID) error {
 // recordRun records what settled job rec teaches its belief (spec §5.2):
 // nothing for a job without a signature, while learning is off, or for a
 // run that taught nothing.
-func (m *Model) recordRun(rec sched.Record) {
+func (m *Model) recordRun(rec sched.Record, trace *sched.Trace) {
 	q := m.queue
 	b := q.beliefOf(rec.Signature)
 	if b == nil {
@@ -184,6 +197,11 @@ func (m *Model) recordRun(rec sched.Record) {
 	run, ok := sched.RunOf(rec)
 	if !ok {
 		return
+	}
+	if run.FullPeak() {
+		if p, ok := sched.BuildProfile(trace); ok {
+			run.Profile = p
+		}
 	}
 	now := time.Now()
 	sched.ScorePrior(b, run)

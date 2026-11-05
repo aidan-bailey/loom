@@ -13,6 +13,7 @@
 - **Ask what the fixture leaves nil that production fills.** A bare test home with no app state made `applyStoredRatio` a no-op, so a ratio-revert bug was invisible to every test until one used a real `config.LoadStateFrom(t.TempDir())`.
 - **A fixture that rebuilds every view hides a missing applier.** `wireCore` (`app/testcore_test.go`) seeds each slot's views fresh, so a test of a published event must change model state and drain without the reseed. Details: [`adding-a-core-event.md`](adding-a-core-event.md).
 - **A synchronous test client hides ordering.** The app tests' client pings before every read and after every cast, so a production path that casts and then reads back the effect passes there. Ordering tests belong in `core/rpc`, which uses production clients.
+- **Another client's view lags until it syncs.** `internal/cli`'s `TestJobInterrupted_AJobThatEndedReportsItsOutcome` followed a job to its end with `loom job run` on one connection, then asked the test daemon's own client (`d.client`) about it: under `-race` that client's copy still showed the job running 1 run in 8, and the test read "continues". Read another client's view through `d.job`/`d.jobs` (`FlushForTest`, then `Sync`) before acting on it.
 - **A parity probe pins only the corpus you chose.** A `send-keys -l` against PTY-write parity gate passed until a reviewer tried a trailing `;` and 17 KiB of text, which falsified the design. Attack a gate's corpus, not just its verdict.
 
 ## Guards
@@ -52,7 +53,7 @@ Loom runs `git add -N .` in every session worktree on each diff probe (`session/
 
 ## Suites that run at the same time
 
-A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (every `TestMain`) puts at `os.TempDir()/loom.log`. Every test process with the same `TMPDIR` shares that file, and the writer renames it to `loom.log.1` once it passes 5 MB. The tests that count lines in it fail with counts of 0 when another process rotates it mid-run: `core`'s `TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce`, `TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce` and `TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew`. That happens when the full suite and the race suite run as concurrent `loom job`s, or alongside another session's suite. Check `ls -la /tmp/loom.log*` for a `.1` written during the run, then run `go test ./core/` on its own before you suspect your change.
+A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (every `TestMain`) puts in a directory of the process's own under `os.TempDir()` (`loom-log-*`), removed by `log.Close()`. Until 2026-11-05 every test process shared `os.TempDir()/loom.log`, and one process renamed it to `loom.log.1` at 5 MB while another counted its lines: `core`'s `TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce`, `TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce` and `TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew` read 0 whenever two suites ran at once. A test that counts log lines reads `log.LogFilePath()`, never a fixed path; a new `TestMain` ends with `log.Close()`, or leaves a `loom-log-*` directory per run. Concurrent suites still share the host: tmux servers, ports and CPU time.
 
 ## What the gates won't tell you
 

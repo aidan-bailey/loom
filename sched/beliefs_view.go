@@ -102,6 +102,11 @@ func (b Belief) Clone() Belief {
 	b.Runs = slices.Clone(b.Runs)
 	for i := range b.Runs {
 		b.Runs[i].ReadBytes, b.Runs[i].WriteBytes = clonePtr(b.Runs[i].ReadBytes), clonePtr(b.Runs[i].WriteBytes)
+		if p := b.Runs[i].Profile; p != nil {
+			c := *p
+			c.Mem.Steps, c.Cores.Steps = slices.Clone(p.Mem.Steps), slices.Clone(p.Cores.Steps)
+			b.Runs[i].Profile = &c
+		}
 	}
 	b.Notes = slices.Clone(b.Notes)
 	b.Prior = clonePtr(b.Prior)
