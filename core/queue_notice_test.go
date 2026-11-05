@@ -94,7 +94,7 @@ func TestJobQueue_ANoticeNamesItsJobsOutcome(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assert.Equal(t, c.want, noticeHead(c.rec))
+			assert.Equal(t, c.want, noticeHead(c.rec, ""))
 		})
 	}
 }
@@ -154,7 +154,7 @@ func TestJobQueue_ANoticeReachesTheOwnersModAndIsRecordedSent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.False(t, msgs[0].AsUser, "a job's notice is nobody's own words")
-	assert.Equal(t, noticeHead(rec)+"\nLog: "+logPath+" (3 lines). Last 2 lines:\n\ntwo\nthree", msgs[0].Text)
+	assert.Equal(t, noticeHead(rec, "")+"\nLog: "+logPath+" (3 lines). Last 2 lines:\n\ntwo\nthree", msgs[0].Text)
 	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, 5).Notice, "not sent until the mod has queued it")
 
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[0].ID}}))
@@ -340,10 +340,10 @@ func TestJobQueue_ASubagentsNoticeGoesToItWhenTheModCan(t *testing.T) {
 				tail := "\nLog: " + logPath + " (3 lines). Last 2 lines:\n\ntwo\nthree"
 				if agents {
 					assert.Equal(t, "a1", msgs[0].Agent)
-					assert.Equal(t, noticeHead(rec)+tail, msgs[0].Text, "the subagent reads today's notice")
+					assert.Equal(t, noticeHead(rec, "")+tail, msgs[0].Text, "the subagent reads today's notice")
 				} else {
 					assert.Empty(t, msgs[0].Agent, "the session's copy")
-					assert.Equal(t, noticeHead(rec)+"\n"+oldModLine("a1")+tail, msgs[0].Text)
+					assert.Equal(t, noticeHead(rec, "")+"\n"+oldModLine("a1")+tail, msgs[0].Text)
 				}
 				require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[0].ID}}))
 				assert.Equal(t, sched.NoticeSent, wqRecord(t, m, 5).Notice)
@@ -376,7 +376,7 @@ func TestJobQueue_ASubagentThatCantTakeItsNoticeLeavesItToTheSession(t *testing.
 	require.Len(t, again, 1)
 	assert.NotEqual(t, first[0].ID, again[0].ID)
 	assert.Empty(t, again[0].Agent)
-	assert.Equal(t, noticeHead(rec)+"\n"+unreachableLine("a1", why)+"\nLog: "+logPath+" (3 lines). Last 2 lines:\n\ntwo\nthree", again[0].Text)
+	assert.Equal(t, noticeHead(rec, "")+"\n"+unreachableLine("a1", why)+"\nLog: "+logPath+" (3 lines). Last 2 lines:\n\ntwo\nthree", again[0].Text)
 	assert.Contains(t, again[0].Text, "(Submitted by your subagent a1; loom could not reach it: Agent 'a1' could not be resumed")
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: again[0].ID}}))
 	assert.Equal(t, sched.NoticeSent, wqRecord(t, m, 5).Notice)

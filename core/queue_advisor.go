@@ -249,6 +249,7 @@ func (m *Model) advisorInputFor(c advisorCall) (advisorInput, bool) {
 		job: advisor.Job{
 			Argv: slices.Clone(rec.Argv), Command: slices.Clone(b.Command), CommandEnv: slices.Clone(b.Env),
 			Description: rec.Description, Repo: sched.RepoName(b.Repo), Folder: b.Folder,
+			After: m.advisorAfter(rec),
 		},
 		host: advisor.Host{Cores: q.host.Cores, RAMGB: int(q.host.RAMBytes >> 30), Caps: q.policy.Caps, DefaultClaim: q.policy.DefaultClaim},
 	}
@@ -456,7 +457,7 @@ func (m *Model) releaseAsking(sig sched.SignatureID, why string) {
 	q := m.queue
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State == sched.Queued && rec.Sizing != "" && rec.Signature == sig {
+		if rec.State.Waiting() && rec.Sizing != "" && rec.Signature == sig {
 			rec.Sizing, rec.AgentWhy = "", why
 			q.moved()
 		}
@@ -470,7 +471,7 @@ func (m *Model) releaseOverdueAsks(now time.Time) {
 	wait := cmp.Or(q.advisor.settings.Wait, advisor.DefaultWait)
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State == sched.Queued && rec.Sizing != "" && now.Sub(rec.Submitted) >= wait {
+		if rec.State.Waiting() && rec.Sizing != "" && now.Sub(rec.Submitted) >= wait {
 			rec.Sizing, rec.AgentWhy = "", fmt.Sprintf("the agent didn't answer in %ds", int(wait.Seconds()))
 			q.moved()
 		}
@@ -485,7 +486,7 @@ func (m *Model) resumeAsks() {
 	now := time.Now()
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State != sched.Queued || rec.Sizing == "" {
+		if !rec.State.Waiting() || rec.Sizing == "" {
 			continue
 		}
 		if why := m.advisorOff(now); why != "" {
