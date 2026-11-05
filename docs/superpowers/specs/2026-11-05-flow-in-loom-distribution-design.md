@@ -23,6 +23,20 @@ Moving flow into loom puts one codebase behind parts 2 and 3, and lets flow come
 - **Profiles in each client repo; records and retros in `~/.loom/flow`.** claude-flow is archived read-only. Rejected: claude-flow as a data-only repo with its backup push; everything under `~/.loom/flow`.
 - **Each launch gets its own copy.** Claude writes `tsconfig.json` and `.claude-plugin/types/` into every `--plugin-dir` it loads (the mod's 2026-10-14 probe, `docs/superpowers/plans/2026-10-14-loom-claude-mod.md`), so a root shared by sessions would be rewritten by each. The flow plugin and its scripts are written into the launch's hooks folder beside the mod, which `hooks.Prepare` empties per launch. This replaces the content-hashed shared root and its sweep from the brainstorm's Section A.
 
+## 2a. Planning amendments (2026-11-05)
+
+Found while planning (`docs/superpowers/plans/2026-11-05-flow-in-loom-distribution.md`); they win where the sections below differ.
+
+1. The roster ID is the hash alone, `loom flow roster <12 hex>`: loom's version lives in `package main`.
+2. One list of guarded agents, `flow/lib/guarded-agents.txt` (`<agent> developer|drafter`), read by the Go guard from the embed and checked by `check-agents.sh`, which now fails an agent with `hooks:` or an editing agent the list misses. `git_guard.HOOK_COMMAND` goes.
+3. `check_plan.py` reads a story's Developer `flow:intermediate-dev` as `intermediate-dev`; plans keep bare role names and the prompts dispatch `flow:<name>`.
+4. The banned-words list splits: the generic words ship in `flow/lib/banned-tokens.txt`, and `check-agents.sh` also reads the owner's private `$FLOW_DATA/banned-tokens.txt` (the client names, owner 2026-11-05).
+5. `doctor`'s `links` check becomes `flow root`, its `shadowed` warning goes, and its `guard` check runs `git_guard.py` directly.
+6. The tools are `conf`, `check-plan`, `packet`, `join`, `premises`, `conformance`, `costs`, `doctor` (= `conf doctor`), `check-agents` and `wait`, plus `guard`, `path` and `import` in Go; `packages.py` has no command line and gets no tool.
+7. `loom flow path` works only inside a session (outside, the root is a temp copy removed when the call ends).
+8. `flow.Write` refuses a dir that exists, writing a `<dir>.partial` sibling and renaming it.
+9. The guard matches the namespaced agent type the §7 probe saw (`flow:junior-dev`), so a home-installed `junior-dev` keeps its own hook during the cutover.
+
 ## 3. Scope
 
 In: the `flow/` tree in loom; the per-launch copy; the plugin's names; the guard hook; the context fragment; the `flow` setting; `loom flow` and its tools; the Python changes the move needs; `loom flow import`; the cutover; CI; docs.

@@ -1,0 +1,25 @@
+name: Flow
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'flow/**'
+      - '.github/workflows/flow.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'flow/**'
+      - '.github/workflows/flow.yml'
+
+jobs:
+  flow:
+    name: Flow's tools and agent lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: flow/lib/test.sh
+        run: bash flow/lib/test.sh
