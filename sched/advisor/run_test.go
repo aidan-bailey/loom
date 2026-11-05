@@ -52,6 +52,23 @@ func TestRun(t *testing.T) {
 		real, _ := filepath.EvalSymlinks(work)
 		assert.Equal(t, real, strings.TrimSpace(string(cwd)))
 	})
+	t.Run("the system prompt", func(t *testing.T) {
+		body := `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x","structured_output":{"note":"hi"}}'`
+		program, dir := fakeClaude(t, body)
+		own := call
+		own.Program, own.SystemPrompt = program, "group these notes"
+		_, err := Run(own)
+		require.NoError(t, err)
+		args, _ := os.ReadFile(filepath.Join(dir, "args"))
+		assert.Contains(t, string(args), "--system-prompt\ngroup these notes\n", "a caller's own prompt")
+
+		program, dir = fakeClaude(t, body)
+		call.Program = program
+		_, err = Run(call)
+		require.NoError(t, err)
+		args, _ = os.ReadFile(filepath.Join(dir, "args"))
+		assert.Contains(t, string(args), "--system-prompt\n"+strings.SplitN(SystemPrompt, "\n", 2)[0], "none is the advisor's")
+	})
 	t.Run("an error result", func(t *testing.T) {
 		program, _ := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"stopped","total_cost_usd":0.5}'`)
 		call.Program = program

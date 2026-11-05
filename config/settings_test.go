@@ -156,6 +156,32 @@ func TestSettings_CloneCopiesTheSchedulerBlock(t *testing.T) {
 	assert.Nil(t, noClaim.Scheduler.DefaultClaim, "an absent default claim stays absent")
 }
 
+// TestSettings_FeedbackBlockRoundTripsAndClones: the "feedback" block loads
+// from a config.json and saves back to the same JSON, a config without one
+// saves none, and a clone's grouper block is its own.
+func TestSettings_FeedbackBlockRoundTripsAndClones(t *testing.T) {
+	const block = `{"workspace": "loom", "grouper": {"enabled": false, "model": "haiku", "effort": "low"}}`
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(`{"feedback": `+block+`}`), 0o644))
+	cfg := LoadConfigFrom(dir)
+	off := false
+	assert.Equal(t, FeedbackSettings{Workspace: "loom", Grouper: &AgentSettings{Enabled: &off, Model: "haiku", Effort: "low"}}, cfg.Snapshot().GetFeedback())
+	assert.JSONEq(t, block, string(savedConfigKeys(t, cfg)["feedback"]))
+
+	absent := LoadConfigFrom(t.TempDir())
+	assert.Equal(t, FeedbackSettings{}, absent.Snapshot().GetFeedback())
+	assert.NotContains(t, savedConfigKeys(t, absent), "feedback")
+
+	s := Settings{Feedback: &FeedbackSettings{Workspace: "a", Grouper: &AgentSettings{Enabled: &off, Model: "m"}}}
+	c := s.Clone()
+	c.Feedback.Workspace, c.Feedback.Grouper.Model = "b", "x"
+	*c.Feedback.Grouper.Enabled = true
+	assert.Equal(t, "a", s.Feedback.Workspace)
+	assert.Equal(t, "m", s.Feedback.Grouper.Model)
+	assert.False(t, *s.Feedback.Grouper.Enabled)
+	assert.Nil(t, Settings{}.Clone().Feedback, "an absent block stays absent")
+}
+
 // TestSettings_GetSchedulerReturnsACopy: the getter hands out a block the
 // caller may change, and the zero value when there is none.
 func TestSettings_GetSchedulerReturnsACopy(t *testing.T) {

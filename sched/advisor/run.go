@@ -25,9 +25,12 @@ type Call struct {
 	Dir     string   // the job's folder: the working directory, to which --restricted confines Read, Glob and Grep
 	Model   string
 	Effort  string
-	Schema  string // PriorSchema or NoteSchema
-	Message []byte // the request, as JSON, on stdin
-	Timeout time.Duration
+	Schema  string // PriorSchema or NoteSchema, or another caller's
+	// SystemPrompt is the system prompt; "" is the advisor's (SystemPrompt).
+	// The feedback grouper passes its own.
+	SystemPrompt string
+	Message      []byte // the request, as JSON, on stdin
+	Timeout      time.Duration
 }
 
 // args are the CLI's arguments for c: headless, the model and effort, the
@@ -36,7 +39,7 @@ type Call struct {
 // no transcript, no permission prompts, and a JSON result under c.Schema.
 func (c Call) args() []string {
 	return []string{
-		"-p", "--model", c.Model, "--effort", c.Effort, "--system-prompt", SystemPrompt,
+		"-p", "--model", c.Model, "--effort", c.Effort, "--system-prompt", cmp.Or(c.SystemPrompt, SystemPrompt),
 		"--tools", "Read,Glob,Grep", "--restricted", "--safe-mode", "--strict-mcp-config",
 		"--no-session-persistence", "--permission-mode", "dontAsk",
 		"--output-format", "json", "--json-schema", c.Schema,
