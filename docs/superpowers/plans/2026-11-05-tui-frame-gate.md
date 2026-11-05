@@ -747,3 +747,11 @@ git commit -q -m "docs(app): the frame gate's rule, structure and measured effec
   - `PreviewPane.String` and `TerminalPane.String` write `displayedPlain`, the plain text displayed for mouse selection. With a reused frame it stays the text on screen, which is what a selection should read.
   - `workContent`, `windowTitle`, `attachCursor`, `bannerView`, `overviewData`, `List.String`, `SplitPane.String`, `Overview.Render`, `Workbench.String` and `ErrBox.String` write nothing.
 - `./app/...` and `./ui/...` pass (job 520). Vet and gofmt are clean.
+
+**Package 3:**
+- **Setup.** There were two sandboxes. `fgbase` was built from abcef9a1, the gate not yet wired, so it behaves as before; it came from `git archive` in the scratchpad, as the loom-dev skill describes. `fgafter` was built from 3ab8dd74. Each ran 9 fake-agent sessions printing a line every 100 ms (`work 900`). The 10th session's `n` prompt timed out at 10 s in the baseline, so both ran 9. All 9 were rail rows of the focused slot, so `drawsPane` drew every one: this measures the frame cap alone, not the filter.
+- **Result.** The TUI's own CPU went from 47–59% of a core (289–481 reads/s) to 16–18% (523 reads/s). That is about 3× less CPU, and about 5× less per read; the baseline read less often because it was busy rendering.
+- **What remains.** A profile of the after build (15 s) put `render` at 87%: `SplitPane.String` 38%, `List.String` 25%, and of that, `BuildCardData` → `RenderEmulator` 22%. That last part is option B's card-tail cache, left to the owner.
+- The method and the numbers are in `docs/claude/debugging-freezes.md` §6.
+- **Gates:** the full suite (job 533), the race run of `app`, `ui` and `core` (534) and e2e (545) pass, as do vet and the Windows build. The first e2e job (536) left off `CGO_ENABLED=0` and failed to build (no gcc), a command slip; 545 is its rerun. golangci-lint is skipped (CI pins v1).
+

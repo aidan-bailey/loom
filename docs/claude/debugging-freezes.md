@@ -73,7 +73,7 @@ The installed loom is a stripped Nix build with no pprof endpoint, and `kernel.y
 
 What it has found:
 
-- **2026-11-05, the TUI at 0.25–0.55 of a core while agents worked.** 79% of its CPU was `home.View`, mostly lipgloss and `x/ansi` measuring string widths (`SplitPane.String`, `List.String` building a card per row from that row's whole emulator screen). Parsing the PTYs took about 2%. Bubble Tea v2 calls `View()` after every message, and each of the 23 pane clients sent `paneDirtyMsg` up to every 16 ms (311 PTY reads a second), whether its pane was on screen or not. So the cost is the number of busy panes times the cost of a frame, and the frame's cost itself grows with the rail's rows.
+- **2026-11-05, the TUI at 0.25–0.55 of a core while agents worked.** 79% of its CPU was `home.View`, mostly lipgloss and `x/ansi` measuring string widths (`SplitPane.String`, `List.String` building a card per row from that row's whole emulator screen). Parsing the PTYs took about 2%. Bubble Tea v2 calls `View()` after every message, and each of the 23 pane clients sent `paneDirtyMsg` up to every 16 ms (311 PTY reads a second), whether its pane was on screen or not. So the cost is the number of busy panes times the cost of a frame, and the frame's cost itself grows with the rail's rows. The frame gate (3ab8dd74, `app/frame_gate.go`) lets pane output share one frame and skip panes off screen. In a loomdev sandbox with 9 sessions printing 10 lines a second, all of them rail rows, the TUI went from 47–59% to 16–18% of a core. What remains is the frame itself: `render` was 87% of that, and 22% of it went to each rail card rendering its session's whole emulator screen.
 
 ## Traps
 
