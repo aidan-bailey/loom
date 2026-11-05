@@ -21,6 +21,19 @@ Flow's agents run every step that can take more than a few minutes through `loom
 - **The gate logic lives in a Go gate runner, `loom flow gates`** (approach A). It submits the chain, stops or resubmits after a FAIL and judges each verdict, so the verifier starts, waits and reports. Rejected: a generic chain inside `loom flow wait` that the verifier builds and judges itself (B, leaving the error-prone parts in the prompt); a chain object in the daemon (C, part 3's orchestration pulled forward).
 - **`loom flow wait` keeps its name and its log paths, ported to Go**, as part 1 decided for every tool a later part ports: agents' call sites don't change.
 
+## 2a. Planning amendments (2026-11-05)
+
+Found while planning (`docs/superpowers/plans/2026-11-05-flow-in-loom-coordination.md`); they win where the sections below differ.
+
+1. One run lock per state dir, `<state>/gates/gates.lock`, so `start`'s one-active-run check and its submits are atomic against another `start`.
+2. The record holds `cwd`, where `start` ran; every job of the run, resubmitted ones included, runs there.
+3. `gates wait` reads a lone all-digit argument as seconds.
+4. Job lists print as `jobs 1, 2, 5`: a run's IDs needn't be consecutive.
+5. `gates cancel` on a run that has ended changes nothing and says so.
+6. `wait wait` on a job the queue no longer knows prints `lost <name>: the queue no longer knows job N` and exits 70.
+7. A story chain continues past a VACUOUS step and a FAIL (infra) from the vacuous check: their jobs ended done, and the daemon releases a dependent on done.
+8. `wait start` and `gates start` exit 125 when they can't reach the daemon.
+
 ## 3. Scope
 
 In: `loom flow gates start|wait|cancel`; `loom flow wait start|wait` in Go; the poll refusal; the prompt changes in `flow:plan-execution-supervisor`, `flow:verifier`, `flow:habits` and `dispatch.md`; retiring `agent-wait.sh`; the tests; docs.
