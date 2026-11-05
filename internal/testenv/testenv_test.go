@@ -226,6 +226,24 @@ func within(dir, p string) bool {
 // job. IsolateLoomDirs clears them, or a fake agent a test starts says hello
 // to the real daemon as that session and takes its mod's place, and the
 // session's messages go undelivered.
+// TestIsolateLoomDirs_PointsTheSessionBusNowhere: a test binary reaches no
+// real user bus, and the live test finds the real address where it was kept.
+func TestIsolateLoomDirs_PointsTheSessionBusNowhere(t *testing.T) {
+	for _, name := range []string{EnvHome, EnvGlobalDir, EnvClaudeTmpDir, EnvClaudeConfigDir} {
+		t.Setenv(name, os.Getenv(name))
+	}
+	t.Setenv(EnvDBus, "unix:path=/run/user/1000/bus")
+	t.Setenv(EnvRealDBus, "")
+	cleanup, err := IsolateLoomDirs()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, "unix:path=/run/user/1000/bus", os.Getenv(EnvRealDBus))
+	addr := os.Getenv(EnvDBus)
+	require.True(t, strings.HasPrefix(addr, "unix:path="), addr)
+	_, statErr := os.Stat(strings.TrimPrefix(addr, "unix:path="))
+	assert.ErrorIs(t, statErr, fs.ErrNotExist, "the bus socket must not exist")
+}
+
 func TestIsolateLoomDirs_ClearsTheLinksToTheRealDaemon(t *testing.T) {
 	for _, name := range []string{EnvHome, EnvGlobalDir, EnvClaudeTmpDir, EnvClaudeConfigDir} {
 		t.Setenv(name, os.Getenv(name))

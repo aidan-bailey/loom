@@ -27,6 +27,10 @@ type QueueView struct {
 	UsedRSSKB int64                    // memory they use, last sampled
 	Dir       string                   // <globalDir>/jobs
 	Jobs      []JobView                // running (by start), waiting (queued and held, in queue order), then finished (newest end first)
+	// Uncontained is why jobs start uncontained while contain is on, on
+	// Linux (cgroup spec §5.5); "" when they are contained, or when
+	// containment isn't expected.
+	Uncontained string
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -133,6 +137,11 @@ type JobView struct {
 	// held, and on a record from an earlier build).
 	After sched.JobID
 	Ready time.Time
+	// Confinement (cgroup spec §5): the scope it runs in, why it runs
+	// uncontained, and its earlier attempts (§8.4).
+	Unit        string
+	Uncontained string
+	Attempt     int
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -276,6 +285,9 @@ func (m *Model) queueView() QueueView {
 		Agent:    m.agentView(time.Now()),
 		Dir:      q.dir,
 	}
+	if queueGOOS == "linux" && q.policy.Contain {
+		v.Uncontained = q.containWhy(q.policy)
+	}
 	var running, queued, finished []sched.Record
 	for _, r := range q.store.Jobs {
 		switch r.State {
@@ -377,6 +389,9 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Spare:        r.Spare,
 		After:        r.After,
 		Ready:        r.Ready,
+		Unit:         r.Unit,
+		Uncontained:  r.Uncontained,
+		Attempt:      r.Attempt,
 	}
 	if r.Exit != nil {
 		e := *r.Exit

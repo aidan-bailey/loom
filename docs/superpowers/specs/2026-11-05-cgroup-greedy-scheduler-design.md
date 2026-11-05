@@ -33,14 +33,14 @@ Made while designing, open to planning: a requeued job keeps its ID and runs aga
 
 ## 3. Scope
 
-In: per-job scopes and the jobs slice; measurement from cgroup files; `KillUnit` cancels; the fallback; usage curves; the budget; the memory and CPU fits; `Forecast` on the same fits; the ladder; `--no-requeue`; what the work view, `loom job list`, `run` and `wait` show; config; docs.
+In: per-job scopes and the jobs slice; measurement from cgroup files; `cgroup.kill` on a cancel's SIGKILL; the fallback; usage curves; the budget; the memory and CPU fits; `Forecast` on the same fits; the ladder; `--no-requeue`; what the work view, `loom job list`, `run` and `wait` show; config; docs.
 
 Out (§14): I/O control, cpusets, nix-daemon and sccache-server work, macOS and Windows, a downgrade's handling of a paused job.
 
 ## 4. Concepts and names
 
 - **Contained job:** a job whose shim joined its scope before starting the command. Every other running job is **uncontained**, with a reason.
-- **Scope:** the transient systemd unit `loom-job-<id>.scope`, in the slice `loom-jobs.slice` under the user's systemd manager.
+- **Scope:** the transient systemd unit `loom-<tag>-job-<id>-<attempt>.scope`, in the slice `loom_<tag>.slice` directly under the user's systemd manager (a dash would nest it in `loom.slice`, whose weight would be all the panes see); the tag is 8 hex digits of the SHA-256 of the jobs directory (§15, 1).
 - **Working set:** a cgroup's `memory.current` less the `inactive_file` of its `memory.stat`, in KB: the memory the job can't give back without swapping.
 - **Curve:** a profiled run's usage over its progress, rising and falling (§6).
 - **Budget:** the memory greedy admission packs into (§7.1).
@@ -54,13 +54,13 @@ Out (§14): I/O control, cpusets, nix-daemon and sccache-server work, macOS and 
 
 ### 5.1 The scope
 
-The shim creates its own scope: after it takes `run.lock` and before it starts the command, it calls `StartTransientUnit("loom-job-<id>.scope", "fail", …)` on the user bus with `PIDs` = its own pid, `Slice=loom-jobs.slice`, `CPUWeight` = 100 × the claim's cores (bounded 1–10000), `OOMPolicy=kill` (so the kernel's OOM killer takes the whole job), and memory and CPU accounting on. It waits for the start job to finish, then starts the command. Migrating a process doesn't move children it already forked, so containment must come first; `systemd-run --scope` works the same way, and systemd, not the daemon, can move a process out of the login cgroup.
+The shim creates its own scope: after it takes `run.lock` and before it starts the command, it calls `StartTransientUnit("loom-<tag>-job-<id>-<attempt>.scope", "fail", …)` on the user bus with `PIDs` = its own pid, `Slice=loom_<tag>.slice`, `CPUWeight` = 100 × the claim's cores (bounded 1–10000), `OOMPolicy=kill` (so the kernel's OOM killer takes the whole job), `CollectMode=inactive-or-failed`, and memory and CPU accounting on. It waits for the start job to finish, then starts the command. Migrating a process doesn't move children it already forked, so containment must come first; `systemd-run --scope` works the same way, and systemd, not the daemon, can move a process out of the login cgroup.
 
 `started.json` gains `unit`, the scope's name. A shim that can't create its scope runs the command uncontained and writes why into `started.json` (`uncontained`).
 
 ### 5.2 The slice
 
-`loom-jobs.slice` sits beside the agents' pane scopes under `user@1000.service`. At startup, and whenever the config changes, the daemon sets it with `SetUnitProperties(runtime=true)`: `CPUWeight=jobs_cpu_weight` (default 50, below the panes' 100), and `MemoryMax` at the `memory_gb` ceiling. The ladder keeps its `MemoryHigh` at the budget (§8.1).
+`loom_<tag>.slice` sits directly under `user@1000.service`, beside the agents' pane scopes, so its weight is what they compete with. Before each contained start the daemon ensures it (§15, 6): `SetUnitProperties(runtime=true)`, or a transient slice when nothing has loaded it, with `CPUWeight=jobs_cpu_weight` (default 50, below the panes' 100), and `MemoryMax` at the `memory_gb` ceiling. The ladder keeps its `MemoryHigh` at the budget (§8.1).
 
 ### 5.3 Measurement
 
@@ -75,7 +75,7 @@ An uncontained job keeps the `/proc` session sampler. `RunOf`'s peak for a conta
 
 ### 5.4 Cancel and the lost-job proof
 
-A cancel of a contained job calls `KillUnit(unit, "all", SIGTERM)`, then SIGKILL after 10 s as today. The lock stays the proof that the shim lives; for a contained job, `cgroup.events`' `populated 0` is the proof that nothing of the job survives.
+A cancel keeps today's SIGTERM to the job's group, behind the lock's proof; the SIGKILL 10 s later also writes the scope's `cgroup.kill`, which reaches processes that left the group (§15, 5). The lost-job proof is unchanged.
 
 ### 5.5 Fallback
 
@@ -131,7 +131,7 @@ New wait reasons: `needs ~11 GB at its peak (forecast leaves 6)`, `CPU busy (pre
 
 ### 8.1 Rung 0: the kernel
 
-The daemon keeps `loom-jobs.slice`'s `MemoryHigh` at the budget, updating it when the budget moves by 256 MiB or more: past it, the kernel throttles and reclaims every job with no daemon in the loop. `MemoryMax` at the ceiling is the desktop's last line; a kernel OOM kill inside the slice takes one whole job (`OOMPolicy=kill`), which the daemon reads from `memory.events` and treats as a rung-3 requeue (§8.4).
+The daemon keeps the slice's `MemoryHigh` at the budget, updating it when the budget moves by 256 MiB or more: past it, the kernel throttles and reclaims every job with no daemon in the loop. `MemoryMax` at the ceiling is the desktop's last line; a kernel OOM kill inside the slice takes one whole job (`OOMPolicy=kill`), which the daemon reads from `memory.events` and treats as a rung-3 requeue (§8.4).
 
 Memory is **short** while headroom is below the reserve or the jobs slice's `memory.pressure` "some" avg10 is at least 10%.
 
@@ -141,7 +141,7 @@ While memory is short, the daemon acts on the **victim**: the most recently star
 
 1. **Squeeze:** `MemoryHigh` = its current working set. It slows, and its cold pages go to compressed swap.
 2. **Pause:** if memory is still short 15 s after the squeeze, `FreezeUnit`.
-3. **Requeue:** if memory is still short 30 s after the pause, `KillUnit` and requeue (§8.4). A `--no-requeue` job stops at the pause rung, however long.
+3. **Requeue:** if memory is still short 30 s after the pause, write its `cgroup.kill` and requeue it (§8.4). A `--no-requeue` job stops at the pause rung, however long.
 
 Each rung re-checks before acting. The ladder moves to the next most recently started job only once the victim is requeued, or paused with `--no-requeue`.
 
@@ -210,7 +210,7 @@ Table tests, with both sides of every threshold pinned: `BuildCurve` (merging ke
 
 ### 13.3 Live
 
-`-tags systemd_live` (like `advisor_live`): on the real user bus, create a `loom-test-<pid>.scope` in a `loom-test.slice`, check that `MemoryHigh` lands in `memory.high`, that freeze shows in `cgroup.events`, that thaw and `KillUnit` work and that the readers parse the real files; never touches `loom-jobs.slice`; skipped without a user bus (CI, the Nix sandbox). One e2e test runs a contained job end to end, skipped without a bus.
+`-tags systemd_live` (like `advisor_live`): on the real user bus, create a `loom-test-<pid>.scope` in a `loom-test.slice`, check that `MemoryHigh` lands in `memory.high`, that freeze shows in `cgroup.events`, that thaw and `cgroup.kill` work and that the readers parse the real files; never touches a loom's own slice; skipped without a user bus (CI, the Nix sandbox). No e2e test reaches the real bus (§15, 15).
 
 ### 13.4 The week's read
 
@@ -222,6 +222,31 @@ Compare with §1: `queue.job_started` `waited_s`, working-set GB-seconds over bu
 - **cpusets:** not delegated here. With shared CPU there is no limit for tools to size themselves to, so the hints remain what sets their parallelism.
 - **Work outside the job's tree:** nix-daemon builds and the sccache server stay in their own cgroups, unmeasured and unladdered.
 - **macOS and Windows:** fallback mode.
-- **A downgrade while a job is paused:** an older loom doesn't know the scope, so the job stays frozen until thawed by hand (`systemctl --user thaw loom-job-<id>.scope`).
+- **A downgrade while a job is paused:** an older loom doesn't know the scope, so the job stays frozen until thawed by hand (`systemctl --user thaw loom-<tag>-job-<id>-<attempt>.scope`).
 - **Curves need runs:** greedy admission helps a command only after 3 curves; until then it counts at its claim.
 - **Later:** CPU limits applied only under contention, `memory.peak` resets per sample for exact phase peaks, `io.max` once delegated, ladder thresholds learned from the week's events.
+
+## 15. Planning amendments
+
+Made while planning (`docs/superpowers/plans/2026-11-06-cgroup-greedy-scheduler.md`), 2026-11-06:
+
+1. **Unit names carry a tag of the jobs directory and the attempt:** the slice is `loom_<tag>.slice` (directly under the user's manager: a dash would nest it in `loom.slice`, whose weight would be all the panes see) and a scope `loom-<tag>-job-<id>-<attempt>.scope`, the tag being 8 hex digits of the SHA-256 of the jobs directory. A loomdev sandbox under the same user manager never shares a name with the real daemon, and a requeued attempt never waits for its predecessor's scope to go. (§4, §5.1, §5.2)
+2. **`spec.json` carries the scope to create (`scope`),** written by the daemon at start when jobs are contained; without it the shim never touches the bus (fallback mode, and every test shim). (§5.1)
+3. **The shim writes the cgroup it landed in (`cgroup`, from `/proc/self/cgroup`) into `started.json`;** the daemon never asks D-Bus for a path. (§5.3)
+4. **Scopes set `CollectMode=inactive-or-failed`,** so a failed (OOM-killed) scope is collected at once. (§5.1)
+5. **Cancels keep the group SIGTERM behind the lock proof; the SIGKILL escalation of a contained job also writes its scope's `cgroup.kill`,** which reaches processes that left the group. The rung-3 kill writes `cgroup.kill` too. `KillUnit` is not used, and the lost-job proof is unchanged. (§5.4, §8.2)
+6. **The daemon ensures the slice before each contained start** (set its properties, or create it as a transient slice): an empty slice can be collected with its properties. (§5.2)
+7. **Time alignment uses each profiled run's own wall times, not a rate.** A curve step is `[until, level, wall]`; a running job's time to a later step is that run's wall time from its current progress to the step, a candidate's from its start; the prediction is the most of every run's spans at each moment. (§6.1, §7.2 items 1–2)
+8. **The curve test pins "never below the run",** as the staircase's does, not equality with the staircase: the two compress differently, and holds keep reading the stored staircase. (§6.2)
+9. **`interactive_reserve_gb` is 1–1024** (0 takes the default, as every scheduler key does). (§10)
+10. **The requeue message records no notice fate,** so the job's end message still comes. (§8.4)
+11. **`Admit` reports the head the starvation guard started (`Decision.Starved`),** and the record keeps it (`starved`) for the ladder's victim order. (§8.2)
+12. **A kernel OOM kill is read from the slice's `memory.events` `oom_kill`** (hierarchical) at each pass: a job that ends by a SIGKILL nobody asked for while that count rose is the OOM's victim. (§8.1, §12)
+13. **The greedy forecast anchors a simulated start's prediction at its simulated start, and ignores the ladder's hold-off.** (§7.4)
+14. **Every test binary points `DBUS_SESSION_BUS_ADDRESS` at a dead socket** (`testenv.IsolateLoomDirs`), keeping the real address in `LOOM_TEST_REAL_DBUS` for the live test alone. (§13)
+15. **No e2e test reaches the real bus:** the live contract test covers D-Bus, and core tests cover the wiring with a fake confiner. (§13.3)
+16. **A paused job is thawed before a cancel's SIGTERM,** since a frozen process can't act on it. (§8)
+17. **The daemon reconciles each contained job's rung from its cgroup at every pass** (`cgroup.events` `frozen`, `memory.high`), which covers a restart. (§12)
+18. **A unit systemd no longer knows (its user manager restarted) needs no state of its own:** its ladder calls fail, are logged, shown (`LadderErr`) and retried, and its rung follows its cgroup. (§12)
+19. **The slice is `loom_<tag>.slice`, not `loom-<tag>.slice`** (found while building Package 1): systemd reads a dash in a slice's name as nesting, so `loom-<tag>.slice` sat in `loom.slice`, whose default weight of 100 was all the agents' panes competed with, and `jobs_cpu_weight` ranked looms only against each other. The live test pins the slice's parent. (§5.2)
+20. **The first probe runs in `Boot`, synchronously, bounded by 2 s** (found while building Package 1): it runs before the loop serves anyone, so it blocks no client, and the jobs a restart admits are contained. A probe at boot as a background job raced the first admission pass and added a job to every count the TUI's tests make; holding admission for it made the first `loom job submit` after a restart say `queued` for a job that started a moment later. Later probes are background jobs, only while jobs wait (§5.5).

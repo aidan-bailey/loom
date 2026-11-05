@@ -18,6 +18,7 @@ const (
 	maxIOJobs     = 64
 	maxStarveMins = 1440
 	maxKeep       = 10000
+	maxCPUWeight  = 10000
 )
 
 // resolveBounded returns v, or def when v is 0, and an error naming the
@@ -37,12 +38,12 @@ func resolveBounded(key string, v, def, lo, hi int) (int, error) {
 // memory_gb is max(1, ⌊0.75 × RAM in GB⌋); io_jobs is 2; the default claim is
 // {min(4, cpus), min(6, memory_gb)}, each half taking its own default;
 // starve_after_minutes is 10; keep_finished is 50; release_past_peaks is
-// true. It fails closed: a value
+// true; contain is true; jobs_cpu_weight is 50. It fails closed: a value
 // outside its bounds (a negative one included), a default claim above a cap,
 // or an unreadable RAM with memory_gb unset is an error and no Policy, since
 // no cap is guessed. The first fault, in the order cpus, memory_gb, io_jobs,
 // starve_after_minutes, keep_finished, default_claim.cpus,
-// default_claim.memory_gb, is the one returned.
+// default_claim.memory_gb, jobs_cpu_weight, is the one returned.
 func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	cpus, err := resolveBounded("cpus", s.CPUs, max(1, h.Cores-2), 1, maxCapCPUs)
 	if err != nil {
@@ -83,11 +84,17 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	weight, err := resolveBounded("jobs_cpu_weight", s.JobsCPUWeight, 50, 1, maxCPUWeight)
+	if err != nil {
+		return Policy{}, err
+	}
 	return Policy{
 		Caps:             Caps{CPUs: cpus, MemoryGB: mem, IOJobs: ioJobs},
 		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMem},
 		StarveAfter:      time.Duration(starve) * time.Minute,
 		KeepFinished:     keep,
 		ReleasePastPeaks: s.ReleasePastPeaks == nil || *s.ReleasePastPeaks,
+		Contain:          s.Contain == nil || *s.Contain,
+		JobsCPUWeight:    weight,
 	}, nil
 }

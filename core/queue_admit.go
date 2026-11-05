@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -64,6 +65,9 @@ func (m *Model) admitJobs() {
 	waiting := map[sched.JobID]string{}
 	var start []sched.JobID
 	var spare map[sched.JobID]sched.Claim
+	if paused == "" {
+		m.maybeProbeConfiner(policy)
+	}
 	if paused != "" {
 		for i := range q.store.Jobs {
 			if q.store.Jobs[i].State == sched.Queued {
@@ -145,6 +149,11 @@ type jobStart struct {
 	hint      int // the CPU claim, which becomes the job's parallelism
 	runner    sched.Runner
 	handshake time.Duration
+	// The scope the shim creates (nil: uncontained), the confiner that
+	// ensures its slice first, and the slice's properties (cgroup spec §5).
+	scope    *sched.ScopeSpec
+	confiner sched.Confiner
+	slice    sched.SliceProps
 }
 
 // jobStarted is a start job's result: the shim's pid and start time, or why
@@ -158,6 +167,11 @@ type jobStarted struct {
 	// proof that it was alive, so its group got no SIGKILL: the model keeps it
 	// owed one (queueState.silent). 0 when nothing is owed.
 	owed int
+	// Confinement (cgroup spec §5): the scope and cgroup the shim reported,
+	// why the job runs uncontained, and a slice call that failed, which
+	// drops the confiner.
+	unit, cgroup, uncontained string
+	confineErr                error
 }
 
 // startJob admits job i of the store with spare added to its claim (job
@@ -176,11 +190,22 @@ func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.
 	}
 	q.starting[rec.ID] = true
 	delete(q.waiting, rec.ID)
+	hint := rec.Claim.Need(policy.Caps).CPUs
+	var scope *sched.ScopeSpec
+	rec.Unit, rec.Cgroup, rec.Uncontained = "", "", ""
+	if why := q.containWhy(policy); why != "" {
+		rec.Uncontained = why
+	} else {
+		scope = &sched.ScopeSpec{Unit: sched.ScopeName(q.dir, rec.ID, rec.Attempt), Slice: sched.SliceName(q.dir), CPUWeight: sched.CPUWeight(hint)}
+	}
 	m.spawnBackground(runJobStart(jobStart{
 		dir: q.jobDir(rec.ID), id: rec.ID, cwd: rec.Cwd,
-		hint:      rec.Claim.Need(policy.Caps).CPUs,
+		hint:      hint,
 		runner:    q.runner,
 		handshake: q.handshakeWait(),
+		scope:     scope,
+		confiner:  q.confiner,
+		slice:     sched.SliceProps{CPUWeight: uint64(policy.JobsCPUWeight), MemoryMaxBytes: uint64(policy.Caps.MemoryGB) << 30},
 	}))
 }
 
@@ -207,7 +232,17 @@ func runJobStart(s jobStart) Job {
 			res.err = fmt.Errorf("its spec could not be read: %w", err)
 			return res
 		}
-		spec.HintCPUs = s.hint
+		if s.scope != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), confineTimeout)
+			err := s.confiner.EnsureSlice(ctx, s.scope.Slice, s.slice)
+			cancel()
+			if err != nil {
+				res.confineErr = err
+				res.uncontained = "its slice could not be set: " + err.Error()
+				s.scope = nil
+			}
+		}
+		spec.HintCPUs, spec.Scope = s.hint, s.scope
 		if err := sched.WriteSpec(s.dir, spec); err != nil {
 			res.err = fmt.Errorf("its spec could not be written: %w", err)
 			return res
@@ -221,6 +256,10 @@ func runJobStart(s jobStart) Job {
 		for {
 			if st, err := sched.ReadStarted(s.dir); err == nil {
 				res.pid, res.started = st.PID, st.Started
+				res.unit, res.cgroup = st.Unit, st.Cgroup
+				if st.Uncontained != "" {
+					res.uncontained = st.Uncontained
+				}
 				return res
 			}
 			if !time.Now().Before(deadline) {
@@ -253,11 +292,17 @@ func (m *Model) deliverJobStarted(r jobStarted) {
 		// Whatever became of the record, the shim may still come up.
 		q.silent[r.id] = silentShim{pid: r.owed, since: time.Now()}
 	}
+	if r.confineErr != nil {
+		m.confinerFailed(r.confineErr)
+	}
 	i := q.index(r.id)
 	if i < 0 || q.store.Jobs[i].State != sched.Running {
 		return
 	}
 	rec := &q.store.Jobs[i]
+	if r.uncontained != "" {
+		rec.Uncontained = r.uncontained
+	}
 	if r.err != nil {
 		rec.Failure = r.err.Error()
 		state := sched.Failed
@@ -269,6 +314,7 @@ func (m *Model) deliverJobStarted(r jobStarted) {
 		return
 	}
 	rec.PID, rec.Started = r.pid, r.started
+	rec.Unit, rec.Cgroup = r.unit, r.cgroup
 	q.moved()
 	m.saveQueueQuiet("start")
 	if rec.CancelReason != "" {

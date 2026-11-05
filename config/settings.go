@@ -161,6 +161,11 @@ type SchedulerSettings struct {
 	// ReleasePastPeaks lets a running job's hold fall below its claim once
 	// its own past runs show its peaks are behind it; absent means true.
 	ReleasePastPeaks *bool `json:"release_past_peaks,omitempty"`
+	// Contain runs each job in its own systemd scope, with greedy admission
+	// and the ladder (cgroup spec §10); absent means true. JobsCPUWeight is
+	// the jobs slice's CPUWeight.
+	Contain       *bool `json:"contain,omitempty"`
+	JobsCPUWeight int   `json:"jobs_cpu_weight,omitempty"`
 }
 
 // AgentSettings is the scheduler block's "agent": the advisor, a headless
@@ -185,6 +190,7 @@ type ClaimSettings struct {
 func (s SchedulerSettings) clone() SchedulerSettings {
 	out := s
 	out.DefaultClaim = clonePtr(s.DefaultClaim)
+	out.Contain = clonePtr(s.Contain)
 	if s.Agent != nil {
 		a := *s.Agent
 		a.Enabled = clonePtr(s.Agent.Enabled)

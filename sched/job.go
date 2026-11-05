@@ -120,6 +120,10 @@ type Policy struct {
 	// ReleasePastPeaks lets a running job's hold fall below its claim once
 	// it is past its peaks (past-peak holds spec §8).
 	ReleasePastPeaks bool `json:"release_past_peaks"`
+	// Contain runs each job in its own scope, and JobsCPUWeight is the
+	// jobs slice's CPUWeight (cgroup spec §10).
+	Contain       bool `json:"contain"`
+	JobsCPUWeight int  `json:"jobs_cpu_weight"`
 }
 
 // Notice is the fate of a job's completion message to its owner's Claude.
@@ -191,6 +195,13 @@ type Record struct {
 	// Past-peak holds (spec 2026-11-05-past-peak-holds §5.4): its usage
 	// passed its lowered hold, so it held its claim from then on.
 	HoldBroke bool `json:"hold_broke,omitempty"`
+
+	// Confinement (cgroup spec §5): the scope it runs in and its cgroup, or
+	// why it runs uncontained; Attempt counts its earlier runs (§8.4).
+	Unit        string `json:"unit,omitempty"`
+	Cgroup      string `json:"cgroup,omitempty"`
+	Uncontained string `json:"uncontained,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record

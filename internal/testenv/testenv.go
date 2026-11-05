@@ -54,6 +54,15 @@ const (
 	EnvJob       = "LOOM_JOB"
 )
 
+// The session bus (cgroup spec §15, 14): IsolateLoomDirs points EnvDBus at a
+// socket that doesn't exist, so no test shim or confiner reaches the
+// developer's systemd, and keeps the real address in EnvRealDBus for the
+// opt-in live test (-tags systemd_live) alone.
+const (
+	EnvDBus     = "DBUS_SESSION_BUS_ADDRESS"
+	EnvRealDBus = "LOOM_TEST_REAL_DBUS"
+)
+
 // IsolateLoomDirs points LOOM_HOME, LOOM_GLOBAL_DIR, CLAUDE_CODE_TMPDIR and
 // CLAUDE_CONFIG_DIR at fresh paths under one new temporary directory, for
 // the rest of the process. HOME is left alone (git and other tools read
@@ -64,7 +73,9 @@ const (
 // inside it) is not, so it reads as absent and every archive operation is
 // a no-op unless a test makes one. It also clears LOOM_MOD_SOCKET,
 // LOOM_LAUNCH and LOOM_JOB, the links a loom session's environment holds to
-// the real daemon. Call it from TestMain before m.Run and run the returned
+// the real daemon, and points the session bus (EnvDBus) at a socket that
+// doesn't exist, keeping the real address in EnvRealDBus. Call it from
+// TestMain before m.Run and run the returned
 // cleanup after it. Tests that need directories of their
 // own still t.Setenv over these; the rest are isolated by default.
 func IsolateLoomDirs() (cleanup func(), err error) {
@@ -89,6 +100,16 @@ func IsolateLoomDirs() (cleanup func(), err error) {
 			_ = os.RemoveAll(dir)
 			return nil, fmt.Errorf("clear %s: %w", name, err)
 		}
+	}
+	if real := os.Getenv(EnvDBus); real != "" && os.Getenv(EnvRealDBus) == "" {
+		if err := os.Setenv(EnvRealDBus, real); err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, fmt.Errorf("keep %s: %w", EnvDBus, err)
+		}
+	}
+	if err := os.Setenv(EnvDBus, "unix:path="+filepath.Join(dir, "no-bus")); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("set %s: %w", EnvDBus, err)
 	}
 	return func() { _ = os.RemoveAll(dir) }, nil
 }

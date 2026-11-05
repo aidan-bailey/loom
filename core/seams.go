@@ -132,6 +132,24 @@ func (m *Model) SetJobRunnerForTest(r sched.Runner) {
 	m.queue.runner, m.queue.runnerErr = r, nil
 }
 
+// SetConfinerForTest installs c as the work queue's confiner (cgroup spec
+// §5): starts are contained through it, and no probe replaces it.
+func (m *Model) SetConfinerForTest(c sched.Confiner) {
+	if m.queue == nil {
+		m.queue = newQueueState()
+	}
+	m.queue.confiner, m.queue.confineErr, m.queue.lastProbe = c, nil, time.Now()
+}
+
+// SetCgroupRootForTest points the work queue's cgroup reads and kills at
+// root, a test's directory, in place of /sys/fs/cgroup.
+func (m *Model) SetCgroupRootForTest(root string) {
+	if m.queue == nil {
+		m.queue = newQueueState()
+	}
+	m.queue.cgroupRoot = root
+}
+
 // SetAdvisorForTest makes the work queue's advisor run program, a fake
 // claude, with each call bounded by timeout (0 keeps the default), whatever
 // Claude program the model has.

@@ -143,6 +143,21 @@ type queueState struct {
 	beliefsSaveFailed bool
 	// advisor is the scheduler's agent (smart scheduler spec §5.6).
 	advisor advisorState
+
+	// Confinement (cgroup spec §5): the user's service manager once a probe
+	// reached it, or why it couldn't; whether a probe is in flight and when
+	// the last one ran. cgroupRoot is sched.CgroupRoot but in tests. availKB
+	// is the host's MemAvailable and slice the jobs slice's reading, from
+	// the last pass; cgroupLogged holds, per running job, the cgroup read
+	// failure last logged.
+	confiner     sched.Confiner
+	confineErr   error
+	probing      bool
+	lastProbe    time.Time
+	cgroupRoot   string
+	availKB      int64
+	slice        *sched.CgroupSample
+	cgroupLogged map[sched.JobID]string
 }
 
 func newQueueState() *queueState {
@@ -157,6 +172,9 @@ func newQueueState() *queueState {
 		holding:    map[sched.JobID]sched.Need{},
 		unprobed:   map[sched.JobID]error{},
 		lockLogged: map[sched.JobID]string{},
+
+		cgroupRoot:   sched.CgroupRoot,
+		cgroupLogged: map[sched.JobID]string{},
 	}
 }
 
@@ -242,6 +260,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	m.loadAdvisorCalls()
 	m.markPendingNotices()
 	m.resolveHeld()
+	m.probeConfinerAtBoot()
 	m.adoptJobs()
 	m.admitJobs()
 	m.resumeAsks()

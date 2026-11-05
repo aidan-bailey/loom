@@ -3,6 +3,7 @@
 package sched
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -154,7 +155,11 @@ func RunShim(jobDir string) int {
 		// lock behind it). Running the command again would run the job twice.
 		return 1
 	}
-	if err := writeStarted(jobDir, Started{PID: os.Getpid(), Started: time.Now()}); err != nil {
+	st := Started{PID: os.Getpid(), Started: time.Now()}
+	if spec.Scope != nil {
+		st.Unit, st.Cgroup, st.Uncontained = joinScope(*spec.Scope)
+	}
+	if err := writeStarted(jobDir, st); err != nil {
 		return shimGiveUp(jobDir, fmt.Errorf("writing started.json: %w", err))
 	}
 
@@ -182,6 +187,35 @@ func RunShim(jobDir string) int {
 		}
 	}
 	return shimReport(jobDir, exit)
+}
+
+// scopeTimeout bounds the shim's scope creation: the daemon waits 5 s for
+// started.json.
+const scopeTimeout = 2 * time.Second
+
+// joinScope moves the shim into its scope before it starts the command, so
+// everything the command forks is inside (cgroup spec §5.1). It returns the
+// unit and the cgroup it landed in, or why it runs uncontained; the job runs
+// either way.
+func joinScope(s ScopeSpec) (unit, cgroup, why string) {
+	ctx, cancel := context.WithTimeout(context.Background(), scopeTimeout)
+	defer cancel()
+	c, err := NewConfiner(ctx)
+	if err != nil {
+		return "", "", err.Error()
+	}
+	defer c.Close()
+	if err := c.JoinScope(ctx, s, os.Getpid()); err != nil {
+		return "", "", err.Error()
+	}
+	path, err := SelfCgroup()
+	switch {
+	case err != nil:
+		return s.Unit, "", "its cgroup could not be read: " + err.Error()
+	case filepath.Base(path) != s.Unit:
+		return s.Unit, "", fmt.Sprintf("it is in %s, not its scope", path)
+	}
+	return s.Unit, path, ""
 }
 
 // lockExclusive takes an exclusive flock on f, waiting for it: the daemon's

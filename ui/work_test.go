@@ -428,6 +428,20 @@ func TestRenderWork_ShowsEachClaimsSourceAndWhyLearningIsOff(t *testing.T) {
 	assert.Contains(t, out, "agent off: no Claude program is configured")
 }
 
+func TestRenderWork_SaysWhyJobsRunUncontained(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:        sched.Host{Name: "fresco"},
+		Policy:      sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}},
+		Uncontained: "connect to the user's systemd: no bus",
+	}
+	out := ansi.Strip(RenderWork(120, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "uncontained: connect to the user's systemd: no bus")
+	q.Uncontained = ""
+	out = ansi.Strip(RenderWork(120, 30, WorkData{Queue: q, Now: now}))
+	assert.NotContains(t, out, "uncontained")
+}
+
 func TestRenderWork_ShowsETAsOverdueMarksAndForecasts(t *testing.T) {
 	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
 	q := core.QueueView{

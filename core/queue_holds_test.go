@@ -162,11 +162,14 @@ func TestJobQueue_AnAdoptedRunGetsNoProfile(t *testing.T) {
 // file's, as it keeps the agent block.
 func TestJobQueue_ACapsEditKeepsTheReleaseSwitch(t *testing.T) {
 	m := wqModel(t)
-	wqConfig(t, m, `{"cpus": 4, "release_past_peaks": false}`)
+	wqConfig(t, m, `{"cpus": 4, "release_past_peaks": false, "contain": false, "jobs_cpu_weight": 30}`)
 	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 6}))
 	got := config.LoadConfigFrom(m.queue.cfgDir).GetScheduler()
 	require.NotNil(t, got.ReleasePastPeaks, "the switch is still in the file")
 	assert.False(t, *got.ReleasePastPeaks)
 	assert.Equal(t, 6, got.CPUs)
 	assert.False(t, m.queue.policy.ReleasePastPeaks, "and in effect")
+	require.NotNil(t, got.Contain, "the cgroup keys too (cgroup spec §10)")
+	assert.False(t, *got.Contain)
+	assert.Equal(t, 30, got.JobsCPUWeight)
 }

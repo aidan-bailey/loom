@@ -12,7 +12,9 @@ require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/vt v0.0.0-20260615092313-b57e5e6d29bb
+	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/creack/pty v1.1.24
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-runewidth v0.0.23

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -52,6 +53,7 @@ func (m *Model) settledJob(i int) {
 	delete(q.holds, rec.ID)
 	delete(q.holding, rec.ID)
 	delete(q.lockLogged, rec.ID)
+	delete(q.cgroupLogged, rec.ID)
 	delete(q.waiting, rec.ID)
 	delete(q.starting, rec.ID)
 	q.moved()
@@ -109,19 +111,21 @@ func signalAlive(jobDir string, pgid int, sig syscall.Signal) (sent bool, err er
 // passJob is one record gateQueue looks at, copied from the store.
 type passJob struct {
 	id          sched.JobID
-	pid         int  // 0: not recorded yet
-	queued      bool // a queued record, probed at boot only
-	cancelled   bool // a cancel was requested
+	cgroup      string // its cgroup (cgroup spec §5.3); "" uncontained
+	pid         int    // 0: not recorded yet
+	queued      bool   // a queued record, probed at boot only
+	cancelled   bool   // a cancel was requested
 	signalledAt time.Time
 	silent      bool // not a record: a failed start's shim, still owed a SIGKILL (queueState.silent)
 }
 
 // queuePass is gateQueue's input: copies only, since its job runs off the loop.
 type queuePass struct {
-	dir      string
-	now      time.Time
-	escalate time.Duration
-	jobs     []passJob
+	dir        string
+	cgroupRoot string
+	now        time.Time
+	escalate   time.Duration
+	jobs       []passJob
 }
 
 // jobObs is what a pass saw of one job.
@@ -139,6 +143,9 @@ type jobObs struct {
 	cleared bool           // silent only: its SIGKILL went, or the shim is gone, so nothing is owed
 	// signalErr is why a signal failed.
 	signalErr error
+	// cg is its cgroup's reading, cgErr why it failed (cgroup spec §5.3).
+	cg    *sched.CgroupSample
+	cgErr error
 }
 
 // queuePassResult is gateQueue's result: what each job's lock and result
@@ -148,6 +155,10 @@ type queuePassResult struct {
 	obs       []jobObs
 	snap      *sched.Snapshot
 	sampleErr error
+	// The host's MemAvailable (0 when it could not be read) and the jobs
+	// slice's reading (nil when no contained job runs), cgroup spec §7.1.
+	availKB int64
+	slice   *sched.CgroupSample
 }
 
 // maybeQueue dispatches gateQueue's pass when it is due: nothing when no job
@@ -173,7 +184,7 @@ func (m *Model) maybeQueue() bool {
 // those owed for silentLimit.
 func (m *Model) queuePassFor(withQueued bool) queuePass {
 	q := m.queue
-	p := queuePass{dir: q.dir, now: time.Now(), escalate: q.escalateAfter()}
+	p := queuePass{dir: q.dir, cgroupRoot: q.cgroupRoot, now: time.Now(), escalate: q.escalateAfter()}
 	for id, s := range q.silent {
 		if p.now.Sub(s.since) >= silentLimit {
 			log.For("core").Warn("queue.silent_shim_given_up", "job", int64(id), "pid", s.pid)
@@ -186,7 +197,7 @@ func (m *Model) queuePassFor(withQueued bool) queuePass {
 		rec := &q.store.Jobs[i]
 		switch {
 		case rec.State == sched.Running && !q.starting[rec.ID]:
-			p.jobs = append(p.jobs, passJob{id: rec.ID, pid: rec.PID, cancelled: rec.CancelReason != "", signalledAt: rec.SignalledAt})
+			p.jobs = append(p.jobs, passJob{id: rec.ID, cgroup: rec.Cgroup, pid: rec.PID, cancelled: rec.CancelReason != "", signalledAt: rec.SignalledAt})
 		case withQueued && rec.State == sched.Queued:
 			p.jobs = append(p.jobs, passJob{id: rec.ID, queued: true})
 		}
@@ -224,6 +235,13 @@ func runQueuePass(p queuePass) queuePassResult {
 			if j.cancelled && !j.queued {
 				tendCancel(&ob, dir, j, p)
 			}
+			if j.cgroup != "" {
+				if cg, err := sched.ReadCgroup(p.cgroupRoot, j.cgroup); err == nil {
+					ob.cg = &cg
+				} else {
+					ob.cgErr = err
+				}
+			}
 		default:
 			ob.gone = true
 			if exit, err := sched.ReadExit(dir); err == nil {
@@ -240,6 +258,18 @@ func runQueuePass(p queuePass) queuePassResult {
 	}
 	if running {
 		res.snap, res.sampleErr = sample()
+		if kb, err := readMemAvailable(); err == nil {
+			res.availKB = kb
+		}
+		for _, j := range p.jobs {
+			if j.cgroup == "" {
+				continue
+			}
+			if s, err := sched.ReadCgroup(p.cgroupRoot, filepath.Dir(j.cgroup)); err == nil {
+				res.slice = &s
+			}
+			break
+		}
 	}
 	for i := range res.obs {
 		ob := &res.obs[i]
@@ -319,6 +349,12 @@ func tendCancel(ob *jobObs, dir string, j passJob, p queuePass) {
 		sent, err := signalAlive(dir, ob.pid, syscall.SIGKILL)
 		ob.signalErr = err
 		ob.killed = sent
+		if sent && j.cgroup != "" {
+			// What left the group is still in the scope (cgroup spec §15, 5).
+			if err := sched.CgroupKill(p.cgroupRoot, j.cgroup); err != nil {
+				ob.signalErr = errors.Join(ob.signalErr, err)
+			}
+		}
 	}
 }
 
@@ -331,6 +367,9 @@ func readStarted(jobDir string) (*sched.Started, int) {
 	}
 	return &st, st.PID
 }
+
+// readMemAvailable reads the host's MemAvailable; tests replace it.
+var readMemAvailable = sched.ReadMemAvailableKB
 
 // sample takes the one process sample of a pass, within sampleTimeout.
 func sample() (*sched.Snapshot, error) {
@@ -437,6 +476,12 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 			}
 		}
 	}
+	if r.availKB > 0 {
+		q.availKB = r.availKB
+	}
+	if r.slice != nil || r.snap != nil {
+		q.slice = r.slice
+	}
 	m.applyUsage(r)
 	m.refreshHolds(q.policy, time.Now())
 	switch {
@@ -494,6 +539,10 @@ func (m *Model) noteAlive(i int, ob jobObs, now time.Time) bool {
 	}
 	if ob.started != nil && rec.PID == 0 {
 		rec.PID, rec.Started, changed = ob.started.PID, ob.started.Started, true
+		rec.Unit, rec.Cgroup = ob.started.Unit, ob.started.Cgroup
+		if ob.started.Uncontained != "" {
+			rec.Uncontained = ob.started.Uncontained
+		}
 	}
 	if !ob.termAt.IsZero() && rec.SignalledAt.IsZero() {
 		rec.SignalledAt, changed = ob.termAt, true
@@ -539,17 +588,15 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 	m.finishJob(i, state, now)
 }
 
-// applyUsage turns the pass's sample into each running job's usage: its
-// session's memory now (the shim leads the job's session; sccache
+// applyUsage turns the pass's sample into each running job's usage: a
+// contained job's cgroup (its working set and its CPU, cgroup spec §5.3),
+// else its session's memory now (the shim leads the job's session; sccache
 // measurement spec §5.2), the peak so far, and the cores used since the last
 // sample; adds a point to the trace of a job not adopted, and breaks a hold
-// the usage passed (past-peak holds spec §5.1, §5.4). A pass whose sample
-// failed leaves the last values.
+// the usage passed (past-peak holds spec §5.1, §5.4). A job with neither
+// reading keeps its last values.
 func (m *Model) applyUsage(r queuePassResult) {
 	q := m.queue
-	if r.snap == nil {
-		return
-	}
 	for _, ob := range r.obs {
 		if ob.gone || ob.err != nil || ob.queued || ob.silent {
 			continue
@@ -559,10 +606,24 @@ func (m *Model) applyUsage(r queuePassResult) {
 			continue
 		}
 		rec := &q.store.Jobs[i]
-		if rec.State != sched.Running || rec.PID <= 1 {
+		if rec.State != sched.Running {
 			continue
 		}
-		rss, cpu, _ := r.snap.Session(rec.PID)
+		if ob.cgErr != nil && q.cgroupLogged[ob.id] != ob.cgErr.Error() {
+			log.For("core").Warn("queue.cgroup_read_failed", "job", int64(ob.id), "cgroup", rec.Cgroup, "err", ob.cgErr)
+			q.cgroupLogged[ob.id] = ob.cgErr.Error()
+		}
+		var rss int64
+		var cpu time.Duration
+		switch {
+		case ob.cg != nil:
+			rss, cpu = ob.cg.WorkingKB, ob.cg.CPU
+			delete(q.cgroupLogged, ob.id)
+		case r.snap != nil && rec.PID > 1:
+			rss, cpu, _ = r.snap.Session(rec.PID)
+		default:
+			continue
+		}
 		cores := 0.0
 		if mark, ok := q.cpuMarks[ob.id]; ok {
 			if dt := r.snap.Taken.Sub(mark.at); dt > 0 {

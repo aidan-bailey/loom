@@ -26,7 +26,7 @@
 
 Recorded in the spec (new §15) in Step 1.1:
 
-1. **Unit names carry a tag of the jobs directory and the attempt:** the slice is `loom-<tag>.slice` (under `loom.slice`) and a scope `loom-<tag>-job-<id>-<attempt>.scope`, the tag being 8 hex digits of the SHA-256 of the jobs directory. A loomdev sandbox under the same user manager never shares a name with the real daemon, and a requeued attempt never waits for its predecessor's scope to go. (§4, §5.1, §5.2)
+1. **Unit names carry a tag of the jobs directory and the attempt:** the slice is `loom_<tag>.slice` (directly under the user's manager: a dash would nest it in `loom.slice`, whose weight would be all the panes see) and a scope `loom-<tag>-job-<id>-<attempt>.scope`, the tag being 8 hex digits of the SHA-256 of the jobs directory. A loomdev sandbox under the same user manager never shares a name with the real daemon, and a requeued attempt never waits for its predecessor's scope to go. (§4, §5.1, §5.2)
 2. **`spec.json` carries the scope to create (`scope`),** written by the daemon at start when jobs are contained; without it the shim never touches the bus (fallback mode, and every test shim). (§5.1)
 3. **The shim writes the cgroup it landed in (`cgroup`, from `/proc/self/cgroup`) into `started.json`;** the daemon never asks D-Bus for a path. (§5.3)
 4. **Scopes set `CollectMode=inactive-or-failed`,** so a failed (OOM-killed) scope is collected at once. (§5.1)
@@ -317,8 +317,8 @@ func unitTag(jobsDir string) string {
 }
 
 // SliceName is the slice the jobs of the loom whose jobs directory is
-// jobsDir run in: loom-<tag>.slice, which systemd places under loom.slice.
-func SliceName(jobsDir string) string { return "loom-" + unitTag(jobsDir) + ".slice" }
+// jobsDir run in: loom_<tag>.slice, directly under the user's manager.
+func SliceName(jobsDir string) string { return "loom_" + unitTag(jobsDir) + ".slice" }
 
 // ScopeName is job id's scope for its attempt (0 for its first run):
 // loom-<tag>-job-<id>-<attempt+1>.scope.
@@ -1143,7 +1143,7 @@ func TestConfiner_Live(t *testing.T) {
 - [ ] `sched/README.md`: the new files and types (units, cgroup readers, confiner, the shim's join, `started.json`'s new fields, `spec.json`'s `scope`).
 - [ ] `sched/CLAUDE.md` rules: **Join the scope before the command starts (`joinScope` before `startCommand`), and run the command uncontained, with the reason in `started.json`, when the join fails.** A process moved after it forked leaves its children behind, and a job refused for want of a scope is work lost. **Convention** — a job half in its scope. **Write `cgroup.kill` only through `CgroupKill`, which refuses anything but a loom job's scope.** A kill of a parent cgroup reaches every process below it, the user's session included. **Enforced** by `TestCgroupKill_RefusesWhatIsNotAJobScope`.
 - [ ] `docs/claude/the-work-queue.md`: a rule: **Make every D-Bus call from a spawned job, never on the loop (`maybeProbeConfiner`, `runJobStart`), and drop the confiner after a failed call (`confinerFailed`).** A call that blocks on a wedged bus freezes every client. *Silent:* a frozen daemon.
-- [ ] `docs/ARCHITECTURE.md`: a line where the work queue is described: jobs run in `loom-<tag>.slice` scopes under the user's systemd.
+- [ ] `docs/ARCHITECTURE.md`: a line where the work queue is described: jobs run in `loom_<tag>.slice` scopes under the user's systemd.
 - [ ] Gates through the queue: `go vet ./...`, the full suite, `-race`, e2e, the Windows and darwin builds, `go run ./tools/claudemd`; `gofmt -l`.
 - [ ] Commit: `git add` the files of this package by path, then
 

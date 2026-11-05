@@ -70,13 +70,16 @@ func loadJSON(path string, v any) error {
 
 // Spec is spec.json: what the shim needs to run a job. It is written when the
 // job is submitted, so a queued job survives a restart, and rewritten with
-// HintCPUs when the job starts.
+// HintCPUs and Scope when the job starts.
 type Spec struct {
 	ID       JobID    `json:"id"`
 	Argv     []string `json:"argv"`
 	Cwd      string   `json:"cwd"`
 	Env      []string `json:"env"`
 	HintCPUs int      `json:"hint_cpus,omitempty"` // written when the job starts
+	// Scope is the scope the shim creates for the job (cgroup spec §5.1),
+	// written when it starts contained; nil runs it uncontained.
+	Scope *ScopeSpec `json:"scope,omitempty"`
 }
 
 // CreateJobDir makes the directory of job id under dir (mode 0700), and dir
@@ -120,6 +123,11 @@ func ReadSpec(jobDir string) (Spec, error) {
 type Started struct {
 	PID     int       `json:"pid"`
 	Started time.Time `json:"started"`
+	// Confinement (cgroup spec §5.1, §5.3): the scope it joined and the
+	// cgroup it landed in, or why it asked for a scope and runs without one.
+	Unit        string `json:"unit,omitempty"`
+	Cgroup      string `json:"cgroup,omitempty"`
+	Uncontained string `json:"uncontained,omitempty"`
 }
 
 // ReadStarted reads jobDir's started.json. The error for an absent file wraps

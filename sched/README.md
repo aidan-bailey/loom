@@ -27,6 +27,10 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `forecast.go` — `Forecast`.
 - `beliefs_view.go` — `BeliefQuery`, `BeliefView`, `ViewBelief`, `Track`, `TrackRecord`, `BeliefsPage`, `Belief.Clone`.
 - `belief_text.go` — `FormatBelief`, `RoughDuration`.
+- `units.go` — `SliceName`, `ScopeName`, `CPUWeight`: the systemd names and weights of a loom's jobs.
+- `cgroup.go` — `CgroupRoot`, `CgroupSample`, `ReadCgroup`, `CgroupKill`, `SelfCgroup`.
+- `meminfo_linux.go`, `meminfo_other.go` — `ReadMemAvailableKB`.
+- `confine.go`, `confine_linux.go`, `confine_other.go` — `ScopeSpec`, `SliceProps`, `Confiner`, `NewConfiner`: the user's systemd over D-Bus (go-systemd).
 - `testmain_test.go` — isolates the loom dirs for the package's tests.
 
 ## Jobs
@@ -70,10 +74,10 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 |---|---|
 | `beliefs.json` | `Beliefs`: `{"version": N, "beliefs": [...]}`, N being 2 while a belief's signature has a prerequisite part and 1 otherwise, so an older loom still reads a registry with none; at most 1,000 beliefs (least recently seen dropped), 20 runs and 5 notes each; the newest 5 runs of each carry their `profile` (`[until, level]` steps), and a run whose usage passed its hold says `hold_broke`. `LoadBeliefs` never writes, and leaves a file that fails to load (`ErrNewerBeliefs` for a newer version, an ID that is not its signature's, a repeat) as it is |
 | `jobs.json` | `Store`: `{"version": 1, "next_id": N, "jobs": [...]}`. `LoadStore` never writes, leaves a file that fails to load alone, reports a newer version as `ErrNewerStore`, and raises `next_id` past every ID in the file and past every numeric directory under the jobs dir (a missing `jobs.json` included), failing the load when the dir can't be listed |
-| `<id>/spec.json` | `Spec`: argv, cwd, the submitter's environment, and the parallelism the start hints |
+| `<id>/spec.json` | `Spec`: argv, cwd, the submitter's environment, the parallelism the start hints, and the scope to join (`scope`, when the job starts contained) |
 | `<id>/output.log` | the command's stdout and stderr |
 | `<id>/run.lock` | the shim's lock, held while the job runs |
-| `<id>/started.json` | `Started`: the shim's pid and start time |
+| `<id>/started.json` | `Started`: the shim's pid and start time, and the scope it joined with the cgroup it landed in (`unit`, `cgroup`), or why it runs uncontained (`uncontained`) |
 | `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, its CPU seconds, on Linux the bytes it read and wrote (from `/proc/self/io` after the shim reaps it), and the start error if the exec failed |
 
 `JobDir(dir, id)` is `<dir>/<id>`, `CreateJobDir` makes it only if it does not exist (a submit never writes into a directory it did not create), and `RemoveJobDir` removes it when retention drops a finished job.
@@ -96,7 +100,7 @@ The process half of the package: it starts a job's runner, tests whether the run
 **The shim.** `loom job-shim <job dir>` (`job_shim.go` in the root package) calls `RunShim`. The daemon starts it with `Runner.Start` as `<loom> job-shim <job dir>`, a child in a session of its own (`Setsid`), so it leads a process group whose id is its pid. Its stdin is `/dev/null`, and its stdout and stderr are appended to `output.log`. It:
 1. refuses to run unless it leads its group;
 2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, so the command and its children inherit both;
-3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock, and writes `started.json`;
+3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock; when `spec.json` names a scope, joins it (`joinScope`: `StartTransientUnit` with its own pid, in the slice, with `CPUWeight` from the claim, `OOMPolicy=kill` and `CollectMode=inactive-or-failed`, bounded by 2 s), and runs uncontained, saying why, when it can't; and writes `started.json`;
 4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the hints (`Hints`: the parallelism variables, and `SCCACHE_CLIENT_SIDE=1`, so sccache runs each compile in its client, inside the job's tree, rather than in its shared daemon), found on that environment's `PATH`;
 5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; a SIGTERM that arrives before the command starts is not checked for, since Go delivers signals asynchronously and no check is reliable; the command starts anyway and the daemon's SIGKILL escalation, 10 s after the cancel, ends it and the job settles as cancelled;
 6. writes `exit.json` (a signal ends a job with code -1 and the name `unix.SignalName` gives it, a command that cannot be executed with code 127 and the error) and returns, which releases the lock.
@@ -106,6 +110,8 @@ A shim that cannot run the job writes an `exit.json` with code 127 and the reaso
 **Asking about a job.** `Probe` is a non-blocking `flock` test of `run.lock`, released at once: held means the shim lives, free means it is gone, and no `run.lock` yet also reads free, since no shim has taken it. `SignalGroup(pgid, sig)` is `kill(-pgid, sig)`; it refuses a pgid of 1 or below and the caller's own group, and answers `ESRCH` for a group that is gone. Neither proves that a group is still the job's: the caller does, with the lock held, or with a `Sample` showing members in the group and no process holding the shim's pid.
 
 **Usage.** On Linux `Sample` reads `/proc/<pid>/stat` for every process (`parseProcStat`): its group, its session, its resident memory, and its CPU time with its waited-for children's, so a session's sum keeps the processes reaped inside it and a short-lived compile still counts ([spec](../docs/superpowers/specs/2026-11-05-sccache-measurement-design.md)). Elsewhere it runs `ps -A -o pid=,pgid=,rss=,time=` once, and `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), with a process's session taken to be its group. A record it cannot read fails the whole sample. `Snapshot.Session(sid)` sums a session's memory and CPU time and counts its members: a job's usage, since the shim leads its session and a child that changes group (coreutils `timeout`) stays in it. `Snapshot.Group(pgid)` does the same for a group and says whether any process has the group's id as its pid: the lost-job proof, since a signal reaches the group. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or the sysctl `hw.memsize` through `unix.SysctlUint64`); a RAM it cannot read stays 0.
+
+**Confinement** ([spec](../docs/superpowers/specs/2026-11-05-cgroup-greedy-scheduler-design.md)). On Linux a job's shim joins a systemd scope of its own, `loom-<tag>-job-<id>-<attempt>.scope`, in its loom's slice, `loom_<tag>.slice`, the tag being 8 hex digits of the SHA-256 of the jobs directory (`SliceName`, `ScopeName`); the slice has no dash, so it sits directly under the user's manager beside the agents' panes. `Confiner` is the user's systemd as the daemon drives it (`JoinScope`, `EnsureSlice`, `SetMemoryHigh`, `Freeze`, `Thaw`); every call waits on D-Bus. `ReadCgroup` reads a cgroup's working set (`memory.current` less `inactive_file`), `memory.high`, CPU (`usage_usec`), pressure (`some` avg10), `oom_kill` and `cgroup.events`, refusing a path that is not clean and absolute; `CgroupKill` writes `cgroup.kill` only for a loom job's scope.
 
 **Windows.** The stubs answer `ErrUnsupported`: sessions, process groups and `flock` have no counterpart here.
 

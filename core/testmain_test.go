@@ -18,6 +18,10 @@ func TestMain(m *testing.M) {
 	// (sched.TestRunner): a process the runner marked hands over to the shim
 	// before anything else runs.
 	sched.MaybeRunTestShim()
+	// No probe for the user's systemd (cgroup spec §5.5): a test that wants
+	// contained starts installs a fake with SetConfinerForTest, and a probe
+	// would add a background job to every count the tests make.
+	newConfiner = nil
 	os.Exit(runTests(m))
 }
 

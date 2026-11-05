@@ -515,6 +515,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverQueuePass(msg)
 	case jobStarted:
 		m.deliverJobStarted(msg)
+	case confinerProbed:
+		m.deliverConfinerProbed(msg)
 	case advisorResult:
 		m.deliverAdvisor(msg)
 	case groupResult:

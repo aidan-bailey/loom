@@ -175,6 +175,24 @@ func TestRunShim_ReportsTheCommandsExit(t *testing.T) {
 	}
 }
 
+// TestRunShim_RunsUncontainedWhenItCannotJoinItsScope: a scope the shim
+// cannot create leaves the job running, with the reason in started.json.
+// The test binary's session bus is dead (testenv.IsolateLoomDirs), so the
+// join fails.
+func TestRunShim_RunsUncontainedWhenItCannotJoinItsScope(t *testing.T) {
+	spec := shimSpec(t, []string{"true"})
+	spec.Scope = &ScopeSpec{Unit: "loom-00000000-job-1-1.scope", Slice: "loom-00000000.slice", CPUWeight: 100}
+	dir := writeShimJob(t, spec)
+	startShim(t, dir)
+	exit := awaitShimExit(t, dir)
+	assert.Equal(t, 0, exit.Code, "the job ran")
+	st, err := ReadStarted(dir)
+	require.NoError(t, err)
+	assert.Empty(t, st.Unit)
+	assert.Empty(t, st.Cgroup)
+	assert.NotEmpty(t, st.Uncontained, "why it runs uncontained")
+}
+
 func TestRunShim_HoldsTheLockWhileTheCommandRuns(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	dir := shimJob(t, shimReadyThen(ready, "exec sleep 30"))

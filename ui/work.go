@@ -196,6 +196,10 @@ func RenderWork(width, height int, d WorkData) string {
 			out = append(out, " "+workDimStyle.Render(line))
 		}
 	}
+	if reported && q.Uncontained != "" {
+		// Jobs start without their own cgroup (cgroup spec §5.5).
+		out = append(out, " "+workDimStyle.Render("uncontained: "+CleanText(q.Uncontained)))
+	}
 
 	rows := WorkRows(q.Jobs)
 	var selected core.JobView
