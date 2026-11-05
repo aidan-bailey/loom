@@ -48,6 +48,10 @@ const tmuxTimeout = 5 * time.Second
 // process and may be slower than other tmux commands.
 const tmuxStartTimeout = 10 * time.Second
 
+// sessionAppearTimeout is how long Start polls for the new session to
+// exist after `new-session` returned. A variable so a test need not sleep it.
+var sessionAppearTimeout = 2 * time.Second
+
 // pumpWaitTimeout bounds how long lifecycle methods (Close, Restore,
 // PausePreview) will wait for the output-pump goroutine to drain after
 // ptmx.Close. The pump exits on any Read error, so in the common case

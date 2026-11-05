@@ -1,13 +1,16 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
@@ -420,4 +423,57 @@ func TestLinkedWorktreeOf_ALockedTreeIsNotMoved(t *testing.T) {
 	runGit(t, repoDir, "worktree", "lock", worktreePath)
 
 	assert.False(t, linkedWorktreeOf(repoDir, worktreePath))
+}
+
+// TestRunGit_FailureErrorIsBounded pins the 2026-10-22 log: a `git diff`
+// that printed a whole diff and then died ("fatal: unable to stat …") put
+// all of it, 1.6 MB, into the error string, and so into serve.log through
+// diff_stats_update_failed. The error keeps the start and the end of what
+// git printed (the cause is usually at the end of combined output) and
+// says how much it dropped.
+func TestRunGit_FailureErrorIsBounded(t *testing.T) {
+	huge := strings.Repeat("+a line of somebody's diff\n", 60_000) // ~1.6 MB
+	out := "diff --git a/x b/x\n" + huge + "fatal: unable to stat 'x.tmp.1.2': No such file or directory"
+	fail := func(*exec.Cmd) ([]byte, error) { return []byte(out), errors.New("exit status 128") }
+	gw := NewGitWorktreeFromStorageWithRunner("/repo", "/repo/.loom/wt", "s", "b", "", false, t.TempDir(),
+		cmd_test.MockCmdExec{CombinedOutputFunc: fail, OutputFunc: fail})
+
+	_, err := gw.runGitCommand("/repo", "diff", "abc")
+
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), 4096, "the error must not carry git's whole output")
+	assert.Contains(t, err.Error(), "diff --git a/x b/x", "the start of the output is kept")
+	assert.Contains(t, err.Error(), "fatal: unable to stat 'x.tmp.1.2'", "the cause at the end is kept")
+	assert.Contains(t, err.Error(), "bytes omitted")
+	assert.Contains(t, err.Error(), "exit status 128", "the wrapped exit error is still named")
+}
+
+// TestRunGit_ShortFailureOutputIsUnchanged: the callers that classify git's
+// English errors (isBranchAbsentErr, …) read the message verbatim, so a
+// short one must pass through untouched.
+func TestRunGit_ShortFailureOutputIsUnchanged(t *testing.T) {
+	fail := func(*exec.Cmd) ([]byte, error) {
+		return []byte("error: branch 'foo' not found.\n"), errors.New("exit status 1")
+	}
+	gw := NewGitWorktreeFromStorageWithRunner("/repo", "/repo/.loom/wt", "s", "b", "", false, t.TempDir(),
+		cmd_test.MockCmdExec{CombinedOutputFunc: fail, OutputFunc: fail})
+
+	_, err := gw.runGitCommand("/repo", "branch", "-D", "foo")
+
+	require.Error(t, err)
+	assert.Equal(t, "git command failed: error: branch 'foo' not found. (exit status 1)", err.Error())
+}
+
+// TestBoundOutput_NeverCutsACharacterInTwo: both cut points land inside a
+// two-byte character here, and a split one would put invalid UTF-8 into the
+// log record.
+func TestBoundOutput_NeverCutsACharacterInTwo(t *testing.T) {
+	out := "x" + strings.Repeat("é", 3000) + "y"
+
+	got := boundOutput(out)
+
+	assert.True(t, utf8.ValidString(got), "bounded output must stay valid UTF-8")
+	assert.Contains(t, got, "bytes omitted")
+	atLimit := out[:maxFailureOutput]
+	assert.Equal(t, atLimit, boundOutput(atLimit), "output at the limit is untouched")
 }
