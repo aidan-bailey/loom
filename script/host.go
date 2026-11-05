@@ -112,6 +112,10 @@ type Host interface {
 	// submitted with loom job, over the whole host) and the focus or
 	// overview layout it was entered from. Not persisted.
 	ToggleWorkView()
+	// ToggleFeedbackView flips between the feedback view (the notes loom's
+	// session agents filed about loom, over the whole host) and the focus
+	// or overview layout it was entered from. Not persisted.
+	ToggleFeedbackView()
 	ResizeSplitUp()
 	ResizeSplitDown()
 

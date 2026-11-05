@@ -27,6 +27,7 @@ type fakeHost struct {
 	toggleTerminalPaneCalls int
 	toggleOverviewCalls     int
 	toggleWorkViewCalls     int
+	toggleFeedbackViewCalls int
 	resizeSplitUpCalls      int
 	resizeSplitDownCalls    int
 }
@@ -87,6 +88,7 @@ func (f *fakeHost) ToggleRail()         { f.toggleRailCalls++ }
 func (f *fakeHost) ToggleTerminalPane() { f.toggleTerminalPaneCalls++ }
 func (f *fakeHost) ToggleOverview()     { f.toggleOverviewCalls++ }
 func (f *fakeHost) ToggleWorkView()     { f.toggleWorkViewCalls++ }
+func (f *fakeHost) ToggleFeedbackView() { f.toggleFeedbackViewCalls++ }
 func (f *fakeHost) ResizeSplitUp()      { f.resizeSplitUpCalls++ }
 func (f *fakeHost) ResizeSplitDown()    { f.resizeSplitDownCalls++ }
 

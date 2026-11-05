@@ -72,6 +72,7 @@ Loom has four view modes:
 - **Overview mode** — a full-width fleet card grid for triaging many sessions at once. See [Overview Mode](#overview-mode).
 - **Session workbench** — a single-session deep-dive: the agent pane on the left, a tabbed panel (markdown / diff / files / terminal / review) on the right. Press `enter` in focus mode to open it. See [Session Workbench](#session-workbench).
 - **Work view** — the host's job queue, across every workspace. Press `w` in focus or overview mode to open it; `w` or `Esc` returns to the mode it came from. It is not persisted: a restarted TUI opens in focus or overview as before. See [The Work Queue](#the-work-queue).
+- **Feedback view** — the notes loom's session agents filed about loom itself, grouped into threads and ranked by how many sessions hit each. Press `F` in focus or overview mode to open it; `F` or `Esc` returns. While threads are open, the status line starts `F feedback N ·`. See [Feedback from Sessions](#feedback-from-sessions).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -334,6 +335,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
 | `w` | Open the work view: the host's job queue (see [The Work Queue](#the-work-queue)) |
+| `F` | Open the feedback view: the notes sessions filed about loom (see [Feedback from Sessions](#feedback-from-sessions)) |
 | `S` | Open settings (edit the workspace's config.json: Default Program, Branch Prefix, Base Branch, Profiles, Claude Preferences, Theme; Build Sweep, which applies to all workspaces; Accounts) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
@@ -352,6 +354,7 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 | `Enter` | Return to focus mode on the selected session, switching to its workspace tab |
 | `Esc` / `Tab` | Return to focus mode where you left it |
 | `w` | Open the work view; `w` or `Esc` there returns to the overview |
+| `F` | Open the feedback view; `F` or `Esc` there returns to the overview |
 | `z` | Collapse/expand the active workspace group |
 | `]` / `[` | Move the cursor to the next/previous agent waiting for input, in any open workspace |
 | `n` / `N` / `I` | Drop to focus mode, then open the create flow |
@@ -396,6 +399,18 @@ The work view covers the whole host, across every workspace. Mouse input is drop
 | `o` | Focus the job's owner session in focus mode, opening its workspace's tab if it is not open. A job whose owner is in the global workspace, which no open tab shows, is left alone: `o` changes nothing and says so on the info line |
 | `e` | Open the caps form: the cores, memory and I/O caps, the default claim, the starvation wait and how many finished jobs to keep. It shows each value in effect, whether it is the host's default, and the host's detected cores and RAM; saving applies it at once, and a refused value is shown in the form |
 | `w` / `Esc` | Return to the mode the view came from |
+
+### Feedback View (after pressing `F`)
+
+The feedback view covers the whole host. Its rows are the threads that aren't closed and the notes no thread holds yet (`n12`), most-reported first; the header says when the grouper is off and why. Mouse input is dropped, and offline `x` and `c` are refused.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k`, `↓` / `j` | Move the selection |
+| `Enter` | Show or hide the selected row's notes: who filed each, on what model and effort, the loom build, its title and its text's first lines |
+| `x` | Start a fix session for the selected thread in `feedback.workspace`, after a confirmation; the view leaves for focus, where the new session attaches |
+| `c` | Close the selected thread, after a confirmation |
+| `F` / `Esc` | Return to the mode the view came from |
 
 ### Name Entry Mode (after pressing `n` or `N`)
 
@@ -923,6 +938,37 @@ loom job agent                              # the scheduler's agent: its state, 
 - **The work view.** `w` shows the host's caps, what the running jobs claim and use, the running, queued and recent jobs, and the selected job's log tail (keys: [Work View](#work-view-after-pressing-w)). A session's card in the rail and the overview shows `⚙ job 14` (with `+N` for more running) or `⚙ queued`.
 - **Files.** Everything is under `~/.loom/jobs/`: `jobs.json`, `beliefs.json` (what each command measured, at most 1,000 commands and 20 runs each) and, per job, `<id>/output.log` (no size cap; `keep_finished` bounds how many finished jobs are kept). A `jobs.json` the daemon cannot read is left untouched and the queue refuses submissions, saying why; a `beliefs.json` it cannot read is left untouched too, and jobs take the default claim until it is fixed (`learning off` in `loom job list` and the work view).
 
+### Feedback from Sessions
+
+Loom's session agents use loom's own tooling (`loom session`, `loom job`, the daemon) and are the first to hit its rough edges. Loom's Claude context asks every agent, subagents included, to file a note when loom's tooling fails, surprises it, contradicts what the context says, or lacks something it needed:
+
+```
+loom feedback add --kind bug --title "loom job run: --after refuses another session's job" \
+  --text "Ran loom job run --after 14 -- go test ./...; it said no such job 14, though loom job list shows it"
+```
+
+The daemon records which session filed it (title, workspace, branch, subagent), the session's model and effort, its loom build and where its transcript is; none of that comes from the note's text. A headless `claude -p` (Haiku at low effort, with the scheduler agent's lockdown) files each note into the open thread about the same problem, or opens a new one, so recurrence shows: `loom feedback list` ranks threads by how many sessions hit each. A closed thread is never reopened: a problem that comes back opens a new thread.
+
+```
+loom feedback list [--all] [--json]   # threads and loose notes, most-reported first
+loom feedback show 3                  # a thread with every note; show n12 for one note
+loom feedback fix 3 [-w loom]         # start a session that fixes it, prompted with every note
+loom feedback close 3
+```
+
+`fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix` and `close` are yours. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
+
+```json
+{
+  "feedback": {
+    "workspace": "loom",
+    "grouper": { "enabled": true, "model": "haiku", "effort": "low", "account": "" }
+  }
+}
+```
+
+`grouper` takes the scheduler agent's fields and bounds (`wait_seconds` aside). A failed call leaves the note ungrouped, shown as its own row and retried 10 minutes later; three failed calls in a row pause the grouper until the daemon restarts or the block changes. With the grouper off, notes stay ungrouped rows.
+
 ### Session Recovery (orphaned worktrees)
 
 If Loom crashes or its state file loses track of a session, the worktree
@@ -1077,6 +1123,7 @@ loom [command]
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
+| `feedback` | File, list, show, fix and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -1127,6 +1174,16 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `job logs <id> [--tail <n>] [-f]` | Print the job's output, all of it or the last `n` lines; `-f` follows until the job ends |
 | `job list [--all]` | The running and queued jobs, with why each waits; `--all` adds the finished ones kept |
 | `job cancel <id>` | Cancel a queued or running job; refused for a finished one |
+
+### Feedback Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `feedback add --kind <bug\|friction\|missing\|docs> --title <t> (--text <x> \| --file <f>)` | File a note from inside a session loom launched (it reads `$LOOM_LAUNCH`, and the effort from `$CLAUDE_EFFORT`); prints `[loom] feedback n12 filed`. Refused outside a session, and for a title over 120 characters or a text over 20,000 bytes |
+| `feedback list [--all] [--json]` | The threads that aren't closed and the notes no thread holds, by how many sessions reported each, then the latest note; `--all` adds closed threads |
+| `feedback show <thread \| nN>` | A thread with every note in full, or one note |
+| `feedback fix <thread> [-w <workspace>]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there) |
+| `feedback close <thread>` | Close a thread |
 
 ### Web Subcommands
 
@@ -1435,6 +1492,8 @@ Workspaces provide per-repository isolation. Each workspace gets its own config,
   workspaces.json                    ← Workspace registry
   loom.lock                          ← The daemon's lock (its pid, socket and build)
   logs/serve.log                     ← The daemon's log
+  jobs/                              ← The work queue (jobs.json, beliefs.json, advisor.jsonl, one folder per job)
+  feedback/                          ← The feedback inbox (feedback.json, grouper.jsonl)
   worktrees/
 
 ~/projects/my-app/.loom/     ← Workspace-scoped

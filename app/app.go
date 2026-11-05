@@ -106,6 +106,11 @@ const (
 	// (work.go). Entered from focus or overview and left for the one it came
 	// from. Never persisted.
 	viewWork
+	// viewFeedback is the host-wide feedback inbox: the notes loom's
+	// session agents filed about loom, ranked by thread (feedback.go).
+	// Entered from focus or overview and left for the one it came from.
+	// Never persisted.
+	viewFeedback
 )
 
 // overviewCursor is the fleet overview's selection in domain coordinates.
@@ -183,6 +188,10 @@ type home struct {
 	// queue is the work queue as last published (core.QueueChanged): what
 	// the work view draws. The zero view until the first event.
 	queue core.QueueView
+	// feedback is the feedback inbox as last published
+	// (core.FeedbackChanged): what the feedback view draws. The zero view
+	// until the first event.
+	feedback core.FeedbackView
 	// initCmd holds the Cmds startHome drained from the model before the
 	// program ran (an error notice's hide timer); Init returns them.
 	initCmd tea.Cmd
@@ -374,6 +383,8 @@ type home struct {
 	// work is the work view's own state (work.go): the selection, the log
 	// tail and the pager. The jobs it shows are home.queue's.
 	work workState
+	// fb is the feedback view's own state (feedback.go).
+	fb fbState
 
 	// listWidth is the current rendered width of the left list panel
 	// (= int(lastWidth * ListWidthPercent)). Cached for mouse-wheel
@@ -559,6 +570,8 @@ func (m *home) applyUIPrefs() {
 	switch {
 	case m.viewMode == viewWork:
 		m.work.from = mode
+	case m.viewMode == viewFeedback:
+		m.fb.from = mode
 	case mode == viewOverview:
 		m.enterOverview()
 	default:
@@ -724,7 +737,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // update is Update's message handler.
 func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.dropWorkMouse(msg) {
+	if m.dropWorkMouse(msg) || m.dropFeedbackMouse(msg) {
 		return m, nil
 	}
 	switch msg := msg.(type) {
@@ -1669,7 +1682,7 @@ func (m *home) instanceChanged() tea.Cmd {
 	// clears when the user actually drops into focus on the card —
 	// the enter/esc handlers flip viewMode to viewFocus before calling
 	// instanceChanged, so the landing itself performs the clear.
-	if selected != nil && m.viewMode != viewOverview && m.viewMode != viewWork {
+	if selected != nil && m.viewMode != viewOverview && m.viewMode != viewWork && m.viewMode != viewFeedback {
 		delete(m.bells, selected.ID)
 		selected.Bell = false // the copy the panes and menu get below
 	}
@@ -2001,6 +2014,8 @@ func (m *home) View() tea.View {
 		mainContent = m.overview.Render(m.overviewData())
 	} else if m.viewMode == viewWork {
 		mainContent = m.workContent()
+	} else if m.viewMode == viewFeedback {
+		mainContent = m.feedbackContent()
 	} else if m.viewMode == viewWorkbench && m.state != stateFileExplorer {
 		// Workbench: agent split (terminal hidden) left, tabbed content
 		// panel right. The rail is not rendered — listWidth is zeroed by
@@ -2054,6 +2069,11 @@ func (m *home) View() tea.View {
 			hint = "esc focus · 1-5 panel · e edit · f follow · i attach · ] next waiting · q quit"
 		} else if m.viewMode == viewWork {
 			hint = m.workHint()
+		} else if m.viewMode == viewFeedback {
+			hint = m.feedbackHint()
+		}
+		if m.viewMode == viewFocus || m.viewMode == viewOverview {
+			hint = m.feedbackBadge() + hint
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())
@@ -2143,7 +2163,7 @@ func (m *home) attachCursor(v *tea.View) {
 	// The overview grid and the work view have no pane content on screen — a
 	// hardware cursor positioned from the hidden split layout would float
 	// over arbitrary cells.
-	if m.viewMode == viewOverview || m.viewMode == viewWork {
+	if m.viewMode == viewOverview || m.viewMode == viewWork || m.viewMode == viewFeedback {
 		return
 	}
 	// Workbench: only the agent split (left column, x-offset 0) shows a
