@@ -49,7 +49,10 @@ Live, on Claude Code 2.1.318, 2026-11-05. Each probe ran a `claude -p` with loom
 - A plugin's `$.session.send({ to: { agentId }, text })` to a finished subagent returns `{ isDelivered: true }`. The subagent resumes with its context intact and its reply reaches the parent as a task notification, which starts a parent turn. This held whether the send ran mid-turn (inside a parent's `tool.call`) or as the parent's turn ended (`turn.complete`).
 - A send to an ID with no transcript returns `{ isDelivered: false, reason: "Agent '…' could not be resumed: No transcript found for agent ID …" }` and doesn't throw.
 - `requestMeta`, the one side channel `tool.call` offers, reaches MCP tools only.
-- Not probed yet: a send while the subagent is still running (the API says the message waits in its queue), and a send after Claude restarts with `--resume` (resuming reads the transcript from disk). §12's gate covers both.
+- **A send to a subagent that is still running** returns `{ isDelivered: true }` at once; the probe sent 4 s into a 15 s Bash call. The message reaches the subagent when its current tool call returns, before its next model step. Claude Code frames it as from "the coordinator" and appends "Address this before completing your current task." The subagent handled it in the same turn: no resume, and no extra parent turn.
+- **A send after Claude restarts with `--resume`** to a subagent of the earlier process returns `{ isDelivered: true }`. The subagent resumes from its transcript with its context intact, and its reply reaches the resumed parent as a task notification. A relaunch that starts a new conversation instead has no such transcript, so the send fails and the parent copy goes out (§5.3).
+
+These last two are §12's gate, run 2026-11-05 after the spec was first written. Both passed, and nothing in §5 changed.
 
 ## 5. Behaviour
 
@@ -184,11 +187,7 @@ The sentence commit 2443acc1 added to `session/loom_context_shared.md` is replac
 
 ## 12. Testing
 
-The gate before building: probe the two open premises live, as §4's probes ran:
-- a send to a subagent that is still running: where it lands, and whether its turn takes it;
-- a send after Claude restarts with `--resume`.
-
-If either fails, settle it in this spec before building.
+The gate before building was to probe two open premises live, as §4's probes ran: a send to a subagent that is still running, and a send after Claude restarts with `--resume`. Both passed on 2026-11-05 (§4).
 
 Go:
 - **`core`, attribution:**
@@ -221,6 +220,6 @@ Opt-in, real Claude (`LOOM_TEST_REAL_CLAUDE=1`):
 
 - A submit loom can't see go to the parent as today: one inside a script, a background shell or the passes of a loop beyond its pattern matches.
 - Agent-team teammates carry an `agentId` the mod sees, and `$.session.send` reaches a live one, but this design is untested with them.
-- Resuming a finished subagent costs a subagent turn and then a parent turn. The owner chose this over the parent taking results once the subagent has finished.
+- Resuming a finished subagent costs a subagent turn and then a parent turn. A subagent still running takes the message in its current turn, at no extra cost (§4). The owner chose this over the parent taking results once the subagent has finished.
 - The phone app's job views, if it gains any, should show `Agent` as §8 does.
 - Sending heavy commands to the queue automatically, by denying a direct run with a pointer to `loom job run`, is a separate feature.
