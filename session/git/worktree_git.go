@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
@@ -198,14 +199,40 @@ func (g *GitWorktree) runGitCore(extraEnv []string, timeout time.Duration, stdou
 		// Debug because many callers intentionally ignore "branch not found" /
 		// "worktree doesn't exist" errors. Elevating to Warn would spam. Callers
 		// that want Warn/Error semantics do so at their layer.
-		log.For("git").Debug("git.cmd.failed", "cmd", strings.Join(args, " "), "path", path, "duration_ms", time.Since(t0).Milliseconds(), "err", err.Error(), "output", strings.TrimSpace(string(output)))
-		return "", fmt.Errorf("git command failed: %s (%w)", strings.TrimSpace(string(output)), err)
+		out := boundOutput(strings.TrimSpace(string(output)))
+		log.For("git").Debug("git.cmd.failed", "cmd", strings.Join(args, " "), "path", path, "duration_ms", time.Since(t0).Milliseconds(), "err", err.Error(), "output", out)
+		return "", fmt.Errorf("git command failed: %s (%w)", out, err)
 	}
 	if gitOkEvery.ShouldLog() {
 		log.For("git").Debug("git.cmd.ok", "cmd", strings.Join(args, " "), "path", path, "duration_ms", time.Since(t0).Milliseconds())
 	}
 
 	return string(output), nil
+}
+
+// maxFailureOutput bounds the git output an error carries: callers wrap
+// these errors into log records, and a `git diff` that printed a whole diff
+// before dying once made one record 1.6 MB.
+const maxFailureOutput = 2048
+
+// boundOutput is out when it fits maxFailureOutput, else its first and last
+// halves around a count of the bytes dropped. Git's cause (a "fatal:" line)
+// sits at the start of a bare failure and at the end of combined output
+// that already printed stdout, so both ends are kept.
+func boundOutput(out string) string {
+	if len(out) <= maxFailureOutput {
+		return out
+	}
+	half := maxFailureOutput / 2
+	head, tail := out[:half], out[len(out)-half:]
+	// Do not cut a multi-byte character in two.
+	if r, size := utf8.DecodeLastRuneInString(head); r == utf8.RuneError && size <= 1 {
+		head = head[:len(head)-1]
+	}
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return fmt.Sprintf("%s\n… [%d bytes omitted] …\n%s", head, len(out)-len(head)-len(tail), tail)
 }
 
 // PushChanges commits and pushes changes in the worktree to the remote branch
