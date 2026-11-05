@@ -63,15 +63,16 @@ func (m *Model) saveBeliefsQuiet(after string) {
 	q.beliefsSaveFailed = false
 }
 
-// jobSignature is the signature of argv run in cwd, or why there is none
-// (spec §5.1). It reads git's files, never runs git, so the loop can call it.
-func jobSignature(argv []string, cwd string) (*sched.Signature, string) {
-	repo, folder, err := sched.FindRepo(cwd)
+// jobSignature is the signature of argv run in cwd with the checkout it
+// runs in, or why there is none (spec §5.1). It reads git's files, never
+// runs git, so the loop can call it.
+func jobSignature(argv []string, cwd string) (sig *sched.Signature, checkout, unsized string) {
+	repo, folder, checkout, err := sched.FindRepo(cwd)
 	if err != nil {
-		return nil, err.Error()
+		return nil, "", err.Error()
 	}
-	sig := sched.NewSignature(repo, folder, argv)
-	return &sig, ""
+	s := sched.NewSignature(repo, folder, argv)
+	return &s, checkout, ""
 }
 
 // beliefOf is the belief of signature id, nil for none: no signature,

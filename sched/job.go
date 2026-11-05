@@ -152,7 +152,8 @@ type Record struct {
 	// a build before sizing, whose claim is left as it was.
 	Asked     Claim        `json:"asked,omitzero"`
 	Signature SignatureID  `json:"signature,omitempty"`
-	Unsized   string       `json:"unsized,omitempty"` // why the job has no signature
+	Checkout  string       `json:"checkout,omitempty"` // the working tree's top it runs in (FindRepo); "" without a signature (advisor run context spec §5.1)
+	Unsized   string       `json:"unsized,omitempty"`  // why the job has no signature
 	Sizing    Sizing       `json:"sizing,omitempty"`
 	Sources   ClaimSources `json:"sources,omitzero"`
 	Learned   int          `json:"learned,omitempty"`   // the runs its learned parts came from

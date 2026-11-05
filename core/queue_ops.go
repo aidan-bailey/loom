@@ -67,11 +67,11 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		return 0, "", fmt.Errorf("admission paused: %s", paused)
 	}
 	now := time.Now()
-	sig, unsized := jobSignature(s.Argv, s.Cwd)
+	sig, checkout, unsized := jobSignature(s.Argv, s.Cwd)
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now,
-		Asked: s.Claim, Unsized: unsized,
+		Asked: s.Claim, Unsized: unsized, Checkout: checkout,
 	}
 	if sig != nil {
 		rec.Signature = sig.ID()

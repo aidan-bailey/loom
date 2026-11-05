@@ -72,44 +72,57 @@ func fakeRepo(t *testing.T) (root string) {
 func TestFindRepo(t *testing.T) {
 	root := fakeRepo(t)
 	common := filepath.Join(root, "main", ".git")
-	cases := []struct{ dir, repo, folder string }{
-		{filepath.Join(root, "main"), common, "."},
-		{filepath.Join(root, "main", "crates", "core"), common, filepath.Join("crates", "core")},
-		{filepath.Join(root, "wt"), common, "."},
-		{filepath.Join(root, "wt", "crates", "core"), common, filepath.Join("crates", "core")},
+	main, wt := filepath.Join(root, "main"), filepath.Join(root, "wt")
+	cases := []struct{ dir, repo, folder, checkout string }{
+		{main, common, ".", main},
+		{filepath.Join(main, "crates", "core"), common, filepath.Join("crates", "core"), main},
+		{wt, common, ".", wt},
+		{filepath.Join(wt, "crates", "core"), common, filepath.Join("crates", "core"), wt},
 	}
 	for _, c := range cases {
-		repo, folder, err := FindRepo(c.dir)
+		repo, folder, checkout, err := FindRepo(c.dir)
 		require.NoError(t, err, c.dir)
 		assert.Equal(t, c.repo, repo, c.dir)
 		assert.Equal(t, c.folder, folder, c.dir)
+		assert.Equal(t, c.checkout, checkout, c.dir)
 	}
 
 	t.Run("a relative gitdir", func(t *testing.T) {
 		root := fakeRepo(t)
 		require.NoError(t, os.WriteFile(filepath.Join(root, "wt", ".git"), []byte("gitdir: ../main/.git/worktrees/wt\n"), 0o644))
-		repo, _, err := FindRepo(filepath.Join(root, "wt"))
+		repo, _, checkout, err := FindRepo(filepath.Join(root, "wt"))
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(root, "main", ".git"), repo)
+		assert.Equal(t, filepath.Join(root, "wt"), checkout)
+	})
+	t.Run("through a symlink", func(t *testing.T) {
+		root := fakeRepo(t)
+		link := filepath.Join(t.TempDir(), "core")
+		require.NoError(t, os.Symlink(filepath.Join(root, "wt", "crates", "core"), link))
+		_, folder, checkout, err := FindRepo(link)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("crates", "core"), folder)
+		assert.Equal(t, filepath.Join(root, "wt"), checkout, "the tree the link resolves into, not the link's own")
 	})
 	t.Run("no repository", func(t *testing.T) {
 		dir, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
-		repo, folder, err := FindRepo(dir)
+		repo, folder, checkout, err := FindRepo(dir)
 		require.NoError(t, err)
 		assert.Equal(t, dir, repo, "the folder is its own repo")
 		assert.Equal(t, ".", folder)
+		assert.Equal(t, dir, checkout, "and its own checkout")
 	})
 	t.Run("a .git file naming nothing", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), []byte("not a gitdir line\n"), 0o644))
-		_, _, err := FindRepo(dir)
+		_, _, _, err := FindRepo(dir)
 		assert.ErrorContains(t, err, "names no gitdir")
 	})
 	t.Run("a gitdir that is gone", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /nonexistent/x/.git/worktrees/y\n"), 0o644))
-		_, _, err := FindRepo(dir)
+		_, _, _, err := FindRepo(dir)
 		assert.Error(t, err)
 	})
 }

@@ -16,29 +16,31 @@ import (
 // git dir on its gitdir: line, whose commondir file, when it has one, names
 // the common dir. repo is the common dir, symlinks resolved, so every
 // worktree of a repository has the same one; folder is dir relative to the
-// directory holding the .git. With no .git up to the root, dir is its own
-// repo and folder is ".". A .git it can't read, or one naming nothing that
-// resolves, is an error: the caller sizes the job without a signature.
-func FindRepo(dir string) (repo, folder string, err error) {
+// directory holding the .git, and checkout is that directory, the working
+// tree's top (advisor run context spec §5.1). With no .git up to the root,
+// dir is its own repo and checkout, and folder is ".". A .git it can't
+// read, or one naming nothing that resolves, is an error: the caller sizes
+// the job without a signature.
+func FindRepo(dir string) (repo, folder, checkout string, err error) {
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve %s: %w", dir, err)
+		return "", "", "", fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	for top := real; ; {
 		common, found, err := gitCommonDir(top)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		if found {
 			rel, err := filepath.Rel(top, real)
 			if err != nil {
-				return "", "", fmt.Errorf("place %s under %s: %w", real, top, err)
+				return "", "", "", fmt.Errorf("place %s under %s: %w", real, top, err)
 			}
-			return common, rel, nil
+			return common, rel, top, nil
 		}
 		parent := filepath.Dir(top)
 		if parent == top {
-			return real, ".", nil
+			return real, ".", real, nil
 		}
 		top = parent
 	}

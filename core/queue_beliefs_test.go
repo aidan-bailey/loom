@@ -14,7 +14,7 @@ import (
 // wqSigOf is the signature a job of argv run in cwd gets.
 func wqSigOf(t *testing.T, argv []string, cwd string) sched.Signature {
 	t.Helper()
-	repo, folder, err := sched.FindRepo(cwd)
+	repo, folder, _, err := sched.FindRepo(cwd)
 	require.NoError(t, err)
 	return sched.NewSignature(repo, folder, argv)
 }
@@ -25,6 +25,9 @@ func TestJobQueue_ARunTeachesTheNextJobOfTheSameCommand(t *testing.T) {
 	id1, _, err := m.submitJob(sub)
 	require.NoError(t, err)
 	first := wqRecord(t, m, id1)
+	checkout, err := filepath.EvalSymlinks(sub.Cwd)
+	require.NoError(t, err)
+	assert.Equal(t, checkout, first.Checkout, "a folder in no repository is its own checkout")
 	assert.Equal(t, sched.ClaimSources{CPUs: sched.SourceDefault, Memory: sched.SourceDefault, IO: sched.SourceDefault}, first.Sources)
 	assert.NotEmpty(t, first.Signature)
 	wqSettle(t, m, id1)
@@ -32,6 +35,7 @@ func TestJobQueue_ARunTeachesTheNextJobOfTheSameCommand(t *testing.T) {
 	b := m.queue.beliefs.Find(first.Signature)
 	require.NotNil(t, b, "the submit made the belief")
 	require.Len(t, b.Runs, 1, "and the settle recorded the run")
+	assert.Equal(t, checkout, b.Runs[0].Checkout, "the run keeps it")
 	assert.Equal(t, sched.OutcomeDone, b.Runs[0].Outcome)
 	saved, err := sched.LoadBeliefs(m.queue.dir)
 	require.NoError(t, err)

@@ -17,7 +17,8 @@ var bt0 = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
 func int64p(n int64) *int64 { return &n }
 
 func TestRunOf(t *testing.T) {
-	base := Record{ID: 6, Claim: Claim{CPUs: 8, MemoryGB: 12, IO: true}, Started: bt0, Ended: bt0.Add(93 * time.Second), PeakRSSKB: 14_000_000}
+	base := Record{ID: 6, Claim: Claim{CPUs: 8, MemoryGB: 12, IO: true}, Started: bt0, Ended: bt0.Add(93 * time.Second), PeakRSSKB: 14_000_000,
+		Checkout: "/src/wt"}
 	exit := &Exit{Code: 0, MaxRSSKB: 14_422_836, CPUSeconds: 512, ReadBytes: int64p(5), WriteBytes: int64p(3 << 30)}
 	cases := []struct {
 		name string
@@ -46,6 +47,7 @@ func TestRunOf(t *testing.T) {
 			assert.Equal(t, c.want, run.Outcome)
 			assert.Equal(t, 93.0, run.WallSeconds)
 			assert.Equal(t, rec.Claim, run.Claim)
+			assert.Equal(t, "/src/wt", run.Checkout, "the run keeps its checkout")
 		})
 	}
 	rec := base
@@ -104,7 +106,7 @@ func TestBeliefsStore_RoundTripAndRefusals(t *testing.T) {
 
 	var bs Beliefs
 	b := bs.Ensure(NewSignature("/r/.git", ".", []string{"go", "test", "./..."}), bt0)
-	b.AddRun(Run{Job: 3, Outcome: OutcomeDone, PeakKB: 700_000, WallSeconds: 40, WriteBytes: int64p(1)})
+	b.AddRun(Run{Job: 3, Outcome: OutcomeDone, PeakKB: 700_000, WallSeconds: 40, WriteBytes: int64p(1), Checkout: "/src/wt"})
 	b.Prior = &Prior{CPUs: 4, MemoryGB: 2, DurationSeconds: 60, At: bt0}
 	require.NoError(t, SaveBeliefs(dir, bs))
 	info, err := os.Stat(filepath.Join(dir, BeliefsFile))
