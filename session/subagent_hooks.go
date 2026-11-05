@@ -187,7 +187,7 @@ func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
 	if why != "" {
 		i.getLogger().Info("claude_memory.unresolved", "reason", why)
 	}
-	launchID, err := hooks.Prepare(dir, memoryDir)
+	launchID, err := hooks.Prepare(dir, memoryDir, "")
 	if err != nil {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program
