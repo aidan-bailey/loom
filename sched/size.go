@@ -79,7 +79,7 @@ func (s ClaimSources) Describe(learned int) string {
 	}
 	out := make([]string, len(groups))
 	for i, g := range groups {
-		out[i] = joinAnd(g.parts) + " " + g.src.describe(learned)
+		out[i] = JoinAnd(g.parts) + " " + g.src.describe(learned)
 	}
 	return strings.Join(out, ", ")
 }
@@ -101,8 +101,8 @@ func (src Source) describe(learned int) string {
 	return "default"
 }
 
-// joinAnd joins words as "a", "a and b", "a, b and c".
-func joinAnd(words []string) string {
+// JoinAnd joins words as "a", "a and b", "a, b and c".
+func JoinAnd(words []string) string {
 	if len(words) <= 1 {
 		return strings.Join(words, "")
 	}

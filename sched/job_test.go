@@ -3,6 +3,7 @@ package sched
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -203,4 +204,29 @@ func TestClaim_Spared(t *testing.T) {
 	assert.Equal(t, "4+2c/3G io", Claim{CPUs: 6, MemoryGB: 3, IO: true}.Spared(Claim{CPUs: 2, MemoryGB: 1}))
 	assert.Equal(t, "4c/6G", Claim{CPUs: 4, MemoryGB: 6}.Spared(Claim{}))
 	assert.Equal(t, "exclusive", Claim{Exclusive: true}.Spared(Claim{}))
+}
+
+func TestState_HeldWaitsAndHasNotEnded(t *testing.T) {
+	assert.False(t, Held.Finished(), "a held job waits for its prerequisite")
+	for state, want := range map[State]bool{
+		Held: true, Queued: true, Running: false, Done: false, Failed: false, Cancelled: false, Lost: false,
+	} {
+		assert.Equal(t, want, state.Waiting(), string(state))
+	}
+}
+
+func TestRecord_QueuedSince(t *testing.T) {
+	t0 := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	assert.Equal(t, t0, Record{Submitted: t0}.QueuedSince(), "a record from an earlier build has no Ready")
+	assert.Equal(t, t0.Add(time.Minute), Record{Submitted: t0, Ready: t0.Add(time.Minute)}.QueuedSince(),
+		"a released job joined the queue at its release")
+}
+
+func TestSubmit_ValidateRefusesANegativeAfter(t *testing.T) {
+	s := Submit{Argv: []string{"true"}, Cwd: "/work", Description: "x", Tail: 20, After: -2}
+	assert.EqualError(t, s.Validate(), "--after is -2: it must be a job ID")
+	s.After = 0
+	assert.NoError(t, s.Validate(), "0 is none")
+	s.After = 14
+	assert.NoError(t, s.Validate())
 }

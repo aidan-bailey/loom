@@ -20,7 +20,8 @@ func (q BeliefQuery) Matches(b Belief) bool {
 
 // BeliefView is a belief with what follows from it now: its repo's name,
 // the claim a job of it that claims nothing would get, how its command
-// scales, and its durations at that claim's cores.
+// scales, its durations at that claim's cores, and the command it runs
+// after.
 type BeliefView struct {
 	Belief         Belief
 	RepoName       string
@@ -30,6 +31,11 @@ type BeliefView struct {
 	P90            time.Duration
 	DurationRuns   int
 	UsualFromPrior bool
+	// After is the command of the belief this one's signature runs after
+	// (dependent jobs spec §5.6). The caller sets it, since it holds the
+	// registry; nil when the signature has no prerequisite part, the
+	// prerequisite had no signature, or that belief is gone.
+	After []string
 }
 
 // ViewBelief is b's view under p; with no caps (admission paused) the

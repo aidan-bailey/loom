@@ -113,3 +113,18 @@ func TestFindRepo(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestSignature_IDWithAPrerequisite(t *testing.T) {
+	cold := NewSignature("/r/.git", ".", []string{"make"})
+	assert.Equal(t, SignatureID("4e0b9c350d02"), cold.ID(), "a signature with no prerequisite keeps the ID it always had")
+
+	warm := cold
+	warm.After = "1a2b3c4d5e6f"
+	assert.NotEqual(t, cold.ID(), warm.ID(), "a prerequisite makes it another signature")
+	other := cold
+	other.After = "0f0f0f0f0f0f"
+	assert.NotEqual(t, warm.ID(), other.ID(), "and each prerequisite another again")
+	none := cold
+	none.After = AfterNone
+	assert.NotEqual(t, cold.ID(), none.ID(), "a prerequisite with no signature still counts")
+}

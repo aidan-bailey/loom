@@ -41,6 +41,7 @@ Out (§13): fan-in, running after a failure, another session's prerequisite, pas
 - **Prerequisite:** the job a job names with `--after N` (`Record.After`, `Submit.After`; 0 for none).
 - **Dependent:** a job with a prerequisite. A job may be the prerequisite of several.
 - **Held:** `sched.Held` (`"held"`), a dependent whose prerequisite hasn't ended. It isn't finished (`State.Finished` is false) and admission never sees it. The states become `held` → `queued` → `running` → `done` | `failed` | `cancelled` | `lost`; a job submitted without a prerequisite, or after one that is already done, starts at `queued`.
+- **Waiting:** `sched.State.Waiting`, true for `queued` and `held`, for the places that treat both alike (cancel at once, move to the front, live sizing, the advisor's asks, the view's waiting jobs) (added while planning).
 - **Release:** a held job becoming `queued` when its prerequisite ends `done`.
 - **Cascade:** a prerequisite that ends `failed`, `cancelled` or `lost` cancels its held dependents, and each of those cancels its own.
 - **Ready:** `Record.Ready`, when a job became `queued`: its submit, or its release. Records from earlier builds have none, and `Submitted` stands in.
@@ -55,7 +56,7 @@ Out (§13): fan-in, running after a failure, another session's prerequisite, pas
 
 - no record of job N exists, whether it never did or retention dropped it: `there is no job 14`;
 - job N's owner isn't the submitter's: `job 14 has another owner: --after takes a job with the same owner as the new one`. Owner 0 counts as an owner, so a job from a plain shell can follow only a job from a plain shell;
-- job N ended other than `done`: `job 14 failed, so a job after it would never run`, or `was cancelled` or `was lost` in place of `failed`.
+- job N ended other than `done`, named as the cascade names it (§5.4): `job 14 failed (exit 101), so a job after it would never run`, or `was killed by SIGSEGV`, `could not start`, `was cancelled`, `was lost` (amended while planning: the same words as the cascade's reasons).
 
 Otherwise:
 - when job N is `queued`, `held` or `running`, the new job is `held`, and its `Order` is job N's (§5.2);
@@ -67,7 +68,7 @@ Owners resolve as today (`jobOwner`): a subagent shares its parent's launch, so 
 
 - A held job's `Order` is its prerequisite's at submit, so a whole chain shares one `Order`, and jobs with equal `Order` go by ID.
 - On release, a job's `Order` becomes the lower of its own and its prerequisite's current one. Moving a prerequisite to the front (`t`, `MoveJobToFront`) therefore carries its dependents along, and a held job moved to the front itself stays there.
-- `MoveJobToFront` accepts a held job as well as a queued one, and sets the `Order` one below the lowest `Order` of every queued and held job, so a job someone moves to the front stays ahead of a chain released after the move.
+- `MoveJobToFront` accepts a held job as well as a queued one, and sets the `Order` one below the lowest `Order` of every queued and held job, for the job and every job held down its chain, so the view lists the chain where it will run and a job someone moves to the front stays ahead of a chain released after the move (amended while planning: the chain moves with it).
 
 ### 5.3 Release and the starvation clock
 
@@ -81,7 +82,7 @@ Owners resolve as today (`jobOwner`): a subagent shares its parent's launch, so 
 
 - When a job settles `failed`, `cancelled` or `lost`, every held job naming it is cancelled in the same loop step, with the reason by how it ended: `because job 14 failed (exit 101)`, `because job 14 was killed by SIGSEGV`, `because job 14 could not start`, `because job 14 was cancelled`, or `because job 14 was lost`. Each job cancelled that way cancels its own held dependents, `because job 15 was cancelled`.
 - `CancelJob` on a held job ends it at once, as on a queued one, and the cascade follows.
-- `cancelOwnerJobs` (a pause, a kill or a reset someone requests) ends held jobs at once, as queued ones, with no message.
+- `cancelOwnerJobs` (a pause, a kill or a reset someone requests) first marks every job of the owners (no message, the reason), then ends the queued and held ones at once, so a cascade one of them sets off finds the jobs after it marked, and they keep the pause's reason and send nothing (amended while planning).
 - `NotifyJob` accepts a held job: it hasn't ended.
 - Release and the cascade happen within the settle, before any admission pass, so no pass sees a held job whose prerequisite has ended.
 
@@ -90,8 +91,8 @@ Owners resolve as today (`jobOwner`): a subagent shares its parent's launch, so 
 - **A prerequisite that succeeds while a job is held after it** sends nothing. Its notice fate is `carried`, with `NoticeWhy` `its result goes with job 15's` (or `with jobs 15 and 16`), which holds whether or not those jobs notify: one followed with `run` reports through its follower. A prerequisite with no held dependents when it ends sends its message as today.
 - **A dependent's message** names its prerequisite in the first line: `[loom] job 15 "run tests" finished: exit 0 after 9m12s (2s in the queue, after job 14 "build tests", done in 3m10s).` A job with several dependents gets each one's message when that one ends.
 - **A cascade sends one message per branch:**
-  - The job that failed sends its own message, when it notifies, with a line after the first naming every job the cascade cancelled, in ID order: `Job 15 "run tests", which waited on it, was cancelled.` or `Jobs 15 "run tests" and 16 "bench", which waited on it, were cancelled.`
-  - When it doesn't notify (`--no-notify`, or followed with `run`), each job the cascade cancelled that notifies sends one, unless a job it waited on, directly or through others, already sent one for this cascade: `[loom] job 15 "run tests" was cancelled because job 14 "build tests" failed (exit 101).` It carries the failed job's log line and tail (at the cancelled job's `--tail`) and names the jobs the cascade cancelled after it.
+  - The job that failed sends its own message, when it notifies, with a line after the first naming every job the cascade cancelled, in ID order: `Job 15 "run tests", which waited on it, was cancelled.` or `Jobs 15 "run tests" and 16 "bench", which waited on it, were cancelled.` Each job the cascade cancelled is then recorded `carried`, `its result goes with job 14's` (amended while planning).
+  - When it doesn't notify (`--no-notify`, or followed with `run`), each job the cascade cancelled that notifies sends one, unless a job it waited on, directly or through others, already sent one for this cascade: `[loom] job 15 "run tests" was cancelled because job 14 "build tests" failed (exit 101).` It carries the failed job's log line and tail (at the cancelled job's `--tail`) and names the jobs the cascade cancelled after it. A job a message above it reports is recorded `carried` by that message's job.
 - **A dependent that peaked at over twice its memory claim** gets a line after the first: `It peaked at 6.1 GB on a 2 GB claim: if it rebuilt what job 14 built, run job 14's output instead.` The peak is the larger of the sampled group peak and the command's max RSS, as `sched.RunOf` takes it; an exclusive claim or a job with no measured peak gets no line. Learning still records the peak, so the next claim covers it.
 - Pauses, kills and resets send nothing, as today, and a notice the owner can't take is recorded undelivered, as today.
 
@@ -106,7 +107,7 @@ Owners resolve as today (`jobOwner`): a subagent shares its parent's launch, so 
 ### 5.7 Loading and older daemons
 
 - `jobs.json` stays at version 1: `after` and `ready` are new fields and `held` a new state. An older daemon admits only `queued` jobs, so it never starts a held one, but it drops `after` and `ready` when it saves, and it can record a pause's cancel request on a held job without ending it.
-- `loadQueue` checks the held jobs after `adoptJobs` and before its first admission pass (rule 2 of `docs/claude/the-work-queue.md`: settle before you admit), in ID order, so a chain resolves from its first job down. `adoptJobs` settles through `settledJob`, so a prerequisite that ended while the daemon was down releases or cascades there; the check covers what is left. A held job is:
+- `loadQueue` checks the held jobs before `adoptJobs` (amended while planning: `adoptJobs`' settles end in `afterSettle`, which runs an admission pass, so a check after it would come after a pass), in ID order, so a chain resolves from its first job down, and the held jobs that carry a cancel request first (a release would otherwise take one back into the queue with its siblings); `adoptJobs` then settles through `settledJob`, so a prerequisite that ended while the daemon was down releases or cascades there. A held job is:
   - released when its prerequisite is `done`;
   - cancelled, cascading, when its prerequisite ended any other way;
   - cancelled `because its prerequisite is unknown` when `After` is 0 or names no record (an older daemon's save, or a store edited by hand);
@@ -118,8 +119,8 @@ Owners resolve as today (`jobOwner`): a subagent shares its parent's launch, so 
 
 - `--after N` on `submit` and `run`, in their help: "run after job N ends done; held until then, and cancelled if it ends any other way".
 - `submit` prints `job 15 held: runs after job 14 (running)` for a held job, and today's `job 15 queued (…)` line for one submitted after a done job; the sized line follows as today.
-- The follower (`run`, `wait`) prints `loom: job 15 held: runs after job 14 (queued)` when the job is held and again whenever the prerequisite's state changes, then today's queue lines. Its start line for a released job reads `job 15 started 2s after job 14 ended`. A job the cascade cancelled ends the follower with exit 125 and `loom: job 15 was cancelled because job 14 failed (exit 101)`.
-- `list` shows held jobs among the queued ones, in queue order, with state `held`, their wait since submit, and the reason `after job 14 (running)` (or `(queued)`, `(held)`). `--json` carries `JobView.After` and `JobView.Ready`.
+- The follower (`run`, `wait`) prints `loom: job 15 held: runs after job 14 (queued)` when the job is held and again whenever the prerequisite's state changes, then today's queue lines. Its start line measures the wait from `Ready` (unchanged for every job but a released one, whose line reads `job 15 started 2s after job 14 ended`). A job the cascade cancelled ends the follower with exit 125 and `loom: job 15 was cancelled because job 14 failed (exit 101)`.
+- `list` shows held jobs among the queued ones, in queue order, with state `held`, their wait since submit, and the reason `after job 14 (running)` (or `(queued)`, `(held)`). (`list` has no `--json`: a sentence on it went, amended while planning.)
 
 ## 7. The work view
 
@@ -139,6 +140,7 @@ The work-queue bullet in `session/loom_context_shared.md` gains, after its sente
 ## 9. Wire
 
 - `sched.Submit.After` and `sched.Record.After` (`JobID`); `sched.Record.Ready` (`time.Time`, `omitzero`); `sched.Held`; `sched.NoticeCarried`; `sched.Signature.After` (`SignatureID`, `omitempty`); `core.JobView.After` and `.Ready`; `advisor.Job.After`.
+- `sched.State.Waiting`; `sched.JoinAnd` (the exported `joinAnd`, for the cascade's and the cancel prompt's lists); `core.JobView.QueuedSince` (added while planning).
 - No new method or event. The wire is JSON, so the fields are additions and `rpc.Protocol` is unchanged. `docs/specs/protocol.md` is regenerated (`go test ./core/rpc -run TestProtocolReference -update`) if it lists the changed types.
 
 ## 10. Components

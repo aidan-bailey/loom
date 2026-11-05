@@ -19,6 +19,15 @@ type Job struct {
 	Repo        string   `json:"repo"`
 	Folder      string   `json:"folder"`
 	Environment []string `json:"environment,omitempty"` // AllowedEnv's
+	After       *After   `json:"after,omitempty"`       // the job this one runs after (dependent jobs spec §5.6)
+}
+
+// After is the job a job runs after, as the advisor is told of it: its
+// command, as its belief normalizes it (its argv when it has none), and its
+// description.
+type After struct {
+	Command     []string `json:"command"`
+	Description string   `json:"description"`
 }
 
 // Known is a belief as the advisor is told of it.

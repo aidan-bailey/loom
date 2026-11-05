@@ -24,10 +24,12 @@ type JobID int64
 // four finished states.
 type State string
 
-// The states of a job. Done is exit 0; Failed is a non-zero exit, a signal or
-// a start that failed; Cancelled is a job cancelled by anyone, whatever its
-// exit; Lost is a job whose shim vanished without writing its result.
+// The states of a job. Held is a job waiting for its prerequisite
+// (Record.After) to end; Done is exit 0; Failed is a non-zero exit, a signal
+// or a start that failed; Cancelled is a job cancelled by anyone, whatever
+// its exit; Lost is a job whose shim vanished without writing its result.
 const (
+	Held      State = "held"
 	Queued    State = "queued"
 	Running   State = "running"
 	Done      State = "done"
@@ -44,6 +46,10 @@ func (s State) Finished() bool {
 	}
 	return false
 }
+
+// Waiting reports whether a job in state s has yet to start: queued, or held
+// after its prerequisite (dependent jobs spec §4).
+func (s State) Waiting() bool { return s == Queued || s == Held }
 
 // Sizing is where a queued job's sizing stands: "" once sized, or
 // SizingAsking while it waits for the advisor's prior (smart scheduler
@@ -112,12 +118,14 @@ type Policy struct {
 // Notice is the fate of a job's completion message to its owner's Claude.
 type Notice string
 
-// The fates of a notice: none due or yet, sent, or recorded as undelivered
-// (with the reason in Record.NoticeWhy).
+// The fates of a notice: none due or yet, sent, recorded as undelivered
+// (with the reason in Record.NoticeWhy), or carried: another job's message
+// reports it (dependent jobs spec §5.5), named in NoticeWhy.
 const (
 	NoticeNone        Notice = ""
 	NoticeSent        Notice = "sent"
 	NoticeUndelivered Notice = "undelivered"
+	NoticeCarried     Notice = "carried"
 )
 
 // Record is a job as jobs.json holds it: everything but its environment,
@@ -163,6 +171,22 @@ type Record struct {
 	// Spare is what a grant added to its base claim when it started (job
 	// scaling spec §5.3); Claim is then the total.
 	Spare Claim `json:"spare,omitzero"`
+
+	// Dependent jobs (spec 2026-11-05-dependent-jobs §4): the job this one
+	// runs after (0 for none), and when it joined the queue: at its submit,
+	// or at its release; zero while it is held, and on a record from an
+	// earlier build (QueuedSince).
+	After JobID     `json:"after,omitempty"`
+	Ready time.Time `json:"ready,omitzero"`
+}
+
+// QueuedSince is when r joined the queue: Ready, or Submitted on a record
+// with none (a held job, or one from a build before dependent jobs).
+func (r Record) QueuedSince() time.Time {
+	if r.Ready.IsZero() {
+		return r.Submitted
+	}
+	return r.Ready
 }
 
 // Exit is exit.json: how the command ended, written by the shim when it
@@ -188,7 +212,8 @@ type Submit struct {
 	Claim       Claim    `json:"claim"` // CPUs or MemoryGB 0: the default claim's
 	Notify      bool     `json:"notify"`
 	Tail        int      `json:"tail"`
-	Launch      string   `json:"launch"` // $LOOM_LAUNCH; "" from a plain shell
+	Launch      string   `json:"launch"`          // $LOOM_LAUNCH; "" from a plain shell
+	After       JobID    `json:"after,omitempty"` // the prerequisite (--after); 0 for none
 }
 
 // totalBytes is the summed length of items.
@@ -205,7 +230,8 @@ func totalBytes(items []string) int {
 // not empty and its arguments total at most 64 KiB; the environment totals at
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
-// folder is absolute. It does not check that the folder exists, which the
+// folder is absolute; the prerequisite is not negative (0 is none). It does
+// not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
 	desc := strings.TrimSpace(s.Description)
@@ -238,6 +264,9 @@ func (s Submit) Validate() error {
 	}
 	if !filepath.IsAbs(s.Cwd) {
 		return fmt.Errorf("the folder %s is not an absolute path", s.Cwd)
+	}
+	if s.After < 0 {
+		return fmt.Errorf("--after is %d: it must be a job ID", s.After)
 	}
 	return nil
 }

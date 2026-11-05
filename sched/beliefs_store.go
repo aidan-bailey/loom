@@ -9,10 +9,14 @@ import (
 	"path/filepath"
 )
 
-// The registry's file and the version of it this build reads and writes.
+// The registry's file, and the newest version of it this build reads. It
+// writes version 2 only while a belief's signature has a prerequisite part
+// (dependent jobs spec §5.6), and 1 otherwise (fileVersion), so an older
+// loom keeps reading a registry with none: it would compute such a belief's
+// ID without the part and refuse the whole file.
 const (
 	BeliefsFile    = "beliefs.json"
-	BeliefsVersion = 1
+	BeliefsVersion = 2
 )
 
 // ErrNewerBeliefs is LoadBeliefs' error for a beliefs.json a newer loom wrote.
@@ -63,14 +67,26 @@ func LoadBeliefs(dir string) (Beliefs, error) {
 }
 
 // SaveBeliefs writes bs as dir's beliefs.json atomically (mode 0600),
-// making dir (mode 0700) when it is absent, and stamps BeliefsVersion.
+// making dir (mode 0700) when it is absent, and stamps its version
+// (fileVersion).
 func SaveBeliefs(dir string, bs Beliefs) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
-	bs.Version = BeliefsVersion
+	bs.Version = bs.fileVersion()
 	if bs.Beliefs == nil {
 		bs.Beliefs = []Belief{}
 	}
 	return saveJSON(filepath.Join(dir, BeliefsFile), bs)
+}
+
+// fileVersion is the version bs is written as: 2 while a belief's signature
+// has a prerequisite part, else 1.
+func (bs Beliefs) fileVersion() int {
+	for _, b := range bs.Beliefs {
+		if b.After != "" {
+			return 2
+		}
+	}
+	return 1
 }

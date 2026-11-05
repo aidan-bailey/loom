@@ -40,3 +40,31 @@ func TestForecast(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+func TestForecast_ReleasesHeldJobs(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	p := Policy{Caps: Caps{CPUs: 8, MemoryGB: 16, IOJobs: 2}, DefaultClaim: Claim{CPUs: 4, MemoryGB: 6}, StarveAfter: time.Hour}
+	four := Claim{CPUs: 4, MemoryGB: 4}
+	jobs := []Record{
+		{ID: 1, Order: 1, State: Running, Claim: four, Started: now.Add(-time.Minute)}, // usual 3m: ends at +2m
+		{ID: 3, Order: 3, State: Running, Claim: four, Started: now},                   // usual 10m: ends at +10m
+		{ID: 7, Order: 7, State: Queued, Claim: four, Submitted: now},                  // behind 9 and 10, which keep job 1's place: starts at +10m
+		{ID: 9, Order: 1, State: Held, After: 1, Claim: four, Submitted: now},          // released at +2m and starts; usual 5m: ends at +7m
+		{ID: 10, Order: 1, State: Held, After: 9, Claim: four, Submitted: now},         // released at +7m and starts
+	}
+	usual := map[JobID]time.Duration{1: 3 * time.Minute, 3: 10 * time.Minute, 7: 5 * time.Minute, 9: 5 * time.Minute, 10: 5 * time.Minute}
+	got := Forecast(jobs, p, now, func(r Record) (time.Duration, bool) { d, ok := usual[r.ID]; return d, ok }, time.Hour)
+	assert.Equal(t, map[JobID]time.Time{
+		9:  now.Add(2 * time.Minute),
+		10: now.Add(7 * time.Minute),
+		7:  now.Add(10 * time.Minute),
+	}, got)
+
+	t.Run("a job held after one being sized gets no start", func(t *testing.T) {
+		jobs := []Record{
+			{ID: 1, Order: 1, State: Queued, Claim: four, Sizing: SizingAsking, Submitted: now},
+			{ID: 2, Order: 1, State: Held, After: 1, Claim: four, Submitted: now},
+		}
+		assert.Empty(t, Forecast(jobs, p, now, func(Record) (time.Duration, bool) { return time.Minute, true }, time.Minute))
+	})
+}

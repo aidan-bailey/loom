@@ -10,19 +10,25 @@ import (
 )
 
 // SignatureID names a signature: the first 12 hex digits of the SHA-256 of
-// the JSON array [repo, folder, command, environment pairs].
+// the JSON array [repo, folder, command, environment pairs], and the
+// prerequisite's signature after them when there is one.
 type SignatureID string
 
 // Signature is what makes two jobs the same job (smart scheduler spec §5.1):
 // the repository (its git common dir), the folder within it, and the command
 // with its wrapper programs removed, the NAME=value pairs they carried kept
-// apart and sorted.
+// apart and sorted; and for a dependent job, its prerequisite's signature
+// (dependent jobs spec §5.6).
 type Signature struct {
-	Repo    string   `json:"repo"`
-	Folder  string   `json:"folder"`
-	Command []string `json:"command"`
-	Env     []string `json:"env,omitempty"`
+	Repo    string      `json:"repo"`
+	Folder  string      `json:"folder"`
+	Command []string    `json:"command"`
+	Env     []string    `json:"env,omitempty"`
+	After   SignatureID `json:"after,omitempty"` // the prerequisite's signature, AfterNone for one with none; "" for no prerequisite
 }
+
+// AfterNone is Signature.After for a job whose prerequisite has no signature.
+const AfterNone SignatureID = "none"
 
 // NewSignature is the signature of argv run in folder of repo.
 func NewSignature(repo, folder string, argv []string) Signature {
@@ -30,13 +36,19 @@ func NewSignature(repo, folder string, argv []string) Signature {
 	return Signature{Repo: repo, Folder: folder, Command: command, Env: env}
 }
 
-// ID is s's ID. No pairs and an empty list of pairs are one signature.
+// ID is s's ID. No pairs and an empty list of pairs are one signature, and
+// After is hashed only when it is set, so a signature with no prerequisite
+// keeps the ID it always had.
 func (s Signature) ID() SignatureID {
 	env := s.Env
 	if env == nil {
 		env = []string{}
 	}
-	data, err := json.Marshal([]any{s.Repo, s.Folder, s.Command, env})
+	parts := []any{s.Repo, s.Folder, s.Command, env}
+	if s.After != "" {
+		parts = append(parts, s.After)
+	}
+	data, err := json.Marshal(parts)
 	if err != nil {
 		panic(err) // strings and slices of them: Marshal cannot fail
 	}
