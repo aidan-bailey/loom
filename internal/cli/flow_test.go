@@ -241,3 +241,27 @@ func TestCheckoutOf_FindsTheDirectoryAKeyNames(t *testing.T) {
 	_, ok = checkoutOf(keyOf(filepath.Join(base, "absent")))
 	assert.False(t, ok)
 }
+
+// TestFlowGuard_TheShippedGuardBlocksADevelopersStash runs the guard on a
+// copy of this build's flow tree, as a launch's hook does: the real
+// git_guard.py, under isolated Python, sees the hook input Claude sends for
+// a flow developer's Bash call (agent_type as TestRealClaude_FlowPluginContract
+// saw it).
+func TestFlowGuard_TheShippedGuardBlocksADevelopersStash(t *testing.T) {
+	needPython(t)
+	root := filepath.Join(t.TempDir(), "flow")
+	require.NoError(t, flow.Write(root))
+	call := func(agent, command string) (int, string) {
+		in := `{"hook_event_name":"PreToolUse","agent_type":"` + agent + `","tool_name":"Bash","cwd":"/","tool_input":{"command":"` + command + `"}}`
+		code, _, errOut := guard(t, root, in)
+		return code, errOut
+	}
+
+	code, errOut := call("flow:junior-dev", "git stash")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errOut, "developer-git-guard: `git stash` is blocked")
+	code, errOut = call("flow:junior-dev", "git status")
+	assert.Equal(t, 0, code, errOut)
+	code, _ = call("flow:verifier", "git stash")
+	assert.Equal(t, 0, code, "the verifier is not guarded")
+}
