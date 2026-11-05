@@ -20,9 +20,9 @@ var loomContextFragments = []string{"../../session/loom_context_shared.md", "../
 // codeSpan is one inline code span: a run between single backticks.
 var codeSpan = regexp.MustCompile("`([^`]+)`")
 
-// Every `loom session <sub> …` or `loom job <sub> …` span in the
-// loom-context fragments names a real subcommand and flags it has, and every span
-// that is a bare flag one some subcommand of either has. An agent following
+// Every `loom session <sub> …`, `loom job <sub> …` or `loom feedback <sub> …`
+// span in the loom-context fragments names a real subcommand and flags it has,
+// and every span that is a bare flag one some subcommand of them has. An agent following
 // a stale line fails on an unknown command or flag, and nothing else would
 // notice.
 func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
@@ -32,7 +32,7 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 		require.NoError(t, err)
 		text.Write(b)
 	}
-	roots := map[string]*cobra.Command{"session": newSessionCmd(), "job": newJobCmd()}
+	roots := map[string]*cobra.Command{"session": newSessionCmd(), "job": newJobCmd(), "feedback": newFeedbackCmd()}
 
 	var commands, bare int
 	for _, m := range codeSpan.FindAllStringSubmatch(text.String(), -1) {
@@ -53,7 +53,7 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 		case strings.HasPrefix(span, "-"):
 			bare++
 			f, ok := parseFlag(words[0])
-			assert.True(t, ok && (f.onAny(roots["session"]) || f.onAny(roots["job"])), "`%s`: no loom session or loom job subcommand has this flag", span)
+			assert.True(t, ok && (f.onAny(roots["session"]) || f.onAny(roots["job"]) || f.onAny(roots["feedback"])), "`%s`: no loom session, job or feedback subcommand has this flag", span)
 		}
 	}
 	assert.Positive(t, commands, "no `loom session <subcommand>` or `loom job <subcommand>` span in %s", loomContextFragments)
