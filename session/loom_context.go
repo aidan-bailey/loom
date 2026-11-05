@@ -15,7 +15,7 @@ import (
 // WriteLoomContextFiles and appended to every Claude launch's system
 // prompt. The worktree variant orients an isolated-worktree session, the
 // workspace variant the root-repo main session (IsWorkspaceTerminal). Each
-// is its own head followed by the tail both share (loomContextFile).
+// is its own head followed by the fragments both share (loomContextFile).
 const (
 	loomContextFileWorktree  = "claude-loom-context.md"
 	loomContextFileWorkspace = "claude-loom-context-workspace.md"
@@ -28,14 +28,29 @@ var (
 	//go:embed loom_context_main.md
 	loomContextMainHead []byte
 	//go:embed loom_context_shared.md
-	loomContextSharedTail []byte
+	loomContextShared []byte
+	//go:embed loom_context_sessions.md
+	loomContextSessions []byte
+	//go:embed loom_context_subagent.md
+	loomContextSubagentHead []byte
 )
 
-// loomContextFile is a prompt file's content: head, a blank line (head
-// ends in a newline), then the shared tail. bytes.Join builds a slice of
-// its own, so no append ever writes into an embedded one.
+// loomContextFile is a prompt file's content: head, then the shared
+// fragment ("Loom itself"), then the sessions fragment ("Other
+// sessions"), with a blank line at each seam (every fragment ends in one
+// newline). bytes.Join builds a slice of its own, so no append ever
+// writes into an embedded one.
 func loomContextFile(head []byte) []byte {
-	return bytes.Join([][]byte{head, loomContextSharedTail}, []byte("\n"))
+	return bytes.Join([][]byte{head, loomContextShared, loomContextSessions}, []byte("\n"))
+}
+
+// subagentContextFile is a subagent's cut of the prompt whose head is
+// head: the subagent head, then head and the shared fragment. The
+// sessions fragment stays the parent's, since messaging and starting
+// sessions is its job. Loom's SubagentStart hook hands it to every
+// subagent but a fork (subagentBrief, hooks.Prepare).
+func subagentContextFile(head []byte) []byte {
+	return bytes.Join([][]byte{loomContextSubagentHead, head, loomContextShared}, []byte("\n"))
 }
 
 // dirFlags is a boolean setting kept per config dir. Each workspace has its

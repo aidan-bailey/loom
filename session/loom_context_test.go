@@ -15,10 +15,10 @@ func TestWriteLoomContextFiles(t *testing.T) {
 
 	wt := filepath.Join(dir, "claude-loom-context.md")
 	ws := filepath.Join(dir, "claude-loom-context-workspace.md")
-	// Each written file is its variant's head, a blank line, then the tail
-	// both variants share; every fragment ends in exactly one newline, so
-	// the seam is one blank line.
-	for _, frag := range [][]byte{loomContextWorktreeHead, loomContextMainHead, loomContextSharedTail} {
+	// Each written file is its variant's head, the shared fragment, then the
+	// sessions fragment; every fragment ends in exactly one newline, so each
+	// seam is one blank line.
+	for _, frag := range [][]byte{loomContextWorktreeHead, loomContextMainHead, loomContextShared, loomContextSessions, loomContextSubagentHead} {
 		assert.True(t, bytes.HasSuffix(frag, []byte("\n")) && !bytes.HasSuffix(frag, []byte("\n\n")),
 			"a loom-context fragment must end in exactly one newline")
 	}
@@ -26,7 +26,7 @@ func TestWriteLoomContextFiles(t *testing.T) {
 		b, err := os.ReadFile(path)
 		assert.NoError(t, err)
 		assert.Contains(t, string(b), "Loom session context")
-		assert.Equal(t, string(head)+"\n"+string(loomContextSharedTail), string(b), path)
+		assert.Equal(t, string(head)+"\n"+string(loomContextShared)+"\n"+string(loomContextSessions), string(b), path)
 	}
 
 	// skip-if-current: a second write with already-current content must not
@@ -97,4 +97,29 @@ func TestLoomContextProgram_ReadsItsOwnConfigDirsToggle(t *testing.T) {
 	assert.Contains(t, loomContextProgram("claude", on, false), "--append-system-prompt-file")
 	assert.Equal(t, "claude", loomContextProgram("claude", off, false))
 	assert.Equal(t, "claude", loomContextProgram("claude", t.TempDir(), false), "a dir never set reads as off")
+}
+
+// A subagent's cut is the subagent head, then its parent's head and the
+// shared fragment. The sessions fragment is the parent's alone: messaging
+// and starting sessions is its job.
+func TestSubagentContext_IsTheParentsWithoutOtherSessions(t *testing.T) {
+	for name, head := range map[string][]byte{"worktree": loomContextWorktreeHead, "workspace": loomContextMainHead} {
+		parent := string(loomContextFile(head))
+		cut := string(subagentContextFile(head))
+
+		assert.Equal(t, string(loomContextSubagentHead)+"\n"+string(head)+"\n"+string(loomContextShared), cut, name)
+		assert.Contains(t, cut, "**Heavy work goes through loom's work queue.**", name)
+		assert.Contains(t, parent, "## Other sessions", name)
+		assert.NotContains(t, cut, "## Other sessions", name)
+		assert.NotContains(t, cut, "loom session send", name)
+	}
+}
+
+// Claude passes a SubagentStart hook's additionalContext inline only up to
+// 10,000 characters; past that it writes the text to a file and hands the
+// subagent a 2,000-character preview. A byte count bounds the characters.
+func TestSubagentContext_FitsClaudesInlineCap(t *testing.T) {
+	for name, head := range map[string][]byte{"worktree": loomContextWorktreeHead, "workspace": loomContextMainHead} {
+		assert.Less(t, len(subagentContextFile(head)), 10000, name)
+	}
 }
