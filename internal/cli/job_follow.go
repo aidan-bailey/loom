@@ -145,6 +145,7 @@ type jobFollower struct {
 	queued  bool
 	started bool
 	sized   bool
+	overdue bool
 	last    string
 }
 
@@ -220,6 +221,10 @@ func (f *jobFollower) report(v core.JobView) {
 			f.d.say("job %d started after %s", v.ID, rounded(v.Started.Sub(v.Submitted)))
 		}
 		f.started = true
+		if ran := time.Since(v.Started); !f.overdue && v.OverdueAfter > 0 && ran > v.OverdueAfter {
+			f.overdue = true
+			f.d.say("job %d is overdue: %s so far, usually %s", v.ID, sched.RoughDuration(ran), sched.RoughDuration(v.Usual))
+		}
 	}
 	if !f.sized && v.Sizing == "" && !v.State.Finished() {
 		f.sized = true

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
@@ -109,6 +110,59 @@ func (m *Model) resizeQueued(p sched.Policy) {
 			q.moved()
 		}
 	}
+}
+
+// readBeliefs is the page query selects: copies, most recently seen first.
+// It refuses while learning is off, and an ID it doesn't hold.
+func (m *Model) readBeliefs(query sched.BeliefQuery) (sched.BeliefsPage, error) {
+	q := m.queue
+	switch {
+	case !q.ready():
+		return sched.BeliefsPage{}, errQueueNotLoaded
+	case q.beliefsErr != nil:
+		return sched.BeliefsPage{}, fmt.Errorf("learning is off: %s", q.learningOff())
+	}
+	page := sched.BeliefsPage{Track: sched.TrackRecord(q.beliefs.Beliefs)}
+	for _, b := range q.beliefs.Beliefs {
+		if query.Matches(b) {
+			page.Beliefs = append(page.Beliefs, sched.ViewBelief(b.Clone(), q.policy))
+		}
+	}
+	if query.ID != "" && len(page.Beliefs) == 0 {
+		return sched.BeliefsPage{}, fmt.Errorf("no belief %s", query.ID)
+	}
+	slices.SortStableFunc(page.Beliefs, func(a, b sched.BeliefView) int { return b.Belief.LastSeen.Compare(a.Belief.LastSeen) })
+	return page, nil
+}
+
+// forgetBelief drops belief id and writes beliefs.json; a failed write
+// refuses the request and keeps the belief. Queued jobs of its signature
+// get a new, empty belief and are re-sized by the pass that follows.
+func (m *Model) forgetBelief(id sched.SignatureID) error {
+	q := m.queue
+	switch {
+	case !q.ready():
+		return errQueueNotLoaded
+	case q.beliefsErr != nil:
+		return fmt.Errorf("learning is off: %s", q.learningOff())
+	}
+	b := q.beliefs.Find(id)
+	if b == nil {
+		return fmt.Errorf("no belief %s", id)
+	}
+	kept := b.Clone()
+	q.beliefs.Forget(id)
+	if err := sched.SaveBeliefs(q.dir, q.beliefs); err != nil {
+		q.beliefs.Beliefs = append(q.beliefs.Beliefs, kept)
+		return fmt.Errorf("write beliefs.json: %w", err)
+	}
+	if slices.ContainsFunc(q.store.Jobs, func(r sched.Record) bool { return r.State == sched.Queued && r.Signature == id }) {
+		q.beliefs.Ensure(kept.Signature, time.Now())
+		m.saveBeliefsQuiet("forget")
+	}
+	q.moved()
+	m.admitJobs()
+	return nil
 }
 
 // recordRun records what settled job rec teaches its belief (spec §5.2):

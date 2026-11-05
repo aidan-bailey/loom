@@ -163,6 +163,11 @@ type Core interface {
 	MoveJobToFront(id sched.JobID, req ReqID)
 	NotifyJob(id sched.JobID, req ReqID)
 	SetSchedulerCaps(s config.SchedulerSettings, req ReqID)
+	// The work queue's beliefs (smart scheduler spec §7): the Reply's
+	// Beliefs holds the beliefs q selects and the advisor's track record;
+	// ForgetBelief drops one.
+	ReadBeliefs(q sched.BeliefQuery, req ReqID)
+	ForgetBelief(id sched.SignatureID, req ReqID)
 }
 
 var _ Core = (*Loop)(nil)

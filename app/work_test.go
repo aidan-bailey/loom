@@ -631,6 +631,7 @@ type workWatch struct {
 	cancels []workCancel
 	fronts  []sched.JobID
 	caps    []config.SchedulerSettings
+	beliefs []sched.BeliefQuery
 	reqs    []core.ReqID
 }
 
@@ -663,6 +664,42 @@ func (w *workWatch) CancelJob(id sched.JobID, from core.CancelFrom, req core.Req
 func (w *workWatch) MoveJobToFront(id sched.JobID, req core.ReqID) {
 	w.fronts = append(w.fronts, id)
 	w.reqs = append(w.reqs, req)
+}
+
+func (w *workWatch) ReadBeliefs(q sched.BeliefQuery, req core.ReqID) {
+	w.beliefs = append(w.beliefs, q)
+	w.reqs = append(w.reqs, req)
+}
+
+func TestWorkView_BOpensTheSelectedJobsBelief(t *testing.T) {
+	j := queueJob(14, sched.Running, "web-smoke")
+	j.Signature = "3f9a1c2b7d10"
+	m := workHome(t, j)
+	w := watchWork(t, m)
+	pressWork(t, m, "b")
+	require.Len(t, w.beliefs, 1)
+	assert.Equal(t, sched.BeliefQuery{ID: "3f9a1c2b7d10"}, w.beliefs[0])
+	require.NotNil(t, m.work.pager)
+	assert.True(t, m.work.pager.belief)
+
+	b := sched.Belief{ID: "3f9a1c2b7d10", Signature: sched.Signature{Repo: "/src/polyoxide/.git", Folder: ".", Command: []string{"bash", "scripts/web-smoke.sh"}}}
+	_ = m.handleReply(core.Reply{Req: w.reqs[0], Beliefs: sched.BeliefsPage{Beliefs: []sched.BeliefView{{Belief: b, RepoName: "polyoxide"}}}})
+	screen := ansi.Strip(m.View().Content)
+	assert.Contains(t, screen, "belief · job 14")
+	assert.Contains(t, screen, "belief 3f9a1c2b7d10 · polyoxide · .")
+	assert.Nil(t, m.workDrained(), "a log read never lands on a belief pager")
+	assert.Nil(t, m.workTick())
+}
+
+func TestWorkView_BOnAJobWithoutABeliefSaysWhy(t *testing.T) {
+	j := queueJob(14, sched.Running, "a")
+	j.Unsized = "read /x/.git: denied"
+	m := workHome(t, j)
+	w := watchWork(t, m)
+	pressWork(t, m, "b")
+	assert.Empty(t, w.beliefs)
+	assert.Nil(t, m.work.pager)
+	assert.Contains(t, m.errBox.String(), "not sized: read /x/.git: denied")
 }
 
 // capsSent opens the form over one running job, types 2000 into the CPUs
@@ -1003,7 +1040,7 @@ func TestWorkActions_OfflineRefusesTheKeysThatNeedTheModel(t *testing.T) {
 
 func TestWorkView_TheStatusLineListsTheKeys(t *testing.T) {
 	m := workHome(t, queueJob(14, sched.Running, "a"))
-	assert.Contains(t, ansi.Strip(m.View().Content), "w/esc back · enter log · x cancel · t to front · o open session · e caps · q quit")
+	assert.Contains(t, ansi.Strip(m.View().Content), "w/esc back · enter log · b belief · x cancel · t to front · o open session · e caps · q quit")
 }
 
 func TestFocusSlotInstance_FocusesByIdentity(t *testing.T) {

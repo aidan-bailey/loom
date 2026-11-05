@@ -72,6 +72,15 @@ type JobView struct {
 	BelowKB   int64
 	Unsized   string
 	AgentWhy  string
+	// Durations (smart scheduler spec §5.5): the belief's usual duration
+	// and P90 (0 for none; UsualFromPrior when they are the agent's
+	// estimate), how long the job may run before it is overdue (0 for
+	// never), and a queued job's forecast start (zero for none).
+	Usual          time.Duration
+	P90            time.Duration
+	UsualFromPrior bool
+	OverdueAfter   time.Duration
+	StartsAt       time.Time
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -222,8 +231,16 @@ func (m *Model) queueView() QueueView {
 		return cmp.Or(b.Ended.Compare(a.Ended), cmp.Compare(b.ID, a.ID))
 	})
 	byID := m.jobOwners(q.store.Jobs)
+	usualOf := func(r sched.Record) (time.Duration, bool) {
+		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature))
+		return u, n > 0 || fromPrior
+	}
+	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), usualOf, m.hostUsual())
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
+		if r.State == sched.Queued {
+			jv.StartsAt = starts[r.ID]
+		}
 		if r.State == sched.Running {
 			v.Claimed.CPUs += jv.Need.CPUs
 			v.Claimed.MemoryGB += jv.Need.MemoryGB
@@ -234,6 +251,22 @@ func (m *Model) queueView() QueueView {
 		v.Jobs = append(v.Jobs, jv)
 	}
 	return v
+}
+
+// hostUsual is the forecast's duration for a job with none: the median of
+// every belief's usual duration on this host, or 5 minutes with none.
+func (m *Model) hostUsual() time.Duration {
+	var all []time.Duration
+	for i := range m.queue.beliefs.Beliefs {
+		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i]); n > 0 {
+			all = append(all, u)
+		}
+	}
+	if len(all) == 0 {
+		return 5 * time.Minute
+	}
+	slices.Sort(all)
+	return all[len(all)/2]
 }
 
 // queueJobView is the view of record r. Only a running job has usage, and
@@ -272,6 +305,9 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		e := *r.Exit
 		jv.Exit = &e
 	}
+	b := q.beliefOf(r.Signature)
+	jv.Usual, jv.P90, _, jv.UsualFromPrior = sched.Usual(b)
+	jv.OverdueAfter = sched.OverdueAfter(b)
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
 	switch r.State {

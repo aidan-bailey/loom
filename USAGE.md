@@ -384,12 +384,13 @@ Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt
 
 ### Work View (after pressing `w`)
 
-The work view covers the whole host, across every workspace. Mouse input is dropped. Offline (daemon away), it shows the last state it had and its actions are refused like every other model key.
+The work view covers the whole host, across every workspace. Mouse input is dropped. Offline (daemon away), it shows the last state it had and its actions are refused like every other model key. Each running or queued job shows its claim and where the claim came from (`learned·5`, `agent`, `default`, `yours`; `—` and `sizing` while it waits for the agent); a running job shows how long it has run against its usual duration (`1m10s/~2m`, marked `⚠` once it is overdue), and a queued job when it is expected to start (`starts ~3m`).
 
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Move the selection |
 | `Enter` | Open the selected job's whole log in a scrolling pager, whose title shows the job's command and folder (`Esc` back) |
+| `b` | Open what the scheduler has learned of the selected job's command in the pager: the claim a job of it gets, its usual duration, the agent's prior and notes, and its runs (`Esc` back) |
 | `x` | Cancel the selected job, after a confirmation (a queued job at once, a running one with SIGTERM and then SIGKILL) |
 | `t` | Move a queued job to the front of the queue |
 | `o` | Focus the job's owner session in focus mode, opening its workspace's tab if it is not open. A job whose owner is in the global workspace, which no open tab shows, is left alone: `o` changes nothing and says so on the info line |
@@ -900,11 +901,15 @@ loom job wait 14                            # follow a job again
 loom job logs 14 -f                         # its output, following
 loom job list --all                         # running, queued and the finished ones kept
 loom job cancel 14
+loom job beliefs                            # what the scheduler learned of each command (--repo NAME for one repo)
+loom job beliefs show 3f9a1c2b7d10          # one command in full: claim, usual duration, the agent's prior and notes, runs
+loom job beliefs forget 3f9a1c2b7d10        # drop a command's history (a new toolchain, a rewritten build)
 ```
 
 - **No shell.** The command runs as given, in the folder you ran `loom job` from, with your environment. Write a pipeline as `-- sh -c '…'`. A command given as one word with spaces in it that names no program (`loom job submit -- "cargo build --release"`) is refused, saying how to split it.
 - **Sizing.** The scheduler sizes each job from what the same command measured before: the same repo (every worktree of it counts as one), the same folder in it, and the same command once wrappers such as `env A=1`, `direnv exec .` and `nix develop -c` are set aside. Memory is the largest peak of its last 10 done runs plus 15%; cores are the busy cores those runs used, plus a quarter, never more than the default claim; an I/O slot goes to a command whose runs write 2 GiB or more. A command with no done run yet takes the default claim (and a failed run's peak only raises it). `submit` says how it sized the job (`sized 8c/16G io (learned from 5 runs)`), and `loom job list` and the work view show where each claim came from (`learned·5`, `default`, `yours`). What it learned is in `~/.loom/jobs/beliefs.json`.
 - **Claims.** `--cpus N` cores and `--mem N` GB override the sizing, part by part; `--cpus` with `--mem` makes the whole claim yours, `--io` takes an I/O slot, and `--exclusive` takes the whole host (it cannot combine with the others). `submit` warns when `--mem` is below what the command has used. A job starts when its claim fits within the caps beside the running jobs' claims; otherwise `loom job list` and the work view say why it waits ("needs 8 cores (4 free)"). A claim is used for admission only: nothing stops a job from using more.
+- **How long.** Once a command has run, `submit` and `run` say how long it usually takes (`usually 2m`; `about 5m` for the agent's estimate), `loom job list`'s `USUAL` column shows it, and a queued job's wait says when it is expected to start (`starts ~3m`, from running admission forward over those durations). A job that has run past max(2 × its P90, P90 + 5 minutes), once its command has three runs, is overdue: `list` marks it, the work view shows `⚠`, and `run` and `wait` say so once (`loom: job 14 is overdue: 9m so far, usually 2m`). Nothing is sent to the owner.
 - **Order.** First fit, so a small job can pass a big one that waits for room, until the big one has waited past `starve_after_minutes` ([Scheduler Caps](#scheduler-caps)); then nothing else starts before it.
 - **Parallelism.** The CPU claim is the job's parallelism: loom sets `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, `MAKEFLAGS=-jN`, `NIX_BUILD_CORES`, `CMAKE_BUILD_PARALLEL_LEVEL` and `GOFLAGS=-p=N` unless your environment already sets them, and `LOOM_JOB=<id>` always.
 - **Owner and messages.** A job submitted from a loom session belongs to it (loom reads `$LOOM_LAUNCH`); one from a plain shell has no owner. `submit` messages the owner's Claude when the job ends, through the loom mod: `[loom] job 14 "tests" finished: exit 0 after 3m10s`, the log's path and its last lines (`--tail N`, default 20; `--no-notify` sends none). `run` sends none while it follows, but if it is interrupted (a Bash timeout, say) and the job has an owner, it asks for one and leaves the job running. A message the session cannot take (it is not running, is busy, or has no live loom mod) is never typed into its pane: the work view marks the job and says why.

@@ -281,11 +281,11 @@ func TestJobList_ShowsEachJobsStateOwnerClaimAndWait(t *testing.T) {
 	var all bytes.Buffer
 	require.NoError(t, writeJobList(&all, q, true, now))
 
-	assert.Regexp(t, `(?m)^ID +STATE +DESCRIPTION +OWNER +CLAIM +TIME +WAITS FOR$`, all.String())
-	assert.Regexp(t, `(?m)^3 +running +tests +alpha +4c/6G +3m0s *$`, all.String())
-	assert.Regexp(t, `(?m)^4 +queued +bench +- +exclusive +1m30s +needs 14 cores \(2 free\)$`, all.String())
-	assert.Regexp(t, `(?m)^2 +failed \(exit 3\) +build +#9 +2c/2G io +10m0s *$`, all.String())
-	assert.Regexp(t, `(?m)^1 +failed \(SIGKILL\) +link +- +1c/1G +10m0s *$`, all.String())
+	assert.Regexp(t, `(?m)^ID +STATE +DESCRIPTION +OWNER +CLAIM +TIME +USUAL +WAITS FOR$`, all.String())
+	assert.Regexp(t, `(?m)^3 +running +tests +alpha +4c/6G +3m0s +- *$`, all.String())
+	assert.Regexp(t, `(?m)^4 +queued +bench +- +exclusive +1m30s +- +needs 14 cores \(2 free\)$`, all.String())
+	assert.Regexp(t, `(?m)^2 +failed \(exit 3\) +build +#9 +2c/2G io +10m0s +- *$`, all.String())
+	assert.Regexp(t, `(?m)^1 +failed \(SIGKILL\) +link +- +1c/1G +10m0s +- *$`, all.String())
 
 	var live bytes.Buffer
 	require.NoError(t, writeJobList(&live, q, false, now))
@@ -338,8 +338,8 @@ func TestJobSubmit_QueuesBehindAnExclusiveJobAndListShowsWhy(t *testing.T) {
 
 	out, _, err = runJob(t, "list")
 	require.NoError(t, err)
-	assert.Regexp(t, `(?m)^1 +running +hog +- +exclusive +\S+ *$`, out)
-	assert.Regexp(t, `(?m)^2 +queued +next +- +\d+c/\d+G default +\S+ +needs \d+ cores \(0 free\)$`, out)
+	assert.Regexp(t, `(?m)^1 +running +hog +- +exclusive +\S+ +- *$`, out)
+	assert.Regexp(t, `(?m)^2 +queued +next +- +\d+c/\d+G default +\S+ +- +(starts \S+ · )?needs \d+ cores \(0 free\)$`, out)
 
 	out, _, err = runJob(t, "cancel", "2")
 	require.NoError(t, err)
@@ -1029,4 +1029,16 @@ func TestJobPrintPlacement_SaysHowAnEndedJobEnded(t *testing.T) {
 			assert.Equal(t, tc.want, out.String())
 		})
 	}
+}
+
+func TestJobList_ShowsUsualDurationsOverdueMarksAndForecasts(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	q := core.QueueView{Jobs: []core.JobView{
+		{ID: 1, State: sched.Running, Description: "tests", Claim: sched.Claim{CPUs: 4, MemoryGB: 2}, Started: now.Add(-9 * time.Minute), Usual: 2 * time.Minute, OverdueAfter: 7 * time.Minute},
+		{ID: 2, State: sched.Queued, Description: "build", Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Submitted: now, StartsAt: now.Add(3 * time.Minute), Waiting: "needs 4 cores (0 free)"},
+	}}
+	var out bytes.Buffer
+	require.NoError(t, writeJobList(&out, q, false, now))
+	assert.Regexp(t, `(?m)^1 +running +tests +- +4c/2G +9m0s +~2m overdue *$`, out.String())
+	assert.Regexp(t, `(?m)^2 +queued +build +- +4c/6G +0s +- +starts ~3m · needs 4 cores \(0 free\)$`, out.String())
 }

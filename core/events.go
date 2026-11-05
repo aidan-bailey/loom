@@ -214,16 +214,17 @@ func (ViewsChanged) coreEvent() {}
 // Notice is the owner warning. The notices the TUI shows for an operation
 // are emitted as usual; the Reply is for the requester that waits on it.
 type Reply struct {
-	Req    ReqID
-	ID     InstanceID
-	Err    error
-	Notice error
-	Issue  github.Issue
-	Turns  transcript.Page
-	Diff   git.Patch
-	Mockup mockup.Page
-	Sweep  buildsweep.Report
-	Job    sched.JobID
+	Req     ReqID
+	ID      InstanceID
+	Err     error
+	Notice  error
+	Issue   github.Issue
+	Turns   transcript.Page
+	Diff    git.Patch
+	Mockup  mockup.Page
+	Sweep   buildsweep.Report
+	Job     sched.JobID
+	Beliefs sched.BeliefsPage
 }
 
 func (Reply) coreEvent() {}

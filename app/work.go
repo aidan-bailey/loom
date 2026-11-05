@@ -65,6 +65,9 @@ type workPager struct {
 	err     string
 	// stat is the log's size and mtime as the last read found them.
 	stat logStat
+	// belief is set when the pager shows the job's belief (b), which a
+	// ReadBeliefs reply fills, not its log: no log read touches it.
+	belief bool
 }
 
 // workSig is what a log read was made for: the job shown, its state and
@@ -185,7 +188,7 @@ func (m *home) workHeight() int { return max(1, m.lastHeight-m.topChromeHeight()
 func (m *home) workContent() string {
 	job, ok := m.workShown()
 	if p := m.work.pager; p != nil && ok {
-		return ui.RenderWorkPager(m.lastWidth, m.workHeight(), ui.WorkPagerData{Job: job, Lines: p.lines, Top: p.top, Omitted: p.omitted, Err: p.err})
+		return ui.RenderWorkPager(m.lastWidth, m.workHeight(), ui.WorkPagerData{Job: job, Lines: p.lines, Top: p.top, Omitted: p.omitted, Err: p.err, Belief: p.belief})
 	}
 	return ui.RenderWork(m.lastWidth, m.workHeight(), ui.WorkData{Queue: m.queue, Selected: job.ID, Tail: m.work.tail, Now: time.Now()})
 }
@@ -195,7 +198,7 @@ func (m *home) workHint() string {
 	if m.work.pager != nil {
 		return "esc back · j/k scroll · pgup/pgdn page · g/G top/bottom"
 	}
-	return "w/esc back · enter log · x cancel · t to front · o open session · e caps · q quit"
+	return "w/esc back · enter log · b belief · x cancel · t to front · o open session · e caps · q quit"
 }
 
 // handleWorkKey is the work view's keys: j/k and the arrows move the
@@ -222,6 +225,8 @@ func (m *home) handleWorkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveWorkSelection(-1)
 	case "enter":
 		m.openWorkPager()
+	case "b":
+		m.openWorkBelief()
 	case "x":
 		return m, m.askCancelWorkJob()
 	case "t":
@@ -248,6 +253,27 @@ func (m *home) openWorkPager() {
 	}
 	m.work.pager = &workPager{id: job.ID}
 	m.work.sig = workSig{}
+}
+
+// openWorkBelief is b: the selected job's belief in the pager, read from
+// the daemon (ReadBeliefs, smart scheduler spec §8). A job without a
+// signature has none to show, and the info line says why.
+func (m *home) openWorkBelief() {
+	job, ok := m.workSelected()
+	if !ok {
+		return
+	}
+	if job.Signature == "" {
+		why := "this job has no belief"
+		if job.Unsized != "" {
+			why = "not sized: " + job.Unsized
+		}
+		m.errBox.SetInfo(why)
+		return
+	}
+	m.work.pager = &workPager{id: job.ID, belief: true}
+	m.work.sig = workSig{}
+	m.core.ReadBeliefs(sched.BeliefQuery{ID: job.Signature}, m.newReq(pendingReq{work: &pendingWork{belief: job.ID}}))
 }
 
 // handleWorkPagerKey scrolls the pager or closes it. Following is just
@@ -280,7 +306,7 @@ func (m *home) handleWorkPagerKey(key string) {
 // workModelKeys are the work view's keys that need the model. Offline they
 // are refused with the info line the offline gate uses: the gate lets t and
 // e through, being TUI-only keys in the focus layout.
-var workModelKeys = map[string]bool{"x": true, "t": true, "o": true, "e": true}
+var workModelKeys = map[string]bool{"x": true, "t": true, "o": true, "e": true, "b": true}
 
 // workOfflineRefused refuses a key that needs the model while the TUI is
 // offline, saying so on the info line.

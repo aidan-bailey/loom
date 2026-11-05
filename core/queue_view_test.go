@@ -466,3 +466,34 @@ func TestPublishQueue_NothingChangedPublishesNothing(t *testing.T) {
 	assert.Empty(t, queueEvents(m.Sync().Events))
 	assert.Empty(t, queueEvents(m.Sync().Events))
 }
+
+// jobViewOf is job id's view in v.
+func jobViewOf(v QueueView, id sched.JobID) (JobView, bool) {
+	for _, j := range v.Jobs {
+		if j.ID == id {
+			return j, true
+		}
+	}
+	return JobView{}, false
+}
+
+func TestQueueView_CarriesDurationsAndTheForecast(t *testing.T) {
+	m := wqLiveModel(t)
+	wqConfig(t, m, `{"cpus": 4}`)
+	sub := wqJob(t, "sleep", "60")
+	b := m.queue.beliefs.Ensure(wqSigOf(t, sub.Argv, sub.Cwd), time.Now())
+	for range 3 {
+		b.AddRun(sched.Run{Outcome: sched.OutcomeDone, PeakKB: 1 << 20, WallSeconds: 120})
+	}
+	running, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	queued, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+
+	v := m.Queue()
+	jr, _ := jobViewOf(v, running)
+	jq, _ := jobViewOf(v, queued)
+	assert.Equal(t, 2*time.Minute, jr.Usual)
+	assert.Equal(t, 7*time.Minute, jr.OverdueAfter)
+	assert.WithinDuration(t, wqRecord(t, m, running).Started.Add(2*time.Minute), jq.StartsAt, time.Second)
+}

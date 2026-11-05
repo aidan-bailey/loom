@@ -755,6 +755,26 @@ type SetSchedulerCapsParams struct {
 type SetSchedulerCapsResult struct {
 }
 
+// ReadBeliefsParams are ReadBeliefs's parameters on the wire.
+type ReadBeliefsParams struct {
+	Q   sched.BeliefQuery `json:"q"`
+	Req core.ReqID        `json:"req"`
+}
+
+// ReadBeliefsResult is ReadBeliefs's result on the wire; an error travels in the reply.
+type ReadBeliefsResult struct {
+}
+
+// ForgetBeliefParams are ForgetBelief's parameters on the wire.
+type ForgetBeliefParams struct {
+	ID  sched.SignatureID `json:"id"`
+	Req core.ReqID        `json:"req"`
+}
+
+// ForgetBeliefResult is ForgetBelief's result on the wire; an error travels in the reply.
+type ForgetBeliefResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -834,6 +854,8 @@ var methods = []methodInfo{
 	{Name: "MoveJobToFront", Kind: kindRequest, Params: MoveJobToFrontParams{}, Result: MoveJobToFrontResult{}},
 	{Name: "NotifyJob", Kind: kindRequest, Params: NotifyJobParams{}, Result: NotifyJobResult{}},
 	{Name: "SetSchedulerCaps", Kind: kindRequest, Params: SetSchedulerCapsParams{}, Result: SetSchedulerCapsResult{}},
+	{Name: "ReadBeliefs", Kind: kindRequest, Params: ReadBeliefsParams{}, Result: ReadBeliefsResult{}},
+	{Name: "ForgetBelief", Kind: kindRequest, Params: ForgetBeliefParams{}, Result: ForgetBeliefResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1422,6 +1444,26 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.SetSchedulerCaps(p.S, p.Req)
 		return SetSchedulerCapsResult{}, nil, true
+	case "ReadBeliefs":
+		var p ReadBeliefsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadBeliefs(p.Q, p.Req)
+		return ReadBeliefsResult{}, nil, true
+	case "ForgetBelief":
+		var p ForgetBeliefParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ForgetBelief(p.ID, p.Req)
+		return ForgetBeliefResult{}, nil, true
 	}
 	return nil, nil, false
 }
@@ -1910,4 +1952,16 @@ func (c *Client) NotifyJob(id sched.JobID, req core.ReqID) {
 func (c *Client) SetSchedulerCaps(s config.SchedulerSettings, req core.ReqID) {
 	var r SetSchedulerCapsResult
 	c.noteRefused(c.requestNoErr("SetSchedulerCaps", SetSchedulerCapsParams{S: s, Req: req}, &r), req)
+}
+
+// ReadBeliefs is core.Core's ReadBeliefs (request).
+func (c *Client) ReadBeliefs(q sched.BeliefQuery, req core.ReqID) {
+	var r ReadBeliefsResult
+	c.noteRefused(c.requestNoErr("ReadBeliefs", ReadBeliefsParams{Q: q, Req: req}, &r), req)
+}
+
+// ForgetBelief is core.Core's ForgetBelief (request).
+func (c *Client) ForgetBelief(id sched.SignatureID, req core.ReqID) {
+	var r ForgetBeliefResult
+	c.noteRefused(c.requestNoErr("ForgetBelief", ForgetBeliefParams{ID: id, Req: req}, &r), req)
 }

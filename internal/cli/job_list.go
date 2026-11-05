@@ -65,7 +65,7 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tSTATE\tDESCRIPTION\tOWNER\tCLAIM\tTIME\tWAITS FOR")
+	fmt.Fprintln(tw, "ID\tSTATE\tDESCRIPTION\tOWNER\tCLAIM\tTIME\tUSUAL\tWAITS FOR")
 	for _, j := range rows {
 		waits := ""
 		if j.State == sched.Queued {
@@ -74,10 +74,35 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 		if j.Unsized != "" {
 			waits = strings.TrimPrefix(waits+"; not sized: "+j.Unsized, "; ")
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j), rounded(elapsed(j, now)), oneLine(waits))
+		if j.State == sched.Queued && !j.StartsAt.IsZero() {
+			waits = startsText(j.StartsAt, now) + " · " + waits
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j), rounded(elapsed(j, now)), usualText(j, now), oneLine(waits))
 	}
 	return tw.Flush()
+}
+
+// usualText is a job's usual duration as `list` shows it: "~2m", "~2m
+// overdue" for a running job past its mark, "-" for none.
+func usualText(j core.JobView, now time.Time) string {
+	if j.Usual <= 0 {
+		return "-"
+	}
+	text := "~" + sched.RoughDuration(j.Usual)
+	if j.State == sched.Running && j.OverdueAfter > 0 && now.Sub(j.Started) > j.OverdueAfter {
+		text += " overdue"
+	}
+	return text
+}
+
+// startsText is a queued job's forecast start: "starts ~3m", or "starts
+// now" when it is due.
+func startsText(at, now time.Time) string {
+	if !at.After(now) {
+		return "starts now"
+	}
+	return "starts ~" + sched.RoughDuration(at.Sub(now))
 }
 
 func ownerText(j core.JobView) string {

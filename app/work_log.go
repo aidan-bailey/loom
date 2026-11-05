@@ -157,7 +157,7 @@ func (m *home) applyWorkLog(msg workLogMsg) {
 		return
 	}
 	p := m.work.pager
-	if p == nil || p.id != msg.id {
+	if p == nil || p.id != msg.id || p.belief {
 		return
 	}
 	if msg.unchanged && p.loaded {
@@ -187,7 +187,7 @@ func (m *home) applyWorkLog(msg workLogMsg) {
 // QueueChanged; a key that moves the selection or opens the pager changes
 // the signature too.
 func (m *home) workDrained() tea.Cmd {
-	if m.viewMode != viewWork {
+	if m.viewMode != viewWork || (m.work.pager != nil && m.work.pager.belief) {
 		return nil
 	}
 	job, ok := m.workShown()
@@ -208,7 +208,7 @@ func (m *home) workDrained() tea.Cmd {
 // job's has stopped growing.
 func (m *home) workTick() tea.Cmd {
 	job, ok := m.workShown()
-	if !ok || job.State != sched.Running {
+	if !ok || job.State != sched.Running || (m.work.pager != nil && m.work.pager.belief) {
 		return nil
 	}
 	return m.workLogRead(job, m.work.pager != nil)

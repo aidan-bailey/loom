@@ -19,6 +19,10 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `size.go` — `Source`, `ClaimSources`, `Sized`, `Size`.
 - `durations.go` — `Usual`, `OverdueAfter`.
 - `ioacct.go`, `ioacct_linux.go`, `ioacct_other.go` — the shim's `/proc/self/io` counters.
+- `surprise.go` — `NeedsPrior`, `Surprise`, `ScorePrior`: when the advisor is asked, and how its priors are scored.
+- `forecast.go` — `Forecast`.
+- `beliefs_view.go` — `BeliefQuery`, `BeliefView`, `ViewBelief`, `Track`, `TrackRecord`, `BeliefsPage`, `Belief.Clone`.
+- `belief_text.go` — `FormatBelief`, `RoughDuration`.
 - `testmain_test.go` — isolates the loom dirs for the package's tests.
 
 ## Jobs
@@ -47,6 +51,8 @@ The smart scheduler's half ([spec](../docs/superpowers/specs/2026-11-05-smart-sc
 - **Runs.** `RunOf` turns a finished record into a run: a done run teaches memory (its peak, the larger of the sampled group peak and `max_rss`), cores (`cpu_seconds` over wall time) and I/O (`write_bytes`); a run that failed with an exit code teaches only its duration and gives its peak as a floor; a signal nobody requested or a cancel gives a floor only; an adopted run's peak is a floor; a start failure or a lost job teaches nothing.
 - **Size.** `Size(asked, belief, policy)` takes each part from the first source with a value: the flag, the belief's last 10 runs, its prior, the default claim. Memory is the largest peak plus 15% (a floor only raises it), held to the cap; cores are 1.25 × the median busy cores, at most the default claim's; an I/O slot goes to a median write of 2 GiB or more. `--cpus` with `--mem` makes the whole claim explicit. `ClaimSources.Tag` and `Describe` say where the parts came from.
 - **Durations.** `Usual` is the median and P90 of the last 10 runs that exited (done, or with an exit code), or the prior's duration; `OverdueAfter` is max(2 × P90, P90 + 5 min) once there are three.
+- **The forecast.** `Forecast` runs `Admit` forward from now over the running jobs' expected ends (start plus usual duration, or a minute from now when that has passed) and gives each queued job its expected start; jobs being sized are left out, and it stops after 1,000 steps or 24 hours.
+- **Reads.** `BeliefsPage` is what `ReadBeliefs` answers: `ViewBelief` adds the repo's name, the claim a job claiming nothing would get now and the durations; `TrackRecord` sums how the advisor's priors scored against their first runs; `FormatBelief` is the text `loom job beliefs show` and the work view's `b` print.
 - **The argv check.** `CheckCommand` refuses a one-word command with spaces that names no program on the submitter's `PATH` (or, with a slash, no file in the job's folder).
 
 ## On disk

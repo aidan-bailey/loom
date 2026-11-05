@@ -4885,3 +4885,14 @@ view's b opens the selected job's belief.
 - **Spec coverage:** §5.1 → Steps 1.3, 1.8; §5.2 → 1.4, 1.7; §5.3 → 1.4, 1.8, 3.3; §5.4 → 1.5, 1.6, 1.8, 2.4; §5.5 → 1.5, 3.1, 3.4–3.6; §5.6 → 2.1, 2.3, 2.4; §5.7 → 1.2, 1.8; §6 → 2.2, 2.4; §7 → 1.9, 2.5, 3.5; §8 → 1.10, 2.5, 3.6; §9 → 1.11; §10 → 1.8, 2.4, 3.3, 3.4; §12 → the tests of each step; §13 → each step's tests; §14 → the three packages.
 - **Names used across packages:** `Size`, `Sized`, `ClaimSources.Tag`/`Describe`, `Usual`, `OverdueAfter`, `NeedsPrior`, `Surprise`, `ScorePrior`, `RunOf`, `Belief.Clone`, `FormatBelief`, `RoughDuration`, `Forecast`, `TrackRecord`, `ViewBelief`; core's `jobSignature`, `beliefOf`, `sizeRecord`, `resizeQueued`, `recordRun`, `saveBeliefsQuiet`, `learningOff`, `queueAdvice`, `dispatchAdvisor`, `releaseAsking`, `releaseOverdueAsks`, `resumeAsks`, `advisorOff`, `agentView`; CLI's `sizingLine`, `memoryWarning`, `claimText`, `printSizing`, `readBeliefs`, `writeBeliefs`.
 - **Known judgment calls left to execution:** the exact shape of `config.Config.GetScheduler` (Step 2.4) and of `testenv.IsolateLoomDirs` (Step 2.3) are read from the code before use; existing tests whose whole-output expectations change (submit's second line, run's sized line, the view's new column) are updated, not deleted.
+
+## Execution notes (2026-11-05)
+
+Executed inline in one session; each package's full suite ran under the race detector through `loom job run`, and Package 3's e2e suite passed.
+
+- **Step 1.5:** two `TestSize` expectations were wrong ("heavy writes take a slot" and "light writes take none" learn 2 cores from one busy core); fixed in the test.
+- **Step 1.11:** the planned sentence named `-- cargo build --release` and a `-- sh -c '…'` span, which the context lints read as flags; it became "Give the command as separate words, the way a shell would split it, and run a pipeline through `sh -c '…'`" (spec §9 too).
+- **Steps 1.13 and 2.4:** new view fields change the generated protocol reference; regenerated with `go test ./core/rpc -run TestProtocolReference -update` in each package, not only in Package 3.
+- **Step 2.3:** the live contract test first ran under the package's isolated `CLAUDE_CONFIG_DIR` (not logged in); it now names the real config dir (`ADVISOR_LIVE_CLAUDE_CONFIG_DIR`, else `~/.claude`), and `Run` reports the CLI's JSON error when stderr is empty. The live call passed: Opus at low effort answered a sensible prior in 6 s.
+- **Step 2.5:** the e2e sandbox's default program is a fake agent, so its daemon has no Claude program and the advisor is off; the e2e test needed no change.
+- **Steps 1.10 and 3.6:** the source and ETA columns narrow the description and owner columns; the render test that checks a full owner name now renders at 148 columns.

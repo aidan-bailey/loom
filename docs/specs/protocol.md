@@ -82,7 +82,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}}}}`
 
 ## Methods
 
@@ -542,6 +542,18 @@ Params: `{"s":{},"req":0}`
 
 Result: `{}`
 
+### ReadBeliefs (request)
+
+Params: `{"q":{},"req":0}`
+
+Result: `{}`
+
+### ForgetBelief (request)
+
+Params: `{"id":"","req":0}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged
@@ -594,7 +606,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}}}`
 
 ### SessionLaunched
 

@@ -28,6 +28,8 @@ func TestSizingLine(t *testing.T) {
 		{core.JobView{Claim: sched.Claim{Exclusive: true}, Sources: srcs(sched.SourceExclusive, sched.SourceExclusive, sched.SourceExclusive)}, ""},
 		{core.JobView{Sizing: sched.SizingAsking}, "being sized: asking the agent"},
 		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}}, ""},
+		{core.JobView{Claim: sched.Claim{CPUs: 8, MemoryGB: 16, IO: true}, Sources: srcs(L, L, L), Learned: 5, Usual: 2 * time.Minute}, "sized 8c/16G io (learned from 5 runs); usually 2m"},
+		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Sources: srcs(A, A, A), Usual: 5 * time.Minute, UsualFromPrior: true}, "sized 4c/6G (the agent's estimate); about 5m"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, sizingLine(c.v))

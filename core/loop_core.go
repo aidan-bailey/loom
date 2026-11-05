@@ -234,3 +234,13 @@ func (l *Loop) NotifyJob(id sched.JobID, req ReqID) {
 func (l *Loop) SetSchedulerCaps(s config.SchedulerSettings, req ReqID) {
 	l.do(func(m *Model) { m.SetSchedulerCaps(s, req) })
 }
+
+// ReadBeliefs runs Model.ReadBeliefs on the loop.
+func (l *Loop) ReadBeliefs(q sched.BeliefQuery, req ReqID) {
+	l.do(func(m *Model) { m.ReadBeliefs(q, req) })
+}
+
+// ForgetBelief runs Model.ForgetBelief on the loop.
+func (l *Loop) ForgetBelief(id sched.SignatureID, req ReqID) {
+	l.do(func(m *Model) { m.ForgetBelief(id, req) })
+}

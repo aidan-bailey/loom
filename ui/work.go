@@ -24,7 +24,7 @@ const (
 	workIDW    = 4
 	workClaimW = 11
 	workSrcW   = 10 // the claim's source: learned·N, agent, yours, default
-	workTimeW  = 6
+	workTimeW  = 13 // elapsed/~usual, with ⚠ when overdue
 )
 
 // workFixed is what a row spends on the marker, the ID, the claim, the time
@@ -75,6 +75,7 @@ type WorkPagerData struct {
 	Top     int
 	Omitted bool
 	Err     string
+	Belief  bool // the lines are the job's belief (b), not its log
 }
 
 // WorkReported reports whether the daemon has published its queue: a view
@@ -281,20 +282,27 @@ func RenderWorkPager(width, height int, d WorkPagerData) string {
 	top := max(0, min(d.Top, len(d.Lines)-body))
 	end := min(len(d.Lines), top+body)
 
+	what, empty := "log", "(no output yet)"
 	title := fmt.Sprintf(" job %d · %s", d.Job.ID, CleanText(d.Job.Description))
+	if d.Belief {
+		what, empty = "belief", "(reading the belief…)"
+		title = fmt.Sprintf(" belief · job %d · %s", d.Job.ID, CleanText(d.Job.Description))
+	}
 	if d.Err == "" && len(d.Lines) > 0 {
 		title += fmt.Sprintf(" · lines %d–%d of %d", top+1, end, len(d.Lines))
 		if d.Omitted {
 			title += " (earlier output not shown)"
 		}
 	}
-	title += workPagerCommand(width-ansi.StringWidth(title)-ansi.StringWidth(workPagerHint)-1, d.Job)
+	if !d.Belief {
+		title += workPagerCommand(width-ansi.StringWidth(title)-ansi.StringWidth(workPagerHint)-1, d.Job)
+	}
 	out := []string{workTitleStyle.Render(title) + workRightHint(width, title, workPagerHint)}
 	switch {
 	case d.Err != "":
-		out = append(out, " "+workErrStyle.Render("cannot read the log: "+CleanText(d.Err)))
+		out = append(out, " "+workErrStyle.Render("cannot read the "+what+": "+CleanText(d.Err)))
 	case len(d.Lines) == 0:
-		out = append(out, " "+workDimStyle.Render("(no output yet)"))
+		out = append(out, " "+workDimStyle.Render(empty))
 	default:
 		for _, l := range d.Lines[top:end] {
 			out = append(out, " "+l)
@@ -516,11 +524,14 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}
-		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workDur(now.Sub(j.Started)), extra
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workRunTime(j, now), extra
 	case sched.Queued:
 		extra = j.Waiting
 		if extra == "" {
 			extra = "waiting"
+		}
+		if !j.StartsAt.IsZero() {
+			extra = workStarts(j.StartsAt, now) + " · " + extra
 		}
 		if j.Sizing != "" {
 			return "—", lipgloss.NewStyle(), "sizing", workWait(now.Sub(j.Submitted)), extra
@@ -546,6 +557,29 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		parts = append(parts, "not delivered")
 	}
 	return claim, claimStyle, "", timeText, strings.Join(parts, " · ")
+}
+
+// workRunTime is a running job's time cell: how long it has run, against
+// its usual duration when it has one, marked ⚠ once it is overdue (smart
+// scheduler spec §5.5).
+func workRunTime(j core.JobView, now time.Time) string {
+	ran := now.Sub(j.Started)
+	text := workDur(ran)
+	if j.Usual > 0 {
+		text += "/~" + sched.RoughDuration(j.Usual)
+	}
+	if j.OverdueAfter > 0 && ran > j.OverdueAfter {
+		text = "⚠ " + text
+	}
+	return text
+}
+
+// workStarts is a queued job's forecast start.
+func workStarts(at, now time.Time) string {
+	if !at.After(now) {
+		return "starts now"
+	}
+	return "starts ~" + sched.RoughDuration(at.Sub(now))
 }
 
 // workClaim is a running or queued job's claim, with a "!" after a memory

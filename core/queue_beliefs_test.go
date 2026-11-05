@@ -134,3 +134,36 @@ func TestJobQueue_AdoptionMarksARunAdopted(t *testing.T) {
 	m.adoptJobs()
 	assert.True(t, wqRecord(t, m, id).Adopted)
 }
+
+func TestReadBeliefs_AnswersWhatTheQuerySelects(t *testing.T) {
+	m := wqModel(t)
+	a := m.queue.beliefs.Ensure(sched.NewSignature("/src/polyoxide/.git", ".", []string{"cargo", "build"}), time.Now())
+	a.Prior = &sched.Prior{CPUs: 2, MemoryGB: 3, Score: sched.PriorScore{Memory: 1.1}}
+	m.queue.beliefs.Ensure(sched.NewSignature("/src/loom/.git", ".", []string{"go", "test", "./..."}), time.Now().Add(time.Second))
+
+	m.ReadBeliefs(sched.BeliefQuery{}, 7)
+	r := requestReply(t, m, 7)
+	require.NoError(t, r.Err)
+	require.Len(t, r.Beliefs.Beliefs, 2)
+	assert.Equal(t, "loom", r.Beliefs.Beliefs[0].RepoName, "most recently seen first")
+	assert.Equal(t, 1, r.Beliefs.Track.Scored)
+
+	m.ReadBeliefs(sched.BeliefQuery{Repo: "polyoxide"}, 8)
+	assert.Len(t, requestReply(t, m, 8).Beliefs.Beliefs, 1)
+	m.ReadBeliefs(sched.BeliefQuery{ID: "000000000000"}, 9)
+	assert.ErrorContains(t, requestReply(t, m, 9).Err, "no belief 000000000000")
+}
+
+func TestForgetBelief_DropsItAndRefusesWhatItCannot(t *testing.T) {
+	m := wqModel(t)
+	b := m.queue.beliefs.Ensure(sched.NewSignature("/src/loom/.git", ".", []string{"go", "test"}), time.Now())
+	id := b.ID
+	m.ForgetBelief(id, 3)
+	require.NoError(t, requestReply(t, m, 3).Err)
+	assert.Nil(t, m.queue.beliefs.Find(id))
+	saved, err := sched.LoadBeliefs(m.queue.dir)
+	require.NoError(t, err)
+	assert.Empty(t, saved.Beliefs)
+	m.ForgetBelief(id, 4)
+	assert.ErrorContains(t, requestReply(t, m, 4).Err, "no belief")
+}

@@ -64,7 +64,14 @@ func sizingLine(v core.JobView) string {
 	if text == "default" && v.AgentWhy != "" {
 		text += ": " + v.AgentWhy
 	}
-	return fmt.Sprintf("sized %s (%s)", v.Claim, text)
+	line := fmt.Sprintf("sized %s (%s)", v.Claim, text)
+	switch {
+	case v.Usual > 0 && v.UsualFromPrior:
+		line += "; about " + sched.RoughDuration(v.Usual)
+	case v.Usual > 0:
+		line += "; usually " + sched.RoughDuration(v.Usual)
+	}
+	return line
 }
 
 // memoryWarning warns of an explicit memory claim below the largest peak

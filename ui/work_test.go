@@ -100,8 +100,8 @@ func TestWorkRows_SectionsInOrderAndRecentCapped(t *testing.T) {
 }
 
 func TestRenderWork_ShowsTheBarsTheSectionsAndTheTail(t *testing.T) {
-	// 132 columns: wide enough for the owner beside the claim's source column.
-	out := ansi.Strip(RenderWork(132, 30, WorkData{Queue: workBusy(), Selected: 14, Tail: WorkTail{ID: 14, Lines: []string{"test orderbook::depth ... ok"}}, Now: workNow}))
+	// 148 columns: wide enough for the owner beside the source and ETA columns.
+	out := ansi.Strip(RenderWork(148, 30, WorkData{Queue: workBusy(), Selected: 14, Tail: WorkTail{ID: 14, Lines: []string{"test orderbook::depth ... ok"}}, Now: workNow}))
 	for _, want := range []string{
 		"Work queue · fresco", "w/esc back",
 		"CPU ██████████░░░░ 10/14 claimed · 11.2 in use",
@@ -426,4 +426,25 @@ func TestRenderWork_ShowsEachClaimsSourceAndWhyLearningIsOff(t *testing.T) {
 	q.Learning, q.Agent = "", core.AgentView{Why: "no Claude program is configured"}
 	out = ansi.Strip(RenderWork(120, 30, WorkData{Queue: q, Now: now}))
 	assert.Contains(t, out, "agent off: no Claude program is configured")
+}
+
+func TestRenderWork_ShowsETAsOverdueMarksAndForecasts(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:   sched.Host{Name: "fresco"},
+		Policy: sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}},
+		Jobs: []core.JobView{
+			{ID: 14, State: sched.Running, Description: "slow", Started: now.Add(-9 * time.Minute), Claim: sched.Claim{CPUs: 4, MemoryGB: 2},
+				Usual: 2 * time.Minute, OverdueAfter: 7 * time.Minute},
+			{ID: 15, State: sched.Running, Description: "fine", Started: now.Add(-70 * time.Second), Claim: sched.Claim{CPUs: 4, MemoryGB: 2},
+				Usual: 2 * time.Minute, OverdueAfter: 7 * time.Minute},
+			{ID: 16, State: sched.Queued, Description: "next", Submitted: now, Claim: sched.Claim{CPUs: 4, MemoryGB: 6},
+				StartsAt: now.Add(3 * time.Minute), Waiting: "needs 4 cores (2 free)"},
+		},
+	}
+	out := ansi.Strip(RenderWork(160, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "⚠ 9m00s/~2m")
+	assert.Contains(t, out, "1m10s/~2m")
+	assert.NotContains(t, out, "⚠ 1m10s")
+	assert.Contains(t, out, "starts ~3m · needs 4 cores (2 free)")
 }

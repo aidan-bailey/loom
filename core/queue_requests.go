@@ -74,6 +74,22 @@ func (m *Model) SetSchedulerCaps(s config.SchedulerSettings, req ReqID) {
 	m.answerQueueRequest(req, m.setSchedulerCaps(s))
 }
 
+// ReadBeliefs answers with the beliefs q selects, most recently seen first,
+// and the advisor's track record (smart scheduler spec §7).
+func (m *Model) ReadBeliefs(q sched.BeliefQuery, req ReqID) {
+	page, err := m.readBeliefs(q)
+	if err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	m.reply(req, Reply{Beliefs: page})
+}
+
+// ForgetBelief drops a belief.
+func (m *Model) ForgetBelief(id sched.SignatureID, req ReqID) {
+	m.answerQueueRequest(req, m.forgetBelief(id))
+}
+
 // answerQueueRequest replies to a request the model answers at once: with
 // the refusal when err is set, else with a success.
 func (m *Model) answerQueueRequest(req ReqID, err error) {

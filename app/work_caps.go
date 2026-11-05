@@ -17,6 +17,8 @@ import (
 // for the other requests.
 type pendingWork struct {
 	form *overlay.WorkCapsOverlay
+	// belief is the job whose belief b asked for; 0 for another request.
+	belief sched.JobID
 }
 
 // workReplied routes a work view request's Reply. The model's answer to a
@@ -25,6 +27,22 @@ type pendingWork struct {
 // form that has since closed, or been replaced, and every other Reply's
 // error goes to the error line.
 func (m *home) workReplied(p *pendingWork, r core.Reply) tea.Cmd {
+	if p.belief != 0 {
+		// A belief for the pager still open on that job; any other is
+		// late and dropped.
+		pg := m.work.pager
+		if pg == nil || !pg.belief || pg.id != p.belief {
+			return nil
+		}
+		pg.loaded = true
+		switch {
+		case r.Err != nil:
+			pg.err = r.Err.Error()
+		case len(r.Beliefs.Beliefs) > 0:
+			pg.lines = sched.FormatBelief(r.Beliefs.Beliefs[0])
+		}
+		return nil
+	}
 	if o := p.form; o != nil && o == m.workCapsOverlay() {
 		if r.Err != nil {
 			o.SetError(r.Err.Error())
