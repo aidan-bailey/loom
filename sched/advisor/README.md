@@ -7,7 +7,7 @@ The work scheduler's agent ([spec](../../docs/superpowers/specs/2026-11-05-smart
 - `doc.go` — the package comment.
 - `settings.go` — `Settings`, `Resolve` (the `scheduler.agent` block: `enabled` true, `model` `haiku`, `effort` `low`, `account` the default, `wait_seconds` 60) and its bounds.
 - `env.go` — `AllowedEnv`: the build variables the advisor may see (`CARGO_*` build and profile settings, `RUSTFLAGS`, `GOFLAGS`, `CGO_ENABLED`, `MAKEFLAGS`, `CC`, the `*FLAGS`, …), less any whose name holds `TOKEN`, `SECRET`, `PASSW`, `KEY`, `CRED` or `AUTH`, each cut to 512 bytes.
-- `request.go` — `PriorRequest` and `ReconcileRequest`, the JSON the call reads on stdin: the job (argv, normalized command, description, repo, folder, the allowed environment), the host (cores, RAM, caps, default claim), known beliefs, and for a reconcile the runs, the prior, the surprising run and the log's last lines.
+- `request.go` — `PriorRequest` and `ReconcileRequest`, the JSON the call reads on stdin: the job (argv, normalized command, description, repo, folder, the allowed environment), the host (cores, RAM, caps, default claim), known beliefs (each with its signature's allowed pairs and, from `RecentRuns`, its last `MaxRecentRuns` runs: outcome, minutes ago, cores, wall time, peak, MiB written, and whether it ran in the job's checkout), and for a reconcile the runs, the prior, the surprising run and the log's last lines.
 - `prompt.go`, `prompt.md` — `SystemPrompt`.
 - `schema.go` — `PriorSchema` and `NoteSchema`, passed to `--json-schema`.
 - `answer.go` — `PriorAnswer`, `ParsePrior` (cores 1 to the default claim's, memory 1 to the cap, a duration of 1 s to a day, a `like` it was given) and `ParseNote`. `ParsePrior` drops quotes and spaces around a `like` first.
