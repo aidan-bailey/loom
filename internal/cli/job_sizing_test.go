@@ -60,6 +60,11 @@ func TestClaimText(t *testing.T) {
 	assert.Equal(t, "4c/6G", claimText(core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 6}}), "a job from before sizing")
 	assert.Equal(t, "4+2c/3G learned·1", claimText(core.JobView{Claim: sched.Claim{CPUs: 6, MemoryGB: 3}, Spare: sched.Claim{CPUs: 2, MemoryGB: 1},
 		Sources: srcs(sched.SourceLearned, sched.SourceLearned, sched.SourceDefault), Learned: 1}))
+	held := core.JobView{State: sched.Running, Claim: sched.Claim{CPUs: 4, MemoryGB: 8}, Holds: sched.Need{CPUs: 1, MemoryGB: 2},
+		Sources: srcs(sched.SourceLearned, sched.SourceLearned, sched.SourceDefault), Learned: 3}
+	assert.Equal(t, "4c/8G learned·3 holds 1c/2G", claimText(held), "a running job holding less than its claim")
+	held.State = sched.Queued
+	assert.Equal(t, "4c/8G learned·3", claimText(held), "only a running job holds")
 }
 
 func TestStartedLine(t *testing.T) {

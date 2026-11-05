@@ -349,16 +349,26 @@ func workHeader(width int, q core.QueueView) string {
 	return workTitleStyle.Render(left) + workRightHint(width, left, "w/esc back ")
 }
 
-// workBars draws the claimed totals against the caps, and what the running
+// workBars draws the claimed totals, or the held ones while holds are below
+// claims (past-peak holds spec §7), against the caps, and what the running
 // jobs measure beside them.
 func workBars(q core.QueueView) []string {
 	caps := q.Policy.Caps
+	cpuFill, memFill := q.Claimed.CPUs, q.Claimed.MemoryGB
 	cpu := fmt.Sprintf("%d/%d claimed · %.1f in use", q.Claimed.CPUs, caps.CPUs, q.UsedCPU)
 	mem := fmt.Sprintf("%d/%d GB claimed · %s in use", q.Claimed.MemoryGB, caps.MemoryGB, workGB(q.UsedRSSKB))
+	if q.Held.CPUs > 0 && q.Held.CPUs < q.Claimed.CPUs {
+		cpuFill = q.Held.CPUs
+		cpu = fmt.Sprintf("%d/%d held · %d claimed · %.1f in use", q.Held.CPUs, caps.CPUs, q.Claimed.CPUs, q.UsedCPU)
+	}
+	if q.Held.MemoryGB > 0 && q.Held.MemoryGB < q.Claimed.MemoryGB {
+		memFill = q.Held.MemoryGB
+		mem = fmt.Sprintf("%d/%d GB held · %d claimed · %s in use", q.Held.MemoryGB, caps.MemoryGB, q.Claimed.MemoryGB, workGB(q.UsedRSSKB))
+	}
 	io := fmt.Sprintf("%d/%d", q.Claimed.IOSlots, caps.IOJobs)
 	return []string{
-		workBarLine("CPU", q.Claimed.CPUs, caps.CPUs, workBarCells, cpu),
-		workBarLine("MEM", q.Claimed.MemoryGB, caps.MemoryGB, workBarCells, mem),
+		workBarLine("CPU", cpuFill, caps.CPUs, workBarCells, cpu),
+		workBarLine("MEM", memFill, caps.MemoryGB, workBarCells, mem),
 		workBarLine("I/O", q.Claimed.IOSlots, caps.IOJobs, min(workBarCells, caps.IOJobs*2), io),
 	}
 }
@@ -531,6 +541,9 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 	switch j.State {
 	case sched.Running:
 		extra = fmt.Sprintf("%.1fc  peak %s", j.CPU, workKB(j.PeakRSSKB))
+		if j.Holds != (sched.Need{}) {
+			extra += "  " + j.Holds.HoldText()
+		}
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}

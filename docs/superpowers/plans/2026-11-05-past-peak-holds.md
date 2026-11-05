@@ -1403,3 +1403,10 @@ func workBars(q core.QueueView) []string {
 - [ ] Full, race and e2e through the queue, one at a time.
 - [ ] Commit by path: `feat(ui,cli): show a hold below its claim; docs`.
 - [ ] Update the memory note and say what's done.
+
+## Execution notes (2026-11-05, inline)
+
+- **P1** 36f7273e. Deviations from the steps above: `TestAdmit_CountsARunningJobAtItsHold`'s 3-core hold leaves "(1 free)", not 0; `policyOff` is a package variable (`new(false)` needs Go 1.26, `go.mod` is 1.25); the `Resolve` tables expect `ReleasePastPeaks: true` except "every field set", which sets it false. Mutation runs: every term of `Hold`'s guards killed after one added case (a released job outlasting every run, in `TestHold_AfterRelease`, which killed the two survivors: `len(aliveAt) == 0` and `p.End > x`); the trace merge's mutant (keep the later point) survived a fixture whose pairs peaked on their later point, fixed by giving point 0 the peak.
+- **P2**: the model's six tests passed first time; mutants killed: the `breakHold` call, the adopted guard on the trace, the settle's trace drop, `Admit`'s holds, the view's `h != jv.Need`, the profile at `recordRun`. `TestJobQueue_AnAdoptedRunGetsNoProfile` passes on the trace guard alone (an adopted job has no trace), so `recordRun`'s `FullPeak` check is a second line, not separately pinned. Adding view fields needs no `rpc.Protocol` bump (`core/rpc/CLAUDE.md`).
+- **P3**: `claimText` puts the hold after the source tag (`4c/8G learned·3 holds 1c/2G`); the work view's bars are 14 cells.
+- **Gates**: the first full suite (job 552, on the P2+P3 tree, run late behind a starved 9 GB head) failed in `TestQueueView_OrdersJobsAndTotals`, whose `qvPolicy` predates the switch; fixing it showed a real gap: `setSchedulerCaps` kept only the file's `agent` block, so a caps edit from the work view's form (`app/work_caps.go`, its own fields only) would turn `release_past_peaks: false` back to the default. Fixed in P2 with `TestJobQueue_ACapsEditKeepsTheReleaseSwitch` (red first), spec amendment 9. The view test also pins `Held` equal to `Claimed` with no profiled runs.
