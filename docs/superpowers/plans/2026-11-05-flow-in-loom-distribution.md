@@ -1984,3 +1984,5 @@ loom job submit -d "flow-in-loom: race" -- env CC=clang CGO_ENABLED=1 go test -r
 ## Execution notes
 
 (Filled in as packages land: P1's agent type, deviations, the gates' results.)
+
+- **P1, 2026-11-05, Claude Code on PATH:** all four premises held in one 13 s run. SubagentStart saw `flowprobe:probe-dev` and `flowprobetwo:probe-two` (two `--plugin-dir` flags both load). PreToolUse fired twice inside the plugin agent with `agent_type` `flowprobe:probe-dev`, the namespaced form, so `probedPrefix = "flow:"`. The preloaded `flowprobe:probe-habits` reached the agent, and the hook's exit 2 blocked `echo PROBE-BLOCKED` while `echo PROBE-ALLOWED` ran.
