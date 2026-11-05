@@ -41,6 +41,19 @@ const (
 	EnvClaudeConfigDir = "CLAUDE_CONFIG_DIR"
 )
 
+// The variables IsolateLoomDirs clears: a loom launch's links to the daemon
+// that launched it, which a test binary run from a loom session (a pane, a
+// `loom job`) inherits. EnvModSocket and EnvLaunch mirror claudemod.EnvSocket
+// and claudemod.EnvLaunch, EnvJob mirrors sched.EnvJob; their tests assert the
+// names agree. Left set, a fake agent a test starts without a mod of its own
+// (tools/fakeagent) says hello to the real daemon as the session and takes its
+// mod's place, and the session's messages go undelivered.
+const (
+	EnvModSocket = "LOOM_MOD_SOCKET"
+	EnvLaunch    = "LOOM_LAUNCH"
+	EnvJob       = "LOOM_JOB"
+)
+
 // IsolateLoomDirs points LOOM_HOME, LOOM_GLOBAL_DIR, CLAUDE_CODE_TMPDIR and
 // CLAUDE_CONFIG_DIR at fresh paths under one new temporary directory, for
 // the rest of the process. HOME is left alone (git and other tools read
@@ -49,8 +62,10 @@ const (
 // and so is the CLAUDE_CODE_TMPDIR one, so a real Claude launched by an
 // opt-in test finds its root's parent; Claude's own root (claude-<uid>
 // inside it) is not, so it reads as absent and every archive operation is
-// a no-op unless a test makes one. Call it from TestMain before m.Run and
-// run the returned cleanup after it. Tests that need directories of their
+// a no-op unless a test makes one. It also clears LOOM_MOD_SOCKET,
+// LOOM_LAUNCH and LOOM_JOB, the links a loom session's environment holds to
+// the real daemon. Call it from TestMain before m.Run and run the returned
+// cleanup after it. Tests that need directories of their
 // own still t.Setenv over these; the rest are isolated by default.
 func IsolateLoomDirs() (cleanup func(), err error) {
 	dir, err := os.MkdirTemp("", "loom-test-dirs")
@@ -67,6 +82,12 @@ func IsolateLoomDirs() (cleanup func(), err error) {
 		if err := os.Mkdir(os.Getenv(name), 0o700); err != nil {
 			_ = os.RemoveAll(dir)
 			return nil, fmt.Errorf("create %s's dir: %w", name, err)
+		}
+	}
+	for _, name := range []string{EnvModSocket, EnvLaunch, EnvJob} {
+		if err := os.Unsetenv(name); err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, fmt.Errorf("clear %s: %w", name, err)
 		}
 	}
 	return func() { _ = os.RemoveAll(dir) }, nil

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,4 +72,9 @@ func TestHints_LeavesItsInputAlone(t *testing.T) {
 	for _, spare := range env[len(env):cap(env)] {
 		assert.Empty(t, spare, "Hints wrote into the caller's spare capacity")
 	}
+}
+
+// testenv.IsolateLoomDirs clears LOOM_JOB by name: the name must be this.
+func TestEnvJobMatchesTestenv(t *testing.T) {
+	assert.Equal(t, EnvJob, testenv.EnvJob)
 }

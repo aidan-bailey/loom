@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +122,22 @@ func TestTailLogs_LastLinesPerFile(t *testing.T) {
 	out := sb.TailLogs(2)
 	assert.Contains(t, out, "==> "+path+" <==\ntwo\nthree\n")
 	assert.NotContains(t, out, "one")
+}
+
+// A sandbox started from a loom pane must not hand its daemon the pane's
+// links to the host's daemon: an agent the sandbox launches without the mod
+// would say hello to the host's daemon as the pane's session and take its
+// mod's place.
+func TestEnviron_DropsTheHostLaunchsLinks(t *testing.T) {
+	t.Setenv(claudemod.EnvSocket, "/run/host-mod.sock")
+	t.Setenv(claudemod.EnvLaunch, "hostlaunch")
+	t.Setenv(sched.EnvJob, "42")
+	sb := &Sandbox{Name: "demo", Dir: t.TempDir()}
+	env := sb.Environ()
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		assert.NotContains(t, []string{claudemod.EnvSocket, claudemod.EnvLaunch, sched.EnvJob}, name, kv)
+	}
+	assert.Contains(t, env, "PATH="+os.Getenv("PATH"), "the rest of the host's environment passes")
+	assert.Contains(t, env, config.EnvGlobalDir+"="+sb.GlobalDir(), "and the overlay")
 }

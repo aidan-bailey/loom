@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,4 +42,11 @@ func TestModule_SpeaksThisProtocol(t *testing.T) {
 	}
 	assert.Contains(t, src, "/"+JobCallPattern+"/", "the module reports the calls the daemon counts (core, attribution)")
 	assert.Contains(t, src, "agents: true", "the hello says the module can send to subagents")
+}
+
+// testenv.IsolateLoomDirs clears the mod's variables by name: the names must
+// be these.
+func TestEnvNamesMatchTestenv(t *testing.T) {
+	assert.Equal(t, EnvSocket, testenv.EnvModSocket)
+	assert.Equal(t, EnvLaunch, testenv.EnvLaunch)
 }
