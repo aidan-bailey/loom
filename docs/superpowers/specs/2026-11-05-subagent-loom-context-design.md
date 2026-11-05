@@ -1,6 +1,6 @@
 # Subagent loom context: brief every subagent through loom's `SubagentStart` hook
 
-Status: design approved 2026-11-05.
+Status: implemented 2026-11-05 (plan: [`../plans/2026-11-05-subagent-loom-context.md`](../plans/2026-11-05-subagent-loom-context.md)).
 
 Builds on [the loom-context revision](2026-11-04-loom-context-revision-design.md) and [subagent job results](2026-11-05-subagent-job-results-design.md) (branch `aidanb/loom-doesnt-know-subagents`, unmerged).
 
@@ -68,7 +68,7 @@ The subagent cut (`subagentContextFile`) is the subagent head, then the parent's
 
 After the merge, the paragraph in `session/loom_context_shared.md` reads correctly to the parent and to a subagent alike. The sentence the routing branch's §9 adds is replaced by one along these lines:
 
-> Submit from a foreground Bash call: a job's `[loom] job N` message goes to whoever submitted it, a subagent included, even after it has finished, and one loom can't place comes to the session, naming the subagent.
+> Submit from a foreground Bash call: a job's `[loom] job N` message goes back to whoever submitted it, a subagent included, which gets it even after it has finished and so can end its turn; a result loom can't place goes to the session's main conversation, naming the subagent.
 
 `TestJobContext_NamesOnlyFlagsTheCommandsHave` keeps asserting that the paragraph names subagents.
 
@@ -127,4 +127,5 @@ The package rule (`session/hooks/CLAUDE.md`): **give subagents the brief only th
 - No brief where loom installs no hooks: Windows, and a launch whose program already passes `--settings`.
 - Teammates and workflow agents: unverified whether `SubagentStart` fires for them, and so whether they are briefed.
 - A subagent resumed after a loom upgrade keeps the brief of the launch it started under, since Claude adds no second copy.
+- A subagent the loom mod resumes with `$.session.send` (a job's result, [subagent job results](2026-11-05-subagent-job-results-design.md) §13) runs as the plugin's own work, for which Claude Code 2.1.318 runs no loom hook. It still holds the brief from its first start, which a parent's Agent call made; only a compaction during that run drops the brief until its next ordinary run.
 - `USAGE.md`'s config table names the toggle; it now says the toggle covers subagents too.
