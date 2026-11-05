@@ -38,20 +38,24 @@ func endJob(rec *sched.Record, state sched.State, now time.Time) {
 	}
 }
 
-// settledJob does what a job's end brings with it: its usage and wait
-// reasons go, a client is told (rev), its run is recorded, and the jobs held
+// settledJob does what a job's end brings with it: its usage, trace, hold
+// and wait reasons go, a client is told (rev), its run is recorded, and the jobs held
 // after it are released or cancelled, with its message and theirs
 // (settleChain). Job i of the store has already been ended (endJob).
 func (m *Model) settledJob(i int) {
 	q := m.queue
 	rec := q.store.Jobs[i]
+	trace := q.traces[rec.ID]
 	delete(q.usage, rec.ID)
 	delete(q.cpuMarks, rec.ID)
+	delete(q.traces, rec.ID)
+	delete(q.holds, rec.ID)
+	delete(q.holding, rec.ID)
 	delete(q.lockLogged, rec.ID)
 	delete(q.waiting, rec.ID)
 	delete(q.starting, rec.ID)
 	q.moved()
-	m.recordRun(rec)
+	m.recordRun(rec, trace)
 	m.settleChain(rec)
 }
 
@@ -434,6 +438,7 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		}
 	}
 	m.applyUsage(r)
+	m.refreshHolds(q.policy, time.Now())
 	switch {
 	case settled:
 		m.afterSettle()
@@ -537,7 +542,9 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 // applyUsage turns the pass's sample into each running job's usage: its
 // session's memory now (the shim leads the job's session; sccache
 // measurement spec §5.2), the peak so far, and the cores used since the last
-// sample. A pass whose sample failed leaves the last values.
+// sample; adds a point to the trace of a job not adopted, and breaks a hold
+// the usage passed (past-peak holds spec §5.1, §5.4). A pass whose sample
+// failed leaves the last values.
 func (m *Model) applyUsage(r queuePassResult) {
 	q := m.queue
 	if r.snap == nil {
@@ -563,6 +570,17 @@ func (m *Model) applyUsage(r queuePassResult) {
 			}
 		}
 		q.cpuMarks[ob.id] = cpuMark{cpu: cpu, at: r.snap.Taken}
+		if !rec.Adopted {
+			tr := q.traces[ob.id]
+			if tr == nil {
+				tr = &sched.Trace{}
+				q.traces[ob.id] = tr
+			}
+			tr.Add(r.snap.Taken, sched.TracePoint{X: cpu.Seconds(), RSSKB: rss, Cores: cores})
+		}
+		if what := q.holds[ob.id].Exceeded(rss, cores); what != "" {
+			m.breakHold(rec, what, rss, cores)
+		}
 		if u := (jobUsage{RSSKB: rss, CPU: cores}); q.usage[ob.id] != u {
 			q.usage[ob.id] = u
 			q.moved()

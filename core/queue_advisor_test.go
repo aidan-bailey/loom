@@ -250,14 +250,14 @@ func TestAdvisor_ASurpriseGetsANote(t *testing.T) {
 		Submitted: t0, Started: t0, Ended: time.Now(), PeakRSSKB: 3 << 20, Exit: &sched.Exit{Code: 0},
 	}
 	m.queue.store.Jobs = append(m.queue.store.Jobs, rec)
-	m.recordRun(rec)
+	m.recordRun(rec, nil)
 	wqWait(t, "the note", func() bool { wqPump(t, m); return len(m.queue.beliefs.Find(sig.ID()).Notes) == 1 })
 	assert.Equal(t, "a cold build after the sweep", m.queue.beliefs.Find(sig.ID()).Notes[0].Text)
 	got := wqCalls(t, calls)
 	require.Len(t, got, 1)
 	assert.Contains(t, got[0], `"surprise":"it peaked at 3.0 GB, above its 2 GB claim"`)
 
-	m.recordRun(rec)
+	m.recordRun(rec, nil)
 	wqPump(t, m)
 	assert.Len(t, wqCalls(t, calls), 1, "one reconcile per belief in six hours")
 }

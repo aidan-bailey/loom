@@ -76,6 +76,7 @@ func (m *Model) admitJobs() {
 		// §5.4).
 		m.releaseOverdueAsks(now)
 		m.resizeQueued(policy)
+		m.refreshHolds(policy, now)
 		// A queued record whose lock could not be tested stays out of the
 		// walk (a shim may be behind it, and it would run the command again
 		// after it): it claims nothing and starts nothing.
@@ -89,12 +90,12 @@ func (m *Model) admitJobs() {
 				return held
 			})
 		}
-		dec := sched.Admit(jobs, policy, now, nil)
+		dec := sched.Admit(jobs, policy, now, q.holding)
 		maps.Copy(waiting, dec.Waiting)
 		start = dec.Start
 		// Spare cores for the jobs it starts, when nothing else waits (job
 		// scaling spec §5.3).
-		spare = sched.Grant(dec, jobs, policy, nil, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
+		spare = sched.Grant(dec, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()
@@ -165,6 +166,8 @@ type jobStarted struct {
 func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.Claim) {
 	q := m.queue
 	rec := &q.store.Jobs[i]
+	log.For("core").Info("queue.job_started", "job", int64(rec.ID), "signature", string(rec.Signature),
+		"waited_s", int64(now.Sub(rec.QueuedSince()).Seconds()))
 	rec.State, rec.Started, rec.PID = sched.Running, now, 0
 	if spare != (sched.Claim{}) {
 		rec.Claim.CPUs += spare.CPUs

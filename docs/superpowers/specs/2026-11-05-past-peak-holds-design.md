@@ -95,7 +95,7 @@ No graphs, and nothing on the phone.
 
 ## 8. Configuration
 
-`config.SchedulerSettings` gains `ReleasePastPeaks *bool` (`"release_past_peaks"`), absent meaning true; `sched.Resolve` copies it to `Policy.ReleasePastPeaks`. A value that does not decode as a boolean makes the block invalid, which pauses admission with the reason, as any field does. Turning it off returns every hold to its claim at the next pass. `USAGE.md` documents it.
+`config.SchedulerSettings` gains `ReleasePastPeaks *bool` (`"release_past_peaks"`), absent meaning true; `sched.Resolve` copies it to `Policy.ReleasePastPeaks`. A value that does not decode as a boolean makes the block invalid, which pauses admission with the reason, as any field does. Turning it off returns every hold to its claim at the next pass. The work view's caps form doesn't show it, and a caps edit keeps the file's value (`setSchedulerCaps`, as for the `agent` block). `USAGE.md` documents it.
 
 ## 9. Components
 
@@ -167,3 +167,4 @@ Made while writing [the plan](../plans/2026-11-05-past-peak-holds.md), 2026-11-0
 6. **The header shows `held` only while the held total is above 0 and below the claimed one,** so a view from a build without holds never reads `0/14 held`.
 7. **An invalid profile is logged once at load (`loadBeliefs`) per signature.** Profiles made at run time are valid by construction.
 8. **The core tests deliver synthetic samples through the pass** to a real shim or a seeded record, so a trace is exact; the job a release admits is a real submit.
+9. **A caps edit keeps the file's `release_past_peaks`** (found by the full suite's run, added during execution): the caps form sends only its own fields, so without it every edit in the work view would turn a `false` back to the default.

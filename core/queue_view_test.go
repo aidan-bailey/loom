@@ -22,10 +22,11 @@ const qvBlock = `{"cpus": 8, "memory_gb": 16, "io_jobs": 2, "default_claim": {"c
 
 // qvPolicy is the policy qvBlock resolves to.
 var qvPolicy = sched.Policy{
-	Caps:         sched.Caps{CPUs: 8, MemoryGB: 16, IOJobs: 2},
-	DefaultClaim: sched.Claim{CPUs: 2, MemoryGB: 4},
-	StarveAfter:  10 * time.Minute,
-	KeepFinished: 50,
+	Caps:             sched.Caps{CPUs: 8, MemoryGB: 16, IOJobs: 2},
+	DefaultClaim:     sched.Claim{CPUs: 2, MemoryGB: 4},
+	StarveAfter:      10 * time.Minute,
+	KeepFinished:     50,
+	ReleasePastPeaks: true,
 }
 
 // qvRecord is a record of the given state, ordered by its ID, with the
@@ -159,6 +160,7 @@ func TestQueueView_OrdersJobsAndTotals(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "jobs"), v.Dir)
 	assert.Empty(t, v.Paused)
 	assert.Equal(t, sched.Need{CPUs: 8, MemoryGB: 12}, v.Claimed, "what the two running jobs' claims take")
+	assert.Equal(t, v.Claimed, v.Held, "with no profiled runs, each holds its claim")
 
 	run1, run2 := jobOf(t, v, first), jobOf(t, v, second)
 	assert.Equal(t, sched.Need{CPUs: 4, MemoryGB: 6}, run1.Need)

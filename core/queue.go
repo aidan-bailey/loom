@@ -94,6 +94,13 @@ type queueState struct {
 	silent map[sched.JobID]silentShim
 	// cpuMarks is each running job's CPU time at the last sample.
 	cpuMarks map[sched.JobID]cpuMark
+	// traces is each running job's samples since its start (past-peak holds
+	// spec §5.1), holds where each one's hold stands (sched.HoldState), and
+	// holding what each counts at for admission, from the last refreshHolds.
+	// In memory only: settledJob drops a job's entries.
+	traces  map[sched.JobID]*sched.Trace
+	holds   map[sched.JobID]sched.HoldState
+	holding map[sched.JobID]sched.Need
 	// doomed holds the IDs retention dropped from the store, whose
 	// directories go once a write of the shorter jobs.json succeeds.
 	doomed []sched.JobID
@@ -145,6 +152,9 @@ func newQueueState() *queueState {
 		starting:   map[sched.JobID]bool{},
 		silent:     map[sched.JobID]silentShim{},
 		cpuMarks:   map[sched.JobID]cpuMark{},
+		traces:     map[sched.JobID]*sched.Trace{},
+		holds:      map[sched.JobID]sched.HoldState{},
+		holding:    map[sched.JobID]sched.Need{},
 		unprobed:   map[sched.JobID]error{},
 		lockLogged: map[sched.JobID]string{},
 	}
