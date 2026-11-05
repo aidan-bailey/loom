@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
@@ -434,4 +435,62 @@ func TestSession_WithProgramEnv(t *testing.T) {
 	require.Same(t, ptyFactory, got.ptyFactory.(*MockPtyFactory))
 	require.Equal(t, cmdExec, got.cmdExec)
 	require.Equal(t, []string{"A=1"}, old.WithProgram("claude").env, "WithProgram carries the env over")
+}
+
+// neverAppearsExec fakes a tmux whose new-session returned but whose
+// session never shows up: has-session always fails, and kill-session fails
+// with killErr (nil: it succeeds).
+func neverAppearsExec(killErr error) cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if slices.Contains(c.Args, "has-session") {
+				return errors.New("can't find session")
+			}
+			if slices.Contains(c.Args, "kill-session") {
+				return killErr
+			}
+			return nil
+		},
+		OutputFunc:         func(*exec.Cmd) ([]byte, error) { return []byte{}, nil },
+		CombinedOutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+}
+
+// shortAppearTimeout shrinks Start's wait for a new session so a test that
+// never lets it appear does not sleep the real two seconds.
+func shortAppearTimeout(t *testing.T) {
+	t.Helper()
+	prev := sessionAppearTimeout
+	sessionAppearTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { sessionAppearTimeout = prev })
+}
+
+// TestSession_StartTimeout_NamesNoNilCause pins the 2026-10-20 log: a start
+// whose session never appeared said "timed out waiting for tmux session X:
+// <nil> (cleanup error: …)", formatting an error that is always nil there
+// and hiding that the session simply never showed up.
+func TestSession_StartTimeout_NamesNoNilCause(t *testing.T) {
+	shortAppearTimeout(t)
+	s := NewSessionWithDeps("gone", "claude", NewMockPtyFactory(t), neverAppearsExec(nil))
+
+	err := s.Start(t.TempDir())
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "<nil>")
+	assert.NotContains(t, err.Error(), "cleanup error", "nothing failed to clean up")
+	assert.Contains(t, err.Error(), "timed out waiting for tmux session loom_gone to appear")
+}
+
+// TestSession_StartTimeout_KeepsTheCleanupError: when the kill that follows
+// a timed-out start fails too, the error still says so.
+func TestSession_StartTimeout_KeepsTheCleanupError(t *testing.T) {
+	shortAppearTimeout(t)
+	s := NewSessionWithDeps("gone", "claude", NewMockPtyFactory(t), neverAppearsExec(errors.New("exit status 1")))
+
+	err := s.Start(t.TempDir())
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "<nil>")
+	assert.Contains(t, err.Error(), "timed out waiting for tmux session loom_gone to appear")
+	assert.Contains(t, err.Error(), "cleanup error: error killing tmux session: exit status 1")
 }

@@ -197,15 +197,18 @@ func (s *Session) Start(workDir string) (err error) {
 	defer ptmx.Close()
 
 	// Poll for session existence with exponential backoff
-	timeout := time.After(2 * time.Second)
+	timeout := time.After(sessionAppearTimeout)
 	sleepDuration := 5 * time.Millisecond
 	for !s.DoesSessionExist() {
 		select {
 		case <-timeout:
+			// err is nil here (new-session itself returned): the session
+			// simply never appeared, so say that rather than format a cause.
+			timedOut := fmt.Errorf("timed out waiting for tmux session %s to appear", s.sanitizedName)
 			if cleanupErr := s.Close(); cleanupErr != nil {
-				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
+				return fmt.Errorf("%w (cleanup error: %v)", timedOut, cleanupErr)
 			}
-			return fmt.Errorf("timed out waiting for tmux session %s: %v", s.sanitizedName, err)
+			return timedOut
 		default:
 			time.Sleep(sleepDuration)
 			// Exponential backoff up to 50ms max
