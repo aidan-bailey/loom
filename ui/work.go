@@ -196,6 +196,9 @@ func RenderWork(width, height int, d WorkData) string {
 			out = append(out, " "+workDimStyle.Render(line))
 		}
 	}
+	if reported && q.LadderErr != "" {
+		out = append(out, " "+workErrStyle.Render("ladder: "+CleanText(q.LadderErr)))
+	}
 	if reported && q.Uncontained != "" {
 		// Jobs start without their own cgroup (cgroup spec §5.5).
 		out = append(out, " "+workDimStyle.Render("uncontained: "+CleanText(q.Uncontained)))
@@ -563,6 +566,9 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		extra = fmt.Sprintf("%.1fc  peak %s", j.CPU, workKB(j.PeakRSSKB))
 		if j.Holds != (sched.Need{}) {
 			extra += "  " + j.Holds.HoldText()
+		}
+		if j.Rung != "" {
+			extra += "  " + j.Rung.Text()
 		}
 		if j.CancelReason != "" {
 			extra = "cancelling"

@@ -208,6 +208,19 @@ type Record struct {
 	Cgroup      string `json:"cgroup,omitempty"`
 	Uncontained string `json:"uncontained,omitempty"`
 	Attempt     int    `json:"attempt,omitempty"`
+
+	// The ladder (cgroup spec §8): the rung it is on and since when, whether
+	// this attempt was laddered, how often it was requeued and why last, a
+	// requeue asked for (the kill is out), whether it may be requeued at all
+	// (--no-requeue), and whether the starvation guard started it.
+	Rung        Rung      `json:"rung,omitempty"`
+	RungAt      time.Time `json:"rung_at,omitzero"`
+	Laddered    bool      `json:"laddered,omitempty"`
+	Requeues    int       `json:"requeues,omitempty"`
+	LastRequeue string    `json:"last_requeue,omitempty"`
+	Requeue     string    `json:"requeue,omitempty"`
+	NoRequeue   bool      `json:"no_requeue,omitempty"`
+	Starved     bool      `json:"starved,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
@@ -242,8 +255,9 @@ type Submit struct {
 	Claim       Claim    `json:"claim"` // CPUs or MemoryGB 0: the default claim's
 	Notify      bool     `json:"notify"`
 	Tail        int      `json:"tail"`
-	Launch      string   `json:"launch"`          // $LOOM_LAUNCH; "" from a plain shell
-	After       JobID    `json:"after,omitempty"` // the prerequisite (--after); 0 for none
+	Launch      string   `json:"launch"`               // $LOOM_LAUNCH; "" from a plain shell
+	After       JobID    `json:"after,omitempty"`      // the prerequisite (--after); 0 for none
+	NoRequeue   bool     `json:"no_requeue,omitempty"` // never requeued when memory runs short: paused instead (cgroup spec §8.2)
 }
 
 // totalBytes is the summed length of items.

@@ -38,6 +38,8 @@ type QueueView struct {
 	BudgetKB    int64
 	PeakKB      int64
 	CPUPressure float64
+	// LadderErr is the ladder's last failed call, "" once one succeeds.
+	LadderErr string
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -149,6 +151,12 @@ type JobView struct {
 	Unit        string
 	Uncontained string
 	Attempt     int
+	// The ladder (cgroup spec §8): its rung, how often it was requeued and
+	// why last, and whether it may be.
+	Rung        sched.Rung
+	Requeues    int
+	LastRequeue string
+	NoRequeue   bool
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -295,6 +303,7 @@ func (m *Model) queueView() QueueView {
 	if queueGOOS == "linux" && q.policy.Contain {
 		v.Uncontained = q.containWhy(q.policy)
 	}
+	v.LadderErr = q.ladderErr
 	var running, queued, finished []sched.Record
 	for _, r := range q.store.Jobs {
 		switch r.State {
@@ -409,6 +418,10 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Unit:         r.Unit,
 		Uncontained:  r.Uncontained,
 		Attempt:      r.Attempt,
+		Rung:         r.Rung,
+		Requeues:     r.Requeues,
+		LastRequeue:  r.LastRequeue,
+		NoRequeue:    r.NoRequeue,
 	}
 	if r.Exit != nil {
 		e := *r.Exit

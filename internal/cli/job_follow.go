@@ -147,6 +147,43 @@ type jobFollower struct {
 	sized   bool
 	overdue bool
 	last    string
+	// The attempt it follows (cgroup spec §8.4) and the rung it last saw.
+	attempt     int
+	attemptSeen bool
+	rung        sched.Rung
+}
+
+// noteAttempt notices a requeue: a view of a later attempt than the last
+// resets the log's offset and the start report, and returns the line to
+// say; "" otherwise.
+func (f *jobFollower) noteAttempt(v core.JobView) string {
+	if !f.attemptSeen {
+		f.attempt, f.attemptSeen = v.Attempt, true
+		return ""
+	}
+	if v.Attempt == f.attempt {
+		return ""
+	}
+	f.attempt, f.off, f.started, f.queued, f.last, f.rung = v.Attempt, 0, false, true, "", ""
+	return fmt.Sprintf("job %d requeued: %s; following its next attempt", v.ID, v.LastRequeue)
+}
+
+// noteRung is the line for a running job's rung change, "" for none.
+func (f *jobFollower) noteRung(v core.JobView) string {
+	if v.State != sched.Running || v.Rung == f.rung {
+		return ""
+	}
+	prev := f.rung
+	f.rung = v.Rung
+	switch {
+	case v.Rung == sched.RungSqueezed && prev == "":
+		return fmt.Sprintf("job %d squeezed: memory is short", v.ID)
+	case v.Rung == sched.RungPaused:
+		return fmt.Sprintf("job %d paused: memory is short", v.ID)
+	case v.Rung == "":
+		return fmt.Sprintf("job %d resumed", v.ID)
+	}
+	return ""
 }
 
 // noJobError is the error of a follower whose job the daemon does not hold.
@@ -179,6 +216,9 @@ func (f *jobFollower) run() (core.JobView, error) {
 		v, ok := jobOf(f.d.Queue(), f.id)
 		if !ok {
 			return v, &noJobError{id: f.id}
+		}
+		if line := f.noteAttempt(v); line != "" && !f.quiet {
+			f.d.say("%s", line)
 		}
 		// The view comes first, so a job seen ended has a complete log.
 		if err := f.copyLog(v.LogPath); err != nil {
@@ -228,6 +268,9 @@ func (f *jobFollower) report(v core.JobView) {
 			f.d.say("%s", startedLine(v))
 		}
 		f.started = true
+		if line := f.noteRung(v); line != "" {
+			f.d.say("%s", line)
+		}
 		if ran := time.Since(v.Started); !f.overdue && v.OverdueAfter > 0 && ran > v.OverdueAfter {
 			f.overdue = true
 			f.d.say("job %d is overdue: %s so far, usually %s", v.ID, sched.RoughDuration(ran), sched.RoughDuration(v.Usual))

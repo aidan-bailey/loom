@@ -200,3 +200,25 @@ func TestBelief_CloneCopiesProfiles(t *testing.T) {
 	c.Runs[0].Profile.Mem.Steps[0].Level = 9
 	assert.Equal(t, int64(2), b.Runs[0].Profile.Mem.Steps[0].Level)
 }
+
+// TestRunOf_ALadderedRunTeachesFloorsOnly: a squeezed or paused run's
+// timing is distorted (cgroup spec §8.5): its peak is a floor and it teaches
+// neither cores nor a duration.
+func TestRunOf_ALadderedRunTeachesFloorsOnly(t *testing.T) {
+	start := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	rec := Record{ID: 1, State: Done, Started: start, Ended: start.Add(time.Minute), Claim: Claim{CPUs: 4, MemoryGB: 6},
+		Exit: &Exit{Code: 0, Ended: start.Add(time.Minute), CPUSeconds: 120}, PeakRSSKB: 1 << 20}
+	run, ok := RunOf(rec)
+	require.True(t, ok)
+	assert.True(t, run.FullPeak())
+	assert.True(t, run.TeachesDuration())
+	assert.True(t, run.teachesCores())
+
+	rec.Laddered = true
+	run, ok = RunOf(rec)
+	require.True(t, ok)
+	assert.True(t, run.Laddered)
+	assert.False(t, run.FullPeak(), "its peak is a floor")
+	assert.False(t, run.TeachesDuration())
+	assert.False(t, run.teachesCores())
+}

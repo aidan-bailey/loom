@@ -517,6 +517,10 @@ func (m *Model) Deliver(msg any) {
 		m.deliverJobStarted(msg)
 	case confinerProbed:
 		m.deliverConfinerProbed(msg)
+	case ladderDone:
+		m.deliverLadderDone(msg)
+	case sliceHighSet:
+		m.deliverSliceHighSet(msg)
 	case advisorResult:
 		m.deliverAdvisor(msg)
 	case groupResult:

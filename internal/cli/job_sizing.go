@@ -121,5 +121,8 @@ func claimText(v core.JobView) string {
 	if v.State == sched.Running && v.Holds != (sched.Need{}) {
 		text += " " + v.Holds.HoldText()
 	}
+	if v.State == sched.Running && v.Rung != "" {
+		text += " " + v.Rung.Text()
+	}
 	return text
 }

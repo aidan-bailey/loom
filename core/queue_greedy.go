@@ -47,6 +47,7 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 		g.Running[rec.ID] = m.predictRunning(rec, now, expect)
 	}
 	g.BudgetKB = sched.Budget(used, avail, p)
+	g.Holdoff = m.ladderHoldoff()
 	g.Predict = func(r sched.Record, start time.Time) sched.Prediction { return m.predictNew(r, start, expect) }
 	if q.slice != nil {
 		g.CPUPressure = q.slice.CPUPressure
@@ -66,7 +67,7 @@ func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sche
 	}
 	var pred sched.Prediction
 	ok := false
-	if tr := q.traces[rec.ID]; rec.Cgroup != "" && !rec.Adopted && tr != nil && len(tr.Points) > 0 {
+	if tr := q.traces[rec.ID]; rec.Cgroup != "" && !rec.Adopted && rec.Rung == "" && rec.Requeues < sched.MaxRequeues && tr != nil && len(tr.Points) > 0 {
 		pred, ok = sched.Predict(sched.CurvedRuns(q.beliefOf(rec.Signature)), tr.Points[len(tr.Points)-1].X, now)
 	}
 	if !ok {
@@ -85,8 +86,10 @@ func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sche
 // predictNew is a job's prediction from start: its command's curves, or flat
 // at its claim for its expected duration.
 func (m *Model) predictNew(r sched.Record, start time.Time, expect func(sched.Record) time.Duration) sched.Prediction {
-	if pred, ok := sched.Predict(sched.CurvedRuns(m.queue.beliefOf(r.Signature)), 0, start); ok {
-		return pred
+	if r.Requeues < sched.MaxRequeues {
+		if pred, ok := sched.Predict(sched.CurvedRuns(m.queue.beliefOf(r.Signature)), 0, start); ok {
+			return pred
+		}
 	}
 	return sched.Flat(int64(r.Claim.MemoryGB)*kbPerGB, start, start.Add(expect(r)))
 }

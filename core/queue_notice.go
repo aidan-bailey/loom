@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 )
@@ -207,6 +208,24 @@ func (m *Model) deliverJobNotice(r jobNoticeBuilt) {
 		return
 	}
 	m.enqueue(inst, &modMessage{text: r.text, origin: OriginJob, job: r.id, agent: r.agent})
+}
+
+// sendRequeueNotice tells rec's owner (or the subagent that submitted it)
+// that the job was killed for memory and requeued (cgroup spec §8.4). It
+// records no fate on the job (the mod message names job 0), so the end
+// message still comes (§15, 10); a job that asked for no message, or whose
+// owner can't take one, sends none.
+func (m *Model) sendRequeueNotice(rec sched.Record, why string) {
+	if !rec.Notify || rec.Owner == 0 {
+		return
+	}
+	inst, reason := m.noticeTarget(InstanceID(rec.Owner))
+	if reason != "" {
+		log.For("core").Info("queue.requeue_notice_skipped", "job", int64(rec.ID), "why", reason)
+		return
+	}
+	text := fmt.Sprintf("[loom] job %d %q was stopped and requeued: %s; it keeps its place in line", rec.ID, rec.Description, why)
+	m.enqueue(inst, &modMessage{text: text, origin: OriginJob, agent: rec.Agent})
 }
 
 // noticeHead is the notice's first line (spec §5.8): the job, then its

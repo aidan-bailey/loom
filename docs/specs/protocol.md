@@ -511,7 +511,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0,"release_past_peaks":false,"contain":false,"jobs_cpu_weight":0,"reserve_gb":0,"cpu_pressure_pct":0,"cpu_overcommit":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"Held":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null,"Uncontained":"","Greedy":false,"BudgetKB":0,"PeakKB":0,"CPUPressure":0}}`
+Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0,"release_past_peaks":false,"contain":false,"jobs_cpu_weight":0,"reserve_gb":0,"cpu_pressure_pct":0,"cpu_overcommit":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"Held":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null,"Uncontained":"","Greedy":false,"BudgetKB":0,"PeakKB":0,"CPUPressure":0,"LadderErr":""}}`
 
 ### SubmitJob (request)
 
@@ -625,7 +625,7 @@ Result: `{}`
 
 ### QueueChanged
 
-`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0,"release_past_peaks":false,"contain":false,"jobs_cpu_weight":0,"reserve_gb":0,"cpu_pressure_pct":0,"cpu_overcommit":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"Held":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null,"Uncontained":"","Greedy":false,"BudgetKB":0,"PeakKB":0,"CPUPressure":0}}`
+`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0,"release_past_peaks":false,"contain":false,"jobs_cpu_weight":0,"reserve_gb":0,"cpu_pressure_pct":0,"cpu_overcommit":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"Held":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null,"Uncontained":"","Greedy":false,"BudgetKB":0,"PeakKB":0,"CPUPressure":0,"LadderErr":""}}`
 
 ### FeedbackChanged
 

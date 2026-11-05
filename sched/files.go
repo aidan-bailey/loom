@@ -2,7 +2,9 @@ package sched
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -148,6 +150,24 @@ func ReadExit(jobDir string) (Exit, error) {
 		return Exit{}, err
 	}
 	return e, nil
+}
+
+// ArchiveAttempt moves an attempt's output.log, started.json and exit.json
+// into jobDir/attempt-<attempt+1> (mode 0700), so the job's next attempt
+// runs in a clean directory (cgroup spec §8.4); a file that isn't there is
+// skipped. The directory must not exist yet.
+func ArchiveAttempt(jobDir string, attempt int) error {
+	dst := filepath.Join(jobDir, fmt.Sprintf("attempt-%d", attempt+1))
+	if err := os.Mkdir(dst, 0o700); err != nil {
+		return fmt.Errorf("make %s: %w", dst, err)
+	}
+	for _, name := range []string{LogFile, StartedFile, ExitFile} {
+		err := os.Rename(filepath.Join(jobDir, name), filepath.Join(dst, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("move %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // writeStarted writes jobDir's started.json atomically. The shim's.

@@ -47,18 +47,24 @@ func (m *Model) settledJob(i int) {
 	q := m.queue
 	rec := q.store.Jobs[i]
 	trace := q.traces[rec.ID]
-	delete(q.usage, rec.ID)
-	delete(q.cpuMarks, rec.ID)
-	delete(q.traces, rec.ID)
-	delete(q.holds, rec.ID)
-	delete(q.holding, rec.ID)
-	delete(q.lockLogged, rec.ID)
-	delete(q.cgroupLogged, rec.ID)
-	delete(q.waiting, rec.ID)
-	delete(q.starting, rec.ID)
+	q.forgetRunning(rec.ID)
 	q.moved()
 	m.recordRun(rec, trace)
 	m.settleChain(rec)
+}
+
+// forgetRunning drops what the queue keeps in memory of a running job: its
+// usage, trace and holds, its logged failures, its wait and its start.
+func (q *queueState) forgetRunning(id sched.JobID) {
+	delete(q.usage, id)
+	delete(q.cpuMarks, id)
+	delete(q.traces, id)
+	delete(q.holds, id)
+	delete(q.holding, id)
+	delete(q.lockLogged, id)
+	delete(q.cgroupLogged, id)
+	delete(q.waiting, id)
+	delete(q.starting, id)
 }
 
 // finishJob ends job i of the store in state and settles it.
@@ -419,6 +425,12 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	case r.snap != nil:
 		q.sampleFailing = false
 	}
+	if r.slice != nil && q.slice != nil && r.slice.OOMKills > q.slice.OOMKills {
+		// A kernel OOM kill in the jobs' slice: the job it took settles in
+		// this pass or the next (cgroup spec §15, 12).
+		q.oomAt = r.at
+		log.For("core").Warn("queue.oom_kill", "count", r.slice.OOMKills)
+	}
 	settled, changed := false, false
 	for _, ob := range r.obs {
 		if ob.silent {
@@ -495,6 +507,7 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		// §7.1); a settle's own pass has run already.
 		m.admitJobs()
 	}
+	m.stepLadder(time.Now())
 }
 
 // noteSilent applies what a pass saw of a failed start's shim: its entry goes
@@ -590,6 +603,13 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 	if ob.killed {
 		log.For("core").Warn("queue.lost_group_killed", "job", int64(rec.ID), "pgid", ob.pid)
 	}
+	if why := m.requeueWhy(*rec, now); why != "" && !cancelled {
+		if !rec.NoRequeue && rec.Requeues < sched.MaxRequeues {
+			m.requeueJob(i, why, now)
+			return
+		}
+		rec.Failure, state = "killed: "+why, sched.Failed
+	}
 	m.finishJob(i, state, now)
 }
 
@@ -617,6 +637,24 @@ func (m *Model) applyUsage(r queuePassResult) {
 		if ob.cgErr != nil && q.cgroupLogged[ob.id] != ob.cgErr.Error() {
 			log.For("core").Warn("queue.cgroup_read_failed", "job", int64(ob.id), "cgroup", rec.Cgroup, "err", ob.cgErr)
 			q.cgroupLogged[ob.id] = ob.cgErr.Error()
+		}
+		if cg := ob.cg; cg != nil && !q.laddering {
+			// The cgroup decides the rung (cgroup spec §15, 17): frozen is
+			// paused, a memory.high is squeezed, neither is none.
+			next := sched.Rung("")
+			switch {
+			case cg.Frozen:
+				next = sched.RungPaused
+			case cg.HighKB > 0:
+				next = sched.RungSqueezed
+			}
+			if next != rec.Rung {
+				rec.Rung, rec.RungAt = next, time.Time{}
+				if next != "" {
+					rec.RungAt, rec.Laddered = r.at, true
+				}
+				q.moved()
+			}
 		}
 		var rss int64
 		var cpu time.Duration

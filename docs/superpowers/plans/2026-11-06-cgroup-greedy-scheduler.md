@@ -2900,3 +2900,15 @@ In `run`, after the view is read and before `copyLog`: say `noteAttempt`'s line 
 - [ ] The spec: execution notes (§16) — what ran, the gates and their job numbers, anything that changed while building.
 - [ ] Gates: vet, full, race, e2e, the Windows and darwin builds, the live contract test once more, `gofmt -l`, `go run ./tools/claudemd`.
 - [ ] Commit: `feat(sched,core,cli,ui): squeeze, pause or requeue a job when memory runs short`.
+
+## Execution notes (2026-11-06, inline)
+
+Built inline from the plan in four commits on `aidanb/jobs-ignoring-limits`: P1 confinement 1b9a1a85, P2 curves 39e507fb, P3 greedy admission fe983ad2, P4 the ladder (this commit). Every package's gates ran through loom's queue: P1 full 750, race 751, e2e 752; P2 769, 770; P3 791, 792, 793; P4 807 (vet, the Windows and darwin builds, full, the CLAUDE.md lint), 808 (race), 809 (e2e and the live contract). The live contract (`-tags systemd_live`, `TestConfiner_Live`) passed against systemd 261.3 on the first run: `OOMPolicy=kill` is accepted on a scope (`memory.oom.group` 1), a slice loaded by `SetUnitProperties` takes `CPUWeight` and `MemoryMax`, and freeze, thaw, `MemoryHigh`, `cgroup.kill` and collection all work; the test stops its slice and removes its runtime drop-in.
+
+Changed while building, beside amendments 19–21:
+
+- The slice was renamed `loom_<tag>.slice` (amendment 19); the first live run's `loom.slice` was stopped by hand.
+- The boot's probe moved into `Boot` (amendment 20) after two failed approaches: a background probe at boot added a job to the TUI tests' counts, and holding admission for it made the first submit after a restart say `queued`.
+- Core's `TestMain` sets `newConfiner = nil` and fixes `readMemAvailable` at 64 GB: with a fake confiner the P1 tests admitted greedily against the real host's free memory.
+- A kernel OOM kill takes the shim with the job (`OOMPolicy=kill`), so no `exit.json` is written: `requeueWhy` accepts a contained job with no result, and the OOM is read at the top of the pass, before the settles.
+- A requeued attempt keeps `AgentWhy` and drops `PeakRSSKB` (the floor run carries it); the work view shows the ladder's last failed call as a header line rather than a per-job detail; the uncontained reason is a header line, with no per-job line.

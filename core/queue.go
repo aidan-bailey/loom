@@ -158,6 +158,17 @@ type queueState struct {
 	availKB      int64
 	slice        *sched.CgroupSample
 	cgroupLogged map[sched.JobID]string
+
+	// The ladder (cgroup spec §8): its state between passes, whether an
+	// action is in flight, the last failed call (shown until one succeeds),
+	// the slice's MemoryHigh as last set and whether a set is in flight, and
+	// when the slice's oom_kill last rose.
+	ladder       sched.LadderState
+	laddering    bool
+	ladderErr    string
+	sliceHighKB  int64
+	sliceSetting bool
+	oomAt        time.Time
 }
 
 func newQueueState() *queueState {

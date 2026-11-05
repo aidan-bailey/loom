@@ -442,6 +442,20 @@ func TestRenderWork_ShowsTheBudgetInGreedyMode(t *testing.T) {
 	assert.Contains(t, out, "pressure 12%")
 }
 
+func TestRenderWork_ShowsTheLadder(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:      sched.Host{Name: "fresco"},
+		Policy:    sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}},
+		LadderErr: "pause job 4: no freezer",
+		Jobs: []core.JobView{{ID: 4, State: sched.Running, Description: "nextest", Started: now.Add(-time.Minute),
+			Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Rung: sched.RungPaused}},
+	}
+	out := ansi.Strip(RenderWork(140, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "paused (memory)")
+	assert.Contains(t, out, "ladder: pause job 4: no freezer")
+}
+
 func TestRenderWork_SaysWhyJobsRunUncontained(t *testing.T) {
 	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 	q := core.QueueView{

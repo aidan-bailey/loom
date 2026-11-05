@@ -1151,3 +1151,29 @@ func TestJobRun_AJobWhosePrerequisiteFailsExits125(t *testing.T) {
 	assert.Equal(t, 125, exitCode(t, err))
 	assert.Contains(t, errOut, "loom: job 2 was cancelled because job 1 failed (exit 3)\n")
 }
+
+func TestJobFollower_NoteAttempt(t *testing.T) {
+	f := &jobFollower{off: 120, started: true}
+	assert.Empty(t, f.noteAttempt(core.JobView{ID: 7}), "the first view sets the attempt")
+	assert.Equal(t, int64(120), f.off)
+	assert.Empty(t, f.noteAttempt(core.JobView{ID: 7}), "the same attempt says nothing")
+	line := f.noteAttempt(core.JobView{ID: 7, Attempt: 1, LastRequeue: "memory ran short (1.2 GB free)"})
+	assert.Equal(t, "job 7 requeued: memory ran short (1.2 GB free); following its next attempt", line)
+	assert.Zero(t, f.off, "the next attempt's log is read from its start")
+	assert.False(t, f.started)
+	assert.True(t, f.queued, "its next start is reported")
+}
+
+func TestJobFollower_NoteRung(t *testing.T) {
+	f := &jobFollower{}
+	running := core.JobView{ID: 7, State: sched.Running}
+	assert.Empty(t, f.noteRung(running))
+	running.Rung = sched.RungSqueezed
+	assert.Equal(t, "job 7 squeezed: memory is short", f.noteRung(running))
+	assert.Empty(t, f.noteRung(running), "said once")
+	running.Rung = sched.RungPaused
+	assert.Equal(t, "job 7 paused: memory is short", f.noteRung(running))
+	running.Rung = ""
+	assert.Equal(t, "job 7 resumed", f.noteRung(running))
+	assert.Empty(t, f.noteRung(core.JobView{ID: 7, State: sched.Done, Rung: sched.RungPaused}), "only a running job")
+}

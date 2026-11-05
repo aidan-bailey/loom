@@ -24,6 +24,7 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `curve.go` — `CurveStep`, `Curve`, `BuildCurve`, `Curve.Validate`, `CurvedRuns`.
 - `predict.go` — `Span`, `Prediction`, `Flat`, `Predict`, `PeakSum`, `WithMarginKB`.
 - `greedy.go` — `Greedy`, `Budget`, `AdmitGreedy` and its fitter.
+- `ladder.go` — `Rung`, `LadderJob`, `LadderInput`, `LadderState`, `Action`, `Ladder`, `MaxRequeues`.
 - `hold.go` — `HoldState`, `Hold`.
 - `ioacct.go`, `ioacct_linux.go`, `ioacct_other.go` — the shim's `/proc/self/io` counters.
 - `surprise.go` — `NeedsPrior`, `Surprise`, `ScorePrior`: when the advisor is asked, and how its priors are scored.
@@ -58,6 +59,10 @@ A `Claim` is whole cores and whole GB, whether the job is I/O-heavy (one of the 
 
 While jobs are contained ([cgroup spec](../docs/superpowers/specs/2026-11-05-cgroup-greedy-scheduler-design.md) §7) the model admits with `AdmitGreedy`, which walks the queue as `Admit` does (`admitWith`: the over-cap skip, the starvation guard, `Decision.Starved` naming a head it started) with another fitter. `Budget` is the running jobs' use plus the host's MemAvailable, less `ReserveGB`, between 0 and the memory cap. A `Prediction` is a job's memory over time, non-overlapping spans: `Predict` reads a belief's curves (3 runs that lasted past the progress asked about), each step from the wall time its run reached it, less the run's wall time at the current progress, its level given 15% and its edges widened by max(30 s, a quarter of how far ahead), the most of every run at each moment; `Flat` is a claim's. A job fits when the sum of every prediction (`PeakSum`, at each span's start) stays within the budget until its own prediction ends; a job also waits while the slice's CPU pressure is at `CPUPressurePct` with a job running, or while claimed cores would pass `CPUOvercommit` × the cores cap; an exclusive claim waits for an empty host; `Greedy.Holdoff` holds every start. `ForecastGreedy` runs the same fit forward, predicting a simulated start from its simulated start.
 
+## The ladder
+
+When greed loses ([cgroup spec](../docs/superpowers/specs/2026-11-05-cgroup-greedy-scheduler-design.md) §8), `Ladder` is one pure pass, at most one `Action`: memory is short while MemAvailable is below the reserve or the slice's memory pressure is 10% or more, and calm while it is 2 GB above the reserve with pressure under 2%. While short it climbs a rung on the victim (a job not exclusive, requeued fewer than `MaxRequeues` (2) times, and not paused with `NoRequeue`; one the starvation guard did not start before one it did; then the most recently started): squeeze (`MemoryHigh` at its working set, at least 64 MiB, since 0 is no limit), pause 15 s later, requeue 30 s after that. Once calm for 30 s it restores the oldest laddered job, one every 15 s. A record keeps its `Rung`, `RungAt`, `Laddered` (squeezed or paused in this attempt: the run teaches floors only, `RunOf`), `Requeues`, `LastRequeue`, the `Requeue` asked for, `NoRequeue` (`Submit.NoRequeue`) and `Starved`. `ArchiveAttempt` moves an attempt's `output.log`, `started.json` and `exit.json` into `attempt-<n>/`.
+
 ## Signatures, beliefs and sizing
 
 The smart scheduler's half ([spec](../docs/superpowers/specs/2026-11-05-smart-scheduler-design.md)): what each command measured, and the claim that follows.
@@ -86,6 +91,7 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 | `<id>/output.log` | the command's stdout and stderr |
 | `<id>/run.lock` | the shim's lock, held while the job runs |
 | `<id>/started.json` | `Started`: the shim's pid and start time, and the scope it joined with the cgroup it landed in (`unit`, `cgroup`), or why it runs uncontained (`uncontained`) |
+| `<id>/attempt-<n>/` | a requeued attempt's `output.log`, `started.json` and `exit.json` (`ArchiveAttempt`) |
 | `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, its CPU seconds, on Linux the bytes it read and wrote (from `/proc/self/io` after the shim reaps it), and the start error if the exec failed |
 
 `JobDir(dir, id)` is `<dir>/<id>`, `CreateJobDir` makes it only if it does not exist (a submit never writes into a directory it did not create), and `RemoveJobDir` removes it when retention drops a finished job.

@@ -73,6 +73,7 @@ type claimFlags struct {
 	cpus, mem     int
 	io, exclusive bool
 	after         int64
+	noRequeue     bool
 }
 
 // add registers the flags on c.
@@ -84,6 +85,7 @@ func (f *claimFlags) add(c *cobra.Command) {
 	fl.BoolVar(&f.io, "io", false, "I/O-heavy: takes one of the host's I/O slots")
 	fl.BoolVar(&f.exclusive, "exclusive", false, "Claim every cap, for a benchmark (not with --cpus, --mem or --io)")
 	fl.Int64Var(&f.after, "after", 0, "Run after job N ends done: held until then, and cancelled if it ends any other way")
+	fl.BoolVar(&f.noRequeue, "no-requeue", false, "Never requeue the job when memory runs short; pause it instead")
 }
 
 // claim is the claim the flags ask for. The daemon applies the default claim
@@ -130,6 +132,7 @@ func (f *claimFlags) submission(c *cobra.Command, args []string, notify bool, ta
 	return sched.Submit{
 		Argv: slices.Clone(args), Cwd: cwd, Env: os.Environ(), Description: desc, Claim: claim,
 		Notify: notify, Tail: tail, Launch: os.Getenv(claudemod.EnvLaunch), After: sched.JobID(f.after),
+		NoRequeue: f.noRequeue,
 	}, nil
 }
 

@@ -41,16 +41,17 @@ type Run struct {
 	Profile     *Profile  `json:"profile,omitempty"`    // its usage over its progress (past-peak holds spec §5.2); only the newest ProfiledRuns keep one
 	HoldBroke   bool      `json:"hold_broke,omitempty"` // its usage passed its lowered hold (past-peak holds spec §5.4)
 	Curve       *Curve    `json:"curve,omitempty"`      // its usage over its progress, rising and falling (cgroup spec §6); only the newest ProfiledRuns keep one
+	Laddered    bool      `json:"laddered,omitempty"`   // squeezed or paused (cgroup spec §8.5): its timing is distorted, so it teaches floors only
 }
 
 // FullPeak reports whether r's peak is the job's whole peak: a done run's,
 // sampled from its start. Every other peak is a floor, which can raise a
 // claim but never set one alone.
-func (r Run) FullPeak() bool { return r.Outcome == OutcomeDone && !r.Adopted }
+func (r Run) FullPeak() bool { return r.Outcome == OutcomeDone && !r.Adopted && !r.Laddered }
 
 // teachesCores reports whether r teaches cores: a done run with CPU time.
 func (r Run) teachesCores() bool {
-	return r.Outcome == OutcomeDone && r.CPUSeconds > 0 && r.WallSeconds > 0
+	return r.Outcome == OutcomeDone && r.CPUSeconds > 0 && r.WallSeconds > 0 && !r.Laddered
 }
 
 // teachesIO reports whether r teaches I/O: a done run that measured it.
@@ -59,7 +60,7 @@ func (r Run) teachesIO() bool { return r.Outcome == OutcomeDone && r.WriteBytes 
 // TeachesDuration reports whether r teaches a duration: a run that exited,
 // done or with an exit code.
 func (r Run) TeachesDuration() bool {
-	return (r.Outcome == OutcomeDone || r.Outcome == OutcomeFailed) && r.WallSeconds > 0
+	return (r.Outcome == OutcomeDone || r.Outcome == OutcomeFailed) && r.WallSeconds > 0 && !r.Laddered
 }
 
 // RunOf is what finished record rec teaches its belief (spec §5.2), and
@@ -90,7 +91,7 @@ func RunOf(rec Record) (Run, bool) {
 	run := Run{
 		Job: rec.ID, Ended: rec.Ended, Outcome: out, Adopted: rec.Adopted, Claim: rec.Claim,
 		PeakKB: rec.PeakRSSKB, WallSeconds: rec.Ended.Sub(rec.Started).Seconds(), Spare: rec.Spare.CPUs,
-		Checkout: rec.Checkout, HoldBroke: rec.HoldBroke,
+		Checkout: rec.Checkout, HoldBroke: rec.HoldBroke, Laddered: rec.Laddered,
 	}
 	if e := rec.Exit; e != nil {
 		run.Signal = e.Signal

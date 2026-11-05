@@ -251,3 +251,15 @@ Made while planning (`docs/superpowers/plans/2026-11-06-cgroup-greedy-scheduler.
 19. **The slice is `loom_<tag>.slice`, not `loom-<tag>.slice`** (found while building Package 1): systemd reads a dash in a slice's name as nesting, so `loom-<tag>.slice` sat in `loom.slice`, whose default weight of 100 was all the agents' panes competed with, and `jobs_cpu_weight` ranked looms only against each other. The live test pins the slice's parent. (§5.2)
 20. **The first probe runs in `Boot`, synchronously, bounded by 2 s** (found while building Package 1): it runs before the loop serves anyone, so it blocks no client, and the jobs a restart admits are contained. A probe at boot as a background job raced the first admission pass and added a job to every count the TUI's tests make; holding admission for it made the first `loom job submit` after a restart say `queued` for a job that started a moment later. Later probes are background jobs, only while jobs wait (§5.5).
 21. **Greedy admission reads MemAvailable itself** (found while building Package 3; a `/proc` file, no process): the pass reads it only while a job runs, so an idle queue's budget would come from a pass long gone. `seconds` (sched's, to the second) turns a curve's wall times into durations. (§7.1)
+
+## 16. Execution notes (2026-11-06, inline)
+
+Built inline from the plan in four commits on `aidanb/jobs-ignoring-limits`: P1 confinement 1b9a1a85, P2 curves 39e507fb, P3 greedy admission fe983ad2, P4 the ladder (this commit). Every package's gates ran through loom's queue: P1 full 750, race 751, e2e 752; P2 769, 770; P3 791, 792, 793; P4 807 (vet, the Windows and darwin builds, full, the CLAUDE.md lint), 808 (race), 809 (e2e and the live contract). The live contract (`-tags systemd_live`, `TestConfiner_Live`) passed against systemd 261.3 on the first run: `OOMPolicy=kill` is accepted on a scope (`memory.oom.group` 1), a slice loaded by `SetUnitProperties` takes `CPUWeight` and `MemoryMax`, and freeze, thaw, `MemoryHigh`, `cgroup.kill` and collection all work; the test stops its slice and removes its runtime drop-in.
+
+Changed while building, beside amendments 19–21:
+
+- The slice was renamed `loom_<tag>.slice` (amendment 19); the first live run's `loom.slice` was stopped by hand.
+- The boot's probe moved into `Boot` (amendment 20) after two failed approaches: a background probe at boot added a job to the TUI tests' counts, and holding admission for it made the first submit after a restart say `queued`.
+- Core's `TestMain` sets `newConfiner = nil` and fixes `readMemAvailable` at 64 GB: with a fake confiner the P1 tests admitted greedily against the real host's free memory.
+- A kernel OOM kill takes the shim with the job (`OOMPolicy=kill`), so no `exit.json` is written: `requeueWhy` accepts a contained job with no result, and the OOM is read at the top of the pass, before the settles.
+- A requeued attempt keeps `AgentWhy` and drops `PeakRSSKB` (the floor run carries it); the work view shows the ladder's last failed call as a header line rather than a per-job detail; the uncontained reason is a header line, with no per-job line.

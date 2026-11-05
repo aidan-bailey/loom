@@ -306,3 +306,25 @@ func TestJobFiles_AbsentAndCorrupt(t *testing.T) {
 		assert.NotErrorIs(t, err, fs.ErrNotExist, "%s corrupt", name)
 	}
 }
+
+func TestArchiveAttempt(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{LogFile, StartedFile, ExitFile, SpecFile} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600))
+	}
+	require.NoError(t, ArchiveAttempt(dir, 0))
+	for _, name := range []string{LogFile, StartedFile, ExitFile} {
+		assert.NoFileExists(t, filepath.Join(dir, name))
+		data, err := os.ReadFile(filepath.Join(dir, "attempt-1", name))
+		require.NoError(t, err)
+		assert.Equal(t, name, string(data))
+	}
+	assert.FileExists(t, filepath.Join(dir, SpecFile), "the spec stays for the next attempt")
+	info, err := os.Stat(filepath.Join(dir, "attempt-1"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+
+	require.NoError(t, ArchiveAttempt(dir, 1), "missing files are skipped")
+	assert.DirExists(t, filepath.Join(dir, "attempt-2"))
+	assert.Error(t, ArchiveAttempt(dir, 1), "an attempt is archived once")
+}
