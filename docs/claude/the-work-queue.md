@@ -29,6 +29,7 @@ A test binary has no `job-shim` command, so a package whose tests start real shi
 - Its `TestMain` calls `sched.MaybeRunTestShim()` as its first statement. When the environment variable `sched.ShimTestEnv` (`LOOM_SCHED_TEST_SHIM`) is `1`, the process runs `sched.RunShim` on its last argument and exits instead of running tests.
 - The runner a test hands the model is `sched.TestRunner()` (the test binary, with that variable set), installed with `Model.SetJobRunnerForTest` in `core/seams.go`.
 - Real jobs are short commands (`sh -c`, `sleep`), and every test leaves no process group behind: cancel or wait for each job it starts.
+- A test that must see a job running gives it a command that outlasts the pump (`sleep 1`): one that exits at once (`sh -c 'exit 0'`) can already be settled when the `wqPump` after its submit returns.
 - Build fixtures through the production path: a booted model, a real shim, a `jobs.json` written with `sched.SaveStore`. A fake runner skips the lock, the `Setsid` and the `exit.json`, which is where the bugs are.
 
 ## Traps
