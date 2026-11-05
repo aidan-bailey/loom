@@ -758,14 +758,34 @@ func TestJobQueue_AStartJobOverlapsTheLoopsEdits(t *testing.T) {
 }
 
 // wqSnap is a process sample taken at at: the job's shim (pid pgid, leading
-// the group) and one child in the group, together using rss KB and cpu of CPU
-// time, and a bystander of another group that no job counts.
+// the group and the session) and one child in both, together using rss KB
+// and cpu of CPU time, and a bystander of another group and session that no
+// job counts.
 func wqSnap(at time.Time, pgid int, rss int64, cpu time.Duration) *sched.Snapshot {
 	return &sched.Snapshot{Taken: at, Procs: []sched.Proc{
-		{PID: pgid, PGID: pgid, RSSKB: rss / 2, CPU: cpu / 2},
-		{PID: pgid + 1, PGID: pgid, RSSKB: rss - rss/2, CPU: cpu - cpu/2},
-		{PID: 7, PGID: 7, RSSKB: 1 << 30, CPU: time.Hour},
+		{PID: pgid, PGID: pgid, SID: pgid, RSSKB: rss / 2, CPU: cpu / 2},
+		{PID: pgid + 1, PGID: pgid, SID: pgid, RSSKB: rss - rss/2, CPU: cpu - cpu/2},
+		{PID: 7, PGID: 7, SID: 7, RSSKB: 1 << 30, CPU: time.Hour},
 	}}
+}
+
+// A job's usage sums its session, not its process group: a child that moved
+// to a group of its own (coreutils timeout) still counts (sccache measurement
+// spec §5.2).
+func TestJobQueue_UsageSumsTheJobsSession(t *testing.T) {
+	const pid = 4242
+	m := wqModel(t)
+	rec := wqEnded(1, 0)
+	rec.State, rec.Exit, rec.Ended, rec.PID, rec.Notify = sched.Running, nil, time.Time{}, pid, false
+	wqSeed(t, m, rec)
+	snap := &sched.Snapshot{Taken: time.Now(), Procs: []sched.Proc{
+		{PID: pid, PGID: pid, SID: pid, RSSKB: 100},
+		{PID: pid + 1, PGID: pid + 1, SID: pid, RSSKB: 900},
+		{PID: 7, PGID: 7, SID: 7, RSSKB: 1 << 30},
+	}}
+	m.Deliver(queuePassResult{at: snap.Taken, obs: []jobObs{{id: 1, pid: pid}}, snap: snap})
+	assert.Equal(t, int64(1000), m.queue.usage[1].RSSKB)
+	assert.Equal(t, int64(1000), wqRecord(t, m, 1).PeakRSSKB)
 }
 
 // Usage comes from the samples a pass delivers (spec §5.4): cores are the

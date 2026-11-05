@@ -19,7 +19,7 @@ import (
 var allowedCalls = map[string]bool{
 	"$.clock.sleep": true, "$.env.get": true, "$.http.fetch": true, "$.prompt.submit": true,
 	"$.command.list": true, "$.command.run": true,
-	"$.session.id": true, "$.session.version": true, "$.ui.log": true,
+	"$.session.id": true, "$.session.send": true, "$.session.version": true, "$.ui.log": true,
 }
 
 // viaCallers is the " (via pump, report)" the validator puts after a call
@@ -44,7 +44,7 @@ func TestRealClaude_ValidatesTheMod(t *testing.T) {
 	require.NoError(t, err, string(out))
 	s := string(out)
 	assert.Contains(t, s, "Validation passed")
-	assert.Contains(t, s, "hooks: session.start, turn.start, turn.complete, tool.call, tool.call{tool=AskUserQuestion}, classic.PermissionRequest")
+	assert.Contains(t, s, "hooks: session.start, turn.start, turn.complete, tool.call, tool.call{tool=Bash}, tool.call{tool=AskUserQuestion}, classic.PermissionRequest")
 	// The validator lists them as "./register.ts calls: $.env.get,
 	// $.ui.log (via pump, report), …": drop each "(via …)" before splitting,
 	// since its callers are comma-separated too.

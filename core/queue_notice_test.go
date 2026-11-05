@@ -298,3 +298,128 @@ func TestJobQueue_NoClientCanSendAJobsOrigin(t *testing.T) {
 	require.Error(t, rs[0].Err)
 	assert.Contains(t, rs[0].Err.Error(), "is no sender's origin")
 }
+
+// agentNotice seeds job 5, ended and owned by inst, as submitted by subagent
+// a1, with a three-line log, and returns its record and log path.
+func agentNotice(t *testing.T, m *Model, inst InstanceID) (sched.Record, string) {
+	t.Helper()
+	rec := wqEnded(5, inst)
+	rec.Agent = "a1"
+	wqSeed(t, m, rec)
+	logPath := filepath.Join(m.queue.jobDir(5), sched.LogFile)
+	require.NoError(t, os.WriteFile(logPath, []byte("one\ntwo\nthree\n"), 0o600))
+	return rec, logPath
+}
+
+// A subagent's notice goes to it through a mod that can send to subagents,
+// as today's text, and a mod that can't gets the session's copy naming the
+// subagent. Which one is decided as the inbox hands it over, so a notice
+// queued before the hello follows the hello (subagent job results spec
+// §5.3).
+func TestJobQueue_ASubagentsNoticeGoesToItWhenTheModCan(t *testing.T) {
+	for _, agents := range []bool{true, false} {
+		for _, helloFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("agents=%v helloFirst=%v", agents, helloFirst), func(t *testing.T) {
+				withMod(t)
+				m := wqModel(t)
+				inst := modInst(t, m, "owner")
+				rec, logPath := agentNotice(t, m, m.idOf(inst))
+				hello := func() { require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Agents: agents})) }
+				if helloFirst {
+					hello()
+				}
+				m.sendJobNotice(rec)
+				wqPump(t, m)
+				if !helloFirst {
+					hello()
+				}
+
+				msgs, _, err := m.ModInbox("L1", "")
+				require.NoError(t, err)
+				require.Len(t, msgs, 1)
+				tail := "\nLog: " + logPath + " (3 lines). Last 2 lines:\n\ntwo\nthree"
+				if agents {
+					assert.Equal(t, "a1", msgs[0].Agent)
+					assert.Equal(t, noticeHead(rec)+tail, msgs[0].Text, "the subagent reads today's notice")
+				} else {
+					assert.Empty(t, msgs[0].Agent, "the session's copy")
+					assert.Equal(t, noticeHead(rec)+"\n"+oldModLine("a1")+tail, msgs[0].Text)
+				}
+				require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[0].ID}}))
+				assert.Equal(t, sched.NoticeSent, wqRecord(t, m, 5).Notice)
+			})
+		}
+	}
+}
+
+// A subagent that can't take its notice leaves it to the session, which gets
+// it with the subagent named and why; its fate is recorded when the session's
+// copy is queued.
+func TestJobQueue_ASubagentThatCantTakeItsNoticeLeavesItToTheSession(t *testing.T) {
+	withMod(t)
+	m := wqModel(t)
+	inst := modInst(t, m, "owner")
+	rec, logPath := agentNotice(t, m, m.idOf(inst))
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Agents: true}))
+	m.sendJobNotice(rec)
+	wqPump(t, m)
+	first, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	why := "Agent 'a1' could not be resumed: No transcript found for agent ID: a1."
+	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "failed", ID: first[0].ID, Error: why}}))
+
+	assert.Equal(t, sched.NoticeNone, wqRecord(t, m, 5).Notice, "not sent until the session's copy is queued")
+	again, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.NotEqual(t, first[0].ID, again[0].ID)
+	assert.Empty(t, again[0].Agent)
+	assert.Equal(t, noticeHead(rec)+"\n"+unreachableLine("a1", why)+"\nLog: "+logPath+" (3 lines). Last 2 lines:\n\ntwo\nthree", again[0].Text)
+	assert.Contains(t, again[0].Text, "(Submitted by your subagent a1; loom could not reach it: Agent 'a1' could not be resumed")
+	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: again[0].ID}}))
+	assert.Equal(t, sched.NoticeSent, wqRecord(t, m, 5).Notice)
+}
+
+// A failed report for any other message is unchanged: a CLI message the mod
+// could not submit is refused, not handed to the session again.
+func TestJobQueue_OnlyASubagentsNoticeFallsBackToTheSession(t *testing.T) {
+	withMod(t)
+	m := wqModel(t)
+	inst := modInst(t, m, "owner")
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Agents: true}))
+	m.enqueue(inst, cliMessage(7, "hi", false))
+	msgs, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "failed", ID: msgs[0].ID, Error: "boom"}}))
+	again, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	assert.Empty(t, again, "nothing is queued again")
+}
+
+// A subagent's notice a stopping daemon holds is undelivered, as any notice
+// the mod took is: it is never rerouted to the session (core/CLAUDE.md, loom
+// mod links).
+func TestJobQueue_ASubagentsNoticeHeldAtTheStopIsUndelivered(t *testing.T) {
+	withMod(t)
+	m := wqModel(t)
+	inst := modInst(t, m, "owner")
+	rec, _ := agentNotice(t, m, m.idOf(inst))
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Agents: true}))
+	m.sendJobNotice(rec)
+	wqPump(t, m)
+	_, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+
+	m.ModsStop()
+
+	assert.Equal(t, sched.NoticeUndelivered, wqRecord(t, m, 5).Notice)
+}
+
+func TestWithSubmitter_PutsItsLineAfterTheHead(t *testing.T) {
+	assert.Equal(t, "head\nline\nrest\nmore", withSubmitter("head\nrest\nmore", "line"))
+	assert.Equal(t, "head\nline", withSubmitter("head", "line"), "a job that never ran has a head alone")
+	assert.Equal(t, "(Submitted by your subagent a1; loom could not reach it: no reason was given.)", unreachableLine("a1", ""))
+}

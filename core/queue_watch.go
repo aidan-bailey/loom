@@ -534,7 +534,8 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 }
 
 // applyUsage turns the pass's sample into each running job's usage: its
-// group's memory now, the peak so far, and the cores used since the last
+// session's memory now (the shim leads the job's session; sccache
+// measurement spec §5.2), the peak so far, and the cores used since the last
 // sample. A pass whose sample failed leaves the last values.
 func (m *Model) applyUsage(r queuePassResult) {
 	q := m.queue
@@ -553,7 +554,7 @@ func (m *Model) applyUsage(r queuePassResult) {
 		if rec.State != sched.Running || rec.PID <= 1 {
 			continue
 		}
-		rss, cpu, _, _ := r.snap.Group(rec.PID)
+		rss, cpu, _ := r.snap.Session(rec.PID)
 		cores := 0.0
 		if mark, ok := q.cpuMarks[ob.id]; ok {
 			if dt := r.snap.Taken.Sub(mark.at); dt > 0 {

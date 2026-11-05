@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -33,39 +34,39 @@ func TestParsePS(t *testing.T) {
 			name: "procps writes hh:mm:ss",
 			in:   "    1     1  10240 00:00:03\n 4242  4242   2048 00:10:00\n",
 			want: []Proc{
-				{PID: 1, PGID: 1, RSSKB: 10240, CPU: 3 * time.Second},
-				{PID: 4242, PGID: 4242, RSSKB: 2048, CPU: 10 * time.Minute},
+				{PID: 1, PGID: 1, SID: 1, RSSKB: 10240, CPU: 3 * time.Second},
+				{PID: 4242, PGID: 4242, SID: 4242, RSSKB: 2048, CPU: 10 * time.Minute},
 			},
 		},
 		{
 			name: "procps writes days before an hour",
 			in:   "77 77 5 2-03:04:05\n",
-			want: []Proc{{PID: 77, PGID: 77, RSSKB: 5, CPU: 48*time.Hour + 3*time.Hour + 4*time.Minute + 5*time.Second}},
+			want: []Proc{{PID: 77, PGID: 77, SID: 77, RSSKB: 5, CPU: 48*time.Hour + 3*time.Hour + 4*time.Minute + 5*time.Second}},
 		},
 		{
 			name: "BSD writes minutes and hundredths",
 			in:   "  501   501   9216   0:03.45\n  502   501  12288  12:34.56\n",
 			want: []Proc{
-				{PID: 501, PGID: 501, RSSKB: 9216, CPU: 3*time.Second + 450*time.Millisecond},
-				{PID: 502, PGID: 501, RSSKB: 12288, CPU: 12*time.Minute + 34*time.Second + 560*time.Millisecond},
+				{PID: 501, PGID: 501, SID: 501, RSSKB: 9216, CPU: 3*time.Second + 450*time.Millisecond},
+				{PID: 502, PGID: 501, SID: 501, RSSKB: 12288, CPU: 12*time.Minute + 34*time.Second + 560*time.Millisecond},
 			},
 		},
 		{
 			name: "BSD writes hours when a process has run that long",
 			in:   "503 503 1024 1:02:03.45\n",
-			want: []Proc{{PID: 503, PGID: 503, RSSKB: 1024, CPU: time.Hour + 2*time.Minute + 3*time.Second + 450*time.Millisecond}},
+			want: []Proc{{PID: 503, PGID: 503, SID: 503, RSSKB: 1024, CPU: time.Hour + 2*time.Minute + 3*time.Second + 450*time.Millisecond}},
 		},
 		{
 			name: "a bare number of seconds",
 			in:   "9 9 1 42\n",
-			want: []Proc{{PID: 9, PGID: 9, RSSKB: 1, CPU: 42 * time.Second}},
+			want: []Proc{{PID: 9, PGID: 9, SID: 9, RSSKB: 1, CPU: 42 * time.Second}},
 		},
 		{
 			name: "blank lines and no trailing newline",
 			in:   "\n9 9 1 0:00\n\n10 9 2 0:01",
 			want: []Proc{
-				{PID: 9, PGID: 9, RSSKB: 1},
-				{PID: 10, PGID: 9, RSSKB: 2, CPU: time.Second},
+				{PID: 9, PGID: 9, SID: 9, RSSKB: 1},
+				{PID: 10, PGID: 9, SID: 9, RSSKB: 2, CPU: time.Second},
 			},
 		},
 		{name: "no output", in: "", want: nil},
@@ -142,7 +143,9 @@ func TestSnapshot_Group(t *testing.T) {
 }
 
 func TestSample_ListsThisProcess(t *testing.T) {
-	requirePS(t)
+	if runtime.GOOS != "linux" {
+		requirePS(t) // Linux reads /proc
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	before := time.Now()
@@ -160,6 +163,13 @@ func TestSample_ListsThisProcess(t *testing.T) {
 	require.NotNil(t, self, "ps -A lists this test binary")
 	assert.Greater(t, self.RSSKB, int64(0))
 	assert.Equal(t, syscall.Getpgrp(), self.PGID)
+	sid, _, errno := syscall.RawSyscall(syscall.SYS_GETSID, 0, 0, 0)
+	require.Zero(t, errno)
+	if runtime.GOOS == "linux" {
+		assert.Equal(t, int(sid), self.SID, "/proc gives the session")
+	} else {
+		assert.Equal(t, self.PGID, self.SID, "ps gives the group in its place")
+	}
 }
 
 func TestSample_FailsOnADoneContext(t *testing.T) {
@@ -170,4 +180,41 @@ func TestSample_FailsOnADoneContext(t *testing.T) {
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Empty(t, snap.Procs, "a failed sample carries nothing")
+}
+
+func TestParseProcStat(t *testing.T) {
+	// pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt majflt
+	// cmajflt utime stime cutime cstime prio nice threads itreal start vsize rss …
+	line := "4242 (cargo (build) x) S 4200 4100 4000 0 -1 4194304 10 0 0 0 150 50 300 25 20 0 4 0 1000 123456 2560 18446744073709551615"
+	p, err := parseProcStat([]byte(line), 4)
+	require.NoError(t, err)
+	assert.Equal(t, Proc{PID: 4242, PGID: 4100, SID: 4000, RSSKB: 10240, CPU: 5250 * time.Millisecond}, p,
+		"comm runs to the last ')', and CPU is the process's time and its reaped children's")
+
+	zombie := "77 (rustc) Z 4242 4100 4000 0 -1 4227084 0 0 0 0 90 10 0 0 20 0 1 0 1001 0 0 18446744073709551615"
+	p, err = parseProcStat([]byte(zombie), 4)
+	require.NoError(t, err)
+	assert.Equal(t, Proc{PID: 77, PGID: 4100, SID: 4000, CPU: time.Second}, p, "a zombie keeps its CPU time until it is reaped")
+
+	for _, bad := range []string{"", "12 S 1 1 1", "x (a) S 1 1 1 0 -1 0 0 0 0 0 1 1 1 1 20 0 1 0 1 1 1", "12 (a) S 1 1"} {
+		_, err := parseProcStat([]byte(bad), 4)
+		assert.Error(t, err, "%q", bad)
+	}
+}
+
+func TestSnapshot_Session(t *testing.T) {
+	snap := Snapshot{Procs: []Proc{
+		{PID: 100, PGID: 100, SID: 100, RSSKB: 1000, CPU: 2 * time.Second},
+		{PID: 101, PGID: 101, SID: 100, RSSKB: 500, CPU: time.Second}, // timeout: a group of its own, the shim's session
+		{PID: 200, PGID: 200, SID: 200, RSSKB: 9000, CPU: time.Hour},
+	}}
+	rss, cpu, members := snap.Session(100)
+	assert.Equal(t, int64(1500), rss)
+	assert.Equal(t, 3*time.Second, cpu)
+	assert.Equal(t, 2, members)
+	rss, _, members, _ = snap.Group(100)
+	assert.Equal(t, int64(1000), rss, "the group leaves out the member that changed group")
+	assert.Equal(t, 1, members)
+	_, _, members = snap.Session(999)
+	assert.Zero(t, members)
 }

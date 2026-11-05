@@ -465,6 +465,13 @@ func TestRenderWork_ShowsWhatTheAgentIsDoing(t *testing.T) {
 	assert.NotContains(t, render(core.AgentView{On: true}), "agent:", "nothing before its first call of the day")
 }
 
+func TestWorkOwner_NamesTheSubagent(t *testing.T) {
+	assert.Equal(t, "no owner", workOwner(core.JobView{}))
+	assert.Equal(t, "lto build · loom", workOwner(core.JobView{Owner: 3, OwnerTitle: "lto build", OwnerWorkspace: "loom"}))
+	assert.Equal(t, "lto build › ab91bd4 · loom", workOwner(core.JobView{Owner: 3, OwnerTitle: "lto build", OwnerWorkspace: "loom", Agent: "ab91bd4b710780552"}))
+	assert.Equal(t, "lto build › ab91bd4", workOwner(core.JobView{Owner: 3, OwnerTitle: "lto build", Agent: "ab91bd4b710780552"}))
+}
+
 func TestWorkClaim_ShowsSpareCores(t *testing.T) {
 	j := core.JobView{Claim: sched.Claim{CPUs: 6, MemoryGB: 3}, Spare: sched.Claim{CPUs: 2, MemoryGB: 1}}
 	assert.Equal(t, "4+2c/3G", workClaim(j))

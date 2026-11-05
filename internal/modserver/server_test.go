@@ -33,6 +33,7 @@ type fakeHost struct {
 	answers map[string]json.RawMessage
 	askWake chan struct{}
 	closes  []string
+	calls   []string
 }
 
 // askErr is what fakeHost answers for launch, poller and ask before it looks
@@ -492,6 +493,30 @@ func TestAsks(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, post(t, c, api("/asks"), `{"launch":"L1","poller":"old","ask":"q1"}`))
 	assert.Equal(t, http.StatusNoContent, post(t, c, api("/asks/close"), `{"launch":"L1","ask":"q1","how":"elsewhere"}`))
 	assert.Equal(t, []string{"q1 elsewhere"}, h.closes)
+}
+
+func (h *fakeHost) ModCall(launch, poller string, c core.ModCall, ended bool) error {
+	if err := askErr(launch, poller, ""); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if ended {
+		h.calls = append(h.calls, c.ID+" ended")
+	} else {
+		h.calls = append(h.calls, c.ID+" "+c.Agent+" "+c.Command)
+	}
+	return nil
+}
+
+func TestCalls(t *testing.T) {
+	h := &fakeHost{}
+	_, c := listen(t, h, time.Second)
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/calls"), `{"launch":"L1","poller":"p","call":{"id":"c1","agent":"a1","command":"loom job submit -- true"}}`))
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/calls"), `{"launch":"L1","poller":"p","call":{"id":"c1"},"ended":true}`))
+	assert.Equal(t, []string{"c1 a1 loom job submit -- true", "c1 ended"}, h.calls)
+	assert.Equal(t, http.StatusNotFound, post(t, c, api("/calls"), `{"launch":"L9","call":{"id":"c1"}}`))
+	assert.Equal(t, http.StatusConflict, post(t, c, api("/calls"), `{"launch":"L1","poller":"old","call":{"id":"c1"}}`))
 }
 
 func TestAnswer_HandsOutAnAnswerAtOnce(t *testing.T) {

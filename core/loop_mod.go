@@ -64,6 +64,13 @@ func (l *Loop) ModAskClosed(launch, poller, ask, how string) error {
 	return err
 }
 
+// ModCall runs Model.ModCall on the loop.
+func (l *Loop) ModCall(launch, poller string, c ModCall, ended bool) error {
+	var err error
+	l.modCall(func(m *Model) { err = m.ModCall(launch, poller, c, ended) })
+	return err
+}
+
 // ModsServing runs Model.ModsServing on the loop.
 func (l *Loop) ModsServing() {
 	l.modCall(func(m *Model) { m.ModsServing() })
