@@ -31,6 +31,9 @@ loom feedback add --kind … --title "…" --file <path>
 - The CLI sends `$LOOM_LAUNCH` (`claudemod.EnvLaunch`), as `loom job submit` does. The daemon resolves it to the owning session and stamps the note itself: instance ID, title, workspace, branch, the subagent when one filed it, the daemon's version and commit, the Claude session ID, and the time. The agent supplies none of these.
 - It prints `[loom] feedback nN filed` and returns at once. Grouping happens later, so filing never blocks the agent.
 - **Fail closed:** with no daemon, no `$LOOM_LAUNCH` or a launch the daemon can't resolve, the command errors with the reason and nothing is stored. A note is never attributed to a guessed session.
+- **The subagent** comes from the mod's call reports, as a job's does: `claudemod.JobCallPattern` widens to `loom feedback add`, and the daemon matches the one in-flight call on the launch whose command holds `feedback` and `add`. None, or more than one, records no subagent (amended while planning).
+- **The build** is the daemon's: `core.Options.Build`, which `serve.go` sets from main's `version` and `rpc.Build()` (amended while planning; `core` can't import `rpc`).
+- **The limits:** a kind from the four, a title of 1–120 characters on one line, a text of 1–20,000 bytes, checked by the model (`feedback.ValidateNote`).
 
 ### The context paragraph
 
@@ -45,7 +48,7 @@ loom feedback add --kind … --title "…" --file <path>
 `<global config dir>/feedback/feedback.json`: one per host, because feedback about loom is host-wide. Each note still records its workspace.
 
 - The daemon's model owns it and saves it as it saves `jobs.json`: on every change, through the model's save path, never by a client.
-- Records are versioned. Unknown records and unknown fields are written back unchanged, so a downgrade keeps them.
+- The file is versioned as `jobs.json` is (amended while planning): a file with a newer version than this loom reads is left untouched and the inbox refuses writes, so a downgrade never overwrites what a newer loom wrote.
 - If the file exists but can't be decoded, the daemon leaves it alone, serves an empty inbox that refuses writes, and reports the error by Notice. It never overwrites a file it couldn't read.
 
 **A note** has:
@@ -72,7 +75,8 @@ A gated background job in the model (`gateFeedback`, dispatched through `dispatc
 
 - **The request** is JSON: the note (kind, title, text), plus every thread whose status is not `closed`, each with its ID, title, kind and its notes' titles plus the first ~300 characters of each text.
 - **The answer** comes back under a JSON schema: `{"thread": T or 0, "title": "<title for a new thread>", "why": "<one sentence>"}`. A 0, or a `T` that is unknown or closed, opens a new thread under `title`; an empty `title` takes the note's own title.
-- **The runner** is the advisor's (`sched/advisor`'s `Run`): `claude -p` with a model, an effort, a schema and a system prompt. `advisor.Call` gains a `SystemPrompt` field (today `run.go` hard-codes the advisor's), so the grouper reuses the runner instead of copying it. The grouper's system prompt lives in the `feedback` package as an embedded `prompt.md`.
+- **The runner** is the advisor's (`sched/advisor`'s `Run`): `claude -p` with a model, an effort, a schema and a system prompt. `advisor.Call` gains a `SystemPrompt` field (today `run.go` hard-codes the advisor's), so the grouper reuses the runner instead of copying it. The grouper's system prompt lives in the `feedback` package as an embedded `prompt.md`. The call keeps the advisor's lockdown and runs in an empty `feedback/grouper/` directory, so its read-only tools reach nothing (amended while planning: notes are untrusted text).
+- **Its settings' bounds** are the advisor's: `advisor.Resolve` becomes `advisor.ResolveBlock(key, block)`, so a bad `feedback.grouper` value names its own key (amended while planning).
 - **The settings** go in the global `config.json`'s `feedback` block:
   - `grouper`, with the same shape as `scheduler.agent` (`config.AgentSettings`: `enabled`, `model`, `effort`, `account`);
   - defaults: enabled, Haiku 5.5, low effort;
@@ -93,7 +97,8 @@ New `Core` methods in `core/iface.go`, all additions, so `rpc.Protocol` doesn't 
 - `FileFeedback(req, FeedbackNote)`: a request. It resolves the launch, stamps the note, saves, and arms the gate. Its Reply carries `N`. It refuses an unresolvable launch or a store that refused its load.
 - `CloseThread(req, T)`: a request. Unknown or already closed → refused (`ErrRefused`).
 - `FixThread(req, T, workspace)`: a request; see §7.
-- `Feedback()`: a local query returning threads and notes, with a state-view method that answers as the model does.
+- `Feedback()`: a local query returning the inbox and the grouper's state (`FeedbackView`), published as a new state event `FeedbackChanged` the way `QueueChanged` publishes the queue: on a revision change, coalesced by the server, kept by the replica, applied by the TUI (amended while planning). The guide is `docs/claude/adding-a-core-event.md`.
+- `Reply` gains `Note`, the filed note's ID.
 
 The `TestMethods_CoverCore`, `TestStateViews_AnswerAsTheModel` and `TestReplica_AnswersAsTheModel` cases, the generated `core/rpc/methods_gen.go`, and the regenerated `docs/specs/protocol.md` come with them. The guide is `docs/claude/adding-a-core-method.md`.
 
@@ -109,7 +114,7 @@ It then makes a `Create` in that workspace, as `loom session new --prompt` does,
   - for each note, where its reporter's transcript lives: the Claude session ID, with both places to look (`~/.claude/projects/…`, and loom's `archive/chats/` once the session has stopped);
   - the opening instruction: "Reporters may run an older loom than this branch. First check whether the base branch already fixes this. If it does, say so and stop. If not, reproduce it, then propose a fix to the user before building it."
 
-On the Create's `Started` the thread becomes `fixing` with the session's instance ID and title. A failed start leaves it `open` and the Notice says why.
+The model composes the `Create` itself, as `loom session new` does: the workspace's program, `launch.FromSettings` and `ChooseLaunchAccount`, and a refusal when remote control is blocked for the chosen account. It marks the thread `fixing` with the new instance's ID, title and workspace as the `Create` is made (amended while planning: a failed start removes its instance, which leaves a `fixing` thread whose session is gone, fixable again as below). The Reply and `Started` reach the requester as a `Create`'s do.
 
 `FixThread` refuses a closed thread, and a `fixing` thread whose fix session still exists (the refusal names it). A `fixing` thread whose session is gone (killed without a fix) can be fixed again, and the new session replaces the old one on the thread.
 
@@ -139,7 +144,8 @@ Ranking counts distinct sessions, not notes, so one session filing five notes ab
   - `c` closes the thread;
   - `esc` leaves the view.
   - A `fixing` thread shows its session's title and status beside it.
-- **The chrome** shows `fb N` while threads are open. A note arriving raises no toast.
+- **The chrome:** while threads are open, the status line of focus and overview starts `F feedback N ·` (amended while planning: the status line is the chrome's one place for it). A note arriving raises no toast.
+- `x` leaves the view for focus before it sends `FixThread`, so the start's inline attach lands in focus, not under the view (amended while planning).
 - **Keymap:** `USAGE.md` and the help list get the key; its truth is `script/defaults.lua`.
 
 ## 10. Package layout
