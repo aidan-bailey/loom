@@ -979,7 +979,9 @@ func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
 // on the commands but not there would send agents to a command that refuses
 // it, so every flag the paragraph names must exist on both `submit` and
 // `run`. Neither file promises that builds and tests run directly, which the
-// paragraph contradicts (spec §8).
+// paragraph contradicts (spec §8). The paragraph also tells the agent that a
+// subagent never receives a job's message, which goes to the session, so a
+// subagent it briefs follows its job with `run` or `wait` instead.
 func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, session.WriteLoomContextFiles(dir))
@@ -996,6 +998,8 @@ func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 
 		assert.Contains(t, para, `loom job submit -d "<what>" -- <cmd>`, name)
 		assert.Contains(t, para, `loom job run -d "<what>" -- <cmd>`, name)
+		assert.Contains(t, para, "subagent", name)
+		assert.Contains(t, para, "`loom job wait <N>`", name)
 		flags := flagName.FindAllString(para, -1)
 		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive"}, flags, name)
 		for _, flag := range flags {
