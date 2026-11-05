@@ -980,8 +980,8 @@ func TestJobRun_AnInterruptAsksForAMessageWhenTheJobHasAnOwner(t *testing.T) {
 // it, so every flag the paragraph names must exist on both `submit` and
 // `run`. Neither file promises that builds and tests run directly, which the
 // paragraph contradicts (spec §8). The paragraph also tells the agent that a
-// subagent never receives a job's message, which goes to the session, so a
-// subagent it briefs follows its job with `run` or `wait` instead.
+// job's message goes back to the subagent that submitted it, even after it
+// has finished (subagent job results spec §9).
 func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, session.WriteLoomContextFiles(dir))
@@ -999,7 +999,7 @@ func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 		assert.Contains(t, para, `loom job submit -d "<what>" -- <cmd>`, name)
 		assert.Contains(t, para, `loom job run -d "<what>" -- <cmd>`, name)
 		assert.Contains(t, para, "subagent", name)
-		assert.Contains(t, para, "`loom job wait <N>`", name)
+		assert.Contains(t, para, "even after it has finished", name)
 		flags := flagName.FindAllString(para, -1)
 		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive"}, flags, name)
 		for _, flag := range flags {
@@ -1045,4 +1045,28 @@ func TestJobList_ShowsUsualDurationsOverdueMarksAndForecasts(t *testing.T) {
 	require.NoError(t, writeJobList(&out, q, false, now))
 	assert.Regexp(t, `(?m)^1 +running +tests +- +4c/2G +9m0s +~2m overdue *$`, out.String())
 	assert.Regexp(t, `(?m)^2 +queued +build +- +4c/6G +0s +- +starts ~3m · needs 4 cores \(0 free\)$`, out.String())
+}
+
+func TestOwnerText_NamesTheSubagent(t *testing.T) {
+	assert.Equal(t, "-", ownerText(core.JobView{}))
+	assert.Equal(t, "lto build", ownerText(core.JobView{Owner: 3, OwnerTitle: "lto build"}))
+	assert.Equal(t, "lto build › ab91bd4", ownerText(core.JobView{Owner: 3, OwnerTitle: "lto build", Agent: "ab91bd4b710780552"}))
+	assert.Equal(t, "#3 › ab91bd4", ownerText(core.JobView{Owner: 3, Agent: "ab91bd4b710780552"}))
+}
+
+// submit says where a job's result will go, so a subagent knows whether it
+// may end its turn (subagent job results spec §5.5).
+func TestResultRoute(t *testing.T) {
+	served := sched.Submit{Launch: "L1", Notify: true}
+	assert.Equal(t, "its result comes back to this subagent (ab91bd4)", resultRoute(served, core.JobView{ID: 1, Owner: 3, Agent: "ab91bd4b710780552"}))
+	assert.Equal(t, "its result comes to this session", resultRoute(served, core.JobView{ID: 1, Owner: 3}))
+	assert.Equal(t, "", resultRoute(served, core.JobView{ID: 1}), "an unknown launch: the daemon's warning says so")
+	assert.Equal(t, "", resultRoute(sched.Submit{Launch: "L1"}, core.JobView{ID: 1, Owner: 3}), "--no-notify")
+	assert.Equal(t, "no session to notify: follow it with loom job wait 1", resultRoute(sched.Submit{Notify: true}, core.JobView{ID: 1}))
+	assert.Equal(t, "no session to notify: follow it with loom job wait 1", resultRoute(sched.Submit{}, core.JobView{ID: 1}), "a plain shell, as before")
+}
+
+func TestContinuesLine_NamesTheSubagent(t *testing.T) {
+	assert.Equal(t, "job 4 continues; a message will bring its result (loom job wait 4 follows it again)", continuesLine(core.JobView{ID: 4}))
+	assert.Equal(t, "job 4 continues; a message will bring its result to this subagent (ab91bd4) (loom job wait 4 follows it again)", continuesLine(core.JobView{ID: 4, Agent: "ab91bd4b710780552"}))
 }

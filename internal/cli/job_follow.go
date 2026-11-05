@@ -338,11 +338,22 @@ func (d *client) interrupted(id sched.JobID, sig os.Signal) error {
 		line, _ := jobOutcome(v)
 		d.say("%s", line)
 	case v.Owner != 0 && d.askForMessage(id):
-		d.say("job %d continues; a message will bring its result (loom job wait %d follows it again)", id, id)
+		d.say("%s", continuesLine(v))
 	default:
 		d.say("job %d continues (loom job wait %d follows it again)", id, id)
 	}
 	return &ExitError{Code: interruptCode(sig)}
+}
+
+// continuesLine is what an interrupted follower says of a job that keeps
+// running and will send a message: to the subagent that submitted it when it
+// has one.
+func continuesLine(v core.JobView) string {
+	to := ""
+	if v.Agent != "" {
+		to = fmt.Sprintf(" to this subagent (%s)", core.ShortAgent(v.Agent))
+	}
+	return fmt.Sprintf("job %d continues; a message will bring its result%s (loom job wait %d follows it again)", v.ID, to, v.ID)
 }
 
 // askForMessage sends NotifyJob on a copy of the client whose context is not

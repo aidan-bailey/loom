@@ -110,9 +110,18 @@ func ownerText(j core.JobView) string {
 	case j.Owner == 0:
 		return "-"
 	case j.OwnerTitle == "":
-		return fmt.Sprintf("#%d", j.Owner)
+		return fmt.Sprintf("#%d", j.Owner) + agentSuffix(j.Agent)
 	}
-	return j.OwnerTitle
+	return j.OwnerTitle + agentSuffix(j.Agent)
+}
+
+// agentSuffix is " › <short id>" for a job a subagent submitted, "" for any
+// other.
+func agentSuffix(agent string) string {
+	if agent == "" {
+		return ""
+	}
+	return " › " + core.ShortAgent(agent)
 }
 
 // elapsed is how long a job has waited (queued), has run (running), or ran
