@@ -10,16 +10,20 @@ import (
 // can be overdue.
 const overdueRuns = 3
 
-// Usual is a belief's usual duration and its P90 (smart scheduler spec
-// §5.5): the median and the 90th percentile (nearest rank) of the wall
-// times of its duration runs among its last window; n is how many there
-// were. With none, the prior's duration stands in for both and fromPrior is
-// true; with no prior either, all are zero.
-func Usual(b *Belief) (usual, p90 time.Duration, n int, fromPrior bool) {
+// Usual is a belief's usual duration and its P90 at cores (smart scheduler
+// spec §5.5, job scaling spec §5.4): the median and the 90th percentile
+// (nearest rank) of the wall times of its duration runs among its last
+// window, each scaled from the cores it had to cores (Scaling.scale: as
+// measured when cores is 0, b's parallel fraction is unknown or it
+// overruns); n is how many there were. With none, the prior's duration
+// stands in for both, unscaled, and fromPrior is true; with no prior
+// either, all are zero.
+func Usual(b *Belief, cores int) (usual, p90 time.Duration, n int, fromPrior bool) {
+	s := ScalingOf(b)
 	var walls []float64
 	for _, r := range b.recent() {
 		if r.TeachesDuration() {
-			walls = append(walls, r.WallSeconds)
+			walls = append(walls, s.scale(r.WallSeconds, r.Claim.CPUs, cores))
 		}
 	}
 	if len(walls) == 0 {
@@ -35,11 +39,11 @@ func Usual(b *Belief) (usual, p90 time.Duration, n int, fromPrior bool) {
 	return seconds(m), seconds(walls[rank]), len(walls), false
 }
 
-// OverdueAfter is how long a job of b may run before it is overdue:
-// max(2 × P90, P90 + 5 minutes) once b has overdueRuns duration runs, else
-// 0 (never).
-func OverdueAfter(b *Belief) time.Duration {
-	_, p90, n, _ := Usual(b)
+// OverdueAfter is how long a job of b at cores may run before it is
+// overdue: max(2 × P90, P90 + 5 minutes) of Usual at cores once b has
+// overdueRuns duration runs, else 0 (never).
+func OverdueAfter(b *Belief, cores int) time.Duration {
+	_, p90, n, _ := Usual(b, cores)
 	if n < overdueRuns {
 		return 0
 	}

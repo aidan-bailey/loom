@@ -117,6 +117,11 @@ type JobView struct {
 	UsualFromPrior bool
 	OverdueAfter   time.Duration
 	StartsAt       time.Time
+	// Job scaling (spec 2026-11-05-job-scaling §5.3): what a grant added to
+	// a started job's base claim, and the width a grant could widen a
+	// queued job to (0 when none could).
+	Spare sched.Claim
+	Ideal int
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -268,7 +273,7 @@ func (m *Model) queueView() QueueView {
 	})
 	byID := m.jobOwners(q.store.Jobs)
 	usualOf := func(r sched.Record) (time.Duration, bool) {
-		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature))
+		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature), r.Claim.CPUs)
 		return u, n > 0 || fromPrior
 	}
 	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), usualOf, m.hostUsual())
@@ -294,7 +299,7 @@ func (m *Model) queueView() QueueView {
 func (m *Model) hostUsual() time.Duration {
 	var all []time.Duration
 	for i := range m.queue.beliefs.Beliefs {
-		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i]); n > 0 {
+		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i], 0); n > 0 {
 			all = append(all, u)
 		}
 	}
@@ -336,14 +341,15 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		BelowKB:      r.BelowKB,
 		Unsized:      r.Unsized,
 		AgentWhy:     r.AgentWhy,
+		Spare:        r.Spare,
 	}
 	if r.Exit != nil {
 		e := *r.Exit
 		jv.Exit = &e
 	}
 	b := q.beliefOf(r.Signature)
-	jv.Usual, jv.P90, _, jv.UsualFromPrior = sched.Usual(b)
-	jv.OverdueAfter = sched.OverdueAfter(b)
+	jv.Usual, jv.P90, _, jv.UsualFromPrior = sched.Usual(b, r.Claim.CPUs)
+	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
 	switch r.State {
@@ -351,6 +357,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		u := q.usage[r.ID]
 		jv.RSSKB, jv.CPU = u.RSSKB, u.CPU
 	case sched.Queued:
+		jv.Ideal = sched.SpareWidth(r, b)
 		jv.Waiting = q.waiting[r.ID]
 		if jv.Waiting == "" && q.paused != "" {
 			jv.Waiting = "admission paused: " + q.paused

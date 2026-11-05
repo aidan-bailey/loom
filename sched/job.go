@@ -159,6 +159,10 @@ type Record struct {
 	BelowKB   int64        `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
 	AgentWhy  string       `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
 	Adopted   bool         `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
+
+	// Spare is what a grant added to its base claim when it started (job
+	// scaling spec §5.3); Claim is then the total.
+	Spare Claim `json:"spare,omitzero"`
 }
 
 // Exit is exit.json: how the command ended, written by the shim when it
@@ -261,6 +265,19 @@ func (c Claim) String() string {
 		return "exclusive"
 	}
 	s := fmt.Sprintf("%dc/%dG", c.CPUs, c.MemoryGB)
+	if c.IO {
+		s += " io"
+	}
+	return s
+}
+
+// Spared is c as a claim with spare cores reads (job scaling spec §6): the
+// base cores, then spare's, "4+2c/3G"; c.String() when spare has no cores.
+func (c Claim) Spared(spare Claim) string {
+	if spare.CPUs == 0 || c.Exclusive {
+		return c.String()
+	}
+	s := fmt.Sprintf("%d+%dc/%dG", c.CPUs-spare.CPUs, spare.CPUs, c.MemoryGB)
 	if c.IO {
 		s += " io"
 	}

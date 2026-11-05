@@ -63,6 +63,7 @@ func (m *Model) admitJobs() {
 	policy, paused := m.refreshPolicy()
 	waiting := map[sched.JobID]string{}
 	var start []sched.JobID
+	var spare map[sched.JobID]sched.Claim
 	if paused != "" {
 		for i := range q.store.Jobs {
 			if q.store.Jobs[i].State == sched.Queued {
@@ -91,6 +92,9 @@ func (m *Model) admitJobs() {
 		dec := sched.Admit(jobs, policy, now)
 		maps.Copy(waiting, dec.Waiting)
 		start = dec.Start
+		// Spare cores for the jobs it starts, when nothing else waits (job
+		// scaling spec §5.3).
+		spare = sched.Grant(dec, jobs, policy, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()
@@ -99,7 +103,7 @@ func (m *Model) admitJobs() {
 	started := false
 	for _, id := range start {
 		if i := q.index(id); i >= 0 && q.store.Jobs[i].State == sched.Queued {
-			m.startJob(i, policy, now)
+			m.startJob(i, policy, now, spare[id])
 			started = true
 		}
 	}
@@ -155,12 +159,18 @@ type jobStarted struct {
 	owed int
 }
 
-// startJob admits job i of the store: it is running from now (its claim is
+// startJob admits job i of the store with spare added to its claim (job
+// scaling spec §5.3; zero for none): it is running from now (its claim is
 // taken by the next pass), and a model job starts its shim (spec §5.3).
-func (m *Model) startJob(i int, policy sched.Policy, now time.Time) {
+func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.Claim) {
 	q := m.queue
 	rec := &q.store.Jobs[i]
 	rec.State, rec.Started, rec.PID = sched.Running, now, 0
+	if spare != (sched.Claim{}) {
+		rec.Claim.CPUs += spare.CPUs
+		rec.Claim.MemoryGB += spare.MemoryGB
+		rec.Spare = spare
+	}
 	q.starting[rec.ID] = true
 	delete(q.waiting, rec.ID)
 	m.spawnBackground(runJobStart(jobStart{

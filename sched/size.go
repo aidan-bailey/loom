@@ -123,11 +123,13 @@ type Sized struct {
 // policy in effect, whose caps it must have. Each part takes the first
 // source with a value: the flag, the belief's last window runs, the
 // belief's prior, the default claim. Memory learns from a done run's peak
-// with a margin, and a floor only raises it; cores learn from busy cores,
-// never past the default claim's; an I/O slot from bytes written. --cpus
-// with --mem makes the whole claim explicit. A part that isn't explicit is
-// held within the policy: cores at most the default claim's, memory at most
-// the cap.
+// with a margin, and a floor only raises it (a run with spare cores counts
+// as largestPeak says); cores learn from busy cores, never past the default
+// claim's unless the command overruns (job scaling spec §5.2), then up to
+// the cap; an I/O slot from bytes written. --cpus with --mem makes the
+// whole claim explicit. A part that isn't explicit is held within the
+// policy: cores at most the default claim's (an overrunner's at most the
+// cap), memory at most the cap.
 func Size(asked Claim, b *Belief, p Policy) Sized {
 	if asked.Exclusive {
 		return Sized{Claim: Claim{Exclusive: true}, Sources: ClaimSources{SourceExclusive, SourceExclusive, SourceExclusive}}
@@ -140,10 +142,16 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 	var s Sized
 	learned := false
 
+	sc := ScalingOf(b)
 	busy, haveBusy := medianBusy(runs)
 	switch {
 	case asked.CPUs > 0:
 		s.Claim.CPUs, s.Sources.CPUs = asked.CPUs, SourceExplicit
+	case sc.Overruns:
+		// The hint variables don't reach it: count the cores it takes, up
+		// to the cap (job scaling spec §5.2).
+		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*sc.Busy)), 1, p.Caps.CPUs), SourceLearned
+		learned = true
 	case haveBusy:
 		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*busy)), 1, p.DefaultClaim.CPUs), SourceLearned
 		learned = true
@@ -153,7 +161,7 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 		s.Claim.CPUs, s.Sources.CPUs = p.DefaultClaim.CPUs, SourceDefault
 	}
 
-	peakKB, full := largestPeak(runs)
+	peakKB, full := largestPeak(runs, s.Claim.CPUs)
 	switch {
 	case asked.MemoryGB > 0:
 		s.Claim.MemoryGB, s.Sources.Memory = asked.MemoryGB, SourceExplicit
@@ -202,14 +210,29 @@ func withMargin(kb int64) int {
 	return max(1, int(math.Ceil(float64(kb)*memoryMargin/kbPerGB)))
 }
 
-// largestPeak is the largest peak among runs, floors included, and whether
-// any of them is a full peak.
-func largestPeak(runs []Run) (kb int64, full bool) {
+// largestPeak is the memory evidence for a claim of cores (smart scheduler
+// spec §5.4, job scaling spec §5.2): the largest peak among runs, floors
+// included, and whether any of them is a full peak. A run that had spare
+// cores counts as a floor of its peak scaled by cores over the cores it
+// had, while runs include a full peak of a run without spare cores; with
+// none, its peak counts as it is, since fewer cores need no more memory.
+func largestPeak(runs []Run, cores int) (kb int64, full bool) {
+	var plain, spared, scaled int64
+	var plainFull, sparedFull bool
 	for _, r := range runs {
-		kb = max(kb, r.PeakKB)
-		full = full || r.FullPeak()
+		if r.Spare == 0 || r.Claim.CPUs < 1 {
+			plain = max(plain, r.PeakKB)
+			plainFull = plainFull || r.FullPeak()
+			continue
+		}
+		spared = max(spared, r.PeakKB)
+		sparedFull = sparedFull || r.FullPeak()
+		scaled = max(scaled, int64(float64(r.PeakKB)*min(1, float64(cores)/float64(r.Claim.CPUs))))
 	}
-	return kb, full
+	if plainFull {
+		return max(plain, scaled), true
+	}
+	return max(plain, spared), sparedFull
 }
 
 // medianBusy is the median of the busy cores (CPU time over wall time) of

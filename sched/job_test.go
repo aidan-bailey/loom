@@ -197,3 +197,10 @@ func TestClaim_String(t *testing.T) {
 		assert.Equal(t, tc.want, tc.claim.String())
 	}
 }
+
+func TestClaim_Spared(t *testing.T) {
+	assert.Equal(t, "4+2c/3G", Claim{CPUs: 6, MemoryGB: 3}.Spared(Claim{CPUs: 2, MemoryGB: 1}))
+	assert.Equal(t, "4+2c/3G io", Claim{CPUs: 6, MemoryGB: 3, IO: true}.Spared(Claim{CPUs: 2, MemoryGB: 1}))
+	assert.Equal(t, "4c/6G", Claim{CPUs: 4, MemoryGB: 6}.Spared(Claim{}))
+	assert.Equal(t, "exclusive", Claim{Exclusive: true}.Spared(Claim{}))
+}

@@ -60,6 +60,10 @@ func TestSize(t *testing.T) {
 			ClaimSources{SourceDefault, SourceExplicit, SourceDefault}, 0, false, peak138},
 		{"an explicit I/O slot", Claim{IO: true}, belief(done(peak138, 0, 93)), szPolicy, Claim{CPUs: 4, MemoryGB: 16, IO: true},
 			ClaimSources{SourceDefault, SourceLearned, SourceExplicit}, 1, false, 0},
+		{"an overrunner's cores pass the default", Claim{}, belief(at(4, 7.81)), szPolicy, Claim{CPUs: 10, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 1, false, 0},
+		{"an overrunner's cores are held to the cap", Claim{}, belief(at(4, 15)), szPolicy, Claim{CPUs: 14, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 1, false, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,6 +83,15 @@ func TestSize(t *testing.T) {
 		}
 		runs = append(runs, done(20<<20, 0, 10)) // the eleventh, oldest
 		assert.Equal(t, 2, Size(Claim{}, belief(runs...), szPolicy).Claim.MemoryGB)
+	})
+
+	t.Run("runs with spare cores", func(t *testing.T) {
+		spare := at(10, 9.0)
+		spare.Spare, spare.PeakKB = 6, 12<<20
+		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 6}, Size(Claim{}, belief(spare, at(4, 3.8)), szPolicy).Claim,
+			"beside a full peak without spare cores, 12 GB at 10 cores is a floor of 4.8 GB at 4")
+		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 14}, Size(Claim{}, belief(spare), szPolicy).Claim,
+			"alone, its peak counts as it is")
 	})
 }
 
@@ -104,25 +117,36 @@ func TestClaimSources_Tag(t *testing.T) {
 func TestUsualAndOverdueAfter(t *testing.T) {
 	sec := func(s float64) Run { return Run{Outcome: OutcomeDone, WallSeconds: s} }
 	b := belief(sec(60), sec(120), sec(90), Run{Outcome: OutcomeCancelled, WallSeconds: 900}, Run{Outcome: OutcomeFailed, WallSeconds: 100})
-	usual, p90, n, fromPrior := Usual(b)
+	usual, p90, n, fromPrior := Usual(b, 0)
 	assert.Equal(t, 95*time.Second, usual, "the median of 60, 90, 100 and 120")
 	assert.Equal(t, 120*time.Second, p90)
 	assert.Equal(t, 4, n)
 	assert.False(t, fromPrior)
-	assert.Equal(t, 7*time.Minute, OverdueAfter(b), "max(2 × 2m, 2m + 5m)")
+	assert.Equal(t, 7*time.Minute, OverdueAfter(b, 0), "max(2 × 2m, 2m + 5m)")
 
 	few := belief(sec(60), sec(60))
-	assert.Zero(t, OverdueAfter(few), "fewer than three duration runs")
+	assert.Zero(t, OverdueAfter(few, 0), "fewer than three duration runs")
 
 	prior := &Belief{Prior: &Prior{DurationSeconds: 300}}
-	usual, p90, n, fromPrior = Usual(prior)
+	usual, p90, n, fromPrior = Usual(prior, 0)
 	assert.Equal(t, 5*time.Minute, usual)
 	assert.Equal(t, 5*time.Minute, p90)
 	assert.Zero(t, n)
 	assert.True(t, fromPrior)
 
-	usual, _, n, fromPrior = Usual(nil)
+	usual, _, n, fromPrior = Usual(nil, 0)
 	assert.Zero(t, usual)
 	assert.Zero(t, n)
 	assert.False(t, fromPrior)
+
+	t.Run("at other cores", func(t *testing.T) {
+		b := belief(at(3, 2.74), at(3, 2.74), at(3, 2.74)) // p ≈ 0.953; 100 s at 3 cores
+		usual, p90, n, _ := Usual(b, 4)
+		assert.Equal(t, 78*time.Second, usual, "100 s × f(4) ÷ f(3)")
+		assert.Equal(t, 78*time.Second, p90)
+		assert.Equal(t, 3, n)
+		usual, _, _, _ = Usual(b, 0)
+		assert.Equal(t, 100*time.Second, usual, "0 cores: as measured")
+		assert.Equal(t, 378*time.Second, OverdueAfter(b, 4), "max(2 × 78 s, 78 s + 5m)")
+	})
 }

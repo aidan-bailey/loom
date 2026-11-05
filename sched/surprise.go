@@ -12,33 +12,42 @@ func NeedsPrior(asked Claim, b *Belief) bool {
 	}
 	runs := b.recent()
 	_, busy := medianBusy(runs)
-	_, full := largestPeak(runs)
+	_, full := largestPeak(runs, 0) // whether a peak is full doesn't depend on the cores
 	_, io := medianWrites(runs)
 	explicitIO := asked.IO || (asked.CPUs > 0 && asked.MemoryGB > 0)
 	return (asked.CPUs == 0 && !busy) || (asked.MemoryGB == 0 && !full) || (!explicitIO && !io)
 }
 
-// Surprise says how run surprises b, which has not recorded it yet (spec
-// §5.6), or "" when it doesn't or b had no run before it: a peak above its
-// memory claim when memory (the claim's memory source) was learned, the
-// agent's or the default; a SIGKILL nobody requested; or, with three
-// duration runs before it, a wall time over three times or under a third of
-// their median.
+// Surprise says how run surprises b, which has not recorded it yet (smart
+// scheduler spec §5.6, job scaling spec §5.5), or "" when it doesn't: a
+// peak above its memory claim when memory (the claim's memory source) was
+// learned, the agent's or the default; a SIGKILL nobody requested; more
+// than overrunRatio × its claim's cores kept busy while b doesn't overrun;
+// or, with three duration runs before it, a wall time over three times or
+// under a third of their median, each scaled to the run's cores. All but
+// the overrun need a run before it.
 func Surprise(b *Belief, run Run, memory Source) string {
-	if b == nil || len(b.Runs) == 0 {
+	if b == nil {
 		return ""
 	}
-	if (memory == SourceLearned || memory == SourceAgent || memory == SourceDefault) && run.PeakKB > int64(run.Claim.MemoryGB)*kbPerGB {
+	before := len(b.Runs) > 0
+	if before && (memory == SourceLearned || memory == SourceAgent || memory == SourceDefault) && run.PeakKB > int64(run.Claim.MemoryGB)*kbPerGB {
 		return fmt.Sprintf("it peaked at %.1f GB, above its %d GB claim", float64(run.PeakKB)/kbPerGB, run.Claim.MemoryGB)
 	}
-	if run.Outcome == OutcomeSignal && run.Signal == "SIGKILL" {
+	if before && run.Outcome == OutcomeSignal && run.Signal == "SIGKILL" {
 		return "it was killed by SIGKILL, which nobody asked for (the out-of-memory killer?)"
 	}
-	if run.TeachesDuration() {
+	s := ScalingOf(b)
+	if c := run.Claim.CPUs; run.teachesCores() && c > 0 && !s.Overruns {
+		if busy := run.CPUSeconds / run.WallSeconds; busy > overrunRatio*float64(c) {
+			return fmt.Sprintf("it kept %.1f cores busy on a %d-core claim: the hint variables don't reach it", busy, c)
+		}
+	}
+	if before && run.TeachesDuration() {
 		var walls []float64
 		for _, r := range b.recent() {
 			if r.TeachesDuration() {
-				walls = append(walls, r.WallSeconds)
+				walls = append(walls, s.scale(r.WallSeconds, r.Claim.CPUs, run.Claim.CPUs))
 			}
 		}
 		if m, ok := median(walls); ok && len(walls) >= overdueRuns && (run.WallSeconds > 3*m || run.WallSeconds < m/3) {

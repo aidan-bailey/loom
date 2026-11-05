@@ -79,7 +79,7 @@ The constants (1.25, 50%, 2×) are `sched`'s, not settings. On fresco's beliefs:
 `sched.Size` keeps the smart scheduler's rules (its spec §5.4) with two changes:
 
 - **An overrunner's cores** are ⌈1.25 × `Busy`⌉, held to 1 and the cap rather than the default claim's cores: vitest claims 10.
-- **A run that had spare cores** teaches a base claim's memory only as a floor: its peak scaled by the claim's cores over the run's. A 10-core run that peaked at 9 GB raises a 4-core claim to at least 5 GB (3.6 GB with the margin) and never sets it alone. Its cores and I/O teach as any done run's do.
+- **A run that had spare cores** teaches a base claim's memory as a floor, its peak scaled by the claim's cores over the run's, while the last 10 runs include a full peak of a run without spare cores: a 10-core run that peaked at 9 GB raises a 4-core claim to at least 5 GB (3.6 GB with the margin) and never sets it alone. With no such full peak, its peak counts as it is, since fewer cores need no more memory (amended while planning: with floors alone, a command whose recent runs all had spare cores would lose its learned memory and ask the advisor for a prior). Its cores and I/O teach as any done run's do.
 
 ### 5.3 The grant
 
@@ -97,7 +97,7 @@ On fresco (caps of 14 cores and 22 GB, a default claim of 4 cores and 6 GB), the
 ### 5.4 Durations, the forecast and overdue marks
 
 - **`Usual(b, cores)`** scales each duration run's wall time by f(cores) ÷ f(its cores) before taking the median and the P90. It scales nothing when `cores` is 0, when `p` is unknown, when the belief overruns, and for an exclusive run. The prior's duration stands in unscaled. **`OverdueAfter(b, cores)`** uses the scaled P90.
-- The view asks at a queued job's base cores and at a running job's total. The forecast runs `Grant` after each simulated `Admit`, adds what it grants to the simulated claims, and asks at the total. The host's fallback duration and the advisor's request ask at 0.
+- The view asks at a queued job's base cores and at a running job's total, and so does the forecast. The forecast runs no grant (amended while planning): a grant happens only when no queued job is left waiting except over the caps, and the forecast leaves out jobs being sized, so a simulated grant could never move a forecast start. The host's fallback duration and the advisor's request ask at 0.
 
 ### 5.5 Surprises
 
@@ -110,7 +110,7 @@ On fresco (caps of 14 cores and 22 GB, a default claim of 4 cores and 6 GB), the
 - **`submit` and `run`** add the ideal width to the sized line when a grant could apply: `sized 4c/2G (learned from 1 run); usually 34s; up to 6 cores when idle`.
 - **The follower's start line** names the spare cores: `job 21 started after 6s with 2 spare cores (4+2c/3G)`.
 - **`loom job beliefs`** gains a SCALES column after CLAIM: `72%`, `0%`, `overruns`, or `-` while `p` is unknown.
-- **`loom job beliefs show`** gains a scaling line: `scaling: 95% parallel over 1 run · efficient up to 6 cores · ~34s at 4, ~24s at 6` (at the base claim's cores and the ideal width); `scaling: ignores the hint variables · keeps 7.8 cores busy, claims 10` for an overrunner; `scaling: unknown until a run with 2 cores or more` otherwise.
+- **`loom job beliefs show`** gains a scaling line in the belief text's label column: `scaling   95% parallel over 1 run · efficient up to 6 cores · ~34s at 4, ~24s at 6` (at the base claim's cores and the ideal width); `scaling   ignores the hint variables · keeps 7.8 cores busy, claims 10` for an overrunner (", claims N" only when there is a claim); `scaling   unknown until a run with 2 cores or more` otherwise.
 - `--json` carries `JobView.Spare` and `BeliefView.Scaling`.
 
 ## 7. The work view
@@ -124,17 +124,16 @@ The work-queue paragraph's sizing sentence becomes: "The scheduler sizes each jo
 
 ## 9. Wire and files
 
-`JobView.Spare` (a `sched.Claim`), `Run.Spare` (inside a `BeliefView`'s belief) and `BeliefView.Scaling` (a `sched.Scaling`) are added, and `docs/specs/protocol.md` is regenerated. `jobs.json` and `beliefs.json` gain optional `spare` fields and keep their versions: an older build ignores them and counts a granted job's total claim as its claim.
+`JobView.Spare` (a `sched.Claim`), `Run.Spare` (inside a `BeliefView`'s belief) and `BeliefView.Scaling` (a `sched.Scaling`) are added, with `JobView.Ideal`, the width a grant could widen a queued job to (`sched.SpareWidth`), 0 when none could, for the sized line (added while planning). `docs/specs/protocol.md` is regenerated. `jobs.json` and `beliefs.json` gain optional `spare` fields and keep their versions: an older build ignores them and counts a granted job's total claim as its claim.
 
 ## 10. Components
 
 | unit | change |
 |---|---|
 | `sched/scaling.go` (new) | `Scaling`, `ScalingOf`, the speed factor and the ideal width |
-| `sched/grant.go` (new) | `Grant`, and a job's memory at t cores |
+| `sched/grant.go` (new) | `SpareWidth`, `Grant`, and a job's memory at t cores |
 | `sched/size.go` | overrunners' cores; runs with spare cores as scaled floors |
 | `sched/durations.go` | `Usual` and `OverdueAfter` take the cores |
-| `sched/forecast.go` | the grant at each simulated pass |
 | `sched/surprise.go` | the scaled duration check; the overrun surprise |
 | `sched/belief.go`, `sched/job.go` | `Run.Spare`, `Record.Spare`, `RunOf`, the claim text |
 | `sched/beliefs_view.go`, `sched/belief_text.go` | `BeliefView.Scaling`; the scaling line |
@@ -159,7 +158,7 @@ The work-queue paragraph's sizing sentence becomes: "The scheduler sizes each jo
 - **`sched`:**
   - `TestScalingOf`: overrun at the median; a run's `p` held to 0–1; the median; unknown with only 1-core runs; exclusive runs left out; the ideal width at 50% and its 2× bound; `p` of 1.
   - `TestGrant`: nothing while a job waits, over-cap jobs aside; a job being sized and a starved head block it; the reserve; queue order; the memory rule and its fit; each case that gets nothing.
-  - New cases in `TestSize` (an overrunner past the default up to the cap; a spare run as a scaled floor), `TestUsual` and `TestOverdueAfter` (at other cores), `TestForecast` (a grant) and `TestSurprise` (the scaled duration; an overrun on a first run; none for a belief that already overruns).
+  - New cases in `TestSize` (an overrunner past the default up to the cap; a spare run as a scaled floor), `TestUsual` and `TestOverdueAfter` (at other cores) and `TestSurprise` (the scaled duration; an overrun on a first run; none for a belief that already overruns).
 - **`core`:** a pass on an idle queue grants, writing the total into the record and into `spec.json`'s hint, and `Spare` into the record and then its run; a pass with a job left waiting grants nothing; a resize never touches a running claim.
 - **`internal/cli` and `ui`:** `4+2c/3G`, the sized and start lines, SCALES, the scaling line, the claim column.
 - No test calls Claude.
