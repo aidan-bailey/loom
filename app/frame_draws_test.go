@@ -86,6 +86,10 @@ func TestDrawsPane_ByLayout(t *testing.T) {
 	assert.False(t, selectedDrawn(), "work: no pane")
 	assert.False(t, m.drawsSession(term), "work: no pane")
 
+	m.viewMode = viewFeedback
+	assert.False(t, selectedDrawn(), "feedback: no pane")
+	assert.False(t, m.drawsSession(term), "feedback: no pane")
+
 	// The file explorer keeps the focus layout over overview and workbench.
 	m.viewMode = viewOverview
 	m.state = stateFileExplorer

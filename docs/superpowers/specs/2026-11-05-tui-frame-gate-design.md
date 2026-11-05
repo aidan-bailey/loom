@@ -77,6 +77,7 @@ It returns `m.gate.output(drawn)`, with `drawn` true when either holds:
 | `viewOverview` | every agent session in an open workspace |
 | `viewWorkbench` | the selected agent; the current terminal, which the workbench's terminal tab (`ui.WbTabTerminal`) shows |
 | `viewWork` | none |
+| `viewFeedback` (main's feedback inbox, merged after this design) | none |
 
 The filter leans toward drawing: a wrong `true` costs one shared frame, while a wrong `false` would freeze a visible pane. The spinner's ticks still render about 12 times a second, so a pane the filter misses degrades to 12 fps rather than freezing. That is a backstop, not something the filter relies on.
 

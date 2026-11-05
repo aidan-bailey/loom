@@ -755,3 +755,8 @@ git commit -q -m "docs(app): the frame gate's rule, structure and measured effec
 - The method and the numbers are in `docs/claude/debugging-freezes.md` §6.
 - **Gates:** the full suite (job 533), the race run of `app`, `ui` and `core` (534) and e2e (545) pass, as do vet and the Windows build. The first e2e job (536) left off `CGO_ENABLED=0` and failed to build (no gcc), a command slip; 545 is its rerun. golangci-lint is skipped (CI pins v1).
 
+**Merge of main** (c484aace):
+- Main's session-feedback work added `viewFeedback`. That conflicted in `render`'s dispatch, resolved as a `case viewFeedback:` in the `switch`.
+- `drawsPane` then left the feedback view drawing the selection and the current terminal, a wrong `true`. It now returns false there, as for the work view. Both terms are mutation-checked.
+- `feedbackContent` clamps `m.fb.sel` during the render (`feedbackSelected`), but the inbox changes only through model events, which render.
+

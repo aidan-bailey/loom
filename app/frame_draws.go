@@ -9,8 +9,8 @@ import "github.com/aidan-bailey/loom/core"
 // a pane frozen on screen.
 func (m *home) drawsPane(session string, v *core.InstanceView) bool {
 	layout := m.layout()
-	if layout == viewWork {
-		return false
+	if layout == viewWork || layout == viewFeedback {
+		return false // full-screen views with no pane
 	}
 	if v == nil {
 		// Only the current terminal is drawn: by the split in focus, and
