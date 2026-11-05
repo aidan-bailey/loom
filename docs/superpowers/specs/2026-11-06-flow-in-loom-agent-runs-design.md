@@ -25,6 +25,25 @@ Part 3's goals (owner, 2026-11-06): cut the supervisor's cost, survive hand-back
 - **One report schema for every role**, with the report's text as the agents write it today. 3b may add structure per role (a review's findings).
 - **Agent definitions don't change**; a fixed preamble before the brief tells a headless agent how to report and ask.
 
+## 2a. Amendments from planning and the probe (2026-11-06)
+
+They win where the sections below differ. Planning (`docs/superpowers/plans/2026-11-06-flow-in-loom-agent-runs.md`):
+1. The setting is `scheduler.agent_jobs`: `scheduler.agent` already names the advisor.
+2. No `rpc.Protocol` bump: an optional field is compatible.
+3. The probe runs as the default account, which has a login.
+4. An agent job's environment drops the parent Claude session's variables (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, its messaging socket and token, `CLAUDE_EFFORT`, `LOOM_MOD_SOCKET` and the rest the plan lists).
+5. Agent jobs get no parallelism hints.
+6. `Grant` passes agent jobs over.
+7. Agent jobs wait while admission is paused.
+8. The permission mode is the global config's.
+
+The probe (`TestRealClaude_FlowAgentRun`, Claude Code 2.1.318):
+
+9. **`--agent` turns `--json-schema` off**, so the report is text: the preamble asks the agent to end it with `STATUS: <status>`, and on NEEDS_CONTEXT a `QUESTION: <question>` line; loom reads the last STATUS line and the QUESTION after it, and a report without one is `failed`. This is §5.1's planned fallback for premise 4.
+10. **`--agent`'s main thread doesn't preload the definition's `skills:`**, which subagents do. Loom inlines each preloaded `flow:` skill's `SKILL.md` body into the first prompt, after the preamble and before the brief; a resume needs none, since it is in the session's context. A preloaded skill outside the flow plugin is refused.
+11. **The account's enabled plugins are turned off** (owner, 2026-11-06): `--settings` sets each plugin the account's and the project's settings enable to false. Their SessionStart hooks injected instructions no subagent gets (superpowers, the explanatory style). The flow plugin, the git guard, permissions, sandbox and CLAUDE.md stay. A settings file that can't be read refuses the run (125).
+12. **The guard needs no fallback:** the hook sees `agent_type` `flow:<role>` for a `--agent` main thread, so `LOOM_FLOW_AGENT` is set for the record only.
+
 ## 3. Scope
 
 In: the probe; the `agent` job kind in `sched` and `core` and its `scheduler.agent_limit` setting; `loom flow agent run|wait|answer|show|list|cancel`; the agent-run record; the command an agent job runs; the guard's `LOOM_FLOW_AGENT` fallback when the probe needs it; the work view's and `loom job list`'s display of agent jobs; tests; docs.

@@ -1541,3 +1541,28 @@ func lockAgents(dir string) (func(), error) {
 
   golangci-lint is skipped, as before.
 - [ ] **Step 3: Execution notes and the handoff.** Append the execution notes (the probe's findings, deviations, mutations, gates), commit, and ask the owner whether to fast-forward local `main`.
+
+## Execution notes
+
+- **P1, the probe.** It passes, with spec amendments 9–12 (§2a); the probe changed with them.
+  - **The first run failed premise 4:** with `--agent`, the result has no `structured_output`. A side test showed `--json-schema` works without `--agent`, with both json and stream-json, and fails with it.
+  - **That first run also showed four of the account's plugins' SessionStart hooks firing,** with the explanatory style's "★ Insight" in the report.
+  - **The owner chose to turn the account's plugins off.** Flag settings `enabledPlugins: {…: false}` removed all SessionStart hooks; synced claude.ai plugins (canva and others) still load.
+  - **The second run failed premise 3:** `--agent`'s main thread ignored `skills:`. A side test showed the same agent preloads its skill as a subagent and not as `--agent`.
+  - **The third run passed all eight premises:**
+    - the model is `claude-haiku-5-5` with tools `[Bash]`;
+    - the hook saw `flowprobe:probe-dev` three times, and exit 2 blocked one call (also in `permission_denials`);
+    - the inlined skill's codeword came back;
+    - `STATUS: NEEDS_CONTEXT` and `QUESTION: Which colour?` parsed;
+    - the resume kept the session and its context;
+    - routine commands ran under the default mode;
+    - the transcript is under `~/.claude/projects/`;
+    - the session is its own.
+  - Cost: about $0.005 per run.
+- **What changes in P3:**
+  - `agentCommand` drops `--json-schema` and adds `enabledPlugins` to `--settings`.
+  - The preamble asks for the status lines.
+  - The first prompt inlines the preloaded skills.
+  - `readResult` parses the `result` text's STATUS and QUESTION lines (markdown `*` and backticks trimmed), and the report is that text.
+  - The fake `claude` answers in status lines.
+  - Step 5, the guard fallback, is skipped.
