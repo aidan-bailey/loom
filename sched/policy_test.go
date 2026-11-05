@@ -31,6 +31,9 @@ func policyWant(cpus, memoryGB, claimCPUs, claimMemoryGB int) Policy {
 		ReleasePastPeaks: true,
 		Contain:          true,
 		JobsCPUWeight:    50,
+		ReserveGB:        4,
+		CPUPressurePct:   25,
+		CPUOvercommit:    2,
 	}
 }
 
@@ -76,18 +79,22 @@ func TestResolve_Explicit(t *testing.T) {
 				DefaultClaim:       &config.ClaimSettings{CPUs: 2, MemoryGB: 3},
 				StarveAfterMinutes: 30, KeepFinished: 5, ReleasePastPeaks: &policyOff,
 				Contain: &policyOff, JobsCPUWeight: 30,
+				InteractiveReserveGB: 2, CPUPressurePct: 40, CPUOvercommit: 3,
 			},
 			want: Policy{
-				Caps:          Caps{CPUs: 4, MemoryGB: 8, IOJobs: 1},
-				DefaultClaim:  Claim{CPUs: 2, MemoryGB: 3},
-				StarveAfter:   30 * time.Minute,
-				KeepFinished:  5,
-				JobsCPUWeight: 30,
+				Caps:           Caps{CPUs: 4, MemoryGB: 8, IOJobs: 1},
+				DefaultClaim:   Claim{CPUs: 2, MemoryGB: 3},
+				StarveAfter:    30 * time.Minute,
+				KeepFinished:   5,
+				JobsCPUWeight:  30,
+				ReserveGB:      2,
+				CPUPressurePct: 40,
+				CPUOvercommit:  3,
 			},
 		},
 		{
 			name: "the largest values",
-			in:   config.SchedulerSettings{CPUs: 1024, MemoryGB: 65536, IOJobs: 64, StarveAfterMinutes: 1440, KeepFinished: 10000, JobsCPUWeight: 10000},
+			in:   config.SchedulerSettings{CPUs: 1024, MemoryGB: 65536, IOJobs: 64, StarveAfterMinutes: 1440, KeepFinished: 10000, JobsCPUWeight: 10000, InteractiveReserveGB: 1024, CPUPressurePct: 100, CPUOvercommit: 8},
 			want: Policy{
 				Caps:             Caps{CPUs: 1024, MemoryGB: 65536, IOJobs: 64},
 				DefaultClaim:     Claim{CPUs: 4, MemoryGB: 6},
@@ -96,11 +103,14 @@ func TestResolve_Explicit(t *testing.T) {
 				ReleasePastPeaks: true,
 				Contain:          true,
 				JobsCPUWeight:    10000,
+				ReserveGB:        1024,
+				CPUPressurePct:   100,
+				CPUOvercommit:    8,
 			},
 		},
 		{
 			name: "the smallest values",
-			in:   config.SchedulerSettings{CPUs: 1, MemoryGB: 1, IOJobs: 1, StarveAfterMinutes: 1, KeepFinished: 1, JobsCPUWeight: 1},
+			in:   config.SchedulerSettings{CPUs: 1, MemoryGB: 1, IOJobs: 1, StarveAfterMinutes: 1, KeepFinished: 1, JobsCPUWeight: 1, InteractiveReserveGB: 1, CPUPressurePct: 1, CPUOvercommit: 1},
 			want: Policy{
 				Caps:             Caps{CPUs: 1, MemoryGB: 1, IOJobs: 1},
 				DefaultClaim:     Claim{CPUs: 1, MemoryGB: 1},
@@ -109,6 +119,9 @@ func TestResolve_Explicit(t *testing.T) {
 				ReleasePastPeaks: true,
 				Contain:          true,
 				JobsCPUWeight:    1,
+				ReserveGB:        1,
+				CPUPressurePct:   1,
+				CPUOvercommit:    1,
 			},
 		},
 		{
@@ -160,6 +173,12 @@ func TestResolve_Bounds(t *testing.T) {
 		{name: "keep_finished above 10000", in: config.SchedulerSettings{KeepFinished: 10001}, want: "scheduler.keep_finished is 10001: it must be 1–10000"},
 		{name: "jobs_cpu_weight below 1", in: config.SchedulerSettings{JobsCPUWeight: -1}, want: "scheduler.jobs_cpu_weight is -1: it must be 1–10000"},
 		{name: "jobs_cpu_weight above 10000", in: config.SchedulerSettings{JobsCPUWeight: 10001}, want: "scheduler.jobs_cpu_weight is 10001: it must be 1–10000"},
+		{name: "interactive_reserve_gb below 1", in: config.SchedulerSettings{InteractiveReserveGB: -1}, want: "scheduler.interactive_reserve_gb is -1: it must be 1–1024"},
+		{name: "interactive_reserve_gb above 1024", in: config.SchedulerSettings{InteractiveReserveGB: 1025}, want: "scheduler.interactive_reserve_gb is 1025: it must be 1–1024"},
+		{name: "cpu_pressure_pct below 1", in: config.SchedulerSettings{CPUPressurePct: -1}, want: "scheduler.cpu_pressure_pct is -1: it must be 1–100"},
+		{name: "cpu_pressure_pct above 100", in: config.SchedulerSettings{CPUPressurePct: 101}, want: "scheduler.cpu_pressure_pct is 101: it must be 1–100"},
+		{name: "cpu_overcommit below 1", in: config.SchedulerSettings{CPUOvercommit: -1}, want: "scheduler.cpu_overcommit is -1: it must be 1–8"},
+		{name: "cpu_overcommit above 8", in: config.SchedulerSettings{CPUOvercommit: 9}, want: "scheduler.cpu_overcommit is 9: it must be 1–8"},
 		{
 			name: "a default claim above the default cap",
 			in:   config.SchedulerSettings{DefaultClaim: &config.ClaimSettings{CPUs: 15}},

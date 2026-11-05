@@ -425,3 +425,18 @@ func TestAdmit_CountsARunningJobAtItsHold(t *testing.T) {
 	jobs[0] = running
 	assert.Empty(t, Admit(jobs, p, now, map[JobID]Need{1: {CPUs: 1, MemoryGB: 1}}).Start, "an exclusive claim ignores a hold")
 }
+
+// TestAdmit_ReportsTheStarvedHead: Decision.Starved names a head the guard
+// started, and is 0 for a first-fit start.
+func TestAdmit_ReportsTheStarvedHead(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	p := Policy{Caps: Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}, StarveAfter: 10 * time.Minute}
+	head := Record{ID: 1, Order: 1, State: Queued, Claim: Claim{CPUs: 4, MemoryGB: 6}, Submitted: now.Add(-11 * time.Minute)}
+	d := Admit([]Record{head}, p, now, nil)
+	assert.Equal(t, []JobID{1}, d.Start)
+	assert.Equal(t, JobID(1), d.Starved)
+	head.Submitted = now
+	d = Admit([]Record{head}, p, now, nil)
+	assert.Equal(t, []JobID{1}, d.Start)
+	assert.Zero(t, d.Starved)
+}

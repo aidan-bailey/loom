@@ -15,6 +15,7 @@ const waitOver = "over this host's caps"
 type Decision struct {
 	Start   []JobID          // in the order to start them; nil when none
 	Waiting map[JobID]string // why each queued job left waiting waits; never nil
+	Starved JobID            // the head the starvation guard started; 0 for none
 }
 
 // plus is the sum of two needs.
@@ -66,34 +67,58 @@ func runningNeed(r Record, p Policy, holds map[JobID]Need) Need {
 	return r.Claim.Need(p.Caps)
 }
 
-// Admit decides which queued jobs start now (spec §5.2). It is a pure
-// function of its arguments. It walks the queued jobs in queue order (Order,
-// then ID):
+// fitter is how admission counts what runs and decides what fits: claims
+// (claimFit, spec §5.2) or the greedy forecast (greedyFit, cgroup spec §7).
+type fitter interface {
+	count(r Record)       // a running job
+	fits(r Record) string // why r doesn't fit what is counted; "" when it does
+	take(r Record)        // r starts: count it
+}
+
+// claimFit counts running jobs at their holds or claims.
+type claimFit struct {
+	p     Policy
+	holds map[JobID]Need
+	used  Need
+}
+
+func (f *claimFit) count(r Record)       { f.used = f.used.plus(runningNeed(r, f.p, f.holds)) }
+func (f *claimFit) fits(r Record) string { return shortfall(f.used, r.Claim.Need(f.p.Caps), f.p.Caps) }
+func (f *claimFit) take(r Record)        { f.used = f.used.plus(r.Claim.Need(f.p.Caps)) }
+
+// Admit decides which queued jobs start now (spec §5.2) by their claims: a
+// Running exclusive claim takes every cap as it stands, and any other
+// running job counts at its hold in holds (past-peak holds spec §6), at its
+// claim with none. The walk is admitWith's. It is a pure function of its
+// arguments.
+func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decision {
+	return admitWith(jobs, p, now, &claimFit{p: p, holds: holds})
+}
+
+// admitWith walks the queued jobs in queue order (Order, then ID), counting
+// the running ones with f:
 //
 //  1. A job whose claim exceeds a cap is skipped and waits "over this host's
 //     caps"; it is never the head. A job being sized (Record.Sizing) waits
 //     with Sizing.Wait and is never the head either.
 //  2. The head is the first job that is not skipped. Once it has waited
 //     p.StarveAfter since it joined the queue (Record.QueuedSince: its
-//     release, for a dependent), Admit starts it if it fits and starts
-//     nothing else, so smaller jobs cannot pass a large one forever.
-//  3. Otherwise (first fit) it starts every job, in order, whose claim fits
-//     what the running jobs and the jobs started before it leave.
+//     release, for a dependent), it starts if it fits (Decision.Starved
+//     names it) and nothing else starts, so smaller jobs cannot pass a large
+//     one forever.
+//  3. Otherwise (first fit) it starts every job, in order, that fits what
+//     the running jobs and the jobs started before it leave.
 //
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
-// Running records count, so a held job is never seen; a Running exclusive
-// claim takes every cap as it stands, and any other running job counts at
-// its hold in holds (past-peak holds spec §6), at its claim with none. A
-// policy without caps (the zero Policy) starts nothing. The jobs slice is
-// left as it is.
-func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decision {
+// Running records count, so a held job is never seen. A policy without caps
+// (the zero Policy) starts nothing. The jobs slice is left as it is.
+func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
-	var used Need
 	var queued []Record
 	for _, r := range jobs {
 		switch r.State {
 		case Running:
-			used = used.plus(runningNeed(r, p, holds))
+			f.count(r)
 		case Queued:
 			queued = append(queued, r)
 		}
@@ -119,8 +144,9 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 	}
 
 	if head := line[0]; now.Sub(head.QueuedSince()) >= p.StarveAfter {
-		if why := shortfall(used, head.Claim.Need(p.Caps), p.Caps); why == "" {
+		if why := f.fits(head); why == "" {
 			d.Start = append(d.Start, head.ID)
+			d.Starved = head.ID
 		} else {
 			d.Waiting[head.ID] = why
 		}
@@ -131,12 +157,11 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 	}
 
 	for _, r := range line {
-		need := r.Claim.Need(p.Caps)
-		if why := shortfall(used, need, p.Caps); why != "" {
+		if why := f.fits(r); why != "" {
 			d.Waiting[r.ID] = why
 			continue
 		}
-		used = used.plus(need)
+		f.take(r)
 		d.Start = append(d.Start, r.ID)
 	}
 	return d

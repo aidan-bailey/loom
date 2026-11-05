@@ -428,6 +428,20 @@ func TestRenderWork_ShowsEachClaimsSourceAndWhyLearningIsOff(t *testing.T) {
 	assert.Contains(t, out, "agent off: no Claude program is configured")
 }
 
+func TestRenderWork_ShowsTheBudgetInGreedyMode(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:   sched.Host{Name: "fresco"},
+		Policy: sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}, CPUOvercommit: 2},
+		Greedy: true, BudgetKB: 19 << 20, PeakKB: 16 << 20, CPUPressure: 12,
+		Claimed: sched.Need{CPUs: 8, MemoryGB: 20}, UsedRSSKB: 10 << 20, UsedCPU: 5.5,
+	}
+	out := ansi.Strip(RenderWork(140, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "budget 19 GB · forecast peak 16.0 GB")
+	assert.Contains(t, out, "8 claimed of 28 allowed")
+	assert.Contains(t, out, "pressure 12%")
+}
+
 func TestRenderWork_SaysWhyJobsRunUncontained(t *testing.T) {
 	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 	q := core.QueueView{

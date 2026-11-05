@@ -31,6 +31,13 @@ type QueueView struct {
 	// Linux (cgroup spec §5.5); "" when they are contained, or when
 	// containment isn't expected.
 	Uncontained string
+	// Greedy admission (cgroup spec §7): whether it runs, the memory budget
+	// it packs into and the running jobs' forecast peak from now, in KB,
+	// and the jobs slice's CPU pressure (%).
+	Greedy      bool
+	BudgetKB    int64
+	PeakKB      int64
+	CPUPressure float64
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -309,11 +316,21 @@ func (m *Model) queueView() QueueView {
 		return cmp.Or(b.Ended.Compare(a.Ended), cmp.Compare(b.ID, a.ID))
 	})
 	byID := m.jobOwners(q.store.Jobs)
-	usualOf := func(r sched.Record) (time.Duration, bool) {
-		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature), r.Claim.CPUs)
-		return u, n > 0 || fromPrior
+	now := time.Now()
+	var starts map[sched.JobID]time.Time
+	if g, ok := m.greedyInputs(q.policy, now); ok {
+		v.Greedy, v.BudgetKB, v.CPUPressure = true, g.BudgetKB, g.CPUPressure
+		var preds []sched.Prediction
+		var end time.Time
+		for _, p := range g.Running {
+			preds = append(preds, p)
+			end = later(end, p.End())
+		}
+		v.PeakKB = sched.PeakSum(preds, now, end)
+		starts = sched.ForecastGreedy(q.store.Jobs, q.policy, now, g, m.usualOf, m.hostUsual())
+	} else {
+		starts = sched.Forecast(q.store.Jobs, q.policy, now, q.holding, m.usualOf, m.hostUsual())
 	}
-	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), q.holding, usualOf, m.hostUsual())
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
 		if r.State.Waiting() {

@@ -490,6 +490,11 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	case changed:
 		m.saveQueueQuiet("watch")
 	}
+	if !settled && q.hasQueued() && q.containWhy(q.policy) == "" {
+		// Greedy admission follows the usage it packs into (cgroup spec
+		// §7.1); a settle's own pass has run already.
+		m.admitJobs()
+	}
 }
 
 // noteSilent applies what a pass saw of a failed start's shim: its entry goes

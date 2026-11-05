@@ -80,3 +80,24 @@ func TestForecast_CountsRunningJobsAtTheirHolds(t *testing.T) {
 	assert.Equal(t, now.Add(10*time.Minute), Forecast(jobs, p, now, nil, usual, time.Minute)[2])
 	assert.Equal(t, now, Forecast(jobs, p, now, map[JobID]Need{1: {CPUs: 2, MemoryGB: 2}}, usual, time.Minute)[2])
 }
+
+// TestForecastGreedy: a job the forecast's peaks leave no room for starts
+// when the running job is expected to end, whatever the ladder holds.
+func TestForecastGreedy(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	run := Record{ID: 1, Order: 1, State: Running, Claim: Claim{CPUs: 4, MemoryGB: 9}, Started: now.Add(-time.Minute)}
+	wait := Record{ID: 2, Order: 2, State: Queued, Claim: Claim{CPUs: 4, MemoryGB: 9}, Submitted: now, Ready: now}
+	p := Policy{Caps: Caps{CPUs: 14, MemoryGB: 14, IOJobs: 2}, StarveAfter: 10 * time.Minute, ReserveGB: 4, CPUPressurePct: 25, CPUOvercommit: 2}
+	g := Greedy{
+		BudgetKB: 12 * kbPerGB,
+		Running:  map[JobID]Prediction{1: Flat(9*kbPerGB, now, now.Add(4*time.Minute))},
+		Predict: func(r Record, start time.Time) Prediction {
+			return Flat(int64(r.Claim.MemoryGB)*kbPerGB, start, start.Add(5*time.Minute))
+		},
+	}
+	usual := func(Record) (time.Duration, bool) { return 5 * time.Minute, true }
+	starts := ForecastGreedy([]Record{run, wait}, p, now, g, usual, time.Minute)
+	assert.Equal(t, run.Started.Add(5*time.Minute), starts[2])
+	g.Holdoff = "memory is short (job 1 paused)"
+	assert.Equal(t, run.Started.Add(5*time.Minute), ForecastGreedy([]Record{run, wait}, p, now, g, usual, time.Minute)[2], "the hold-off passes")
+}

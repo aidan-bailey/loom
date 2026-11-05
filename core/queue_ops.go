@@ -299,6 +299,7 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	s.Agent = file.Agent
 	s.ReleasePastPeaks = file.ReleasePastPeaks
 	s.Contain, s.JobsCPUWeight = file.Contain, file.JobsCPUWeight
+	s.InteractiveReserveGB, s.CPUPressurePct, s.CPUOvercommit = file.InteractiveReserveGB, file.CPUPressurePct, file.CPUOvercommit
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)

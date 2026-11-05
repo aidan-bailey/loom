@@ -27,6 +27,23 @@ const (
 // forecastSteps steps or past forecastHorizon; a job it hasn't started by
 // then has no entry.
 func Forecast(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
+	return forecastWith(jobs, p, now, usual, fallback, func(sim []Record, clock time.Time) Decision {
+		return Admit(sim, p, clock, holds)
+	})
+}
+
+// ForecastGreedy is Forecast with the greedy fit (cgroup spec §7.4): a
+// simulated start is predicted from its simulated start, and the ladder's
+// hold-off is left out, since it passes.
+func ForecastGreedy(jobs []Record, p Policy, now time.Time, g Greedy, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
+	g.Holdoff = ""
+	return forecastWith(jobs, p, now, usual, fallback, func(sim []Record, clock time.Time) Decision {
+		return AdmitGreedy(sim, p, clock, g)
+	})
+}
+
+// forecastWith is Forecast's simulation with admit as its admission pass.
+func forecastWith(jobs []Record, p Policy, now time.Time, usual func(Record) (time.Duration, bool), fallback time.Duration, admit func(sim []Record, clock time.Time) Decision) map[JobID]time.Time {
 	starts := map[JobID]time.Time{}
 	if !p.usable() {
 		return starts
@@ -59,7 +76,7 @@ func Forecast(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, usua
 	index := func(id JobID) int { return slices.IndexFunc(sim, func(r Record) bool { return r.ID == id }) }
 	clock := now
 	for range forecastSteps {
-		for _, id := range Admit(sim, p, clock, holds).Start {
+		for _, id := range admit(sim, clock).Start {
 			i := index(id)
 			sim[i].State, sim[i].Started = Running, clock
 			starts[id] = clock

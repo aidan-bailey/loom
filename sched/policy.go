@@ -19,6 +19,8 @@ const (
 	maxStarveMins = 1440
 	maxKeep       = 10000
 	maxCPUWeight  = 10000
+	maxReserveGB  = 1024
+	maxOvercommit = 8
 )
 
 // resolveBounded returns v, or def when v is 0, and an error naming the
@@ -38,12 +40,14 @@ func resolveBounded(key string, v, def, lo, hi int) (int, error) {
 // memory_gb is max(1, ⌊0.75 × RAM in GB⌋); io_jobs is 2; the default claim is
 // {min(4, cpus), min(6, memory_gb)}, each half taking its own default;
 // starve_after_minutes is 10; keep_finished is 50; release_past_peaks is
-// true; contain is true; jobs_cpu_weight is 50. It fails closed: a value
+// true; contain is true; jobs_cpu_weight is 50; interactive_reserve_gb is 4;
+// cpu_pressure_pct is 25; cpu_overcommit is 2. It fails closed: a value
 // outside its bounds (a negative one included), a default claim above a cap,
 // or an unreadable RAM with memory_gb unset is an error and no Policy, since
 // no cap is guessed. The first fault, in the order cpus, memory_gb, io_jobs,
 // starve_after_minutes, keep_finished, default_claim.cpus,
-// default_claim.memory_gb, jobs_cpu_weight, is the one returned.
+// default_claim.memory_gb, jobs_cpu_weight, interactive_reserve_gb,
+// cpu_pressure_pct, cpu_overcommit, is the one returned.
 func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	cpus, err := resolveBounded("cpus", s.CPUs, max(1, h.Cores-2), 1, maxCapCPUs)
 	if err != nil {
@@ -88,6 +92,18 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	reserve, err := resolveBounded("interactive_reserve_gb", s.InteractiveReserveGB, 4, 1, maxReserveGB)
+	if err != nil {
+		return Policy{}, err
+	}
+	pressure, err := resolveBounded("cpu_pressure_pct", s.CPUPressurePct, 25, 1, 100)
+	if err != nil {
+		return Policy{}, err
+	}
+	overcommit, err := resolveBounded("cpu_overcommit", s.CPUOvercommit, 2, 1, maxOvercommit)
+	if err != nil {
+		return Policy{}, err
+	}
 	return Policy{
 		Caps:             Caps{CPUs: cpus, MemoryGB: mem, IOJobs: ioJobs},
 		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMem},
@@ -96,5 +112,8 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 		ReleasePastPeaks: s.ReleasePastPeaks == nil || *s.ReleasePastPeaks,
 		Contain:          s.Contain == nil || *s.Contain,
 		JobsCPUWeight:    weight,
+		ReserveGB:        reserve,
+		CPUPressurePct:   pressure,
+		CPUOvercommit:    overcommit,
 	}, nil
 }

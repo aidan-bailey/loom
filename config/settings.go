@@ -166,6 +166,12 @@ type SchedulerSettings struct {
 	// the jobs slice's CPUWeight.
 	Contain       *bool `json:"contain,omitempty"`
 	JobsCPUWeight int   `json:"jobs_cpu_weight,omitempty"`
+	// Greedy admission (cgroup spec §10): the headroom kept for everything
+	// outside the queue, the CPU pressure past which no job starts, and the
+	// summed core claims allowed, as a multiple of cpus.
+	InteractiveReserveGB int `json:"interactive_reserve_gb,omitempty"`
+	CPUPressurePct       int `json:"cpu_pressure_pct,omitempty"`
+	CPUOvercommit        int `json:"cpu_overcommit,omitempty"`
 }
 
 // AgentSettings is the scheduler block's "agent": the advisor, a headless

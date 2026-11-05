@@ -124,6 +124,12 @@ type Policy struct {
 	// jobs slice's CPUWeight (cgroup spec §10).
 	Contain       bool `json:"contain"`
 	JobsCPUWeight int  `json:"jobs_cpu_weight"`
+	// Greedy admission (cgroup spec §7, §10): the headroom kept outside the
+	// queue (GB), the CPU pressure (%) past which no job starts, and the
+	// summed core claims allowed as a multiple of the cores cap.
+	ReserveGB      int `json:"reserve_gb"`
+	CPUPressurePct int `json:"cpu_pressure_pct"`
+	CPUOvercommit  int `json:"cpu_overcommit"`
 }
 
 // Notice is the fate of a job's completion message to its owner's Claude.

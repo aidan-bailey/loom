@@ -94,7 +94,12 @@ func (m *Model) admitJobs() {
 				return held
 			})
 		}
-		dec := sched.Admit(jobs, policy, now, q.holding)
+		var dec sched.Decision
+		if g, ok := m.greedyInputs(policy, now); ok {
+			dec = sched.AdmitGreedy(jobs, policy, now, g)
+		} else {
+			dec = sched.Admit(jobs, policy, now, q.holding)
+		}
 		maps.Copy(waiting, dec.Waiting)
 		start = dec.Start
 		// Spare cores for the jobs it starts, when nothing else waits (job

@@ -29,6 +29,9 @@ var qvPolicy = sched.Policy{
 	ReleasePastPeaks: true,
 	Contain:          true,
 	JobsCPUWeight:    50,
+	ReserveGB:        4,
+	CPUPressurePct:   25,
+	CPUOvercommit:    2,
 }
 
 // qvRecord is a record of the given state, ordered by its ID, with the

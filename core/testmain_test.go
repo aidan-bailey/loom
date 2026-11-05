@@ -22,6 +22,9 @@ func TestMain(m *testing.M) {
 	// contained starts installs a fake with SetConfinerForTest, and a probe
 	// would add a background job to every count the tests make.
 	newConfiner = nil
+	// Greedy admission reads the host's MemAvailable: tests see a fixed 64
+	// GB, so the caps decide, unless a test sets its own.
+	readMemAvailable = func() (int64, error) { return 64 << 20, nil }
 	os.Exit(runTests(m))
 }
 

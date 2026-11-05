@@ -22,6 +22,8 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `grant.go` — `SpareWidth`, `Grant`.
 - `profile.go` — `TracePoint`, `Trace`, `Step`, `Staircase`, `Profile`, `BuildProfile`, `ProfiledRuns`.
 - `curve.go` — `CurveStep`, `Curve`, `BuildCurve`, `Curve.Validate`, `CurvedRuns`.
+- `predict.go` — `Span`, `Prediction`, `Flat`, `Predict`, `PeakSum`, `WithMarginKB`.
+- `greedy.go` — `Greedy`, `Budget`, `AdmitGreedy` and its fitter.
 - `hold.go` — `HoldState`, `Hold`.
 - `ioacct.go`, `ioacct_linux.go`, `ioacct_other.go` — the shim's `/proc/self/io` counters.
 - `surprise.go` — `NeedsPrior`, `Surprise`, `ScorePrior`: when the advisor is asked, and how its priors are scored.
@@ -51,6 +53,10 @@ A `Claim` is whole cores and whole GB, whether the job is I/O-heavy (one of the 
 ## Admission
 
 `Admit(jobs, policy, now)` returns the jobs to start and, for each queued job left waiting, why. It walks the queued jobs in queue order: a job over a cap is skipped (`over this host's caps`) and is never the head; once the head, the first job not skipped, has waited `StarveAfter` since it joined the queue (`QueuedSince`), it starts if it fits and nothing else starts (the others wait `waits for job <id>, which has waited past <m>m`); otherwise every job that fits what the running jobs and the earlier starts leave starts, first fit. A job that does not fit waits for cores (`needs <n> cores (<free> free)`), then GB (`needs <n> GB (<free> free)`), then I/O slots (`needs an I/O slot`, or `needs <n> I/O slots (<free> free)` for a need of more than one). A held job is never seen.
+
+## Greedy admission
+
+While jobs are contained ([cgroup spec](../docs/superpowers/specs/2026-11-05-cgroup-greedy-scheduler-design.md) §7) the model admits with `AdmitGreedy`, which walks the queue as `Admit` does (`admitWith`: the over-cap skip, the starvation guard, `Decision.Starved` naming a head it started) with another fitter. `Budget` is the running jobs' use plus the host's MemAvailable, less `ReserveGB`, between 0 and the memory cap. A `Prediction` is a job's memory over time, non-overlapping spans: `Predict` reads a belief's curves (3 runs that lasted past the progress asked about), each step from the wall time its run reached it, less the run's wall time at the current progress, its level given 15% and its edges widened by max(30 s, a quarter of how far ahead), the most of every run at each moment; `Flat` is a claim's. A job fits when the sum of every prediction (`PeakSum`, at each span's start) stays within the budget until its own prediction ends; a job also waits while the slice's CPU pressure is at `CPUPressurePct` with a job running, or while claimed cores would pass `CPUOvercommit` × the cores cap; an exclusive claim waits for an empty host; `Greedy.Holdoff` holds every start. `ForecastGreedy` runs the same fit forward, predicting a simulated start from its simulated start.
 
 ## Signatures, beliefs and sizing
 

@@ -369,6 +369,22 @@ func workBars(q core.QueueView) []string {
 		memFill = q.Held.MemoryGB
 		mem = fmt.Sprintf("%d/%d GB held · %d claimed · %s in use", q.Held.MemoryGB, caps.MemoryGB, q.Claimed.MemoryGB, workGB(q.UsedRSSKB))
 	}
+	if q.Greedy {
+		// Greedy admission (cgroup spec §7): memory against the budget it
+		// packs into, cores against what the overcommit allows.
+		budget := int((q.BudgetKB + 1<<20 - 1) >> 20)
+		memFill = int((q.PeakKB + 1<<20 - 1) >> 20)
+		mem = fmt.Sprintf("budget %d GB · forecast peak %s · %s in use · %d claimed", budget, workGB(q.PeakKB), workGB(q.UsedRSSKB), q.Claimed.MemoryGB)
+		allowed := q.Policy.CPUOvercommit * caps.CPUs
+		cpuFill = q.Claimed.CPUs
+		cpu = fmt.Sprintf("%d claimed of %d allowed · %.1f in use · pressure %.0f%%", q.Claimed.CPUs, allowed, q.UsedCPU, q.CPUPressure)
+		io := fmt.Sprintf("%d/%d", q.Claimed.IOSlots, caps.IOJobs)
+		return []string{
+			workBarLine("CPU", cpuFill, max(allowed, 1), workBarCells, cpu),
+			workBarLine("MEM", memFill, max(budget, 1), workBarCells, mem),
+			workBarLine("I/O", q.Claimed.IOSlots, caps.IOJobs, min(workBarCells, caps.IOJobs*2), io),
+		}
+	}
 	io := fmt.Sprintf("%d/%d", q.Claimed.IOSlots, caps.IOJobs)
 	return []string{
 		workBarLine("CPU", cpuFill, caps.CPUs, workBarCells, cpu),
