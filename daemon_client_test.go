@@ -365,6 +365,49 @@ func TestJoin_ANewerDaemonIsNewerDaemonError(t *testing.T) {
 	})
 }
 
+// TestJoin_ANewerDaemonSaysWhatSetsItApart pins the 2026-11-01 log: a
+// daemon newer only by its protocol was refused with "the loom daemon is
+// 0.14.0 ((devel)), newer than this loom (0.14.0 ((devel)))", two names
+// that read as one build. The message now names the fields the comparison
+// decided on, and no longer doubles the parentheses of Go's "(devel)".
+func TestJoin_ANewerDaemonSaysWhatSetsItApart(t *testing.T) {
+	ours := rpc.Hello{Exe: "ours", Version: "0.14.0", Build: "(devel)", Protocol: 7}
+	newer := rpc.Hello{Exe: "newer", Version: "0.14.0", Build: "(devel)", Protocol: 8}
+	f := &fakeDaemons{t: t, builds: []rpc.Hello{newer}}
+
+	_, err := f.link(ours, nil).join(false)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, app.ErrDaemonNewer)
+	assert.Equal(t, "the loom daemon is 0.14.0 (devel) [protocol 8], newer than this loom (0.14.0 (devel) [protocol 7]): upgrade loom, or run `loom serve stop`", err.Error())
+}
+
+// TestDescribeBuilds: builds that read differently keep their plain names;
+// ones that read alike gain what differs, in the order CompareBuilds
+// decides it.
+func TestDescribeBuilds(t *testing.T) {
+	base := rpc.Hello{Version: "0.14.0", Build: "(devel)", Protocol: 7}
+	cases := []struct {
+		name         string
+		a, b         rpc.Hello
+		wantA, wantB string
+	}{
+		{"different releases", rpc.Hello{Version: "0.13.0", Build: "v0.13.0 abc"}, rpc.Hello{Version: "0.14.0", Build: "v0.14.0 123"}, "0.13.0 (v0.13.0 abc)", "0.14.0 (v0.14.0 123)"},
+		{"protocol", base, rpc.Hello{Version: "0.14.0", Build: "(devel)", Protocol: 8}, "0.14.0 (devel) [protocol 7]", "0.14.0 (devel) [protocol 8]"},
+		{"commit time", rpc.Hello{Version: "0.14.0", Build: "(devel)", Time: "2026-11-01T10:00:00Z"}, rpc.Hello{Version: "0.14.0", Build: "(devel)"}, "0.14.0 (devel) [commit 2026-11-01T10:00:00Z]", "0.14.0 (devel) [no commit time]"},
+		{"modified tree", rpc.Hello{Version: "0.14.0", Build: "(devel)", Modified: true}, rpc.Hello{Version: "0.14.0", Build: "(devel)"}, "0.14.0 (devel) [modified]", "0.14.0 (devel) [clean]"},
+		{"executable time", rpc.Hello{Version: "0.14.0", Build: "(devel)", ExeTime: "2026-11-01T10:00:00Z"}, rpc.Hello{Version: "0.14.0", Build: "(devel)", ExeTime: "2026-11-02T10:00:00Z"}, "0.14.0 (devel) [built 2026-11-01T10:00:00Z]", "0.14.0 (devel) [built 2026-11-02T10:00:00Z]"},
+		{"nothing differs", base, base, "0.14.0 (devel)", "0.14.0 (devel)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotA, gotB := describeBuilds(c.a, c.b)
+			assert.Equal(t, c.wantA, gotA)
+			assert.Equal(t, c.wantB, gotB)
+		})
+	}
+}
+
 // TestRejoin_IsQuiet: a rejoin runs under the TUI, which holds the screen,
 // so it writes nothing to stderr: its dial says nothing while it waits for
 // a daemon still starting, and a replacement is announced to say (the

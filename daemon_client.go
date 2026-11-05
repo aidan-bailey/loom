@@ -45,8 +45,8 @@ type daemonLink struct {
 type newerDaemonError struct{ peer, own rpc.Hello }
 
 func (e *newerDaemonError) Error() string {
-	return fmt.Sprintf("the loom daemon is %s, newer than this loom (%s): upgrade loom, or run `loom serve stop`",
-		describeBuild(e.peer), describeBuild(e.own))
+	peer, own := describeBuilds(e.peer, e.own)
+	return fmt.Sprintf("the loom daemon is %s, newer than this loom (%s): upgrade loom, or run `loom serve stop`", peer, own)
 }
 
 // Is matches app.ErrDaemonNewer, so the TUI tells this refusal from any
@@ -86,11 +86,13 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 		case order == rpc.ServerNewer:
 			return nil, &newerDaemonError{peer: peer, own: d.own}
 		case replaced:
-			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s), even after replacing it", describeBuild(peer), describeBuild(d.own))
+			peerName, ownName := describeBuilds(peer, d.own)
+			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s), even after replacing it", peerName, ownName)
 		}
 		if refusal := d.mayReplace(peer.Tmux); refusal != nil {
+			peerName, ownName := describeBuilds(peer, d.own)
 			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s), and %w: a loom inside loom never replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)",
-				describeBuild(peer), describeBuild(d.own), refusal)
+				peerName, ownName, refusal)
 		}
 		// The stop can take a while: the old daemon finishes its
 		// lifecycle jobs and saves before it exits.
@@ -260,10 +262,14 @@ func handshake(nc net.Conn, timeout time.Duration) (*rpc.Client, error) {
 }
 
 // describeBuild names a build for a message: its release, then the module
-// version and commit Go stamped.
+// version and commit Go stamped. Go's own "(devel)" already carries its
+// parentheses.
 func describeBuild(h rpc.Hello) string {
 	switch {
 	case h.Version != "" && h.Build != "":
+		if strings.HasPrefix(h.Build, "(") && strings.HasSuffix(h.Build, ")") {
+			return h.Version + " " + h.Build
+		}
 		return h.Version + " (" + h.Build + ")"
 	case h.Version != "":
 		return h.Version
@@ -271,6 +277,50 @@ func describeBuild(h rpc.Hello) string {
 		return h.Build
 	}
 	return "an unknown build"
+}
+
+// describeBuilds names two builds that a message sets side by side. When
+// they read alike (two "0.14.0 (devel)", settled by protocol or by commit
+// time, which describeBuild does not print) each gains what sets it apart
+// from the other, so a "newer" or "older" verdict is not between two
+// identical names.
+func describeBuilds(a, b rpc.Hello) (string, string) {
+	da, db := describeBuild(a), describeBuild(b)
+	if da != db {
+		return da, db
+	}
+	return da + buildDifferences(a, b), db + buildDifferences(b, a)
+}
+
+// buildDifferences lists, in the order rpc.CompareBuilds decides them, what
+// h has that other has not: commit time, a modified tree, protocol and
+// executable time. "" when none differs.
+func buildDifferences(h, other rpc.Hello) string {
+	var parts []string
+	if h.Time != other.Time {
+		if h.Time == "" {
+			parts = append(parts, "no commit time")
+		} else {
+			parts = append(parts, "commit "+h.Time)
+		}
+	}
+	if h.Modified != other.Modified {
+		if h.Modified {
+			parts = append(parts, "modified")
+		} else {
+			parts = append(parts, "clean")
+		}
+	}
+	if h.Protocol != other.Protocol {
+		parts = append(parts, fmt.Sprintf("protocol %d", h.Protocol))
+	}
+	if h.ExeTime != other.ExeTime && h.ExeTime != "" {
+		parts = append(parts, "built "+h.ExeTime)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(parts, ", ") + "]"
 }
 
 // joinCLI connects a subcommand (internal/cli) to the daemon as the TUI's
