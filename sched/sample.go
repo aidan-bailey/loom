@@ -1,10 +1,7 @@
 package sched
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +11,9 @@ import (
 type Proc struct {
 	PID   int
 	PGID  int
+	SID   int // its session; its process group where the sample can't tell (ps)
 	RSSKB int64
-	CPU   time.Duration // CPU time used so far, user and system together
+	CPU   time.Duration // CPU time so far, user and system together; on Linux its waited-for children's too
 }
 
 // Snapshot is one reading of the process table.
@@ -24,32 +22,10 @@ type Snapshot struct {
 	Procs []Proc
 }
 
-// Sample reads the process table with one "ps -A -o pid=,pgid=,rss=,time=",
-// which procps (Linux) and BSD ps (macOS) both accept, though they write the
-// time column differently (ParsePS reads both). ps runs for as long as ctx
-// allows: the caller gives it 5 s. A ps that fails, runs out of time or lists
-// nothing is an error, and the caller skips that sample.
-func Sample(ctx context.Context) (Snapshot, error) {
-	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,pgid=,rss=,time=").Output()
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			err = ctxErr
-		}
-		return Snapshot{}, fmt.Errorf("ps: %w", err)
-	}
-	procs, err := ParsePS(out)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if len(procs) == 0 {
-		return Snapshot{}, errors.New("ps listed no processes")
-	}
-	return Snapshot{Taken: time.Now(), Procs: procs}, nil
-}
-
 // ParsePS reads the output of "ps -A -o pid=,pgid=,rss=,time=": one process
 // per line, four whitespace-separated fields, rss in kilobytes. The time is
-// [d-][[h:]m:]s[.f]: procps writes [d-]hh:mm:ss, BSD ps m:ss.hh. A line it
+// [d-][[h:]m:]s[.f]: procps writes [d-]hh:mm:ss, BSD ps m:ss.hh. SID is the
+// process group: ps can't say the session on every platform. A line it
 // cannot read fails the whole parse, since a sample with a hole in it would
 // understate a job's use.
 func ParsePS(out []byte) ([]Proc, error) {
@@ -88,7 +64,7 @@ func parsePSLine(fields []string) (Proc, error) {
 	if err != nil {
 		return Proc{}, err
 	}
-	return Proc{PID: pid, PGID: pgid, RSSKB: rss, CPU: cpu}, nil
+	return Proc{PID: pid, PGID: pgid, SID: pgid, RSSKB: rss, CPU: cpu}, nil
 }
 
 // parseCPUTime reads ps's time column: [d-][[h:]m:]s[.f].
@@ -160,4 +136,57 @@ func (s Snapshot) Group(pgid int) (rssKB int64, cpu time.Duration, members int, 
 		}
 	}
 	return rssKB, cpu, members, leaderAlive
+}
+
+// userHZ is the unit of the CPU times in /proc/<pid>/stat: clock ticks, 100
+// a second on every Linux (USER_HZ).
+const userHZ = 100
+
+// parseProcStat reads one /proc/<pid>/stat (sccache measurement spec §5.2):
+// "pid (comm) state ppid pgrp session … utime stime cutime cstime … rss …",
+// the times in ticks of 1/userHZ s and rss in pages of pageKB KB. comm is
+// everything from the first "(" to the last ")", since a name may hold
+// spaces and parentheses. CPU is utime + stime + cutime + cstime: the
+// process's own time and its waited-for children's, so a session's sum
+// keeps the processes reaped inside it.
+func parseProcStat(raw []byte, pageKB int64) (Proc, error) {
+	s := string(raw)
+	open, end := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
+	if open < 1 || end < open {
+		return Proc{}, fmt.Errorf("stat %q has no (comm)", s)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(s[:open]))
+	if err != nil {
+		return Proc{}, fmt.Errorf("stat %q: pid: %w", s, err)
+	}
+	f := strings.Fields(s[end+1:]) // f[0] is field 3, the state: field n is f[n-3]
+	if len(f) < 22 {
+		return Proc{}, fmt.Errorf("stat %q has %d fields after comm, want 22 or more", s, len(f))
+	}
+	var n [7]int64 // pgrp, session, utime, stime, cutime, cstime, rss
+	for i, idx := range []int{2, 3, 11, 12, 13, 14, 21} {
+		if n[i], err = strconv.ParseInt(f[idx], 10, 64); err != nil {
+			return Proc{}, fmt.Errorf("stat %q: field %d: %w", s, idx+3, err)
+		}
+	}
+	ticks := n[2] + n[3] + n[4] + n[5]
+	return Proc{
+		PID: pid, PGID: int(n[0]), SID: int(n[1]), RSSKB: n[6] * pageKB,
+		CPU: time.Duration(ticks) * time.Second / userHZ,
+	}, nil
+}
+
+// Session sums the memory and CPU time of the processes in session sid, and
+// counts them (sccache measurement spec §5.2): a job's usage, since the shim
+// leads its session and a descendant leaves it only by calling setsid. Where
+// the sample can't tell sessions (ps), a process's session is its group.
+func (s Snapshot) Session(sid int) (rssKB int64, cpu time.Duration, members int) {
+	for _, p := range s.Procs {
+		if p.SID == sid {
+			rssKB += p.RSSKB
+			cpu += p.CPU
+			members++
+		}
+	}
+	return rssKB, cpu, members
 }

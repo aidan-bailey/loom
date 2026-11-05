@@ -19,22 +19,24 @@ func TestHints_AddsWhatTheEnvironmentLacks(t *testing.T) {
 		"NIX_BUILD_CORES=4",
 		"CMAKE_BUILD_PARALLEL_LEVEL=4",
 		"GOFLAGS=-p=4",
+		"SCCACHE_CLIENT_SIDE=1",
 		"LOOM_JOB=14",
 	}, got)
 
-	assert.Len(t, Hints(nil, 2, 1), 7, "an empty environment gets the six hints and LOOM_JOB")
+	assert.Len(t, Hints(nil, 2, 1), 8, "an empty environment gets the seven hints and LOOM_JOB")
 }
 
 // TestHints_KeepsWhatTheSubmitterSet: a variable the submitter's environment
 // already sets keeps its value, an empty one included, and is not repeated; a
 // name that only starts like a hint is no hint.
 func TestHints_KeepsWhatTheSubmitterSet(t *testing.T) {
-	env := []string{"CARGO_BUILD_JOBS=2", "GOFLAGS=-mod=vendor", "MAKEFLAGS=", "CARGO_BUILD_JOBS_EXTRA=1"}
+	env := []string{"CARGO_BUILD_JOBS=2", "GOFLAGS=-mod=vendor", "MAKEFLAGS=", "SCCACHE_CLIENT_SIDE=0", "CARGO_BUILD_JOBS_EXTRA=1"}
 	got := Hints(env, 8, 3)
 	assert.Equal(t, []string{
 		"CARGO_BUILD_JOBS=2",
 		"GOFLAGS=-mod=vendor",
 		"MAKEFLAGS=",
+		"SCCACHE_CLIENT_SIDE=0",
 		"CARGO_BUILD_JOBS_EXTRA=1",
 		"RUST_TEST_THREADS=8",
 		"NIX_BUILD_CORES=8",

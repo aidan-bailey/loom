@@ -13,7 +13,10 @@ const jobIDVar = "LOOM_JOB"
 // empty value included), and LOOM_JOB set to id, replacing one a job
 // submitted from inside another job inherited. The hints are
 // CARGO_BUILD_JOBS=N, RUST_TEST_THREADS=N, MAKEFLAGS=-jN, NIX_BUILD_CORES=N,
-// CMAKE_BUILD_PARALLEL_LEVEL=N and GOFLAGS=-p=N. env is left as it is.
+// CMAKE_BUILD_PARALLEL_LEVEL=N, GOFLAGS=-p=N and SCCACHE_CLIENT_SIDE=1, which
+// has sccache run each compile in its client, inside the job's tree where it
+// is measured, rather than in its shared daemon (sccache measurement spec
+// §5.1). env is left as it is.
 func Hints(env []string, cpus int, id JobID) []string {
 	n := strconv.Itoa(cpus)
 	hints := []struct{ name, value string }{
@@ -23,6 +26,7 @@ func Hints(env []string, cpus int, id JobID) []string {
 		{"NIX_BUILD_CORES", n},
 		{"CMAKE_BUILD_PARALLEL_LEVEL", n},
 		{"GOFLAGS", "-p=" + n},
+		{"SCCACHE_CLIENT_SIDE", "1"},
 	}
 	out := make([]string, 0, len(env)+len(hints)+1)
 	set := make(map[string]bool, len(env))
