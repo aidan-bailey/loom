@@ -82,8 +82,9 @@ func subagentLive(s Status) bool {
 }
 
 // launchProgram composes the command for env's new tmux session: loom's
-// context flag and, when launching is true, loom's subagent hooks (and,
-// on an account, its memory dir: accountMemoryDir).
+// context flag and, when launching is true, loom's subagent hooks (with
+// the subagents' cut of that context, subagentBrief, and on an account
+// its memory dir: accountMemoryDir).
 // launching is false only for Start(false), which reattaches to a live
 // session with Restore. That Claude is still writing to its existing
 // hooks folder, and preparing a new one would wipe its history. When
@@ -98,7 +99,7 @@ func (i *Instance) launchProgram(env LaunchEnv, launching bool) string {
 		i.launches++
 		i.mu.Unlock()
 		i.resetHookLaunch()
-		program = i.prepareHooks(program, env.ClaudeConfigDir)
+		program = i.prepareHooks(program, env.ClaudeConfigDir, subagentBrief(env.Program, i.ConfigDir, i.IsWorkspaceTerminal))
 	}
 	return program
 }
@@ -169,8 +170,10 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 // just untracked. It also adopts the new launch ID and resets the
 // tracker, so scan results from before this launch are dropped. When a
 // daemon serves the loom mod, it also writes the mod into the folder and
-// adds --plugin-dir (prepareMod).
-func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
+// adds --plugin-dir (prepareMod). A non-empty brief is what each of the
+// launch's subagents but a fork is told at its start (subagentBrief,
+// hooks.Prepare).
+func (i *Instance) prepareHooks(program, claudeConfigDir, brief string) string {
 	if i.ConfigDir == "" || runtime.GOOS == "windows" || !IsClaudeProgram(program) {
 		return program
 	}
@@ -187,7 +190,7 @@ func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
 	if why != "" {
 		i.getLogger().Info("claude_memory.unresolved", "reason", why)
 	}
-	launchID, err := hooks.Prepare(dir, memoryDir, "")
+	launchID, err := hooks.Prepare(dir, memoryDir, brief)
 	if err != nil {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program

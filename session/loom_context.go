@@ -115,15 +115,14 @@ func BuildLoomContextCommand(program, filePath string) string {
 	return defaultRegistry.Lookup(program).ApplyLoomContextFlag(program, filePath)
 }
 
-// loomContextProgram wraps program with the loom-context flag for launch.
-// Returns program unchanged when the feature is disabled, configDir is
-// empty, or the selected file is missing (fail-safe: never point Claude
-// at a nonexistent file). Selects the workspace variant for workspace
-// terminals, else the worktree variant. Non-Claude programs are a no-op
-// via BuildLoomContextCommand.
-func loomContextProgram(program, configDir string, isWorkspaceTerminal bool) string {
+// loomContextPath is the prompt file a launch in configDir points Claude
+// at, and whether it gets one: the feature is on for configDir and the
+// variant's file exists (fail-safe: never point Claude at a nonexistent
+// file). Workspace terminals get the workspace variant, the rest the
+// worktree variant.
+func loomContextPath(configDir string, isWorkspaceTerminal bool) (string, bool) {
 	if configDir == "" || !LoomContextEnabled(configDir) {
-		return program
+		return "", false
 	}
 	name := loomContextFileWorktree
 	if isWorkspaceTerminal {
@@ -131,7 +130,33 @@ func loomContextProgram(program, configDir string, isWorkspaceTerminal bool) str
 	}
 	path := filepath.Join(configDir, name)
 	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+// loomContextProgram wraps program with the loom-context flag for launch,
+// pointing at loomContextPath's file. Returns program unchanged when there
+// is none. Non-Claude programs are a no-op via BuildLoomContextCommand.
+func loomContextProgram(program, configDir string, isWorkspaceTerminal bool) string {
+	path, ok := loomContextPath(configDir, isWorkspaceTerminal)
+	if !ok {
 		return program
 	}
 	return BuildLoomContextCommand(program, path)
+}
+
+// subagentBrief is what loom's SubagentStart hook tells each subagent of
+// a program launched in configDir: the cut (subagentContextFile) of the
+// prompt loomContextProgram gives the program itself, or "" when it gives
+// none (the feature off, the file missing, a program other than Claude).
+func subagentBrief(program, configDir string, isWorkspaceTerminal bool) string {
+	if _, ok := loomContextPath(configDir, isWorkspaceTerminal); !ok || !IsClaudeProgram(program) {
+		return ""
+	}
+	head := loomContextWorktreeHead
+	if isWorkspaceTerminal {
+		head = loomContextMainHead
+	}
+	return string(subagentContextFile(head))
 }

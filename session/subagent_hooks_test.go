@@ -1,8 +1,10 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -419,4 +421,40 @@ func TestRecoveryLaunch_ResumesRecordedConversation(t *testing.T) {
 	assert.Equal(t, InstanceEnv(LaunchEnv{Program: "claude --resume " + id}), env)
 	got, _ := inst.ClaudeSession()
 	assert.Equal(t, id, got, "the relaunch's reset keeps the ID until its own SessionStart replaces it")
+}
+
+// The launch hands hooks.Prepare the cut subagentBrief picks: the
+// worktree cut, the workspace cut for a workspace terminal, none when
+// loom's context is off.
+func TestLaunchProgram_BriefsSubagentsOnlyWithTheLoomContext(t *testing.T) {
+	cases := []struct {
+		name          string
+		on, workspace bool
+		want          []byte // nil: no brief
+	}{
+		{"worktree", true, false, subagentContextFile(loomContextWorktreeHead)},
+		{"workspace terminal", true, true, subagentContextFile(loomContextMainHead)},
+		{"context off", false, false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inst := hooksInstance(t, "claude")
+			inst.IsWorkspaceTerminal = tc.workspace
+			require.NoError(t, WriteLoomContextFiles(inst.ConfigDir))
+			SetLoomContextEnabled(inst.ConfigDir, tc.on)
+
+			got := inst.launchProgram(LaunchEnv{Program: "claude"}, true)
+
+			require.Contains(t, got, settingsFlag(inst))
+			b, err := os.ReadFile(hooks.BriefPath(SubagentHooksDir(inst.ConfigDir, inst.Title)))
+			if tc.want == nil {
+				assert.True(t, errors.Is(err, fs.ErrNotExist), "no brief file: %v", err)
+				return
+			}
+			require.NoError(t, err)
+			var out map[string]map[string]string
+			require.NoError(t, json.Unmarshal(b, &out))
+			assert.Equal(t, string(tc.want), out["hookSpecificOutput"]["additionalContext"])
+		})
+	}
 }

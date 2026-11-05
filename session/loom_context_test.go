@@ -123,3 +123,23 @@ func TestSubagentContext_FitsClaudesInlineCap(t *testing.T) {
 		assert.Less(t, len(subagentContextFile(head)), 10000, name)
 	}
 }
+
+// A launch's subagents get the cut of the prompt the launch itself gets,
+// and none when it gets none: the feature off, its file missing, or a
+// program other than Claude.
+func TestSubagentBrief_FollowsTheParentsContext(t *testing.T) {
+	dir := t.TempDir()
+	assert.NoError(t, WriteLoomContextFiles(dir))
+	SetLoomContextEnabled(dir, true)
+
+	assert.Equal(t, string(subagentContextFile(loomContextWorktreeHead)), subagentBrief("claude", dir, false))
+	assert.Equal(t, string(subagentContextFile(loomContextMainHead)), subagentBrief("claude", dir, true))
+	assert.Empty(t, subagentBrief("aider", dir, false))
+
+	missing := t.TempDir()
+	SetLoomContextEnabled(missing, true)
+	assert.Empty(t, subagentBrief("claude", missing, false), "no prompt file, no flag, no brief")
+
+	SetLoomContextEnabled(dir, false)
+	assert.Empty(t, subagentBrief("claude", dir, false))
+}
