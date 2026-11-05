@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/aidan-bailey/loom/config"
@@ -39,7 +40,6 @@ var flowTools = []flowTool{
 	{name: "costs", script: "agent_costs.py", short: "Token usage and API-price cost of a session's agents, or of run records"},
 	{name: "doctor", script: "flowconf.py", args: []string{"doctor"}, short: "Check that a supervised run can start here"},
 	{name: "check-agents", script: "check-agents.sh", short: "Lint the flow plugin's agents and skills"},
-	{name: "wait", script: "agent-wait.sh", short: "Start a long step, or wait for one inside a turn"},
 }
 
 func newFlowCmd() *cobra.Command {
@@ -58,7 +58,7 @@ func newFlowCmd() *cobra.Command {
 			},
 		})
 	}
-	cmd.AddCommand(newFlowGuardCmd(), newFlowPathCmd(), newFlowImportCmd())
+	cmd.AddCommand(newFlowGuardCmd(), newFlowPathCmd(), newFlowImportCmd(), newFlowWaitCmd())
 	return cmd
 }
 
@@ -104,34 +104,12 @@ func runFlowTool(c *cobra.Command, tool flowTool, args []string) error {
 		return err
 	}
 	defer cleanup()
-	interp, argv := "python3", []string{"-I", filepath.Join(root, "lib", tool.script)}
-	if strings.HasSuffix(tool.script, ".sh") {
-		interp, argv = "bash", argv[1:]
-	}
-	bin, err := exec.LookPath(interp)
-	if err != nil {
-		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow %s: %s is not on PATH; flow's tools need it", tool.name, interp)}
-	}
-	roster, err := os.ReadFile(filepath.Join(root, flow.RosterFile))
-	if err != nil {
+	code, err := flowScript(root, tool.script, append(slices.Clone(tool.args), args...), c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr())
+	switch {
+	case err != nil:
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow %s: %v", tool.name, err)}
-	}
-	data, err := flowDataDir()
-	if err != nil {
-		return &ExitError{Code: exitNotRun, Msg: err.Error()}
-	}
-	argv = append(append(argv, tool.args...), args...)
-	runner := exec.Command(bin, argv...)
-	runner.Stdin, runner.Stdout, runner.Stderr = c.InOrStdin(), c.OutOrStdout(), c.ErrOrStderr()
-	runner.Env = append(os.Environ(),
-		flow.EnvRoot+"="+root, "FLOW_ROOT="+root, "FLOW_DATA="+data,
-		"FLOW_ROSTER="+strings.TrimSpace(string(roster)))
-	if err := runner.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() > 0 {
-			return &ExitError{Code: exit.ExitCode()}
-		}
-		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow %s: %v", tool.name, err)}
+	case code != 0:
+		return &ExitError{Code: code}
 	}
 	return nil
 }
