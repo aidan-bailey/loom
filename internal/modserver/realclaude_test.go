@@ -16,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/transcript"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -596,6 +597,8 @@ func TestRealClaude_ASubagentGetsItsJobsResult(t *testing.T) {
 		first = c
 		return ok
 	})
+	assert.NotEmpty(t, first.Model, "the report carries the session's model ($.session.model()), which a feedback note records")
+	t.Logf("reported model: %q", first.Model)
 	p.waitFor("the main turn to end", 5*time.Minute, func() bool {
 		_, ok := host.event("complete", "m1")
 		return ok

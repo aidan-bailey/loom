@@ -1377,3 +1377,18 @@ The owner asked, while Package 1 was being committed, that each note carry the m
 - §8 CLI: Step 3.1. §9 TUI: Steps 4.1–4.2. §10 layout: the files table.
 - §11 tests: in each package, and §1's measure reads `grouper.jsonl` (Step 1.8).
 - §12 is out of scope, and nothing here builds it.
+
+## Execution notes (2026-11-05, inline)
+
+- **Commits:** P1 31252027 (`feedback`, `advisor.ResolveBlock`, `Call.SystemPrompt`, the config block), P2 041a8240 (the model, the grouper, the wire, the mod's pattern and model), P3 d6474f85 (`loom feedback`, the context paragraph), P4 3fed85d0 (the view, `F`, the status line, `USAGE.md`, `docs/ARCHITECTURE.md`).
+- **The owner's mid-execution addition** (above, "Amendment") went into P2 and P3. The model comes from `$.session.model()`, sent with the mod's call report (`ModCall.Model`). The effort comes from `$CLAUDE_EFFORT`, which Claude Code sets in every Bash call. `ClaudeEfforts` holds `default`, which `FileFeedback` drops along with any unknown value.
+- **Deviations from the plan:**
+  - `config.Settings` carries `Feedback *FeedbackSettings` (with `GetFeedback` and `Clone`), because a block missing from `Settings` would be dropped by any settings save of the global workspace. The model still reads it from disk through `diskConfigBlock`, a generic form of `diskSchedulerBlock`.
+  - `ChooseLaunchAccount` takes the narrower `LaunchAccounts` (`AccountNames`, `AccountsLoaded`, `Account`), so `FixThread` can pass the model, which isn't a `Core`.
+  - `Reply`'s wire form is hand-written (`core/events_json.go`), so `Note` was added there. `TestWire_EveryFieldSurvives` caught it.
+  - `FeedbackView.Workspace` carries `feedback.workspace`, so the TUI's `x` confirm names the workspace without reading config itself.
+  - The publish compares the revision and `grouperOff()`'s text (`feedbackPublication`), not the whole view, so a wake doesn't clone the inbox.
+  - The real-Claude validator pins the mod's calls: `$.session.model` was added to `allowedCalls` (it is within the documented `$.session` reach).
+  - Tests that list the state events by hand were updated for `FeedbackChanged`: `TestSync_PublishesChangedWorkspacesFirst`, `instanceEvents`, `TestLoop_SyncAndSnapshotIsOneCall`, `TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone` and `TestProtocolReference`'s order.
+- **Live:** `TestLive_GroupsTwoNotesTogether` passed on real Haiku in 11 s for three calls. It put two differently worded `--after` notes in one thread and a `send --wait` note in another. `TestRealClaude_ValidatesTheMod` passed after the allowlist change.
+- **Flake seen:** `TestAccountSync_LinksNewEntriesForEveryAccount` failed once in a queued run and passed 3/3 alone. It is the known account-sync flake.
