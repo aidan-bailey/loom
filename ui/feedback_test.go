@@ -49,6 +49,10 @@ func TestRenderFeedback_ExpandsTheSelectedRow(t *testing.T) {
 	}
 	assert.NotContains(t, out, "line four", "three lines of a note's text")
 
+	one := fbView(t, now)
+	one.Inbox.Notes[0].Text = "a\nb\nc\nd"
+	assert.Contains(t, ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: one, Expanded: true, Now: now})), "… 1 more line (loom feedback show n1)")
+
 	out = ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: fbView(t, now), Selected: 1, Expanded: true, Now: now}))
 	assert.Contains(t, out, "n3 missing · s3", "a loose note expands to itself")
 	assert.NotContains(t, out, "n1 bug ·", "only the selected row expands")
@@ -61,7 +65,7 @@ func TestRenderFeedback_FitsItsBox(t *testing.T) {
 		lines := strings.Split(out, "\n")
 		assert.Len(t, lines, size[1])
 		for _, l := range lines {
-			assert.LessOrEqual(t, ansi.StringWidth(l), size[0])
+			assert.Equal(t, size[0], ansi.StringWidth(l), "every line fills the box, or the layout centers it: %q", l)
 		}
 	}
 	assert.Empty(t, RenderFeedback(0, 10, FeedbackData{}))

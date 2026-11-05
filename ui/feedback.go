@@ -59,7 +59,7 @@ func RenderFeedback(width, height int, d FeedbackData) string {
 	rows := FeedbackRows(v)
 	if len(rows) == 0 {
 		out = append(out, " "+workDimStyle.Render("No feedback yet. Sessions file it with loom feedback add."))
-		return workBox(out, width, height)
+		return fbBox(out, width, height)
 	}
 	titleW := max(8, width-3-fbIDW-fbKindW-fbSessionsW-fbNotesW-fbLastW-fbStatusW-12)
 	out = append(out, workSectionStyle.Render(fbCells("   ", "ID", "KIND", "SESS", "NOTES", "LAST", "STATUS", "TITLE", titleW)))
@@ -77,7 +77,20 @@ func RenderFeedback(width, height int, d FeedbackData) string {
 		}
 	}
 	out = append(out, workWindow(lines, selLine, height-len(out))...)
-	return workBox(out, width, height)
+	return fbBox(out, width, height)
+}
+
+// fbBox is workBox with every line padded to width: the view sits in a
+// column the layout centers (lipgloss.JoinVertical), which would center a
+// short line under the header.
+func fbBox(lines []string, width, height int) string {
+	box := strings.Split(workBox(lines, width, height), "\n")
+	for i, l := range box {
+		if pad := width - ansi.StringWidth(l); pad > 0 {
+			box[i] = l + strings.Repeat(" ", pad)
+		}
+	}
+	return strings.Join(box, "\n")
 }
 
 // fbCells lays out one row's cells, fitted to their columns.
@@ -134,7 +147,12 @@ func fbNotes(in feedback.Inbox, r feedback.Row, width int, now time.Time) []stri
 		text := strings.Split(strings.TrimSpace(n.Text), "\n")
 		for i, l := range text {
 			if i == fbNoteLines {
-				out = append(out, "        "+workDimStyle.Render(fmt.Sprintf("… %d more lines (loom feedback show n%d)", len(text)-fbNoteLines, n.ID)))
+				more := len(text) - fbNoteLines
+				word := "lines"
+				if more == 1 {
+					word = "line"
+				}
+				out = append(out, "        "+workDimStyle.Render(fmt.Sprintf("… %d more %s (loom feedback show n%d)", more, word, n.ID)))
 				break
 			}
 			out = append(out, "        "+workDimStyle.Render(ansi.Truncate(CleanText(l), max(0, width-8), "…")))
