@@ -422,6 +422,10 @@ type home struct {
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
 
+	// gate lets View reuse its last frame for pane output
+	// (app/frame_gate.go); its zero value is ready.
+	gate frameGate
+
 	// aliveProbe replaces the tmux has-session probe behind sessionAlive in
 	// tests; nil in production.
 	aliveProbe func(name string) bool
@@ -729,8 +733,18 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.exitErr != nil {
 		return m, nil
 	}
+	// The next View renders unless pane output asks to reuse the frame
+	// (paneDirtyMsg's case); a tick ends a burst whatever state routes it.
+	m.gate.fresh()
+	if _, ok := msg.(frameTickMsg); ok {
+		m.gate.ticked()
+	}
 	model, cmd := m.update(msg)
-	cmd = tea.Batch(cmd, m.drainCore(), m.checkLink(), m.workDrained())
+	drained, applied := m.drainCoreApplied()
+	cmd = tea.Batch(cmd, drained, m.checkLink(), m.workDrained())
+	if applied || m.offline() {
+		m.gate.fresh()
+	}
 	m.publishSelection()
 	return model, cmd
 }
@@ -854,7 +868,8 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The promotion is the ladder's, a display overlay (setLadder),
 			// read from the row as the user sees it (v, overlaid): the
 			// status promoted is the one shown.
-			if v.Status == session.Ready && !v.StatusReported {
+			promoted := v.Status == session.Ready && !v.StatusReported
+			if promoted {
 				m.setLadder(v.ID, session.Running)
 				m.updateTabBarStatuses()
 			}
@@ -863,16 +878,19 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.handleError(err)
 				}
 			}
-			return m, nil
+			// A frame only for what the screen can show: a promotion changes
+			// the statuses on cards and the tab bar wherever the row is.
+			return m, m.gate.output(promoted || m.drawsPane(msg.session, v))
 		}
 		// Not an agent session — the terminal pane's current session renders;
-		// dirty events from cached-but-hidden terminal sessions are dropped.
+		// dirty events from cached-but-hidden terminal sessions are dropped,
+		// and ask for no frame.
 		if selected != nil && msg.session == m.splitPane.CurrentTerminalSessionName() {
 			if err := m.splitPane.UpdateTerminal(selected); err != nil {
 				return m, m.handleError(err)
 			}
 		}
-		return m, nil
+		return m, m.gate.output(m.drawsPane(msg.session, nil))
 	case paneQuietMsg:
 		v, _ := m.viewBySession(msg.session)
 		if v != nil {
@@ -1993,8 +2011,23 @@ func (m *home) repoPath() string {
 // resolve to config.GetConfigDir.
 func (m *home) configDir() string { return m.info.ConfigDir }
 
-// View implements tea.Model.
-func (m *home) View() tea.View {
+// View implements tea.Model: render's frame, or the last one when the
+// Update before was pane output that asked to reuse it (frameGate).
+func (m *home) View() tea.View { return m.gate.view(m.render) }
+
+// layout is the presentation render draws: the view mode, except that
+// the file explorer keeps the focus layout over overview and the
+// workbench (its overlay replaces the right pane). drawsPane reads it
+// too, so the frame gate's filter follows what render draws.
+func (m *home) layout() viewMode {
+	if m.state == stateFileExplorer && (m.viewMode == viewOverview || m.viewMode == viewWorkbench) {
+		return viewFocus
+	}
+	return m.viewMode
+}
+
+// render draws a frame.
+func (m *home) render() tea.View {
 	// asView funnels every render path through one tea.View so alt-screen
 	// and mouse cell-motion (previously tea.NewProgram options) are set
 	// consistently on every frame.
@@ -2006,22 +2039,23 @@ func (m *home) View() tea.View {
 		return v
 	}
 	// Overview replaces the whole rail+panes assembly. The file-explorer
-	// state keeps the focus layout (its overlay replaces the right pane),
-	// though it is currently unreachable from overview — 'f' is not in
-	// overviewKeyAllowed — so the guard is belt-and-braces.
+	// state keeps the focus layout (layout), though it is currently
+	// unreachable from overview — 'f' is not in overviewKeyAllowed — so
+	// that is belt-and-braces.
 	var mainContent string
-	if m.viewMode == viewOverview && m.state != stateFileExplorer {
+	switch m.layout() {
+	case viewOverview:
 		mainContent = m.overview.Render(m.overviewData())
-	} else if m.viewMode == viewWork {
+	case viewWork:
 		mainContent = m.workContent()
-	} else if m.viewMode == viewFeedback {
+	case viewFeedback:
 		mainContent = m.feedbackContent()
-	} else if m.viewMode == viewWorkbench && m.state != stateFileExplorer {
+	case viewWorkbench:
 		// Workbench: agent split (terminal hidden) left, tabbed content
 		// panel right. The rail is not rendered — listWidth is zeroed by
 		// the sizing branch.
 		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, m.splitPane.String(), m.workbench.String())
-	} else {
+	default:
 		listView := ""
 		if !m.railHidden {
 			listView = m.list.String()

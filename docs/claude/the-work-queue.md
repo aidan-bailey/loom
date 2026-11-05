@@ -44,6 +44,7 @@ A test binary has no `job-shim` command, so a package whose tests start real shi
 - **The queue's published view follows more than the records.** `QueueChanged` is also published when a job's owner resolves differently (a rename, an unregister, a kill), so `JobView`'s owner fields stay current; a change to the queue that never calls `q.moved()` is never published.
 - **`loadQueue` ends with an admission pass.** A seeded queued job that fits starts at load, so a test that wants jobs left queued uses an over-cap claim or a paused policy block.
 - **A cap edit never touches running jobs.** It changes only what starts next; an `--exclusive` claim is stored as a flag, so it follows the caps it is admitted under.
+- **Host load the queue doesn't see.** When the host is busier than its running jobs, attribute each process by ancestry: a job's processes descend from `job-shim <global dir>/jobs/N`, and anything else is outside the queue. On 2026-11-05 the gap was agents' commands that never entered it (flow's agent-wait script detached them with `setsid` until flow d937675 wrapped them in `loom job run`) and the sccache server, a child of PID 1, compiling for those commands, which lack the `SCCACHE_CLIENT_SIDE` hint jobs get. Match a server-side `rustc` to its client by `--crate-name` and `--out-dir` before blaming a job, and count a reaped child's CPU (`cutime`) against its nearest live ancestor, or a job that ends mid-sample reads as the daemon's.
 
 ## What the gates won't tell you
 
