@@ -309,6 +309,7 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 
 	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -327,9 +328,22 @@ func drawsHome(t *testing.T) (m *home, focusRow, peerRow, terminal string) {
 	m.slots[1].ws().AddForTest(b)
 	m.syncViews()
 	m.drainCore()
-	ts := tmux.NewSessionWithDeps("t-cur", "bash", fakePtyFactory{t: t}, aliveCmdExecForTest())
+	ts := tmux.NewTmuxSessionWithDeps("t-cur", "bash", fakePtyFactory{t: t}, aliveCmdExecForTest())
 	m.splitPane.InjectTerminalSessionForTest("t-cur", ts, t.TempDir())
+	// A new row takes the selection; put it back on a fleet row, so
+	// f-live is a rail row and not the selected agent.
+	for _, row := range m.list.GetInstances() {
+		if row.Title == "f1" {
+			m.list.SelectID(row.ID)
+		}
+	}
 	require.NotEqual(t, f.Title, m.list.GetSelectedInstance().Title, "fixture: f-live is not the selection")
+	// Settle: the first pane event after the rows were added flushes their
+	// views (ViewsChanged) once; later events publish nothing, as in a
+	// running TUI.
+	for _, inst := range []*session.Instance{f, b} {
+		m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
+	}
 	return m, f.Pane().TmuxSessionName(), b.Pane().TmuxSessionName(), ts.SessionName()
 }
 
@@ -379,13 +393,19 @@ func TestDrawsPane_ByLayout(t *testing.T) {
 	assert.False(t, m.drawsSession(peerRow), "file explorer over overview: focus rules")
 }
 
-// rendered leaves m just past a render made a frame ago, so drawn output
-// renders at once rather than arming a tick.
+// stubFrame records a frame through the gate, as View does, without
+// drawing the fleet fixture (it has no chrome to draw).
+func stubFrame(m *home) {
+	m.gate.view(func() tea.View { return tea.NewView("frame") })
+}
+
+// rendered leaves m a frame past a render, so drawn output renders at
+// once rather than arming a tick.
 func rendered(t *testing.T, m *home) *time.Time {
 	t.Helper()
 	now := time.Unix(1000, 0)
 	m.gate.now = func() time.Time { return now }
-	m.View()
+	stubFrame(m)
 	now = now.Add(frameInterval)
 	return &now
 }
@@ -410,6 +430,9 @@ func TestPaneOutput_DrawnOutputRenders(t *testing.T) {
 
 func TestPaneOutput_PromotionRenders(t *testing.T) {
 	m, inst := peerLiveHome(t, session.Ready) // a peer slot's row, not drawn in focus mode
+	// Settle as drawsHome does, without the pane event that would promote:
+	// the first PaneOutput flushes the rows' views once.
+	m.core.PaneOutput(idOf(m, inst))
 	m.drainCore()
 	rendered(t, m)
 	m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
@@ -445,7 +468,7 @@ func TestUpdate_OfflineRenders(t *testing.T) {
 func TestUpdate_TheFrameTickRendersAndClearsTheTick(t *testing.T) {
 	m, focusRow, _, _ := drawsHome(t)
 	now := rendered(t, m)
-	m.View()
+	stubFrame(m)
 	*now = now.Add(time.Millisecond)
 	m.Update(paneDirtyMsg{session: focusRow})
 	require.True(t, m.gate.pending, "fixture: within a frame, a tick is armed")
@@ -707,4 +730,20 @@ git commit -q -m "docs(app): the frame gate's rule, structure and measured effec
 
 ## Execution notes
 
-(Filled in while executing: the side-effect audit, the measurements, deviations.)
+**Package 1** (abcef9a1):
+- `TestFrameGate_NoFrameYetRenders` as first written checked "no frame yet" after a `view` had already rendered one: a test bug, fixed.
+- The `!g.has ||` term in `output` was redundant, since `rendered` is the zero time before the first frame, and no test could pin it, so it went.
+- A new assertion pins `view` clearing `reuse` after it renders.
+- All seven gate mutations fail a test.
+
+**Package 2:**
+- The fixture's terminal session needs `tmux.NewTmuxSessionWithDeps`; `NewSessionWithDeps` builds a `*tmux.Session`.
+- A new row takes the list's selection, so `drawsHome` selects `f1`.
+- The fleet fixture has no chrome, and a full `View` panics on its nil `errBox`, so the wiring tests record a stub frame through the gate (`stubFrame`).
+- The first `PaneOutput` after rows are added flushes their views once (two `ViewsChanged`); later ones publish nothing. This was checked with a debug test through `go test -overlay`, outside the worktree. The fixtures settle first: `drawsHome` with one pane event per row, `TestPaneOutput_PromotionRenders` with a `PaneOutput` and a drain, so the promotion test doesn't pass on the flush.
+- All 14 mutations of `drawsPane`, the wrapper and the case fail a test, with no compile errors standing in for test failures.
+- **Side-effect audit of `render`:**
+  - `normalizeOverviewCursor` writes `m.overviewCursor`, healing a cursor that a kill, a collapse or a slot change invalidated. Those arrive as keys or model events and render.
+  - `PreviewPane.String` and `TerminalPane.String` write `displayedPlain`, the plain text displayed for mouse selection. With a reused frame it stays the text on screen, which is what a selection should read.
+  - `workContent`, `windowTitle`, `attachCursor`, `bannerView`, `overviewData`, `List.String`, `SplitPane.String`, `Overview.Render`, `Workbench.String` and `ErrBox.String` write nothing.
+- `./app/...` and `./ui/...` pass (job 520). Vet and gofmt are clean.

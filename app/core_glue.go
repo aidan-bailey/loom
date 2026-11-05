@@ -33,16 +33,25 @@ func forwardWakes(wakes <-chan struct{}, send func(tea.Msg)) {
 // steps must see an event's effect (a workspace transition) runs it right
 // after the model call. A bare test home without a model drains nothing.
 func (m *home) drainCore() tea.Cmd {
+	cmd, _ := m.drainCoreApplied()
+	return cmd
+}
+
+// drainCoreApplied is drainCore, also saying whether it applied anything:
+// Update renders a frame after a drain that did (frameGate).
+func (m *home) drainCoreApplied() (tea.Cmd, bool) {
 	if m.core == nil {
-		return nil
+		return nil, false
 	}
 	var cmds []tea.Cmd
+	applied := false
 	for events := m.core.Sync(); len(events) > 0; events = m.core.Sync() {
+		applied = true
 		for _, ev := range events {
 			cmds = append(cmds, m.applyCoreEvent(ev))
 		}
 	}
-	return tea.Batch(cmds...)
+	return tea.Batch(cmds...), applied
 }
 
 // publishSelection tells the model which row is selected, when that
