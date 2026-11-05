@@ -84,6 +84,7 @@ type JobView struct {
 	OwnerTitle       string      // "" when the owner isn't served
 	OwnerWorkspace   string      // the owner's workspace's WorkspaceView.Label; "" when the owner isn't served
 	OwnerWorkspaceID WorkspaceID // the owner's workspace, which `o` opens (openTab); 0 when the owner isn't served
+	Agent            string      // the subagent that submitted it (sched.Record.Agent), full ID; "" for none
 	Claim            sched.Claim
 	Need             sched.Need // an exclusive claim's at the current caps
 	Submitted        time.Time
@@ -317,6 +318,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Argv:         slices.Clone(r.Argv),
 		Cwd:          r.Cwd,
 		Owner:        InstanceID(r.Owner),
+		Agent:        r.Agent,
 		Claim:        r.Claim,
 		Need:         r.Claim.Need(q.policy.Caps),
 		Submitted:    r.Submitted,
@@ -357,4 +359,13 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		}
 	}
 	return jv
+}
+
+// ShortAgent is a subagent's ID as the job views show it: its first 7
+// characters, enough to tell one session's subagents apart.
+func ShortAgent(id string) string {
+	if len(id) <= 7 {
+		return id
+	}
+	return id[:7]
 }

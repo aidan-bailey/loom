@@ -192,6 +192,11 @@ type ModHello struct {
 	// ($.command.list()), with their sources. nil from an older mod, which
 	// can't run one, so the model hands it none (commandRefusal).
 	Commands []ModCommand `json:"commands,omitempty"`
+	// Agents says the mod reports `loom job` Bash calls (ModCall) and can
+	// send a message to a subagent (ModMessage.Agent). false from an older
+	// mod, which gets a subagent's job notice as the session's (subagent job
+	// results spec §5.3).
+	Agents bool `json:"agents,omitempty"`
 }
 
 // ModCommand is one slash command a mod's hello lists: its name, without the
@@ -248,6 +253,9 @@ type ModHost interface {
 	ModAsk(launch, poller string, ask ModAsk) error
 	ModAnswer(launch, poller, ask string) (json.RawMessage, <-chan struct{}, error)
 	ModAskClosed(launch, poller, ask, how string) error
+	// ModCall records a Bash call the mod reports starting, or forgets it
+	// once ended; poller is as ModInbox's.
+	ModCall(launch, poller string, c ModCall, ended bool) error
 	// ModsServing says the server listens from now, so every launch's
 	// grace runs from here at the earliest.
 	ModsServing()
@@ -316,6 +324,11 @@ type modLink struct {
 	// true for a built-in (commandsOf). nil before a hello, or after one
 	// that listed none (an older mod).
 	commands map[string]bool
+	// agents is the recorded hello's ModHello.Agents: the mod can send to a
+	// subagent. calls are the `loom job` Bash calls it reports in flight,
+	// oldest first (core/mod_calls.go).
+	agents bool
+	calls  []*reportedCall
 	// since is when the link was made: the model met the launch then, as a
 	// start or relaunch delivered or a message or mod named it. A launch
 	// that reports no SessionStart is still starting only up to
@@ -531,7 +544,7 @@ func (m *Model) endLink(inst *session.Instance, l *modLink, why string) {
 		m.endTurns(inst, l, why)
 		m.dropAsks(inst, l, why)
 	})
-	l.outbox, l.turning = nil, map[string]*modMessage{}
+	l.outbox, l.turning, l.calls = nil, map[string]*modMessage{}, nil
 	l.poke()
 }
 
@@ -693,6 +706,7 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	l.heard = time.Now()
 	l.poller, l.loaded = h.Poller, h.Loaded
 	l.commands = commandsOf(h.Commands)
+	l.agents = h.Agents
 	return nil
 }
 

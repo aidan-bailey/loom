@@ -40,6 +40,33 @@ type queueHost struct {
 	answers map[string]json.RawMessage
 	askWake chan struct{}
 	closes  []string
+	// calls are the Bash calls the mod reported starting.
+	calls []core.ModCall
+}
+
+// ModCall records each call reported starting; an ended report is not kept.
+func (h *queueHost) ModCall(launch, _ string, c core.ModCall, ended bool) error {
+	if launch != "L1" {
+		return core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !ended {
+		h.calls = append(h.calls, c)
+	}
+	return nil
+}
+
+// callWith is the first call reported starting whose command holds s.
+func (h *queueHost) callWith(s string) (core.ModCall, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.calls {
+		if strings.Contains(c.Command, s) {
+			return c, true
+		}
+	}
+	return core.ModCall{}, false
 }
 
 func (h *queueHost) ModAsk(launch, _ string, ask core.ModAsk) error {

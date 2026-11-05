@@ -73,6 +73,7 @@ func Listen(path string, host core.ModHost, hold time.Duration) (*Server, error)
 	mux.HandleFunc(route("POST", "/asks"), s.asks)
 	mux.HandleFunc(route("GET", "/answer"), s.answerPoll)
 	mux.HandleFunc(route("POST", "/asks/close"), s.askClosed)
+	mux.HandleFunc(route("POST", "/calls"), s.calls)
 	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go s.serve(ln)
 	host.ModsServing()
@@ -211,6 +212,13 @@ type askClosedBody struct {
 	How    string `json:"how"`
 }
 
+type callBody struct {
+	Launch string       `json:"launch"`
+	Poller string       `json:"poller"`
+	Call   core.ModCall `json:"call"`
+	Ended  bool         `json:"ended"`
+}
+
 func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 	var b helloBody
 	if decode(w, r, &b) {
@@ -255,6 +263,15 @@ func (s *Server) askClosed(w http.ResponseWriter, r *http.Request) {
 	var b askClosedBody
 	if decode(w, r, &b) {
 		answer(w, s.host.ModAskClosed(b.Launch, b.Poller, b.Ask, b.How))
+	}
+}
+
+// calls takes a Bash call the mod reports starting or ended (subagent job
+// results spec §6).
+func (s *Server) calls(w http.ResponseWriter, r *http.Request) {
+	var b callBody
+	if decode(w, r, &b) {
+		answer(w, s.host.ModCall(b.Launch, b.Poller, b.Call, b.Ended))
 	}
 }
 

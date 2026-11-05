@@ -126,6 +126,7 @@ type Record struct {
 	ID           JobID     `json:"id"`
 	Order        int64     `json:"order"`           // lower first; the ID at submit, the lowest queued Order − 1 on a move to the front
 	Owner        uint64    `json:"owner,omitempty"` // a core.InstanceID; 0 for none
+	Agent        string    `json:"agent,omitempty"` // the subagent (its Claude agentId) whose Bash call submitted it; "" for the session's main conversation or unknown
 	Description  string    `json:"description"`
 	Argv         []string  `json:"argv"`
 	Cwd          string    `json:"cwd"`
