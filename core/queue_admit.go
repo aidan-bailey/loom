@@ -89,12 +89,12 @@ func (m *Model) admitJobs() {
 				return held
 			})
 		}
-		dec := sched.Admit(jobs, policy, now)
+		dec := sched.Admit(jobs, policy, now, nil)
 		maps.Copy(waiting, dec.Waiting)
 		start = dec.Start
 		// Spare cores for the jobs it starts, when nothing else waits (job
 		// scaling spec §5.3).
-		spare = sched.Grant(dec, jobs, policy, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
+		spare = sched.Grant(dec, jobs, policy, nil, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()

@@ -292,7 +292,7 @@ func (m *Model) queueView() QueueView {
 		u, _, n, fromPrior := sched.Usual(q.beliefOf(r.Signature), r.Claim.CPUs)
 		return u, n > 0 || fromPrior
 	}
-	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), usualOf, m.hostUsual())
+	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), nil, usualOf, m.hostUsual())
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
 		if r.State.Waiting() {

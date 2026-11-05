@@ -14,7 +14,9 @@ const (
 // Forecast is when each queued job is expected to start (spec §5.5), a pure
 // function of its arguments: it runs Admit forward from now. A running job
 // is expected to end at its start plus its usual duration (usual's answer,
-// or fallback when it has none), or a minute from now when that has passed.
+// or fallback when it has none), or a minute from now when that has passed,
+// and counts at its hold in holds until then (past-peak holds spec §6); a
+// job the simulation starts counts at its claim.
 // At each expected end the job's claim is freed and Admit runs again with
 // the clock at that time, so the starvation guard and the over-cap skip
 // apply as they will. Jobs being sized are left out. A held job joins the
@@ -24,7 +26,7 @@ const (
 // It stops after
 // forecastSteps steps or past forecastHorizon; a job it hasn't started by
 // then has no entry.
-func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
+func Forecast(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
 	starts := map[JobID]time.Time{}
 	if !p.usable() {
 		return starts
@@ -57,7 +59,7 @@ func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.D
 	index := func(id JobID) int { return slices.IndexFunc(sim, func(r Record) bool { return r.ID == id }) }
 	clock := now
 	for range forecastSteps {
-		for _, id := range Admit(sim, p, clock).Start {
+		for _, id := range Admit(sim, p, clock, holds).Start {
 			i := index(id)
 			sim[i].State, sim[i].Started = Running, clock
 			starts[id] = clock

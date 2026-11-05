@@ -36,7 +36,8 @@ func resolveBounded(key string, v, def, lo, hi int) (int, error) {
 // bounds. A 0 or absent field takes its default: cpus is max(1, cores − 2);
 // memory_gb is max(1, ⌊0.75 × RAM in GB⌋); io_jobs is 2; the default claim is
 // {min(4, cpus), min(6, memory_gb)}, each half taking its own default;
-// starve_after_minutes is 10; keep_finished is 50. It fails closed: a value
+// starve_after_minutes is 10; keep_finished is 50; release_past_peaks is
+// true. It fails closed: a value
 // outside its bounds (a negative one included), a default claim above a cap,
 // or an unreadable RAM with memory_gb unset is an error and no Policy, since
 // no cap is guessed. The first fault, in the order cpus, memory_gb, io_jobs,
@@ -83,9 +84,10 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 		return Policy{}, err
 	}
 	return Policy{
-		Caps:         Caps{CPUs: cpus, MemoryGB: mem, IOJobs: ioJobs},
-		DefaultClaim: Claim{CPUs: claimCPUs, MemoryGB: claimMem},
-		StarveAfter:  time.Duration(starve) * time.Minute,
-		KeepFinished: keep,
+		Caps:             Caps{CPUs: cpus, MemoryGB: mem, IOJobs: ioJobs},
+		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMem},
+		StarveAfter:      time.Duration(starve) * time.Minute,
+		KeepFinished:     keep,
+		ReleasePastPeaks: s.ReleasePastPeaks == nil || *s.ReleasePastPeaks,
 	}, nil
 }

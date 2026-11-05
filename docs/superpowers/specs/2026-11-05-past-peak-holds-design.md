@@ -59,13 +59,13 @@ A profile that fails validation on load (steps out of order or not falling, a le
 
 ### 5.3 The hold
 
-`sched.Hold(rec, belief, trace, policy)` returns a running job's hold (a `sched.Need`) and why. It is pure, called on the loop by each admission pass for every running job (§6). The hold is the job's claim (`Claim.Need`) unless every rule below passes; rules 3 to 5 apply to memory and cores separately, so one resource can be released while the other is not.
+`sched.Hold(rec, belief, trace, fresh, prev, policy)` returns where a running job's hold stands (`sched.HoldState`) and what it counts at (a `sched.Need`). It is pure, called on the loop by each admission pass for every running job (§6). The hold is the job's claim (`Claim.Need`) unless every rule below passes; rules 3 to 5 apply to memory and cores separately, so one resource can be released while the other is not.
 
 1. **History.** The belief has at least 3 profiled runs (the newest 5 carry profiles), and none of its last 10 runs has `HoldBroke`.
 2. **A complete trace and an ordinary claim.** The job was not adopted, its trace is complete, this pass's sample succeeded, learning is on (no `beliefsErr`), `Policy.ReleasePastPeaks` is true, and the claim is neither exclusive nor fully explicit (`--cpus` with `--mem`: the submitter asserted something history doesn't show).
 3. **Seen its peak.** Let `A(x)` be the profiled runs whose end is past the job's current `x`. The job's own observed peak in the resource (the trace's maximum) has reached 90% of the lowest peak among the profiled runs, and `x` is past the peak `x` of every run in `A(x)`.
 4. **Not outlasting.** `A(x)` is not empty. The envelope `E(x)` is the highest level, at `x`, among the staircases of the runs in `A(x)`: runs that ended before `x` drop out, since this run has already shown itself longer than them.
-5. **Tracking.** The job's usage at its last 2 points is at or below `E(x)` at those points.
+5. **Tracking.** The job's usage at its last 2 points is at or below `E(x)`, the envelope now.
 
 When all pass, the resource's candidate is `E(x)` plus 15% for memory and plus 25% for cores, rounded up to whole GB and whole cores, at least 1, at most the claim. A job not yet released holds its claim until its candidate is below the claim; from then on its stored hold is the lower of its stored hold and the new candidate, so a stored hold only falls. After release, rules 3 and 5 no longer apply to that resource. In a pass where rule 1, 2 or 4 fails for a released job (a failed sample, the switch turned off, a job outlasting every profiled run), the job counts at its claim for that pass and its stored hold is kept; this is not a break, and it only stops new admissions. Rule 4 never passes again once it fails, since `x` never falls, so a job outlasting every profiled run holds its claim to the end.
 
@@ -89,7 +89,7 @@ A settle and a removal clear the job's entries in `queueState.traces` and `queue
 
 - **`JobView.Holds`** (`sched.Need`, zero when the job holds its claim), and **`QueueView.Held`**, the sum of the running jobs' holds beside `Claimed`. The protocol reference is regenerated (`go test ./core/rpc -run TestProtocolReference -update`).
 - **The work view.** A running job holding less than its claim says `holds 1c/2G` in its row's trailing detail (the claim column keeps its width). The header's CPU and MEM bars draw what is held, and their text reads `8/14 held · 12 claimed · 5.1 in use` while holds are below claims, and as now otherwise.
-- **The CLI.** `loom job list` and `loom job show` add `holds 1c/2G` after the claim on a running job holding less than its claim.
+- **The CLI.** `loom job list` adds `holds 1c/2G` after the claim on a running job holding less than its claim.
 
 No graphs, and nothing on the phone.
 
@@ -137,7 +137,7 @@ Every case falls back to the claim or records nothing:
   - `Hold`: each of rules 1 to 5 on both sides, once just passing and once just failing, and each term of a compound rule (rules 2 and 3) mutation-checked separately; the margins and rounding; never above the claim, never below 1; a hold only falls; an exclusive claim and an I/O slot never released.
   - `Admit`, `Grant`, `Forecast` with holds: a hold below its claim starts a job that otherwise waits; a missing entry counts at the claim; a hold above what's free starts nothing new.
   - `Profile.Validate` on each invalid shape.
-- **`core`, with real shims** (a booted model, `sched.TestRunner()`):
+- **`core`**, with samples delivered through the pass (`m.Deliver(queuePassResult{…})`) to a real shim (`wqLaunch`) or a seeded record, and a real submit for the job a release admits:
   - a belief seeded with 3 profiled runs and a job (`sh -c` that allocates, frees and idles) releases its hold and lets a second job start that its claim kept out;
   - a released job whose usage rises breaks its hold, records `HoldBroke` on its run, and the signature's next job does not release;
   - an adopted job holds its claim;
@@ -154,3 +154,16 @@ Every case falls back to the claim or records nothing:
 - **3 s samples** can miss a short spike, in the trace as in today's peak; the margins absorb it.
 - **Graphs.** The trace could feed sparklines in the work view and the phone; the owner chose admission only.
 - **Host pressure.** PSI or MemAvailable as a brake on admission, or to admit beyond history, is not used.
+
+## 13. Planning amendments
+
+Made while writing [the plan](../plans/2026-11-05-past-peak-holds.md), 2026-11-05:
+
+1. **`Hold` returns no reason.** It returns the state and the need; the tests pin each rule by its outcome on both sides.
+2. **Rule 5 compares the last 2 points with the envelope now, `E(x)`,** not with the envelope at each point's own progress: compared with their own, a point from before the drop passes trivially and the dwell is no dwell.
+3. **Holds are refreshed after every sample (`deliverQueuePass`) and at every admission pass (`admitJobs`),** so the view follows a hold while nothing waits.
+4. **A step is written as the pair `[until, level]`,** and every progress (a step's `until`, a peak's, the end) is rounded up to 0.1 CPU-second: later, so never lower.
+5. **`loom job list` only:** there is no `loom job show`. The hold text is `Need.HoldText` (`holds 1c/2G`), shared by the work view and the CLI, as `Claim.Spared` is.
+6. **The header shows `held` only while the held total is above 0 and below the claimed one,** so a view from a build without holds never reads `0/14 held`.
+7. **An invalid profile is logged once at load (`loadBeliefs`) per signature.** Profiles made at run time are valid by construction.
+8. **The core tests deliver synthetic samples through the pass** to a real shim or a seeded record, so a trace is exact; the job a release admits is a real submit.

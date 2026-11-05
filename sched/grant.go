@@ -23,13 +23,14 @@ func SpareWidth(r Record, b *Belief) int {
 // spec §5.3), a pure function of its arguments: dec is Admit's decision
 // over jobs under p, and belief gives a record's belief (nil for none). It
 // grants nothing while a queued job waits for anything but the caps. The
-// pool is the caps less the running jobs' claims, the starting jobs' base
+// pool is the caps less the running jobs' holds (holds, as Admit counts
+// them), the starting jobs' base
 // claims and a reserve of the default claim. In dec's order, each job
 // SpareWidth can widen takes the most cores up to that width whose memory
 // (spareMemory) fits what the pool has left, and the pool shrinks by what
 // it took. A job that gets nothing has no entry; nil when none gets
 // anything.
-func Grant(dec Decision, jobs []Record, p Policy, belief func(Record) *Belief) map[JobID]Claim {
+func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief func(Record) *Belief) map[JobID]Claim {
 	if len(dec.Start) == 0 || !p.usable() {
 		return nil
 	}
@@ -48,7 +49,7 @@ func Grant(dec Decision, jobs []Record, p Policy, belief func(Record) *Belief) m
 			starting[r.ID] = r
 			used = used.plus(r.Claim.Need(p.Caps))
 		} else if r.State == Running {
-			used = used.plus(r.Claim.Need(p.Caps))
+			used = used.plus(runningNeed(r, p, holds))
 		}
 	}
 	reserve := p.DefaultClaim.Need(p.Caps)

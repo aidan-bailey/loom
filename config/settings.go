@@ -153,6 +153,9 @@ type SchedulerSettings struct {
 	StarveAfterMinutes int            `json:"starve_after_minutes,omitempty"`
 	KeepFinished       int            `json:"keep_finished,omitempty"`
 	Agent              *AgentSettings `json:"agent,omitempty"`
+	// ReleasePastPeaks lets a running job's hold fall below its claim once
+	// its own past runs show its peaks are behind it; absent means true.
+	ReleasePastPeaks *bool `json:"release_past_peaks,omitempty"`
 }
 
 // AgentSettings is the scheduler block's "agent": the advisor, a headless

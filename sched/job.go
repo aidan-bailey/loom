@@ -86,6 +86,10 @@ type Need struct {
 	IOSlots  int `json:"io_slots"`
 }
 
+// HoldText is n as the hold a running job counts at (past-peak holds spec
+// §7): "holds 1c/2G".
+func (n Need) HoldText() string { return fmt.Sprintf("holds %dc/%dG", n.CPUs, n.MemoryGB) }
+
 // Need returns what c takes from caps: the claimed cores and GB and one I/O
 // slot for an I/O job, or every cap, as caps stand, for an exclusive claim.
 func (c Claim) Need(caps Caps) Need {
@@ -113,6 +117,9 @@ type Policy struct {
 	DefaultClaim Claim         `json:"default_claim"` // CPUs and MemoryGB set
 	StarveAfter  time.Duration `json:"starve_after"`
 	KeepFinished int           `json:"keep_finished"`
+	// ReleasePastPeaks lets a running job's hold fall below its claim once
+	// it is past its peaks (past-peak holds spec §8).
+	ReleasePastPeaks bool `json:"release_past_peaks"`
 }
 
 // Notice is the fate of a job's completion message to its owner's Claude.
@@ -180,6 +187,10 @@ type Record struct {
 	// earlier build (QueuedSince).
 	After JobID     `json:"after,omitempty"`
 	Ready time.Time `json:"ready,omitzero"`
+
+	// Past-peak holds (spec 2026-11-05-past-peak-holds §5.4): its usage
+	// passed its lowered hold, so it held its claim from then on.
+	HoldBroke bool `json:"hold_broke,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
