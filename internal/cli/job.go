@@ -46,7 +46,7 @@ func newJobCmd() *cobra.Command {
 			"(cores, memory and I/O-heavy jobs) and keeps it running across daemon restarts.\n\n" +
 			"Put the command after --. No shell is involved: a pipeline is `-- sh -c '…'`.",
 	}
-	cmd.AddCommand(newJobSubmitCmd(), newJobRunCmd(), newJobWaitCmd(), newJobLogsCmd(), newJobListCmd(), newJobCancelCmd(), newJobBeliefsCmd())
+	cmd.AddCommand(newJobSubmitCmd(), newJobRunCmd(), newJobWaitCmd(), newJobLogsCmd(), newJobListCmd(), newJobCancelCmd(), newJobBeliefsCmd(), newJobAgentCmd())
 	return cmd
 }
 

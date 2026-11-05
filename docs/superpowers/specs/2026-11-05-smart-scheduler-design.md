@@ -335,3 +335,15 @@ Three packages, each leaving the build green with its docs:
 - **No periodic curation.** The advisor sees one belief at a time. Later: an occasional pass over the whole registry to merge signatures and refresh priors.
 - **Per host.** Beliefs live with the host's queue; another host, or a sandbox's global dir, starts empty.
 - **No phone view** of beliefs or ETAs.
+
+## 16. Seeing the agent (added 2026-11-05, after the build)
+
+The owner asked to see what the agent does; the design was agreed in chat and is recorded here.
+
+- **The call log.** `<globalDir>/jobs/advisor.jsonl`: one JSON line per call that ended or was dropped, oldest first, the last 500 kept, rewritten atomically by the model after each one. A file that fails to load is left untouched: the log is then kept in memory only, and a notice says so once.
+- **A line** holds `v` (1), when it ended, the kind (`prior` or `reconcile`), the job, the signature, the repo's name, the command, the model and effort asked for and the model that answered, how long it waited for its turn and how long it ran, the CLI's turns, input, output and cache tokens, cost and denied tool uses, the outcome (`answered`, `failed` or `skipped`), the error, the answer as the agent gave it, and a reconcile's surprise. Requests are not logged: they hold the job's argv, description and filtered environment.
+- **`advisor.Run`** returns the CLI result's metrics with the answer, and with an error result too.
+- **Live state.** `AgentView` adds the calls waiting, the call in flight (its kind, job, command and start), failures in a row, the end of a pause, and today's calls, failures and cost.
+- **`ReadAgent(limit, req)`**: the Reply's `Agent` holds the live state, the last `limit` calls newest first (20 when 0, at most 500), the log's path, and why it is kept in memory only, if it is.
+- **`loom job agent [--calls N] [--json]`** prints the state and a table of recent calls (when, kind, job, command, model, time, tokens, cost, outcome with the answer or error), or the page as JSON.
+- **The work view's header** shows `agent: sizing job 17 (12s) · 2 waiting · today 5 calls, $0.06` while a call runs, `agent: idle · today 5 calls, $0.06` once it has run today, and `agent off: <why>` as before.

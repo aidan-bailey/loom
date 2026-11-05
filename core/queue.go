@@ -229,6 +229,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	q.store = store
 	q.moved()
 	m.loadBeliefs()
+	m.loadAdvisorCalls()
 	m.markPendingNotices()
 	m.adoptJobs()
 	m.admitJobs()

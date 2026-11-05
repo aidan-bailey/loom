@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
@@ -68,6 +69,15 @@ type advisorState struct {
 	// shorter call. "" and 0 keep Model.ClaudeProgram and the default.
 	program string
 	timeout time.Duration
+	// flightAt is when the call in flight started.
+	flightAt time.Time
+	// calls is the call log (spec §16), oldest first, the last
+	// advisor.MaxCalls; callsErr is why advisor.jsonl failed to load (the
+	// log is then kept in memory only), and callsSaveFailed is set while
+	// the last write failed, so a run of failures raises one notice.
+	calls           []advisor.CallRecord
+	callsErr        error
+	callsSaveFailed bool
 }
 
 // advisorInput is what a call's job needs: copies only.
@@ -91,6 +101,7 @@ type advisorResult struct {
 	call          advisorCall
 	model, effort string
 	raw           json.RawMessage
+	usage         advisor.Usage
 	err           error
 }
 
@@ -189,10 +200,13 @@ func (m *Model) dispatchAdvisor() {
 		i := max(0, slices.IndexFunc(a.pending, func(c advisorCall) bool { return c.kind == advisePrior }))
 		c := a.pending[i]
 		a.pending = slices.Delete(a.pending, i, i+1)
+		why := ""
 		if c.kind == adviseReconcile && now.Sub(c.queued) >= reconcileStaleAfter {
-			continue
+			why = "it waited over an hour for its turn"
 		}
-		why := m.advisorOff(now)
+		if why == "" {
+			why = m.advisorOff(now)
+		}
 		if pct := m.advisorUsageHigh(now); why == "" && pct > 0 {
 			why = fmt.Sprintf("the agent's account is at %.0f%% of its 5-hour limit", pct)
 		}
@@ -205,13 +219,16 @@ func (m *Model) dispatchAdvisor() {
 		}
 		if why != "" {
 			log.For("core").Info("queue.advisor_skipped", "kind", c.kind.String(), "sig", string(c.sig), "why", why)
+			rec := m.callRecord(c, now)
+			rec.Model, rec.Effort, rec.Outcome, rec.Error = a.settings.Model, a.settings.Effort, advisor.OutcomeSkipped, why
+			m.logCall(rec)
 			if c.kind == advisePrior {
 				m.releaseAsking(c.sig, why)
 			}
 			continue
 		}
 		flight := c
-		a.flight = &flight
+		a.flight, a.flightAt = &flight, now
 		m.spawnBackground(runAdvisor(in))
 	}
 }
@@ -307,10 +324,11 @@ func runAdvisor(in advisorInput) Job {
 			res.err = fmt.Errorf("the job's folder can't be read: %w", err)
 			return res
 		}
-		res.raw, res.err = advisor.Run(advisor.Call{
+		out, err := advisor.Run(advisor.Call{
 			Program: in.program, Env: in.accountEnv, Dir: in.cwd, Model: in.settings.Model, Effort: in.settings.Effort,
 			Schema: schema, Message: msg, Timeout: in.timeout,
 		})
+		res.raw, res.usage, res.err = out.Answer, out.Usage, err
 		return res
 	}
 }
@@ -340,10 +358,15 @@ func (in advisorInput) message() ([]byte, string, error) {
 func (m *Model) deliverAdvisor(r advisorResult) {
 	q := m.queue
 	a := &q.advisor
-	a.flight = nil
 	now := time.Now()
+	rec := m.callRecord(r.call, now)
+	rec.Model, rec.Effort, rec.Usage, rec.Answer = r.model, r.effort, r.usage, string(r.raw)
+	rec.WaitedMS = max(0, a.flightAt.Sub(r.call.queued).Milliseconds())
+	a.flight, a.flightAt = nil, time.Time{}
 	b := q.beliefOf(r.call.sig)
 	if b == nil {
+		rec.Outcome, rec.Error = advisor.OutcomeFailed, "its belief was forgotten while the agent answered"
+		m.logCall(rec)
 		if r.call.kind == advisePrior {
 			m.releaseAsking(r.call.sig, "its belief was forgotten")
 		}
@@ -367,6 +390,11 @@ func (m *Model) deliverAdvisor(r advisorResult) {
 			}
 		}
 	}
+	rec.Outcome = advisor.OutcomeAnswered
+	if err != nil {
+		rec.Outcome, rec.Error = advisor.OutcomeFailed, err.Error()
+	}
+	m.logCall(rec)
 	why := ""
 	if err != nil {
 		log.For("core").Warn("queue.advisor_failed", "kind", r.call.kind.String(), "sig", string(r.call.sig), "err", err)
@@ -469,9 +497,114 @@ func (m *Model) resumeAsks() {
 	}
 }
 
-// agentView is the advisor as a client sees it.
+// agentView is the advisor as a client sees it: its settings, whether it
+// is on, the calls waiting and the one in flight, failures in a row, a
+// pause, and the calls that ran since local midnight (spec §16).
 func (m *Model) agentView(now time.Time) AgentView {
-	a := m.queue.advisor
+	q := m.queue
+	a := &q.advisor
 	why := m.advisorOff(now)
-	return AgentView{On: why == "", Model: a.settings.Model, Effort: a.settings.Effort, Wait: a.settings.Wait, Why: why}
+	v := AgentView{
+		On: why == "", Model: a.settings.Model, Effort: a.settings.Effort, Wait: a.settings.Wait, Why: why,
+		Pending: len(a.pending), Failures: a.failures,
+	}
+	if now.Before(a.pausedUntil) {
+		v.PausedUntil = a.pausedUntil
+	}
+	if f := a.flight; f != nil {
+		v.Flight = AgentFlight{Kind: f.kind.String(), Job: f.job, Started: a.flightAt}
+		if b := q.beliefOf(f.sig); b != nil {
+			v.Flight.Command = strings.Join(b.Command, " ")
+		}
+	}
+	y, mo, d := now.Date()
+	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location())
+	for _, c := range a.calls {
+		if c.Outcome == advisor.OutcomeSkipped || c.At.Before(midnight) {
+			continue
+		}
+		v.Today.Calls++
+		if c.Outcome == advisor.OutcomeFailed {
+			v.Today.Failed++
+		}
+		v.Today.CostUSD += c.Usage.CostUSD
+	}
+	return v
+}
+
+// callRecord is the call log's line for call c, ending at now: what the
+// call was about, with the belief's repo and command when it has one.
+func (m *Model) callRecord(c advisorCall, now time.Time) advisor.CallRecord {
+	rec := advisor.CallRecord{At: now, Kind: c.kind.String(), Job: c.job, Signature: c.sig, Surprise: c.surprise}
+	if b := m.queue.beliefOf(c.sig); b != nil {
+		rec.Repo, rec.Command = sched.RepoName(b.Repo), strings.Join(b.Command, " ")
+	}
+	return rec
+}
+
+// logCall appends rec to the call log, keeping the last advisor.MaxCalls,
+// and writes advisor.jsonl, unless it failed to load: the log is then kept
+// in memory only. A failed write raises one notice per run of failures.
+func (m *Model) logCall(rec advisor.CallRecord) {
+	q := m.queue
+	a := &q.advisor
+	a.calls = append(a.calls, rec)
+	if n := len(a.calls); n > advisor.MaxCalls {
+		a.calls = slices.Clone(a.calls[n-advisor.MaxCalls:])
+	}
+	q.moved()
+	if !q.ready() || a.callsErr != nil {
+		return
+	}
+	if err := advisor.SaveCalls(q.dir, a.calls); err != nil {
+		log.For("core").Warn("queue.advisor_log_save_failed", "err", err)
+		if !a.callsSaveFailed {
+			a.callsSaveFailed = true
+			m.causedBy(0, func() {
+				m.notifyErr(fmt.Errorf("work queue: write the agent's call log: %w; its calls are kept in memory and written with the next one", err))
+			})
+		}
+		return
+	}
+	a.callsSaveFailed = false
+}
+
+// loadAdvisorCalls loads the call log beside jobs.json. One that fails to
+// load is left as it is and never written: calls are kept in memory only,
+// and a notice tells the next TUI.
+func (m *Model) loadAdvisorCalls() {
+	q := m.queue
+	calls, err := advisor.LoadCalls(q.dir)
+	if err != nil {
+		q.advisor.callsErr = err
+		log.For("core").Error("queue.advisor_log_load_failed", "dir", q.dir, "err", err)
+		m.notifyErr(fmt.Errorf("work queue: the agent's call log could not be read: %w; it is left as it is, and calls are kept in memory only", err))
+		return
+	}
+	q.advisor.calls = calls
+}
+
+// agentCallsShown is how many calls ReadAgent answers with when asked for 0.
+const agentCallsShown = 20
+
+// readAgent is the agent's page: its state and its last limit calls,
+// newest first (agentCallsShown for 0, at most advisor.MaxCalls).
+func (m *Model) readAgent(limit int) (AgentPage, error) {
+	q := m.queue
+	if !q.ready() {
+		return AgentPage{}, errQueueNotLoaded
+	}
+	if limit <= 0 {
+		limit = agentCallsShown
+	}
+	limit = min(limit, advisor.MaxCalls)
+	calls := q.advisor.calls
+	page := AgentPage{State: m.agentView(time.Now()), Kept: len(calls), Path: filepath.Join(q.dir, advisor.CallsFile)}
+	if err := q.advisor.callsErr; err != nil {
+		page.LogErr = err.Error()
+	}
+	for i := len(calls) - 1; i >= 0 && len(page.Calls) < limit; i-- {
+		page.Calls = append(page.Calls, calls[i])
+	}
+	return page, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/sched/advisor"
 )
 
 // QueueView is the work queue as a client sees it (published as
@@ -35,6 +36,41 @@ type AgentView struct {
 	Effort string
 	Wait   time.Duration
 	Why    string // why it is off or paused; "" while on
+	// Its work (smart scheduler spec §16): the calls waiting their turn,
+	// the call in flight (zero when none), failed calls in a row, the end
+	// of a pause (zero unless paused), and the calls that ran today.
+	Pending     int
+	Flight      AgentFlight
+	Failures    int
+	PausedUntil time.Time
+	Today       AgentDay
+}
+
+// AgentFlight is the agent's call in flight.
+type AgentFlight struct {
+	Kind    string // advisor.KindPrior or advisor.KindReconcile; "" when none
+	Job     sched.JobID
+	Command string
+	Started time.Time
+}
+
+// AgentDay is the agent's calls that ran since local midnight: how many,
+// how many failed, and what they cost in dollars.
+type AgentDay struct {
+	Calls   int
+	Failed  int
+	CostUSD float64
+}
+
+// AgentPage is ReadAgent's answer (smart scheduler spec §16): the agent's
+// state, its last calls newest first, how many the log holds, the log's
+// file, and why the log is kept in memory only ("" when it isn't).
+type AgentPage struct {
+	State  AgentView
+	Calls  []advisor.CallRecord
+	Kept   int
+	Path   string
+	LogErr string
 }
 
 // JobView is one job of the queue as a client sees it.

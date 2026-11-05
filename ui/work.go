@@ -190,6 +190,10 @@ func RenderWork(width, height int, d WorkData) string {
 		out = append(out, " "+workErrStyle.Render("learning off: "+CleanText(q.Learning)))
 	case reported && q.Agent.Why != "":
 		out = append(out, " "+workDimStyle.Render("agent off: "+CleanText(q.Agent.Why)))
+	case reported:
+		if line := workAgentLine(q.Agent, d.Now); line != "" {
+			out = append(out, " "+workDimStyle.Render(line))
+		}
 	}
 
 	rows := WorkRows(q.Jobs)
@@ -557,6 +561,39 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		parts = append(parts, "not delivered")
 	}
 	return claim, claimStyle, "", timeText, strings.Join(parts, " · ")
+}
+
+// workAgentLine is the header's line on the scheduler's agent while it is
+// on (smart scheduler spec §16): the call in flight and the calls waiting,
+// then today's calls and cost; "idle" once it has run today; nothing before.
+func workAgentLine(a core.AgentView, now time.Time) string {
+	var parts []string
+	switch {
+	case a.Flight.Kind != "":
+		verb := "sizing"
+		if a.Flight.Kind == "reconcile" {
+			verb = "noting"
+		}
+		parts = append(parts, fmt.Sprintf("agent: %s job %d (%s)", verb, a.Flight.Job, sched.RoughDuration(now.Sub(a.Flight.Started))))
+		if a.Pending > 0 {
+			parts = append(parts, fmt.Sprintf("%d waiting", a.Pending))
+		}
+	case a.Today.Calls > 0:
+		parts = append(parts, "agent: idle")
+	default:
+		return ""
+	}
+	if d := a.Today; d.Calls > 0 {
+		today := fmt.Sprintf("today %d call", d.Calls)
+		if d.Calls != 1 {
+			today += "s"
+		}
+		if d.Failed > 0 {
+			today += fmt.Sprintf(" (%d failed)", d.Failed)
+		}
+		parts = append(parts, today+fmt.Sprintf(", $%.2f", d.CostUSD))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // workRunTime is a running job's time cell: how long it has run, against

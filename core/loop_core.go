@@ -240,6 +240,11 @@ func (l *Loop) ReadBeliefs(q sched.BeliefQuery, req ReqID) {
 	l.do(func(m *Model) { m.ReadBeliefs(q, req) })
 }
 
+// ReadAgent runs Model.ReadAgent on the loop.
+func (l *Loop) ReadAgent(limit int, req ReqID) {
+	l.do(func(m *Model) { m.ReadAgent(limit, req) })
+}
+
 // ForgetBelief runs Model.ForgetBelief on the loop.
 func (l *Loop) ForgetBelief(id sched.SignatureID, req ReqID) {
 	l.do(func(m *Model) { m.ForgetBelief(id, req) })

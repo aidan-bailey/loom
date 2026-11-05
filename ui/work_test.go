@@ -448,3 +448,19 @@ func TestRenderWork_ShowsETAsOverdueMarksAndForecasts(t *testing.T) {
 	assert.NotContains(t, out, "⚠ 1m10s")
 	assert.Contains(t, out, "starts ~3m · needs 4 cores (2 free)")
 }
+
+func TestRenderWork_ShowsWhatTheAgentIsDoing(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{Host: sched.Host{Name: "fresco"}, Policy: sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}}}
+	render := func(a core.AgentView) string {
+		q.Agent = a
+		return ansi.Strip(RenderWork(160, 20, WorkData{Queue: q, Now: now}))
+	}
+	busy := core.AgentView{On: true, Pending: 2, Flight: core.AgentFlight{Kind: "prior", Job: 17, Started: now.Add(-12 * time.Second)},
+		Today: core.AgentDay{Calls: 5, Failed: 1, CostUSD: 0.0612}}
+	assert.Contains(t, render(busy), "agent: sizing job 17 (12s) · 2 waiting · today 5 calls (1 failed), $0.06")
+	noting := core.AgentView{On: true, Flight: core.AgentFlight{Kind: "reconcile", Job: 14, Started: now.Add(-4 * time.Second)}}
+	assert.Contains(t, render(noting), "agent: noting job 14 (4s)")
+	assert.Contains(t, render(core.AgentView{On: true, Today: core.AgentDay{Calls: 1, CostUSD: 0.01}}), "agent: idle · today 1 call, $0.01")
+	assert.NotContains(t, render(core.AgentView{On: true}), "agent:", "nothing before its first call of the day")
+}

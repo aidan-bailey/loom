@@ -775,6 +775,16 @@ type ForgetBeliefParams struct {
 type ForgetBeliefResult struct {
 }
 
+// ReadAgentParams are ReadAgent's parameters on the wire.
+type ReadAgentParams struct {
+	Limit int        `json:"limit"`
+	Req   core.ReqID `json:"req"`
+}
+
+// ReadAgentResult is ReadAgent's result on the wire; an error travels in the reply.
+type ReadAgentResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -856,6 +866,7 @@ var methods = []methodInfo{
 	{Name: "SetSchedulerCaps", Kind: kindRequest, Params: SetSchedulerCapsParams{}, Result: SetSchedulerCapsResult{}},
 	{Name: "ReadBeliefs", Kind: kindRequest, Params: ReadBeliefsParams{}, Result: ReadBeliefsResult{}},
 	{Name: "ForgetBelief", Kind: kindRequest, Params: ForgetBeliefParams{}, Result: ForgetBeliefResult{}},
+	{Name: "ReadAgent", Kind: kindRequest, Params: ReadAgentParams{}, Result: ReadAgentResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1464,6 +1475,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ForgetBelief(p.ID, p.Req)
 		return ForgetBeliefResult{}, nil, true
+	case "ReadAgent":
+		var p ReadAgentParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadAgent(p.Limit, p.Req)
+		return ReadAgentResult{}, nil, true
 	}
 	return nil, nil, false
 }
@@ -1964,4 +1985,10 @@ func (c *Client) ReadBeliefs(q sched.BeliefQuery, req core.ReqID) {
 func (c *Client) ForgetBelief(id sched.SignatureID, req core.ReqID) {
 	var r ForgetBeliefResult
 	c.noteRefused(c.requestNoErr("ForgetBelief", ForgetBeliefParams{ID: id, Req: req}, &r), req)
+}
+
+// ReadAgent is core.Core's ReadAgent (request).
+func (c *Client) ReadAgent(limit int, req core.ReqID) {
+	var r ReadAgentResult
+	c.noteRefused(c.requestNoErr("ReadAgent", ReadAgentParams{Limit: limit, Req: req}, &r), req)
 }

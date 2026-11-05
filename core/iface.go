@@ -168,6 +168,9 @@ type Core interface {
 	// ForgetBelief drops one.
 	ReadBeliefs(q sched.BeliefQuery, req ReqID)
 	ForgetBelief(id sched.SignatureID, req ReqID)
+	// The agent's state and its last limit calls, newest first: the
+	// Reply's Agent (smart scheduler spec §16).
+	ReadAgent(limit int, req ReqID)
 }
 
 var _ Core = (*Loop)(nil)

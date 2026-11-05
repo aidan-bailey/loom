@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,25 +43,51 @@ func (c Call) args() []string {
 	}
 }
 
-// Run makes call c and returns its structured answer, unchecked: the
-// caller parses it (ParsePrior, ParseNote). The command is built through
-// account.Command, which refuses an account dir that is missing.
-func Run(c Call) (json.RawMessage, error) {
+// Usage is what one call took (spec §16): its wall time by the daemon's
+// clock, and what the CLI's JSON result reports (the model that answered,
+// turns, tokens, cost in dollars and tool uses denied). Zero where the CLI
+// printed no result.
+type Usage struct {
+	Model            string  `json:"model,omitempty"`
+	DurationMS       int64   `json:"duration_ms"`
+	Turns            int     `json:"turns,omitempty"`
+	InputTokens      int64   `json:"input_tokens,omitempty"`
+	OutputTokens     int64   `json:"output_tokens,omitempty"`
+	CacheReadTokens  int64   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64   `json:"cache_write_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	Denials          int     `json:"denials,omitempty"`
+}
+
+// Result is a call's structured answer, unchecked, and what it took.
+type Result struct {
+	Answer json.RawMessage
+	Usage  Usage
+}
+
+// Run makes call c and returns its structured answer, unchecked (the caller
+// parses it: ParsePrior, ParseNote), with what it took, which a failed call
+// carries too. The command is built through account.Command, which refuses
+// an account dir that is missing.
+func Run(c Call) (Result, error) {
 	timeout := cmp.Or(c.Timeout, DefaultTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd, err := account.Command(ctx, c.Program, c.Env, c.args()...)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	cmd.Dir = c.Dir
 	cmd.Stdin = bytes.NewReader(c.Message)
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	start := time.Now()
 	out, err := cmd.Output()
+	res := Result{Usage: usageOf(out)}
+	res.Usage.DurationMS = max(1, time.Since(start).Milliseconds())
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("the agent didn't answer in %s", timeout)
+		return res, fmt.Errorf("the agent didn't answer in %s", timeout)
 	}
 	if err != nil {
 		// Claude reports most failures (a logout, a refusal) in its JSON
@@ -68,9 +96,36 @@ func Run(c Call) (json.RawMessage, error) {
 		if _, perr := structuredOutput(out); detail == "" && perr != nil && len(bytes.TrimSpace(out)) > 0 {
 			detail = ": " + perr.Error()
 		}
-		return nil, fmt.Errorf("the agent's claude failed: %w%s", err, detail)
+		return res, fmt.Errorf("the agent's claude failed: %w%s", err, detail)
 	}
-	return structuredOutput(out)
+	res.Answer, err = structuredOutput(out)
+	return res, err
+}
+
+// usageOf reads what a call took out of the CLI's JSON result; zero for
+// output that isn't one.
+func usageOf(out []byte) Usage {
+	var r struct {
+		NumTurns     int     `json:"num_turns"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Usage        struct {
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+		PermissionDenials []json.RawMessage          `json:"permission_denials"`
+		ModelUsage        map[string]json.RawMessage `json:"modelUsage"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &r) != nil {
+		return Usage{}
+	}
+	models := slices.Sorted(maps.Keys(r.ModelUsage))
+	return Usage{
+		Model: strings.Join(models, "+"), Turns: r.NumTurns, CostUSD: r.TotalCostUSD, Denials: len(r.PermissionDenials),
+		InputTokens: r.Usage.InputTokens, OutputTokens: r.Usage.OutputTokens,
+		CacheReadTokens: r.Usage.CacheReadInputTokens, CacheWriteTokens: r.Usage.CacheCreationInputTokens,
+	}
 }
 
 // structuredOutput reads the answer out of the CLI's JSON result.

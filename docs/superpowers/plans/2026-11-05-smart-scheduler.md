@@ -4896,3 +4896,13 @@ Executed inline in one session; each package's full suite ran under the race det
 - **Step 2.3:** the live contract test first ran under the package's isolated `CLAUDE_CONFIG_DIR` (not logged in); it now names the real config dir (`ADVISOR_LIVE_CLAUDE_CONFIG_DIR`, else `~/.claude`), and `Run` reports the CLI's JSON error when stderr is empty. The live call passed: Opus at low effort answered a sensible prior in 6 s.
 - **Step 2.5:** the e2e sandbox's default program is a fake agent, so its daemon has no Claude program and the advisor is off; the e2e test needed no change.
 - **Steps 1.10 and 3.6:** the source and ETA columns narrow the description and owner columns; the render test that checks a full owner name now renders at 148 columns.
+
+## Package 4: Seeing the agent (added 2026-11-05)
+
+Spec §16, agreed in chat after the build. Built test-first in one package:
+
+1. `sched/advisor`: `Run` returns a `Result` with the call's `Usage` (wall time, and the CLI result's `modelUsage` key, `num_turns`, token counts, `total_cost_usd`, `permission_denials`), on failure too; `calllog.go` adds `CallRecord`, `LoadCalls` and `SaveCalls` for `advisor.jsonl` (the last 500 lines, never a request). Tests: `TestRun` (usage on an answer and on an error result), `TestCallLog_RoundTripAndCap`, `TestCallLog_AFileThatFailsToLoadIsLeftAsItIs`.
+2. `core`: `logCall` records every call that ends or is dropped, `loadAdvisorCalls` loads the log at boot (memory only when it fails), `agentView` adds the calls waiting, the call in flight, failures, the pause and today's use, and `ReadAgent(limit, req)` answers with `AgentPage` (`Reply.Agent`, `replyJSON`, the generated wire and the protocol reference). Tests: the advisor tests check the log and live state, `TestAdvisor_TheCallLogSurvivesARestartAndReadAgentPagesIt`, `TestAdvisor_ACallLogThatFailsToLoadIsKeptInMemoryOnly`.
+3. `internal/cli/job_agent.go`: `loom job agent [--calls N] [--json]`. Tests: `TestWriteAgent`, `TestJobAgent_ShowsTheAgentsState`.
+4. `ui/work.go`: `workAgentLine` in the header. Test: `TestRenderWork_ShowsWhatTheAgentIsDoing`.
+5. Docs: USAGE, ARCHITECTURE, the advisor's README and CLAUDE.md, the work-queue guide.

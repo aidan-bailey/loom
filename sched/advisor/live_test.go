@@ -32,10 +32,11 @@ func TestLive_TheRealCLIAnswersAPrior(t *testing.T) {
 		Host: Host{Cores: 16, RAMGB: 30, Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}, DefaultClaim: sched.Claim{CPUs: 4, MemoryGB: 6}},
 	})
 	require.NoError(t, err)
-	raw, err := Run(Call{Program: "claude", Env: []string{"CLAUDE_CONFIG_DIR=" + configDir}, Dir: wd,
+	res, err := Run(Call{Program: "claude", Env: []string{"CLAUDE_CONFIG_DIR=" + configDir}, Dir: wd,
 		Model: DefaultModel, Effort: DefaultEffort, Schema: PriorSchema, Message: msg})
 	require.NoError(t, err)
-	_, err = ParsePrior(raw, 4, 22, func(sched.SignatureID) bool { return false })
-	require.NoError(t, err, string(raw))
-	t.Logf("prior: %s", raw)
+	_, err = ParsePrior(res.Answer, 4, 22, func(sched.SignatureID) bool { return false })
+	require.NoError(t, err, string(res.Answer))
+	require.NotEmpty(t, res.Usage.Model, "the CLI names the model that answered")
+	t.Logf("prior: %s; usage: %+v", res.Answer, res.Usage)
 }

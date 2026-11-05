@@ -225,6 +225,7 @@ type Reply struct {
 	Sweep   buildsweep.Report
 	Job     sched.JobID
 	Beliefs sched.BeliefsPage
+	Agent   AgentPage
 }
 
 func (Reply) coreEvent() {}

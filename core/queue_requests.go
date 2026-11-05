@@ -85,6 +85,17 @@ func (m *Model) ReadBeliefs(q sched.BeliefQuery, req ReqID) {
 	m.reply(req, Reply{Beliefs: page})
 }
 
+// ReadAgent answers with the agent's state and its last limit calls,
+// newest first (smart scheduler spec §16).
+func (m *Model) ReadAgent(limit int, req ReqID) {
+	page, err := m.readAgent(limit)
+	if err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	m.reply(req, Reply{Agent: page})
+}
+
 // ForgetBelief drops a belief.
 func (m *Model) ForgetBelief(id sched.SignatureID, req ReqID) {
 	m.answerQueueRequest(req, m.forgetBelief(id))

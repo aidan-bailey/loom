@@ -11,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/sched/advisor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +27,8 @@ func wqFakeClaude(t *testing.T, answer string, delay time.Duration) (program, ca
 	calls = filepath.Join(dir, "calls")
 	result := `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}`
 	if answer != "" {
-		result = `{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":` + answer + `}`
+		result = `{"type":"result","subtype":"success","is_error":false,"result":"","num_turns":2,"total_cost_usd":0.0125,` +
+			`"usage":{"input_tokens":5,"output_tokens":40},"modelUsage":{"claude-opus-5-5":{}},"structured_output":` + answer + `}`
 	}
 	script := "#!/bin/sh\n" +
 		"cat >> '" + calls + "'\necho >> '" + calls + "'\n"
@@ -66,8 +68,32 @@ func TestAdvisor_AnUnseenCommandIsSizedByItsPrior(t *testing.T) {
 	assert.Equal(t, sched.SizingAsking, rec.Sizing)
 	assert.Equal(t, sched.Queued, rec.State, "it waits for the prior")
 	assert.Equal(t, "being sized (asking the agent)", m.Queue().Jobs[0].Waiting)
+	flight := m.Queue().Agent.Flight
+	assert.Equal(t, "prior", flight.Kind, "the call is in flight until the loop runs its job")
+	assert.Equal(t, id, flight.Job)
+	assert.Equal(t, "true", flight.Command)
+	assert.False(t, flight.Started.IsZero())
 
 	wqWait(t, "the prior", func() bool { wqPump(t, m); return wqRecord(t, m, id).Sizing == "" })
+	agent := m.Queue().Agent
+	assert.Zero(t, agent.Flight, "no call in flight")
+	assert.Equal(t, AgentDay{Calls: 1, CostUSD: 0.0125}, agent.Today)
+	logged := m.queue.advisor.calls
+	require.Len(t, logged, 1, "the call is logged")
+	c := logged[0]
+	assert.Equal(t, advisor.OutcomeAnswered, c.Outcome)
+	assert.Equal(t, advisor.KindPrior, c.Kind)
+	assert.Equal(t, id, c.Job)
+	assert.Equal(t, "true", c.Command)
+	assert.Equal(t, "opus", c.Model)
+	assert.Equal(t, "claude-opus-5-5", c.Usage.Model)
+	assert.Equal(t, 0.0125, c.Usage.CostUSD)
+	assert.Equal(t, int64(40), c.Usage.OutputTokens)
+	assert.Positive(t, c.Usage.DurationMS)
+	assert.Contains(t, c.Answer, "a tiny job")
+	saved, err := advisor.LoadCalls(m.queue.dir)
+	require.NoError(t, err)
+	assert.Len(t, saved, 1, "advisor.jsonl holds it")
 	rec = wqRecord(t, m, id)
 	assert.Equal(t, sched.Claim{CPUs: 2, MemoryGB: 3}, rec.Claim)
 	assert.Equal(t, sched.SourceAgent, rec.Sources.Memory)
@@ -134,6 +160,12 @@ func TestAdvisor_AFailureBacksOffAndThreePauseIt(t *testing.T) {
 	}
 	assert.Len(t, wqCalls(t, calls), 3)
 	assert.Contains(t, m.Queue().Agent.Why, "paused until")
+	assert.False(t, m.Queue().Agent.PausedUntil.IsZero())
+	assert.Equal(t, AgentDay{Calls: 3, Failed: 3}, m.Queue().Agent.Today)
+	for _, c := range m.queue.advisor.calls {
+		assert.Equal(t, advisor.OutcomeFailed, c.Outcome)
+		assert.Contains(t, c.Error, "error_during_execution")
+	}
 	id, _, err = m.submitJob(wqJob(t, "true", "3"))
 	require.NoError(t, err)
 	assert.Empty(t, wqRecord(t, m, id).Sizing, "a paused advisor is not asked")
@@ -147,6 +179,59 @@ func TestAdvisor_TheUsageGuardSkipsTheCall(t *testing.T) {
 	assert.Empty(t, rec.Sizing)
 	assert.Equal(t, "the agent's account is at 95% of its 5-hour limit", rec.AgentWhy)
 	assert.Empty(t, wqCalls(t, calls))
+	require.Len(t, m.queue.advisor.calls, 1, "a dropped call is logged too")
+	assert.Equal(t, advisor.OutcomeSkipped, m.queue.advisor.calls[0].Outcome)
+	assert.Equal(t, "the agent's account is at 95% of its 5-hour limit", m.queue.advisor.calls[0].Error)
+	assert.Zero(t, m.Queue().Agent.Today.Calls, "a dropped call didn't run")
+}
+
+func TestAdvisor_TheCallLogSurvivesARestartAndReadAgentPagesIt(t *testing.T) {
+	dir := t.TempDir()
+	m := wqModelAt(t, dir)
+	program, _ := wqFakeClaude(t, wqPriorAnswer, 0)
+	m.SetAdvisorForTest(program, 10*time.Second)
+	t.Cleanup(func() { wqStop(t, m) })
+	var ids []sched.JobID
+	for _, argv := range [][]string{{"true", "1"}, {"true", "2"}, {"true", "3"}} {
+		id, _, err := m.submitJob(wqJob(t, argv...))
+		require.NoError(t, err)
+		ids = append(ids, id)
+		wqWait(t, "the prior", func() bool { wqPump(t, m); return wqRecord(t, m, id).Sizing == "" })
+	}
+
+	m.ReadAgent(2, 5)
+	r := requestReply(t, m, 5)
+	require.NoError(t, r.Err)
+	require.Len(t, r.Agent.Calls, 2, "the limit")
+	assert.Equal(t, ids[2], r.Agent.Calls[0].Job, "newest first")
+	assert.Equal(t, 3, r.Agent.Kept)
+	assert.Equal(t, filepath.Join(m.queue.dir, advisor.CallsFile), r.Agent.Path)
+	assert.Empty(t, r.Agent.LogErr)
+
+	again := wqModelAt(t, dir)
+	assert.Len(t, again.queue.advisor.calls, 3, "loaded at boot")
+}
+
+func TestAdvisor_ACallLogThatFailsToLoadIsKeptInMemoryOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "jobs", advisor.CallsFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("{nope\n"), 0o600))
+
+	m := wqModelAt(t, dir)
+	require.Error(t, m.queue.advisor.callsErr)
+	program, _ := wqFakeClaude(t, wqPriorAnswer, 0)
+	m.SetAdvisorForTest(program, 10*time.Second)
+	t.Cleanup(func() { wqStop(t, m) })
+	id := wqSubmit(t, m, "true")
+	wqWait(t, "the prior", func() bool { wqPump(t, m); return wqRecord(t, m, id).Sizing == "" })
+
+	assert.Len(t, m.queue.advisor.calls, 1, "kept in memory")
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{nope\n", string(got), "never written")
+	m.ReadAgent(0, 6)
+	assert.Contains(t, requestReply(t, m, 6).Agent.LogErr, "advisor.jsonl")
 }
 
 func TestAdvisor_ASurpriseGetsANote(t *testing.T) {

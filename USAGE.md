@@ -904,6 +904,7 @@ loom job cancel 14
 loom job beliefs                            # what the scheduler learned of each command (--repo NAME for one repo)
 loom job beliefs show 3f9a1c2b7d10          # one command in full: claim, usual duration, the agent's prior and notes, runs
 loom job beliefs forget 3f9a1c2b7d10        # drop a command's history (a new toolchain, a rewritten build)
+loom job agent                              # the scheduler's agent: its state, today's calls and cost, its recent calls (--json, --calls N)
 ```
 
 - **No shell.** The command runs as given, in the folder you ran `loom job` from, with your environment. Write a pipeline as `-- sh -c '…'`. A command given as one word with spaces in it that names no program (`loom job submit -- "cargo build --release"`) is refused, saying how to split it.
@@ -1360,6 +1361,8 @@ A command the queue has never measured is sized by an agent: a headless `claude 
 | `wait_seconds` | `60` | 1–600 |
 
 A block outside its bounds turns the agent off (the work view's header and `loom job list` say why); jobs are still sized from what was measured.
+
+To see what the agent does, run `loom job agent`: whether it is on, the call it is making, the calls waiting, failures in a row, today's calls and cost, and a table of its recent calls (when, kind, job, command, model, how long, tokens in and out, cost, and the estimate or note it gave, or why it failed or was skipped). `--json` prints the same as JSON, and `--calls N` lists more. Every call, and every call dropped before it ran, is kept in `~/.loom/jobs/advisor.jsonl` (the last 500, one JSON line each, with no request: a request holds the job's command line, description and build variables). The work view's header shows the call in flight and today's use (`agent: sizing job 17 (12s) · 2 waiting · today 5 calls, $0.06`). The cost is what the CLI reports, at API prices, also on a subscription plan.
 
 ### Claude Fullscreen Renderer
 

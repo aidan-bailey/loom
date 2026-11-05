@@ -82,7 +82,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}}}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""}}}`
 
 ## Methods
 
@@ -510,7 +510,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":""},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
+Result: `{"value":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
 ### SubmitJob (request)
 
@@ -554,6 +554,12 @@ Params: `{"id":"","req":0}`
 
 Result: `{}`
 
+### ReadAgent (request)
+
+Params: `{"limit":0,"req":0}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged
@@ -594,7 +600,7 @@ Result: `{}`
 
 ### QueueChanged
 
-`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":""},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
+`{"View":{"Host":{"name":"","cores":0,"ram_bytes":0},"Settings":{},"Policy":{"caps":{"cpus":0,"memory_gb":0,"io_jobs":0},"default_claim":{},"starve_after":0,"keep_finished":0},"Paused":"","Learning":"","Agent":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Claimed":{"cpus":0,"memory_gb":0,"io_slots":0},"UsedCPU":0,"UsedRSSKB":0,"Dir":"","Jobs":null}}`
 
 ### Reactivated
 
@@ -606,7 +612,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}}}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""}}`
 
 ### SessionLaunched
 

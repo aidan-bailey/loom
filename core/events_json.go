@@ -48,11 +48,12 @@ type replyJSON struct {
 	Sweep   buildsweep.Report
 	Job     sched.JobID
 	Beliefs sched.BeliefsPage
+	Agent   AgentPage
 }
 
 // MarshalJSON encodes r with its errors as WireErrors.
 func (r Reply) MarshalJSON() ([]byte, error) {
-	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Mockup: r.Mockup, Sweep: r.Sweep, Job: r.Job, Beliefs: r.Beliefs})
+	return json.Marshal(replyJSON{Req: r.Req, ID: r.ID, Err: ToWire(r.Err), Notice: ToWire(r.Notice), Issue: r.Issue, Turns: r.Turns, Diff: r.Diff, Mockup: r.Mockup, Sweep: r.Sweep, Job: r.Job, Beliefs: r.Beliefs, Agent: r.Agent})
 }
 
 // UnmarshalJSON decodes a Reply MarshalJSON encoded.
@@ -61,6 +62,6 @@ func (r *Reply) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &j); err != nil {
 		return err
 	}
-	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Mockup: j.Mockup, Sweep: j.Sweep, Job: j.Job, Beliefs: j.Beliefs}
+	*r = Reply{Req: j.Req, ID: j.ID, Err: FromWire(j.Err), Notice: FromWire(j.Notice), Issue: j.Issue, Turns: j.Turns, Diff: j.Diff, Mockup: j.Mockup, Sweep: j.Sweep, Job: j.Job, Beliefs: j.Beliefs, Agent: j.Agent}
 	return nil
 }

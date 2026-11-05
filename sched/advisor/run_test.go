@@ -30,11 +30,17 @@ func TestRun(t *testing.T) {
 	call := Call{Model: "opus", Effort: "low", Schema: NoteSchema, Message: []byte(`{"task":"reconcile"}`), Dir: work, Timeout: 5 * time.Second}
 
 	t.Run("an answer", func(t *testing.T) {
-		program, dir := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x","structured_output":{"note":"hi"}}'`)
+		program, dir := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x","num_turns":2,"total_cost_usd":0.0285,`+
+			`"usage":{"input_tokens":2,"output_tokens":53,"cache_read_input_tokens":10,"cache_creation_input_tokens":3435},"permission_denials":[{"tool_name":"Bash"}],`+
+			`"modelUsage":{"claude-opus-5-5":{}},"structured_output":{"note":"hi"}}'`)
 		call.Program = program
-		raw, err := Run(call)
+		res, err := Run(call)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"note":"hi"}`, string(raw))
+		assert.JSONEq(t, `{"note":"hi"}`, string(res.Answer))
+		u := res.Usage
+		assert.Equal(t, Usage{Model: "claude-opus-5-5", DurationMS: u.DurationMS, Turns: 2, InputTokens: 2, OutputTokens: 53,
+			CacheReadTokens: 10, CacheWriteTokens: 3435, CostUSD: 0.0285, Denials: 1}, u)
+		assert.Positive(t, u.DurationMS, "the call's wall time, by the daemon's clock")
 		args, _ := os.ReadFile(filepath.Join(dir, "args"))
 		for _, want := range []string{"-p", "--model\nopus", "--effort\nlow", "--tools\nRead,Glob,Grep", "--restricted", "--safe-mode",
 			"--strict-mcp-config", "--no-session-persistence", "--permission-mode\ndontAsk", "--output-format\njson", "--json-schema", "--system-prompt"} {
@@ -47,10 +53,11 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, real, strings.TrimSpace(string(cwd)))
 	})
 	t.Run("an error result", func(t *testing.T) {
-		program, _ := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"stopped"}'`)
+		program, _ := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"stopped","total_cost_usd":0.5}'`)
 		call.Program = program
-		_, err := Run(call)
+		res, err := Run(call)
 		assert.ErrorContains(t, err, "error_max_turns")
+		assert.Equal(t, 0.5, res.Usage.CostUSD, "what a failed call cost is kept")
 	})
 	t.Run("no structured output", func(t *testing.T) {
 		program, _ := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x"}'`)
