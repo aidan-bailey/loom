@@ -73,11 +73,20 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		return 0, "", err
 	}
 	now := time.Now()
+	// An agent job (flow in loom part 3a, spec §5.2) is never sized: no
+	// signature, no claim, no advisor; it records its account.
+	agentJob := s.Kind == sched.KindAgent
 	sig, checkout, unsized := jobSignature(s.Argv, s.Cwd)
+	if agentJob {
+		sig, checkout, unsized = nil, "", "an agent job is never sized"
+	}
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now, Ready: now,
-		Asked: s.Claim, Unsized: unsized, Checkout: checkout,
+		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind,
+	}
+	if agentJob {
+		rec.AccountKey = envValue(s.Env, "CLAUDE_CONFIG_DIR")
 	}
 	if prereq != nil {
 		// A dependent (dependent jobs spec §5.1): held while its
@@ -94,9 +103,11 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	if sig != nil {
 		rec.Signature = sig.ID()
 	}
-	q.sizeRecord(&rec, policy)
-	if err := sched.CheckClaim(rec.Claim, policy); err != nil {
-		return 0, "", err
+	if !agentJob {
+		q.sizeRecord(&rec, policy)
+		if err := sched.CheckClaim(rec.Claim, policy); err != nil {
+			return 0, "", err
+		}
 	}
 	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), now) {
 		rec.Sizing = sched.SizingAsking
@@ -126,7 +137,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		}
 		return 0, "", err
 	}
-	if err := sched.WriteSpec(q.jobDir(id), sched.Spec{ID: id, Argv: rec.Argv, Cwd: s.Cwd, Env: slices.Clone(s.Env)}); err != nil {
+	if err := sched.WriteSpec(q.jobDir(id), sched.Spec{ID: id, Argv: rec.Argv, Cwd: s.Cwd, Env: slices.Clone(s.Env), Kind: rec.Kind}); err != nil {
 		// Taking back the directory is safe: this submit just created it, and
 		// id was never in a written jobs.json, so no shim can own it.
 		_ = sched.RemoveJobDir(q.dir, id)
@@ -383,4 +394,14 @@ func (m *Model) cancelOwnerJobs(owners map[InstanceID]bool, reason string) {
 	}
 	m.gate(gateQueue).request()
 	m.maybeQueue()
+}
+
+// envValue is name's value in env, the last one set; "" when it is unset.
+func envValue(env []string, name string) string {
+	for _, kv := range slices.Backward(env) {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
 }

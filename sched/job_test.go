@@ -83,6 +83,12 @@ func TestSubmit_Validate(t *testing.T) {
 		{"exclusive with io", func(s *Submit) { s.Claim = Claim{Exclusive: true, IO: true} }, "--exclusive claims everything: drop --cpus, --mem and --io"},
 		{"a relative folder", func(s *Submit) { s.Cwd = "work/tree" }, "the folder work/tree is not an absolute path"},
 		{"no folder", func(s *Submit) { s.Cwd = "" }, "the folder  is not an absolute path"},
+		{"a bare agent job", func(s *Submit) { s.Kind = KindAgent }, ""},
+		{"an agent job with cpus", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{CPUs: 1} }, "an agent job claims nothing and runs after nothing"},
+		{"an agent job with io", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{IO: true} }, "an agent job claims nothing and runs after nothing"},
+		{"an agent job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{Exclusive: true} }, "an agent job claims nothing and runs after nothing"},
+		{"an agent job after another", func(s *Submit) { s.Kind, s.After = KindAgent, 3 }, "an agent job claims nothing and runs after nothing"},
+		{"an unknown kind", func(s *Submit) { s.Kind = "x" }, `unknown job kind "x"`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

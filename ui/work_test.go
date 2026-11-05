@@ -477,6 +477,7 @@ func TestWorkClaim_ShowsSpareCores(t *testing.T) {
 	assert.Equal(t, "4+2c/3G", workClaim(j))
 	j.AboveCap = true
 	assert.Equal(t, "4+2c/3G!", workClaim(j))
+	assert.Equal(t, "agent", workClaim(core.JobView{Kind: sched.KindAgent}), "an agent job claims nothing")
 }
 
 func TestWorkRows_HeldJobsListAmongTheQueued(t *testing.T) {

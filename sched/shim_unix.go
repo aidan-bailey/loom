@@ -163,6 +163,9 @@ func RunShim(jobDir string) int {
 	// spec.Env, the hint variables it lacks and LOOM_JOB, and the command
 	// runs with exactly that.
 	env := Hints(spec.Env, max(spec.HintCPUs, 1), spec.ID)
+	if spec.Kind == KindAgent {
+		env = AgentHints(spec.Env, spec.ID)
+	}
 	// A SIGTERM that reached this shim before the command starts is not
 	// checked for: Go delivers signals asynchronously, so no read of sigs
 	// here is reliable. The command starts and the daemon's SIGKILL, 10 s

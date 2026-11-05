@@ -120,6 +120,9 @@ type Policy struct {
 	// ReleasePastPeaks lets a running job's hold fall below its claim once
 	// it is past its peaks (past-peak holds spec §8).
 	ReleasePastPeaks bool `json:"release_past_peaks"`
+	// AgentJobs is how many agent jobs of one account run at once (flow in
+	// loom part 3a, spec §5.2).
+	AgentJobs int `json:"agent_jobs"`
 }
 
 // Notice is the fate of a job's completion message to its owner's Claude.
@@ -191,6 +194,12 @@ type Record struct {
 	// Past-peak holds (spec 2026-11-05-past-peak-holds §5.4): its usage
 	// passed its lowered hold, so it held its claim from then on.
 	HoldBroke bool `json:"hold_broke,omitempty"`
+
+	// Agent runs (flow in loom part 3a, spec §5.2): the job's kind ("" for
+	// a build, KindAgent), and an agent job's account: its environment's
+	// CLAUDE_CONFIG_DIR ("" for the default account).
+	Kind       string `json:"kind,omitempty"`
+	AccountKey string `json:"account_key,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
@@ -216,6 +225,11 @@ type Exit struct {
 	WriteBytes *int64  `json:"write_bytes,omitempty"` // Linux: what it wrote to storage, net of cancelled writes
 }
 
+// KindAgent is an agent job's kind (flow in loom part 3a, spec §5.2): a
+// headless Claude process, admitted by a per-account limit, never by the
+// caps, and never sized. A build job's kind is "".
+const KindAgent = "agent"
+
 // Submit is what a client sends to queue a job.
 type Submit struct {
 	Argv        []string `json:"argv"`
@@ -227,6 +241,7 @@ type Submit struct {
 	Tail        int      `json:"tail"`
 	Launch      string   `json:"launch"`          // $LOOM_LAUNCH; "" from a plain shell
 	After       JobID    `json:"after,omitempty"` // the prerequisite (--after); 0 for none
+	Kind        string   `json:"kind,omitempty"`  // "" for a build, KindAgent
 }
 
 // totalBytes is the summed length of items.
@@ -243,7 +258,8 @@ func totalBytes(items []string) int {
 // not empty and its arguments total at most 64 KiB; the environment totals at
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
-// folder is absolute; the prerequisite is not negative (0 is none). It does
+// folder is absolute; the prerequisite is not negative (0 is none); an agent
+// job claims nothing and runs after nothing, and no other kind is known. It does
 // not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
@@ -280,6 +296,12 @@ func (s Submit) Validate() error {
 	}
 	if s.After < 0 {
 		return fmt.Errorf("--after is %d: it must be a job ID", s.After)
+	}
+	switch {
+	case s.Kind != "" && s.Kind != KindAgent:
+		return fmt.Errorf("unknown job kind %q", s.Kind)
+	case s.Kind == KindAgent && (s.Claim != Claim{} || s.After != 0):
+		return errors.New("an agent job claims nothing and runs after nothing")
 	}
 	return nil
 }

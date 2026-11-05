@@ -18,6 +18,7 @@ const (
 	maxIOJobs     = 64
 	maxStarveMins = 1440
 	maxKeep       = 10000
+	maxAgentJobs  = 16
 )
 
 // resolveBounded returns v, or def when v is 0, and an error naming the
@@ -36,12 +37,12 @@ func resolveBounded(key string, v, def, lo, hi int) (int, error) {
 // bounds. A 0 or absent field takes its default: cpus is max(1, cores − 2);
 // memory_gb is max(1, ⌊0.75 × RAM in GB⌋); io_jobs is 2; the default claim is
 // {min(4, cpus), min(6, memory_gb)}, each half taking its own default;
-// starve_after_minutes is 10; keep_finished is 50; release_past_peaks is
-// true. It fails closed: a value
+// starve_after_minutes is 10; keep_finished is 50; agent_jobs is 4;
+// release_past_peaks is true. It fails closed: a value
 // outside its bounds (a negative one included), a default claim above a cap,
 // or an unreadable RAM with memory_gb unset is an error and no Policy, since
 // no cap is guessed. The first fault, in the order cpus, memory_gb, io_jobs,
-// starve_after_minutes, keep_finished, default_claim.cpus,
+// starve_after_minutes, keep_finished, agent_jobs, default_claim.cpus,
 // default_claim.memory_gb, is the one returned.
 func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	cpus, err := resolveBounded("cpus", s.CPUs, max(1, h.Cores-2), 1, maxCapCPUs)
@@ -71,6 +72,10 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	agentJobs, err := resolveBounded("agent_jobs", s.AgentJobs, 4, 1, maxAgentJobs)
+	if err != nil {
+		return Policy{}, err
+	}
 	var claim config.ClaimSettings
 	if s.DefaultClaim != nil {
 		claim = *s.DefaultClaim
@@ -88,6 +93,7 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMem},
 		StarveAfter:      time.Duration(starve) * time.Minute,
 		KeepFinished:     keep,
+		AgentJobs:        agentJobs,
 		ReleasePastPeaks: s.ReleasePastPeaks == nil || *s.ReleasePastPeaks,
 	}, nil
 }

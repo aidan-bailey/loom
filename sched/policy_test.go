@@ -28,6 +28,7 @@ func policyWant(cpus, memoryGB, claimCPUs, claimMemoryGB int) Policy {
 		DefaultClaim:     Claim{CPUs: claimCPUs, MemoryGB: claimMemoryGB},
 		StarveAfter:      10 * time.Minute,
 		KeepFinished:     50,
+		AgentJobs:        4,
 		ReleasePastPeaks: true,
 	}
 }
@@ -79,27 +80,30 @@ func TestResolve_Explicit(t *testing.T) {
 				DefaultClaim: Claim{CPUs: 2, MemoryGB: 3},
 				StarveAfter:  30 * time.Minute,
 				KeepFinished: 5,
+				AgentJobs:    4,
 			},
 		},
 		{
 			name: "the largest values",
-			in:   config.SchedulerSettings{CPUs: 1024, MemoryGB: 65536, IOJobs: 64, StarveAfterMinutes: 1440, KeepFinished: 10000},
+			in:   config.SchedulerSettings{CPUs: 1024, MemoryGB: 65536, IOJobs: 64, StarveAfterMinutes: 1440, KeepFinished: 10000, AgentJobs: 16},
 			want: Policy{
 				Caps:             Caps{CPUs: 1024, MemoryGB: 65536, IOJobs: 64},
 				DefaultClaim:     Claim{CPUs: 4, MemoryGB: 6},
 				StarveAfter:      1440 * time.Minute,
 				KeepFinished:     10000,
+				AgentJobs:        16,
 				ReleasePastPeaks: true,
 			},
 		},
 		{
 			name: "the smallest values",
-			in:   config.SchedulerSettings{CPUs: 1, MemoryGB: 1, IOJobs: 1, StarveAfterMinutes: 1, KeepFinished: 1},
+			in:   config.SchedulerSettings{CPUs: 1, MemoryGB: 1, IOJobs: 1, StarveAfterMinutes: 1, KeepFinished: 1, AgentJobs: 1},
 			want: Policy{
 				Caps:             Caps{CPUs: 1, MemoryGB: 1, IOJobs: 1},
 				DefaultClaim:     Claim{CPUs: 1, MemoryGB: 1},
 				StarveAfter:      time.Minute,
 				KeepFinished:     1,
+				AgentJobs:        1,
 				ReleasePastPeaks: true,
 			},
 		},
@@ -150,6 +154,8 @@ func TestResolve_Bounds(t *testing.T) {
 		{name: "starve_after_minutes above 1440", in: config.SchedulerSettings{StarveAfterMinutes: 1441}, want: "scheduler.starve_after_minutes is 1441: it must be 1–1440"},
 		{name: "keep_finished below 1", in: config.SchedulerSettings{KeepFinished: -5}, want: "scheduler.keep_finished is -5: it must be 1–10000"},
 		{name: "keep_finished above 10000", in: config.SchedulerSettings{KeepFinished: 10001}, want: "scheduler.keep_finished is 10001: it must be 1–10000"},
+		{name: "agent_jobs above 16", in: config.SchedulerSettings{AgentJobs: 17}, want: "scheduler.agent_jobs is 17: it must be 1–16"},
+		{name: "agent_jobs below 0", in: config.SchedulerSettings{AgentJobs: -1}, want: "scheduler.agent_jobs is -1: it must be 1–16"},
 		{
 			name: "a default claim above the default cap",
 			in:   config.SchedulerSettings{DefaultClaim: &config.ClaimSettings{CPUs: 15}},

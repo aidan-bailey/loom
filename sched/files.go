@@ -77,6 +77,7 @@ type Spec struct {
 	Cwd      string   `json:"cwd"`
 	Env      []string `json:"env"`
 	HintCPUs int      `json:"hint_cpus,omitempty"` // written when the job starts
+	Kind     string   `json:"kind,omitempty"`      // KindAgent: AgentHints, not Hints
 }
 
 // CreateJobDir makes the directory of job id under dir (mode 0700), and dir
