@@ -1566,3 +1566,25 @@ func lockAgents(dir string) (func(), error) {
   - `readResult` parses the `result` text's STATUS and QUESTION lines (markdown `*` and backticks trimmed), and the report is that text.
   - The fake `claude` answers in status lines.
   - Step 5, the guard fallback, is skipped.
+- **P2, e77f5c44.** Built as planned.
+  - `Grant` is passed over by the agent ID set.
+  - The `Resolve` fixtures and `TestResolve_Bounds` gained `agent_jobs`.
+  - The protocol reference was regenerated: only optional fields were added, so no bump.
+  - All six mutations turned red: no limit; agents queued as builds; a grant stopped by an agent's wait; a spec without its kind; `Validate` without the agent rule; an agent sized.
+  - The full suite later caught `core`'s `qvPolicy` fixture missing `AgentJobs` (1ee8115d).
+- **P3, 2cf48a02.** Built with the probe's amendments:
+  - status lines;
+  - `pluginsOff` reads the account's and the project's `settings.json` and `settings.local.json`, and refuses a file it can't read;
+  - `preloadedSkills` parses the frontmatter's `skills:` in either form, and refuses a skill outside the flow plugin.
+
+  Step 5 (the guard fallback) was skipped: the probe saw the namespaced `agent_type`. The fake `claude` became `fakeAgentClaude`, since `internal/cli` already has a `fakeClaude`. All six mutations turned red: no scrub; answering a DONE run; no question required; reusing a name; plugins left on; skills not inlined.
+- **Docs, 4290d99c.**
+- **Gates:**
+  - gofmt clean, `go vet ./...` clean, and the Windows and darwin builds passed.
+  - `bash flow/lib/test.sh`: 333 tests and the agent lint passed.
+  - The CLAUDE.md lint passed.
+  - Job 731, the full suite: failed only on the `qvPolicy` fixture.
+  - Job 743, the full suite again: exit 0, 46 ok, no FAIL.
+  - Job 744, race over `sched`, `core` and `internal/cli`: exit 0.
+  - golangci-lint was skipped.
+  - No supervised use yet: that is 3b.
