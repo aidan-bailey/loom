@@ -17,7 +17,11 @@ const (
 // or fallback when it has none), or a minute from now when that has passed.
 // At each expected end the job's claim is freed and Admit runs again with
 // the clock at that time, so the starvation guard and the over-cap skip
-// apply as they will. Jobs being sized are left out. It stops after
+// apply as they will. Jobs being sized are left out. A held job joins the
+// simulated queue when its prerequisite's expected end comes, at the lower of
+// its order and its prerequisite's, as a release does (dependent jobs spec
+// §5.3); one whose prerequisite never ends in the simulation gets no start.
+// It stops after
 // forecastSteps steps or past forecastHorizon; a job it hasn't started by
 // then has no entry.
 func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
@@ -46,7 +50,7 @@ func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.D
 			}
 			ends = append(ends, ending{r.ID, at})
 			sim = append(sim, r)
-		case r.State == Queued && r.Sizing == "":
+		case r.State.Waiting() && r.Sizing == "":
 			sim = append(sim, r)
 		}
 	}
@@ -59,7 +63,7 @@ func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.D
 			starts[id] = clock
 			ends = append(ends, ending{id, clock.Add(expect(sim[i]))})
 		}
-		if !slices.ContainsFunc(sim, func(r Record) bool { return r.State == Queued }) || len(ends) == 0 {
+		if !slices.ContainsFunc(sim, func(r Record) bool { return r.State.Waiting() }) || len(ends) == 0 {
 			break
 		}
 		slices.SortFunc(ends, func(a, b ending) int { return a.at.Compare(b.at) })
@@ -72,6 +76,23 @@ func Forecast(jobs []Record, p Policy, now time.Time, usual func(Record) (time.D
 			clock = e.at
 		}
 		sim[index(e.id)].State = Done
+		releaseHeld(sim, e.id, clock)
 	}
 	return starts
+}
+
+// releaseHeld is a release in the simulation (dependent jobs spec §5.3):
+// each held job after job id, which has just ended, joins the queue at at,
+// at the lower of its order and id's.
+func releaseHeld(sim []Record, id JobID, at time.Time) {
+	i := slices.IndexFunc(sim, func(r Record) bool { return r.ID == id })
+	if i < 0 {
+		return
+	}
+	order := sim[i].Order
+	for j := range sim {
+		if sim[j].State == Held && sim[j].After == id {
+			sim[j].State, sim[j].Ready, sim[j].Order = Queued, at, min(sim[j].Order, order)
+		}
+	}
 }

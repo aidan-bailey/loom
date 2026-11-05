@@ -80,7 +80,11 @@ func sizingLine(v core.JobView) string {
 // startedLine is the follower's line when a job starts (job scaling spec
 // §6): how long it waited, and the spare cores it was lent.
 func startedLine(v core.JobView) string {
-	line := fmt.Sprintf("job %d started after %s", v.ID, rounded(v.Started.Sub(v.Submitted)))
+	line := fmt.Sprintf("job %d started after %s", v.ID, rounded(v.Started.Sub(v.QueuedSince())))
+	if v.After != 0 && v.Ready.After(v.Submitted) {
+		// Released after its prerequisite (dependent jobs spec §6).
+		line = fmt.Sprintf("job %d started %s after job %d ended", v.ID, rounded(v.Started.Sub(v.Ready)), v.After)
+	}
 	switch n := v.Spare.CPUs; {
 	case n == 1:
 		line += fmt.Sprintf(" with 1 spare core (%s)", v.Claim.Spared(v.Spare))

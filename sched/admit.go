@@ -64,14 +64,15 @@ func shortfall(used, need Need, caps Caps) string {
 //     caps"; it is never the head. A job being sized (Record.Sizing) waits
 //     with Sizing.Wait and is never the head either.
 //  2. The head is the first job that is not skipped. Once it has waited
-//     p.StarveAfter since it was submitted, Admit starts it if it fits and
-//     starts nothing else, so smaller jobs cannot pass a large one forever.
+//     p.StarveAfter since it joined the queue (Record.QueuedSince: its
+//     release, for a dependent), Admit starts it if it fits and starts
+//     nothing else, so smaller jobs cannot pass a large one forever.
 //  3. Otherwise (first fit) it starts every job, in order, whose claim fits
 //     what the running jobs and the jobs started before it leave.
 //
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
-// Running records count; a Running exclusive claim takes every cap as it
-// stands. A policy without caps (the zero Policy) starts nothing. The jobs
+// Running records count, so a held job is never seen; a Running exclusive
+// claim takes every cap as it stands. A policy without caps (the zero Policy) starts nothing. The jobs
 // slice is left as it is.
 func Admit(jobs []Record, p Policy, now time.Time) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
@@ -105,7 +106,7 @@ func Admit(jobs []Record, p Policy, now time.Time) Decision {
 		return d
 	}
 
-	if head := line[0]; now.Sub(head.Submitted) >= p.StarveAfter {
+	if head := line[0]; now.Sub(head.QueuedSince()) >= p.StarveAfter {
 		if why := shortfall(used, head.Claim.Need(p.Caps), p.Caps); why == "" {
 			d.Start = append(d.Start, head.ID)
 		} else {

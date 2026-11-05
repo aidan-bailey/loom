@@ -129,7 +129,7 @@ func writeBeliefs(w io.Writer, page sched.BeliefsPage, now time.Time) {
 		}
 		claim := claimText(core.JobView{Claim: v.Sized.Claim, Sources: v.Sized.Sources, Learned: v.Sized.Learned, AboveCap: v.Sized.AboveCap})
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", v.Belief.ID, v.RepoName, v.Belief.Folder,
-			cutTo(oneLine(strings.Join(v.Belief.Command, " ")), 40), len(v.Belief.Runs), claim, scalesText(v.Scaling), usual,
+			cutTo(oneLine(beliefCommand(v)), 40), len(v.Belief.Runs), claim, scalesText(v.Scaling), usual,
 			sched.RoughDuration(now.Sub(v.Belief.LastSeen))+" ago")
 	}
 	_ = tw.Flush()
@@ -162,4 +162,14 @@ func runsText(n int) string {
 		return "1 run"
 	}
 	return fmt.Sprintf("%d runs", n)
+}
+
+// beliefCommand is a belief's command as `loom job beliefs` lists it, with
+// the command it runs after (dependent jobs spec §5.6).
+func beliefCommand(v sched.BeliefView) string {
+	command := strings.Join(v.Belief.Command, " ")
+	if v.After != nil {
+		command += " (after " + strings.Join(v.After, " ") + ")"
+	}
+	return command
 }

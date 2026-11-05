@@ -86,3 +86,21 @@ func TestFormatBelief_Scaling(t *testing.T) {
 	assert.Equal(t, "scaling   ignores the hint variables · keeps 7.8 cores busy, claims 10", line(belief(at(4, 7.81))))
 	assert.Equal(t, "scaling   unknown until a run with 2 cores or more", line(belief(at(1, 1.0))))
 }
+
+func TestFormatBelief_NamesTheCommandItRunsAfter(t *testing.T) {
+	sig := NewSignature("/r/.git", ".", []string{"cargo", "test"})
+	text := func(after SignatureID, command []string) []string {
+		s := sig
+		s.After = after
+		v := ViewBelief(Belief{ID: s.ID(), Signature: s}, Policy{})
+		v.After = command
+		return FormatBelief(v)
+	}
+	assert.Contains(t, text("1a2b3c4d5e6f", []string{"cargo", "test", "--no-run"}), "after     cargo test --no-run")
+	assert.Contains(t, text(AfterNone, nil), "after     a job with no signature")
+	assert.Contains(t, text("1a2b3c4d5e6f", nil), "after     belief 1a2b3c4d5e6f, since forgotten")
+	for _, line := range text("", nil) {
+		assert.False(t, strings.HasPrefix(line, "after"), "no prerequisite, no line: %q", line)
+	}
+	assert.Equal(t, "a, b and c", JoinAnd([]string{"a", "b", "c"}))
+}

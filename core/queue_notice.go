@@ -33,14 +33,22 @@ type jobNoticeBuilt struct {
 }
 
 // sendJobNotice tells rec's owner how the job ended (spec §5.8), through the
-// loom mod's outbox with the origin OriginJob. Nothing is sent for a job
-// that asked for no notice, has no owner, or already has a fate. When the
-// owner is gone or can't take it the notice is recorded undelivered at once;
+// loom mod's outbox with the origin OriginJob: its head (jobHead) and its
+// log's tail.
+func (m *Model) sendJobNotice(rec sched.Record) {
+	m.sendNotice(rec, m.jobHead(rec), rec.ID)
+}
+
+// sendNotice sends head, then the tail of job logOf's log at rec's --tail,
+// to rec's owner (or the subagent that submitted rec, rec.Agent), and records
+// the notice's fate on rec. Nothing is sent for a job that asked for no
+// notice, has no owner, or already has a fate (wantsNotice). When the owner
+// is gone or can't take it the notice is recorded undelivered at once;
 // otherwise a job reads the log's tail off the loop (a log has no size cap)
 // and deliverJobNotice queues the text. rec is a copy: the caller may be
 // iterating the store.
-func (m *Model) sendJobNotice(rec sched.Record) {
-	if !rec.Notify || rec.Owner == 0 || rec.Notice != sched.NoticeNone {
+func (m *Model) sendNotice(rec sched.Record, head string, logOf sched.JobID) {
+	if !wantsNotice(rec) {
 		return
 	}
 	owner := InstanceID(rec.Owner)
@@ -48,8 +56,59 @@ func (m *Model) sendJobNotice(rec sched.Record) {
 		m.noteNotice(rec.ID, sched.NoticeUndelivered, why)
 		return
 	}
-	logPath := filepath.Join(m.queue.jobDir(rec.ID), sched.LogFile)
-	m.spawnBackground(buildNoticeJob(rec.ID, owner, rec.Agent, noticeHead(rec), logPath, rec.Tail))
+	logPath := filepath.Join(m.queue.jobDir(logOf), sched.LogFile)
+	m.spawnBackground(buildNoticeJob(rec.ID, owner, rec.Agent, head, logPath, rec.Tail))
+}
+
+// jobHead is rec's message before its log: its first line, which names the
+// job it was released after (afterText), and the over-claim line of a
+// dependent that needs one (overClaimLine).
+func (m *Model) jobHead(rec sched.Record) string {
+	head := noticeHead(rec, m.afterText(rec))
+	if line := overClaimLine(rec); line != "" {
+		head += "\n" + line
+	}
+	return head
+}
+
+// afterText is what a released dependent's first line adds in its
+// parenthesis (dependent jobs spec §5.5): `after job 14 "build tests", done
+// in 3m10s`. It is "" for a job with no prerequisite, one queued at once
+// after a job that had already ended (its Ready is its submit), and one
+// whose prerequisite's record is gone or never ran.
+func (m *Model) afterText(rec sched.Record) string {
+	if rec.After == 0 || !rec.Ready.After(rec.Submitted) {
+		return ""
+	}
+	i := m.queue.index(rec.After)
+	if i < 0 {
+		return ""
+	}
+	p := m.queue.store.Jobs[i]
+	if p.State != sched.Done || p.Started.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("after job %d %q, done in %s", p.ID, p.Description, roundedDur(p.Ended.Sub(p.Started)))
+}
+
+// overClaimLine is the line a dependent's message gets when it peaked at
+// over twice its memory claim (dependent jobs spec §5.5): it may have rebuilt
+// what its prerequisite built. The peak is the larger of the sampled one and
+// the command's max RSS, as sched.RunOf takes it. "" for a job with no
+// prerequisite, an exclusive claim, or a peak within twice the claim.
+func overClaimLine(rec sched.Record) string {
+	if rec.After == 0 || rec.Claim.Exclusive || rec.Claim.MemoryGB < 1 {
+		return ""
+	}
+	peak := rec.PeakRSSKB
+	if rec.Exit != nil {
+		peak = max(peak, rec.Exit.MaxRSSKB)
+	}
+	if peak <= 2*(int64(rec.Claim.MemoryGB)<<20) {
+		return ""
+	}
+	return fmt.Sprintf("It peaked at %.1f GB on a %d GB claim: if it rebuilt what job %d built, run job %d's output instead.",
+		float64(peak)/(1<<20), rec.Claim.MemoryGB, rec.After, rec.After)
 }
 
 // noticeTarget is the session a notice for owner would go to, and why it
@@ -150,10 +209,12 @@ func (m *Model) deliverJobNotice(r jobNoticeBuilt) {
 	m.enqueue(inst, &modMessage{text: r.text, origin: OriginJob, job: r.id, agent: r.agent})
 }
 
-// noticeHead is the notice's first line (spec §5.8): the job, then its outcome
-// and how long it ran and waited. A lost job or one that failed to start has
-// no run to time; a job cancelled while queued only waited.
-func noticeHead(rec sched.Record) string {
+// noticeHead is the notice's first line (spec §5.8): the job, then its
+// outcome and how long it ran and waited in the queue (from when it joined
+// it, Record.QueuedSince), with after, unless it is "", added in the
+// parenthesis (dependent jobs spec §5.5). A lost job or one that failed to
+// start has no run to time; a job cancelled while it waited only waited.
+func noticeHead(rec sched.Record, after string) string {
 	var what string
 	switch {
 	case rec.State == sched.Cancelled:
@@ -174,9 +235,13 @@ func noticeHead(rec sched.Record) string {
 	case rec.State == sched.Lost, startFailed(rec.State, rec.Failure, rec.Exit):
 		return head + "."
 	case !rec.Started.IsZero() && !rec.Ended.Before(rec.Started):
-		return fmt.Sprintf("%s after %s (%s in the queue).", head, roundedDur(rec.Ended.Sub(rec.Started)), roundedDur(rec.Started.Sub(rec.Submitted)))
+		wait := roundedDur(rec.Started.Sub(rec.QueuedSince())) + " in the queue"
+		if after != "" {
+			wait += ", " + after
+		}
+		return fmt.Sprintf("%s after %s (%s).", head, roundedDur(rec.Ended.Sub(rec.Started)), wait)
 	default:
-		return fmt.Sprintf("%s after %s in the queue.", head, roundedDur(rec.Ended.Sub(rec.Submitted)))
+		return fmt.Sprintf("%s after %s in the queue.", head, roundedDur(rec.Ended.Sub(rec.QueuedSince())))
 	}
 }
 

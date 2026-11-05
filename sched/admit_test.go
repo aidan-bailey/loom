@@ -360,3 +360,51 @@ func TestAdmit_AJobBeingSizedWaitsAndIsNeverTheHead(t *testing.T) {
 	assert.Equal(t, []JobID{2}, d.Start, "the job being sized holds nothing back, starved or not")
 	assert.Equal(t, "being sized (asking the agent)", d.Waiting[1])
 }
+
+// heldJob is a job held after job after, submitted waited ago.
+func heldJob(id, after JobID, claim Claim, waited time.Duration) Record {
+	return Record{ID: id, Order: int64(id), State: Held, After: after, Claim: claim, Submitted: admitNow.Add(-waited)}
+}
+
+// releasedJob is a queued job whose chain was submitted waited ago and that
+// joined the queue ago.
+func releasedJob(id JobID, claim Claim, waited, ago time.Duration) Record {
+	r := queuedJob(id, claim, waited)
+	r.Ready = admitNow.Add(-ago)
+	return r
+}
+
+func TestAdmit_StarvationCountsFromReady(t *testing.T) {
+	runAdmitCases(t, []admitCase{
+		{
+			name: "a job released a minute ago is no starving head, though its chain began half an hour ago",
+			jobs: []Record{
+				runningJob(1, Claim{CPUs: 6, MemoryGB: 6}),
+				releasedJob(2, admitBig, 30*time.Minute, time.Minute),
+				queuedJob(3, admitSmall, time.Minute),
+			},
+			start:   []JobID{3},
+			waiting: map[JobID]string{2: "needs 10 cores (8 free)"},
+		},
+		{
+			name: "a job released past the starvation time starves as any job does",
+			jobs: []Record{
+				runningJob(1, Claim{CPUs: 6, MemoryGB: 6}),
+				releasedJob(2, admitBig, 30*time.Minute, 10*time.Minute),
+				queuedJob(3, admitSmall, time.Minute),
+			},
+			waiting: map[JobID]string{
+				2: "needs 10 cores (8 free)",
+				3: "waits for job 2, which has waited past 10m",
+			},
+		},
+		{
+			name: "a held job is never admitted, never the head and never said to wait",
+			jobs: []Record{
+				heldJob(1, 9, admitSmall, time.Hour),
+				queuedJob(2, admitSmall, time.Minute),
+			},
+			start: []JobID{2},
+		},
+	})
+}

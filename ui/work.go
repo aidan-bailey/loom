@@ -86,16 +86,17 @@ func WorkReported(q core.QueueView) bool {
 }
 
 // WorkRows is the jobs in the order the work view lists them, and so the
-// order its selection walks: the running ones, the queued ones, then the
-// newest WorkRecentMax finished, each section in the order jobs gives
-// (running by start, queued in queue order, finished newest first).
+// order its selection walks: the running ones, the waiting ones (queued and
+// held), then the newest WorkRecentMax finished, each section in the order
+// jobs gives (running by start, waiting in queue order, finished newest
+// first).
 func WorkRows(jobs []core.JobView) []core.JobView {
 	var running, queued, finished []core.JobView
 	for _, j := range jobs {
 		switch {
 		case j.State == sched.Running:
 			running = append(running, j)
-		case j.State == sched.Queued:
+		case j.State.Waiting():
 			queued = append(queued, j)
 		case j.State.Finished():
 			finished = append(finished, j)
@@ -377,7 +378,7 @@ func workSection(s sched.State) string {
 	switch s {
 	case sched.Running:
 		return "RUNNING"
-	case sched.Queued:
+	case sched.Queued, sched.Held:
 		return "QUEUED"
 	}
 	return "RECENT"
@@ -419,8 +420,8 @@ func workTailBody(j core.JobView, ok bool, t WorkTail, n int) []string {
 	switch {
 	case !ok:
 		return nil
-	case j.State == sched.Queued:
-		return []string{workDimStyle.Render("(queued: no output yet)")}
+	case j.State.Waiting():
+		return []string{workDimStyle.Render(fmt.Sprintf("(%s: no output yet)", j.State))}
 	case t.ID != j.ID:
 		return []string{workDimStyle.Render("(reading the log…)")}
 	case t.Err != "":
@@ -534,7 +535,7 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 			extra = "cancelling"
 		}
 		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workRunTime(j, now), extra
-	case sched.Queued:
+	case sched.Queued, sched.Held:
 		extra = j.Waiting
 		if extra == "" {
 			extra = "waiting"
@@ -543,9 +544,9 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 			extra = workStarts(j.StartsAt, now) + " · " + extra
 		}
 		if j.Sizing != "" {
-			return "—", lipgloss.NewStyle(), "sizing", workWait(now.Sub(j.Submitted)), extra
+			return "—", lipgloss.NewStyle(), "sizing", workWait(now.Sub(j.QueuedSince())), extra
 		}
-		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workWait(now.Sub(j.Submitted)), extra
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workWait(now.Sub(j.QueuedSince())), extra
 	}
 	claim, claimStyle = workResult(j)
 	timeText = "-"

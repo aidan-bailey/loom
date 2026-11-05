@@ -96,7 +96,7 @@ func (q *queueState) sizeRecord(rec *sched.Record, p sched.Policy) bool {
 	return true
 }
 
-// resizeQueued recomputes the claim of every queued job this build sized,
+// resizeQueued recomputes the claim of every queued or held job this build sized,
 // from its belief and p: a claim stays live until the job starts (spec
 // §5.4). A record queued by a build before sizing (no Sources) keeps its
 // claim.
@@ -104,7 +104,7 @@ func (m *Model) resizeQueued(p sched.Policy) {
 	q := m.queue
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State != sched.Queued || rec.Sources == (sched.ClaimSources{}) {
+		if !rec.State.Waiting() || rec.Sources == (sched.ClaimSources{}) {
 			continue
 		}
 		if q.sizeRecord(rec, p) {
@@ -126,7 +126,13 @@ func (m *Model) readBeliefs(query sched.BeliefQuery) (sched.BeliefsPage, error) 
 	page := sched.BeliefsPage{Track: sched.TrackRecord(q.beliefs.Beliefs)}
 	for _, b := range q.beliefs.Beliefs {
 		if query.Matches(b) {
-			page.Beliefs = append(page.Beliefs, sched.ViewBelief(b.Clone(), q.policy))
+			v := sched.ViewBelief(b.Clone(), q.policy)
+			if b.After != "" && b.After != sched.AfterNone {
+				if p := q.beliefs.Find(b.After); p != nil {
+					v.After = slices.Clone(p.Command)
+				}
+			}
+			page.Beliefs = append(page.Beliefs, v)
 		}
 	}
 	if query.ID != "" && len(page.Beliefs) == 0 {
@@ -157,7 +163,7 @@ func (m *Model) forgetBelief(id sched.SignatureID) error {
 		q.beliefs.Beliefs = append(q.beliefs.Beliefs, kept)
 		return fmt.Errorf("write beliefs.json: %w", err)
 	}
-	if slices.ContainsFunc(q.store.Jobs, func(r sched.Record) bool { return r.State == sched.Queued && r.Signature == id }) {
+	if slices.ContainsFunc(q.store.Jobs, func(r sched.Record) bool { return r.State.Waiting() && r.Signature == id }) {
 		q.beliefs.Ensure(kept.Signature, time.Now())
 		m.saveBeliefsQuiet("forget")
 	}

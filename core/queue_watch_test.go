@@ -58,7 +58,7 @@ func wqStop(t *testing.T, m *Model) {
 	q := m.queue
 	for i := range q.store.Jobs {
 		switch rec := &q.store.Jobs[i]; rec.State {
-		case sched.Queued:
+		case sched.Queued, sched.Held:
 			rec.State = sched.Cancelled
 		case sched.Running:
 			if rec.CancelReason == "" {

@@ -5,18 +5,18 @@ The work scheduler's package. This file covers the logic half: the job types, th
 ## Files
 
 - `doc.go` — the package comment.
-- `job.go` — `JobID`, `State`, `Claim`, `Caps`, `Need`, `Host`, `Policy`, `Notice`, `Record`, `Exit` and `Submit`, with `Claim.Need`, `Submit.Validate` and `CheckClaim`.
+- `job.go` — `JobID`, `State` (with `Held`, `State.Finished` and `State.Waiting`), `Claim`, `Caps`, `Need`, `Host`, `Policy`, `Notice` (with `NoticeCarried`), `Record` (with `Record.QueuedSince`), `Exit` and `Submit`, with `Claim.Need`, `Submit.Validate` and `CheckClaim`.
 - `policy.go` — `Resolve`: a `config.SchedulerSettings` and a `Host` in, a `Policy` or an error out.
 - `admit.go` — `Admit` and its `Decision`.
 - `hints.go` — `Hints`.
 - `store.go` — `Store`, `LoadStore`, `SaveStore` and `ErrNewerStore`.
 - `files.go` — the file names, `JobDir`, `CreateJobDir`, `RemoveJobDir`, and the codecs of `Spec`, `Started` and `Exit`.
 - `command.go` — `CheckCommand`, and the command lookup on the submitter's `PATH` that the shim and the check share.
-- `signature.go` — `SignatureID`, `Signature`, `NewSignature`, `Normalize`, `RepoName`.
+- `signature.go` — `SignatureID`, `Signature`, `AfterNone`, `NewSignature`, `Normalize`, `RepoName`.
 - `repo.go` — `FindRepo`: the repository, the folder within it and the checkout.
 - `belief.go` — `Outcome`, `Run`, `RunOf`, `Prior`, `PriorScore`, `Note`, `AdvisorMarks`, `Belief`, `Beliefs`.
 - `beliefs_store.go` — `LoadBeliefs`, `SaveBeliefs`, `ErrNewerBeliefs`.
-- `size.go` — `Source`, `ClaimSources`, `Sized`, `Size`.
+- `size.go` — `Source`, `ClaimSources`, `Sized`, `Size`, `JoinAnd`.
 - `durations.go` — `Usual`, `OverdueAfter`.
 - `scaling.go` — `Scaling`, `ScalingOf`.
 - `grant.go` — `SpareWidth`, `Grant`.
@@ -29,9 +29,9 @@ The work scheduler's package. This file covers the logic half: the job types, th
 
 ## Jobs
 
-A job is `queued`, then `running`, then one of four finished states: `done` (exit 0), `failed` (a non-zero exit, a signal, or a start that failed), `cancelled` (cancelled by anyone, whatever its exit) or `lost` (its shim vanished without writing its result). `State.Finished` is true for the last four. A `JobID` is per host, from 1, and never reused.
+A job is `held` while it waits for its prerequisite (`Record.After`, [dependent jobs](../docs/superpowers/specs/2026-11-05-dependent-jobs-design.md)), then `queued`, then `running`, then one of four finished states: `done` (exit 0), `failed` (a non-zero exit, a signal, or a start that failed), `cancelled` (cancelled by anyone, whatever its exit) or `lost` (its shim vanished without writing its result). `State.Finished` is true for the last four, and `State.Waiting` for `held` and `queued`. A `JobID` is per host, from 1, and never reused.
 
-A `Submit` is what a client sends; the model validates it (`Submit.Validate` for the bounds, `CheckClaim` for the caps), applies the default claim and stores a `Record`, which is everything about the job but its environment. A `Record`'s `Order` is its ID at submit and the lowest queued `Order` minus 1 after a move to the front, and the queue runs lowest first.
+A `Submit` is what a client sends; the model validates it (`Submit.Validate` for the bounds, `CheckClaim` for the caps), applies the default claim and stores a `Record`, which is everything about the job but its environment. A `Record`'s `Order` is its ID at submit and the lowest queued `Order` minus 1 after a move to the front, and the queue runs lowest first. `Ready` is when a job joined the queue: at its submit, or at its release for a dependent; `QueuedSince` falls back on `Submitted` for a held job and for a record from an earlier build.
 
 ## Claims, caps and the policy
 
@@ -43,19 +43,19 @@ A `Claim` is whole cores and whole GB, whether the job is I/O-heavy (one of the 
 
 ## Admission
 
-`Admit(jobs, policy, now)` returns the jobs to start and, for each queued job left waiting, why. It walks the queued jobs in queue order: a job over a cap is skipped (`over this host's caps`) and is never the head; once the head, the first job not skipped, has waited `StarveAfter` since it was submitted, it starts if it fits and nothing else starts (the others wait `waits for job <id>, which has waited past <m>m`); otherwise every job that fits what the running jobs and the earlier starts leave starts, first fit. A job that does not fit waits for cores (`needs <n> cores (<free> free)`), then GB (`needs <n> GB (<free> free)`), then I/O slots (`needs an I/O slot`, or `needs <n> I/O slots (<free> free)` for a need of more than one).
+`Admit(jobs, policy, now)` returns the jobs to start and, for each queued job left waiting, why. It walks the queued jobs in queue order: a job over a cap is skipped (`over this host's caps`) and is never the head; once the head, the first job not skipped, has waited `StarveAfter` since it joined the queue (`QueuedSince`), it starts if it fits and nothing else starts (the others wait `waits for job <id>, which has waited past <m>m`); otherwise every job that fits what the running jobs and the earlier starts leave starts, first fit. A job that does not fit waits for cores (`needs <n> cores (<free> free)`), then GB (`needs <n> GB (<free> free)`), then I/O slots (`needs an I/O slot`, or `needs <n> I/O slots (<free> free)` for a need of more than one). A held job is never seen.
 
 ## Signatures, beliefs and sizing
 
 The smart scheduler's half ([spec](../docs/superpowers/specs/2026-11-05-smart-scheduler-design.md)): what each command measured, and the claim that follows.
 
-- **Signature.** `FindRepo` finds the job's repository from git's files alone (the first `.git` up from its folder; a worktree's `gitdir:` and its `commondir` lead to the common dir), so every worktree of a repository shares one; `Normalize` strips wrapper programs (`env` with only `NAME=value` operands, `direnv exec DIR`, `nix develop|shell … -c`, `time`, `nice`, `ionice`) and keeps their pairs apart, sorted. A signature is the repo, the folder within it, the command and the pairs; its ID is 12 hex digits of their SHA-256. `FindRepo` also gives the checkout, the directory holding the `.git` (symlinks resolved): a record and its run keep it (`Checkout`), apart from the signature, which every checkout of a repository shares.
+- **Signature.** `FindRepo` finds the job's repository from git's files alone (the first `.git` up from its folder; a worktree's `gitdir:` and its `commondir` lead to the common dir), so every worktree of a repository shares one; `Normalize` strips wrapper programs (`env` with only `NAME=value` operands, `direnv exec DIR`, `nix develop|shell … -c`, `time`, `nice`, `ionice`) and keeps their pairs apart, sorted. A signature is the repo, the folder within it, the command and the pairs; its ID is 12 hex digits of their SHA-256. A dependent's signature also carries its prerequisite's (`After`; `AfterNone` when that one had none), hashed only when set, so every other ID is what it always was. `FindRepo` also gives the checkout, the directory holding the `.git` (symlinks resolved): a record and its run keep it (`Checkout`), apart from the signature, which every checkout of a repository shares.
 - **Runs.** `RunOf` turns a finished record into a run: a done run teaches memory (its peak, the larger of the sampled group peak and `max_rss`), cores (`cpu_seconds` over wall time) and I/O (`write_bytes`); a run that failed with an exit code teaches only its duration and gives its peak as a floor; a signal nobody requested or a cancel gives a floor only; an adopted run's peak is a floor; a start failure or a lost job teaches nothing.
 - **Size.** `Size(asked, belief, policy)` takes each part from the first source with a value: the flag, the belief's last 10 runs, its prior, the default claim. Memory is the largest peak plus 15% (a floor only raises it), held to the cap; cores are 1.25 × the median busy cores, at most the default claim's; an I/O slot goes to a median write of 2 GiB or more. An overrunner's cores (its runs keep more than 1.25 × their cores busy: the hint variables don't reach it) are 1.25 × its median busy cores, up to the cap. A run that had spare cores counts toward memory as a floor scaled to the claim's cores while the last 10 runs include a full peak without spare cores, and as it is without one. `--cpus` with `--mem` makes the whole claim explicit. `ClaimSources.Tag` and `Describe` say where the parts came from.
 - **Durations.** `Usual` is the median and P90 of the last 10 runs that exited (done, or with an exit code), each wall time scaled from the cores it had to the cores asked about (none at 0), or the prior's duration; `OverdueAfter` is max(2 × P90, P90 + 5 min) once there are three.
 - **Scaling.** `ScalingOf` reads a belief's done runs for Amdahl's parallel fraction (each run with 2 cores or more gives (1 − 1/busy) ÷ (1 − 1/cores); the median), the ideal width (the most cores above 50% efficiency, at most twice the most cores a run had) and whether the command overruns ([spec](../docs/superpowers/specs/2026-11-05-job-scaling-design.md)).
 - **The grant.** `Grant` runs on what `Admit` starts: while no queued job waits but over the caps, each starting job `SpareWidth` can widen takes spare cores up to its ideal width, from the caps less the running claims, the starting base claims and a reserve of the default claim, with memory in proportion (lowered to what a run at that width measured).
-- **The forecast.** `Forecast` runs `Admit` forward from now over the running jobs' expected ends (start plus usual duration, or a minute from now when that has passed) and gives each queued job its expected start; jobs being sized are left out, and it stops after 1,000 steps or 24 hours.
+- **The forecast.** `Forecast` runs `Admit` forward from now over the running jobs' expected ends (start plus usual duration, or a minute from now when that has passed) and gives each queued job its expected start; jobs being sized are left out, a held job joins the simulated queue at its prerequisite's expected end, at the lower of the two orders (`releaseHeld`), and it stops after 1,000 steps or 24 hours.
 - **Reads.** `BeliefsPage` is what `ReadBeliefs` answers: `ViewBelief` adds the repo's name, the claim a job claiming nothing would get now and the durations; `TrackRecord` sums how the advisor's priors scored against their first runs; `FormatBelief` is the text `loom job beliefs show` and the work view's `b` print, its scaling line included (the parallel fraction, the ideal width and the usual duration at the claim's cores and at that width; or an overrunner's busy cores).
 - **The argv check.** `CheckCommand` refuses a one-word command with spaces that names no program on the submitter's `PATH` (or, with a slash, no file in the job's folder).
 
@@ -65,7 +65,7 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 
 | Path | Holds |
 |---|---|
-| `beliefs.json` | `Beliefs`: `{"version": 1, "beliefs": [...]}`, at most 1,000 beliefs (least recently seen dropped), 20 runs and 5 notes each. `LoadBeliefs` never writes, and leaves a file that fails to load (`ErrNewerBeliefs` for a newer version, an ID that is not its signature's, a repeat) as it is |
+| `beliefs.json` | `Beliefs`: `{"version": N, "beliefs": [...]}`, N being 2 while a belief's signature has a prerequisite part and 1 otherwise, so an older loom still reads a registry with none; at most 1,000 beliefs (least recently seen dropped), 20 runs and 5 notes each. `LoadBeliefs` never writes, and leaves a file that fails to load (`ErrNewerBeliefs` for a newer version, an ID that is not its signature's, a repeat) as it is |
 | `jobs.json` | `Store`: `{"version": 1, "next_id": N, "jobs": [...]}`. `LoadStore` never writes, leaves a file that fails to load alone, reports a newer version as `ErrNewerStore`, and raises `next_id` past every ID in the file and past every numeric directory under the jobs dir (a missing `jobs.json` included), failing the load when the dir can't be listed |
 | `<id>/spec.json` | `Spec`: argv, cwd, the submitter's environment, and the parallelism the start hints |
 | `<id>/output.log` | the command's stdout and stderr |

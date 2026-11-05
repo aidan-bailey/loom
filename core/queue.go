@@ -231,6 +231,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	m.loadBeliefs()
 	m.loadAdvisorCalls()
 	m.markPendingNotices()
+	m.resolveHeld()
 	m.adoptJobs()
 	m.admitJobs()
 	m.resumeAsks()

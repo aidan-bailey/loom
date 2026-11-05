@@ -25,7 +25,7 @@ type QueueView struct {
 	UsedCPU   float64                  // cores the running jobs use, last sampled
 	UsedRSSKB int64                    // memory they use, last sampled
 	Dir       string                   // <globalDir>/jobs
-	Jobs      []JobView                // running (by start), queued (queue order), then finished (newest end first)
+	Jobs      []JobView                // running (by start), waiting (queued and held, in queue order), then finished (newest end first)
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -123,6 +123,11 @@ type JobView struct {
 	// queued job to (0 when none could).
 	Spare sched.Claim
 	Ideal int
+	// Dependent jobs (spec 2026-11-05-dependent-jobs §4): the job this one
+	// runs after (0 for none), and when it joined the queue (zero while
+	// held, and on a record from an earlier build).
+	After sched.JobID
+	Ready time.Time
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -130,6 +135,16 @@ type JobView struct {
 // record is missing or says the exec failed (Exit.Error). A job that ran and
 // exited non-zero or by a signal, and a job in any other state, is not.
 func (j JobView) StartFailed() bool { return startFailed(j.State, j.Failure, j.Exit) }
+
+// QueuedSince is when the job joined the queue: Ready, or Submitted when it
+// has none (a held job, or a record from an earlier build), as
+// sched.Record.QueuedSince.
+func (j JobView) QueuedSince() time.Time {
+	if j.Ready.IsZero() {
+		return j.Submitted
+	}
+	return j.Ready
+}
 
 // startFailed is StartFailed over the fields a job's record and its view
 // share, so the notice (which has a record) and the view agree.
@@ -238,8 +253,8 @@ func (m *Model) queueOwners() []jobOwner {
 func (m *Model) queueRev() uint64 { return m.queue.rev }
 
 // queueView builds the published view of m.queue: the running jobs by
-// start, the queued ones in queue order, then the finished ones, newest end
-// first. It copies everything it holds, and never the environment, which no
+// start, the waiting ones (queued and held) in queue order, then the finished
+// ones, newest end first. It copies everything it holds, and never the environment, which no
 // record keeps.
 func (m *Model) queueView() QueueView {
 	q := m.queue
@@ -257,7 +272,7 @@ func (m *Model) queueView() QueueView {
 		switch r.State {
 		case sched.Running:
 			running = append(running, r)
-		case sched.Queued:
+		case sched.Queued, sched.Held:
 			queued = append(queued, r)
 		default:
 			finished = append(finished, r)
@@ -280,7 +295,7 @@ func (m *Model) queueView() QueueView {
 	starts := sched.Forecast(q.store.Jobs, q.policy, time.Now(), usualOf, m.hostUsual())
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
-		if r.State == sched.Queued {
+		if r.State.Waiting() {
 			jv.StartsAt = starts[r.ID]
 		}
 		if r.State == sched.Running {
@@ -344,6 +359,8 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Unsized:      r.Unsized,
 		AgentWhy:     r.AgentWhy,
 		Spare:        r.Spare,
+		After:        r.After,
+		Ready:        r.Ready,
 	}
 	if r.Exit != nil {
 		e := *r.Exit
@@ -358,6 +375,8 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 	case sched.Running:
 		u := q.usage[r.ID]
 		jv.RSSKB, jv.CPU = u.RSSKB, u.CPU
+	case sched.Held:
+		jv.Waiting = q.heldWaiting(r)
 	case sched.Queued:
 		jv.Ideal = sched.SpareWidth(r, b)
 		jv.Waiting = q.waiting[r.ID]

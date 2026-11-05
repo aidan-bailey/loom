@@ -7,8 +7,9 @@ import (
 )
 
 // FormatBelief is a belief as `loom job beliefs show` and the work view's
-// belief pager print it: its signature, claim, durations, how it scales,
-// prior, notes and runs, one line each, with no styling.
+// belief pager print it: its signature, the command it runs after, claim,
+// durations, how it scales, prior, notes and runs, one line each, with no
+// styling.
 func FormatBelief(v BeliefView) []string {
 	b := v.Belief
 	lines := []string{fmt.Sprintf("belief %s · %s · %s", b.ID, v.RepoName, b.Folder)}
@@ -17,6 +18,9 @@ func FormatBelief(v BeliefView) []string {
 		command += "  (env " + strings.Join(b.Env, " ") + ")"
 	}
 	lines = append(lines, "command   "+command)
+	if line := afterLine(v); line != "" {
+		lines = append(lines, line)
+	}
 	if v.Sized.Claim != (Claim{}) {
 		lines = append(lines, fmt.Sprintf("claim     %s (%s)", v.Sized.Claim, v.Sized.Sources.Describe(v.Sized.Learned)))
 	}
@@ -76,6 +80,20 @@ func FormatBelief(v BeliefView) []string {
 			r.Job, r.Ended.Local().Format("2006-01-02 15:04"), r.Outcome, r.Claim, peak, busy, RoughDuration(seconds(r.WallSeconds)), written))
 	}
 	return lines
+}
+
+// afterLine is the belief text's line on the command its command runs after
+// (dependent jobs spec §5.6), "" for one with no prerequisite part.
+func afterLine(v BeliefView) string {
+	switch after := v.Belief.After; {
+	case after == "":
+		return ""
+	case after == AfterNone:
+		return "after     a job with no signature"
+	case v.After != nil:
+		return "after     " + strings.Join(v.After, " ")
+	}
+	return fmt.Sprintf("after     belief %s, since forgotten", v.Belief.After)
 }
 
 // scalingLine is the belief text's line on how its command scales (job

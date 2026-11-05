@@ -50,6 +50,10 @@ Loom runs `git add -N .` in every session worktree on each diff probe (`session/
 - **A plain `go build` in a worktree nested in another checkout stamps the enclosing checkout's commit.** Go's VCS stamping looks for a `.git` directory and skips a worktree's `.git` file, so `vcs.revision`, `vcs.time` and `vcs.modified` describe the main checkout, a dirty build reads clean, and `rpc.CompareBuilds` orders the wrong commits. Build dev binaries through loomdev (`internal/devsandbox`'s `goBuild` stamps the worktree's own commit); check a binary with `go version -m`.
 - **Pace output a scroll test asserts on**: [`nix-build-failures.md`](nix-build-failures.md) explains tmux's burst redraw.
 
+## Suites that run at the same time
+
+A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (every `TestMain`) puts at `os.TempDir()/loom.log`. Every test process with the same `TMPDIR` shares that file, and the writer renames it to `loom.log.1` once it passes 5 MB. The tests that count lines in it fail with counts of 0 when another process rotates it mid-run: `core`'s `TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce`, `TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce` and `TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew`. That happens when the full suite and the race suite run as concurrent `loom job`s, or alongside another session's suite. Check `ls -la /tmp/loom.log*` for a `.1` written during the run, then run `go test ./core/` on its own before you suspect your change.
+
 ## What the gates won't tell you
 
 No test checks a fake against the component it stands in for, or that a guard has a positive control. Review asks those questions, and only if someone asks them on purpose.

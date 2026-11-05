@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -117,7 +118,7 @@ func TestBeliefsStore_RoundTripAndRefusals(t *testing.T) {
 	assert.Equal(t, bs.Beliefs, got.Beliefs)
 
 	cases := map[string]string{
-		"newer":      `{"version": 2, "beliefs": []}`,
+		"newer":      `{"version": 3, "beliefs": []}`,
 		"garbled":    `{nope`,
 		"mismatched": `{"version": 1, "beliefs": [{"id": "000000000000", "repo": "/r/.git", "folder": ".", "command": ["x"]}]}`,
 		"version 0":  `{"version": 0, "beliefs": []}`,
@@ -143,4 +144,35 @@ func TestRunOf_KeepsItsSpareCores(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 4, run.Spare)
 	assert.Equal(t, Claim{CPUs: 8, MemoryGB: 4}, run.Claim, "the claim it ran with: the total")
+}
+
+func TestBeliefsStore_VersionFollowsThePrerequisiteParts(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "jobs")
+	version := func() int {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dir, BeliefsFile))
+		require.NoError(t, err)
+		var head struct {
+			Version int `json:"version"`
+		}
+		require.NoError(t, json.Unmarshal(data, &head))
+		return head.Version
+	}
+	var bs Beliefs
+	build := bs.Ensure(NewSignature("/r/.git", ".", []string{"cargo", "test", "--no-run"}), bt0).ID
+	require.NoError(t, SaveBeliefs(dir, bs))
+	assert.Equal(t, 1, version(), "no prerequisite part: an older loom reads it")
+
+	warm := NewSignature("/r/.git", ".", []string{"cargo", "test"})
+	warm.After = build
+	bs.Ensure(warm, bt0)
+	require.NoError(t, SaveBeliefs(dir, bs))
+	assert.Equal(t, 2, version(), "an older loom would compute this belief's ID without its prerequisite")
+	got, err := LoadBeliefs(dir)
+	require.NoError(t, err)
+	assert.Equal(t, bs.Beliefs, got.Beliefs, "this build reads it back")
+
+	bs.Forget(warm.ID())
+	require.NoError(t, SaveBeliefs(dir, bs))
+	assert.Equal(t, 1, version(), "back to 1 once no belief has one")
 }

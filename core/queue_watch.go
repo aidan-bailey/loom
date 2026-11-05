@@ -39,8 +39,9 @@ func endJob(rec *sched.Record, state sched.State, now time.Time) {
 }
 
 // settledJob does what a job's end brings with it: its usage and wait
-// reasons go, a client is told (rev), and its owner is sent the notice. Job
-// i of the store has already been ended (endJob).
+// reasons go, a client is told (rev), its run is recorded, and the jobs held
+// after it are released or cancelled, with its message and theirs
+// (settleChain). Job i of the store has already been ended (endJob).
 func (m *Model) settledJob(i int) {
 	q := m.queue
 	rec := q.store.Jobs[i]
@@ -51,7 +52,7 @@ func (m *Model) settledJob(i int) {
 	delete(q.starting, rec.ID)
 	q.moved()
 	m.recordRun(rec)
-	m.sendJobNotice(rec)
+	m.settleChain(rec)
 }
 
 // finishJob ends job i of the store in state and settles it.

@@ -68,13 +68,13 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 	fmt.Fprintln(tw, "ID\tSTATE\tDESCRIPTION\tOWNER\tCLAIM\tTIME\tUSUAL\tWAITS FOR")
 	for _, j := range rows {
 		waits := ""
-		if j.State == sched.Queued {
+		if j.State.Waiting() {
 			waits = j.Waiting
 		}
 		if j.Unsized != "" {
 			waits = strings.TrimPrefix(waits+"; not sized: "+j.Unsized, "; ")
 		}
-		if j.State == sched.Queued && !j.StartsAt.IsZero() {
+		if j.State.Waiting() && !j.StartsAt.IsZero() {
 			waits = startsText(j.StartsAt, now) + " · " + waits
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -124,12 +124,13 @@ func agentSuffix(agent string) string {
 	return " › " + core.ShortAgent(agent)
 }
 
-// elapsed is how long a job has waited (queued), has run (running), or ran
-// (finished; a job that never started, how long it lived).
+// elapsed is how long a job has waited (queued: since it joined the queue;
+// held: since its submit), has run (running), or ran (finished; a job that
+// never started, how long it lived).
 func elapsed(j core.JobView, now time.Time) time.Duration {
 	switch {
-	case j.State == sched.Queued:
-		return now.Sub(j.Submitted)
+	case j.State.Waiting():
+		return now.Sub(j.QueuedSince())
 	case j.State == sched.Running:
 		return now.Sub(j.Started)
 	case !j.Started.IsZero():

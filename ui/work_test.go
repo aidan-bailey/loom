@@ -478,3 +478,27 @@ func TestWorkClaim_ShowsSpareCores(t *testing.T) {
 	j.AboveCap = true
 	assert.Equal(t, "4+2c/3G!", workClaim(j))
 }
+
+func TestWorkRows_HeldJobsListAmongTheQueued(t *testing.T) {
+	held := workQueued(32, "tests", "after job 20 (running)", time.Minute)
+	held.State, held.After = sched.Held, 20
+	var ids []sched.JobID
+	for _, j := range WorkRows([]core.JobView{workRunning(20, "build", time.Minute), held, workQueued(30, "q30", "", time.Minute)}) {
+		ids = append(ids, j.ID)
+	}
+	assert.Equal(t, []sched.JobID{20, 32, 30}, ids, "a held job sits among the queued, where the view's order puts it")
+}
+
+func TestRenderWork_AHeldJobSaysWhatItRunsAfter(t *testing.T) {
+	held := workQueued(32, "run tests", "after job 14 (running)", time.Minute)
+	held.State, held.After = sched.Held, 14
+	q := workBusy()
+	q.Jobs = append([]core.JobView{q.Jobs[0], q.Jobs[1], held}, q.Jobs[2:]...)
+
+	out := ansi.Strip(RenderWork(148, 30, WorkData{Queue: q, Selected: 32, Now: workNow}))
+
+	assert.Contains(t, lineWith(t, out, "run tests"), "after job 14 (running)")
+	assert.Less(t, strings.Index(out, "QUEUED"), strings.Index(out, "run tests"), "listed under QUEUED")
+	assert.Less(t, strings.Index(out, "run tests"), strings.Index(out, "RECENT"))
+	assert.Contains(t, out, "(held: no output yet)")
+}

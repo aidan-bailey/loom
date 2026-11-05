@@ -37,7 +37,7 @@ func ownerJobBadges(q core.QueueView) map[core.InstanceID]string {
 				o.lowest = j.ID
 			}
 			o.running++
-		case sched.Queued:
+		case sched.Queued, sched.Held:
 			o.queued = true
 		}
 	}
