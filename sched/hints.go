@@ -12,16 +12,19 @@ const EnvJob = "LOOM_JOB"
 // lacks added, each set to cpus unless env already sets it (to anything, an
 // empty value included), and LOOM_JOB set to id, replacing one a job
 // submitted from inside another job inherited. The hints are
-// CARGO_BUILD_JOBS=N, RUST_TEST_THREADS=N, MAKEFLAGS=-jN, NIX_BUILD_CORES=N,
-// CMAKE_BUILD_PARALLEL_LEVEL=N, GOFLAGS=-p=N and SCCACHE_CLIENT_SIDE=1, which
-// has sccache run each compile in its client, inside the job's tree where it
-// is measured, rather than in its shared daemon (sccache measurement spec
-// §5.1). env is left as it is.
+// CARGO_BUILD_JOBS=N, RUST_TEST_THREADS=N, NEXTEST_TEST_THREADS=N,
+// MAKEFLAGS=-jN, NIX_BUILD_CORES=N, CMAKE_BUILD_PARALLEL_LEVEL=N, GOFLAGS=-p=N
+// and SCCACHE_CLIENT_SIDE=1, which has sccache run each compile in its client,
+// inside the job's tree where it is measured, rather than in its shared daemon
+// (sccache measurement spec §5.1). cargo-nextest runs each test in a process
+// of its own and never reads RUST_TEST_THREADS: without its own variable it
+// runs one test per logical CPU, whatever the claim. env is left as it is.
 func Hints(env []string, cpus int, id JobID) []string {
 	n := strconv.Itoa(cpus)
 	hints := []struct{ name, value string }{
 		{"CARGO_BUILD_JOBS", n},
 		{"RUST_TEST_THREADS", n},
+		{"NEXTEST_TEST_THREADS", n},
 		{"MAKEFLAGS", "-j" + n},
 		{"NIX_BUILD_CORES", n},
 		{"CMAKE_BUILD_PARALLEL_LEVEL", n},

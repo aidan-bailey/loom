@@ -16,6 +16,7 @@ func TestHints_AddsWhatTheEnvironmentLacks(t *testing.T) {
 		"HOME=/home/me",
 		"CARGO_BUILD_JOBS=4",
 		"RUST_TEST_THREADS=4",
+		"NEXTEST_TEST_THREADS=4",
 		"MAKEFLAGS=-j4",
 		"NIX_BUILD_CORES=4",
 		"CMAKE_BUILD_PARALLEL_LEVEL=4",
@@ -24,7 +25,7 @@ func TestHints_AddsWhatTheEnvironmentLacks(t *testing.T) {
 		"LOOM_JOB=14",
 	}, got)
 
-	assert.Len(t, Hints(nil, 2, 1), 8, "an empty environment gets the seven hints and LOOM_JOB")
+	assert.Len(t, Hints(nil, 2, 1), 9, "an empty environment gets the eight hints and LOOM_JOB")
 }
 
 // TestHints_KeepsWhatTheSubmitterSet: a variable the submitter's environment
@@ -40,6 +41,7 @@ func TestHints_KeepsWhatTheSubmitterSet(t *testing.T) {
 		"SCCACHE_CLIENT_SIDE=0",
 		"CARGO_BUILD_JOBS_EXTRA=1",
 		"RUST_TEST_THREADS=8",
+		"NEXTEST_TEST_THREADS=8",
 		"NIX_BUILD_CORES=8",
 		"CMAKE_BUILD_PARALLEL_LEVEL=8",
 		"LOOM_JOB=3",
