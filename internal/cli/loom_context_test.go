@@ -11,26 +11,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// loomContextShared is the tail of the loom-context prompts, which teaches
-// `loom session` and `loom job` to every Claude session loom launches
-// (session package, WriteLoomContextFiles).
-const loomContextShared = "../../session/loom_context_shared.md"
+// loomContextFragments are the loom-context fragments that teach
+// `loom job` ("Loom itself") and `loom session` ("Other sessions") to
+// every Claude session loom launches (session package,
+// WriteLoomContextFiles).
+var loomContextFragments = []string{"../../session/loom_context_shared.md", "../../session/loom_context_sessions.md"}
 
 // codeSpan is one inline code span: a run between single backticks.
 var codeSpan = regexp.MustCompile("`([^`]+)`")
 
 // Every `loom session <sub> …` or `loom job <sub> …` span in the
-// loom-context tail names a real subcommand and flags it has, and every span
+// loom-context fragments names a real subcommand and flags it has, and every span
 // that is a bare flag one some subcommand of either has. An agent following
 // a stale line fails on an unknown command or flag, and nothing else would
 // notice.
 func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
-	b, err := os.ReadFile(loomContextShared)
-	require.NoError(t, err)
+	var text strings.Builder
+	for _, path := range loomContextFragments {
+		b, err := os.ReadFile(path)
+		require.NoError(t, err)
+		text.Write(b)
+	}
 	roots := map[string]*cobra.Command{"session": newSessionCmd(), "job": newJobCmd()}
 
 	var commands, bare int
-	for _, m := range codeSpan.FindAllStringSubmatch(string(b), -1) {
+	for _, m := range codeSpan.FindAllStringSubmatch(text.String(), -1) {
 		span := m[1]
 		words := strings.Fields(span)
 		switch {
@@ -51,8 +56,8 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 			assert.True(t, ok && (f.onAny(roots["session"]) || f.onAny(roots["job"])), "`%s`: no loom session or loom job subcommand has this flag", span)
 		}
 	}
-	assert.Positive(t, commands, "no `loom session <subcommand>` or `loom job <subcommand>` span in %s", loomContextShared)
-	assert.Positive(t, bare, "no bare flag span in %s", loomContextShared)
+	assert.Positive(t, commands, "no `loom session <subcommand>` or `loom job <subcommand>` span in %s", loomContextFragments)
+	assert.Positive(t, bare, "no bare flag span in %s", loomContextFragments)
 }
 
 // subcommandNamed is root's subcommand called name, or nil.

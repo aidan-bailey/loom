@@ -132,7 +132,7 @@ func TestRealClaude_AccountMemoryDir(t *testing.T) {
 	tm("kill-session", "-t", tmux.SessionTarget("plain"))
 
 	hooksDir := filepath.Join(t.TempDir(), "hooks")
-	_, err = hooks.Prepare(hooksDir, memDir)
+	_, err = hooks.Prepare(hooksDir, memDir, "")
 	require.NoError(t, err)
 	screen, send = start("loom", "--settings '"+hooks.SettingsPath(hooksDir)+"'")
 	send("Automated test. Use the Write tool to save an auto-memory file named probe-b.md in your memory directory, then reply DONE.")

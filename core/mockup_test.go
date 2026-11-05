@@ -55,7 +55,7 @@ func companionServer(t *testing.T) int {
 func writeHook(t *testing.T, inst *session.Instance, payload string) {
 	t.Helper()
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
-	_, err := hooks.Prepare(dir, "")
+	_, err := hooks.Prepare(dir, "", "")
 	require.NoError(t, err)
 	name := fmt.Sprintf("%d-1.json", time.Now().UnixNano())
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name), []byte(payload), 0o600))
