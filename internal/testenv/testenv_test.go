@@ -220,3 +220,24 @@ func within(dir, p string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
+
+// A test binary run from a loom session (a `loom job`, a pane) inherits the
+// session's links to the real daemon: its mod socket, its launch and its
+// job. IsolateLoomDirs clears them, or a fake agent a test starts says hello
+// to the real daemon as that session and takes its mod's place, and the
+// session's messages go undelivered.
+func TestIsolateLoomDirs_ClearsTheLinksToTheRealDaemon(t *testing.T) {
+	for _, name := range []string{EnvHome, EnvGlobalDir, EnvClaudeTmpDir, EnvClaudeConfigDir} {
+		t.Setenv(name, os.Getenv(name))
+	}
+	for _, name := range []string{EnvModSocket, EnvLaunch, EnvJob} {
+		t.Setenv(name, "from-the-session")
+	}
+	cleanup, err := IsolateLoomDirs()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	for _, name := range []string{EnvModSocket, EnvLaunch, EnvJob} {
+		_, set := os.LookupEnv(name)
+		assert.False(t, set, name)
+	}
+}

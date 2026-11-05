@@ -14,12 +14,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/internal/daemon"
+	"github.com/aidan-bailey/loom/sched"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -161,9 +164,23 @@ func (s *Sandbox) Env() []string {
 	}
 }
 
-// Environ is os.Environ() with Env() appended; os/exec uses the last value
-// of a duplicated key, so the overlay wins.
-func (s *Sandbox) Environ() []string { return append(os.Environ(), s.Env()...) }
+// hostLinks are the variables a loom launch holds to the daemon that
+// launched it: its mod socket, its launch and its job. A sandbox started from
+// a loom pane must not pass them on, or an agent the sandbox launches without
+// the mod (fakeagent) says hello to the host's daemon as the pane's session
+// and takes its mod's place.
+var hostLinks = []string{claudemod.EnvSocket, claudemod.EnvLaunch, sched.EnvJob}
+
+// Environ is os.Environ() less the host launch's links (hostLinks), with
+// Env() appended; os/exec uses the last value of a duplicated key, so the
+// overlay wins.
+func (s *Sandbox) Environ() []string {
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(hostLinks, name)
+	})
+	return append(env, s.Env()...)
+}
 
 // Cmd runs argv in the sandbox's environment from the toy repo, as a
 // sandboxed loom would run: Cmd(sb.LoomBin(), "serve", "stop"), say.

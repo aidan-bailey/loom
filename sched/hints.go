@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// jobIDVar names the variable that tells a job its own ID.
-const jobIDVar = "LOOM_JOB"
+// EnvJob names the variable that tells a job its own ID.
+const EnvJob = "LOOM_JOB"
 
 // Hints returns a new environment: env with the parallelism variables it
 // lacks added, each set to cpus unless env already sets it (to anything, an
@@ -32,7 +32,7 @@ func Hints(env []string, cpus int, id JobID) []string {
 	set := make(map[string]bool, len(env))
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
-		if name == jobIDVar {
+		if name == EnvJob {
 			continue
 		}
 		set[name] = true
@@ -43,5 +43,5 @@ func Hints(env []string, cpus int, id JobID) []string {
 			out = append(out, h.name+"="+h.value)
 		}
 	}
-	return append(out, jobIDVar+"="+strconv.FormatInt(int64(id), 10))
+	return append(out, EnvJob+"="+strconv.FormatInt(int64(id), 10))
 }
