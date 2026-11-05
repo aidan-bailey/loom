@@ -50,6 +50,7 @@ func (m *Model) settledJob(i int) {
 	delete(q.waiting, rec.ID)
 	delete(q.starting, rec.ID)
 	q.moved()
+	m.recordRun(rec)
 	m.sendJobNotice(rec)
 }
 
@@ -482,6 +483,7 @@ func (m *Model) noteAlive(i int, ob jobObs, now time.Time) bool {
 	changed := false
 	if rec.State == sched.Queued {
 		rec.State, rec.Started, changed = sched.Running, now, true
+		rec.Adopted = true // its peak is sampled from now on: a floor
 		delete(q.waiting, rec.ID)
 	}
 	if ob.started != nil && rec.PID == 0 {

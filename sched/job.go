@@ -45,6 +45,17 @@ func (s State) Finished() bool {
 	return false
 }
 
+// Sizing is where a queued job's sizing stands: "" once sized, or
+// SizingAsking while it waits for the advisor's prior (smart scheduler
+// spec §5.4). Admission skips a job being sized.
+type Sizing string
+
+// SizingAsking is a job waiting for the advisor's prior.
+const SizingAsking Sizing = "asking"
+
+// Wait is why admission leaves a job being sized waiting.
+func (Sizing) Wait() string { return "being sized (asking the agent)" }
+
 // Claim is what a job asks of the host: whole cores, whole GB, whether it is
 // I/O-heavy, or everything.
 type Claim struct {
@@ -118,7 +129,7 @@ type Record struct {
 	Description  string    `json:"description"`
 	Argv         []string  `json:"argv"`
 	Cwd          string    `json:"cwd"`
-	Claim        Claim     `json:"claim"` // the default claim already applied, except an exclusive one
+	Claim        Claim     `json:"claim"` // the claim it is admitted with: sized while queued (smart scheduler spec §5.4), fixed once it starts; an exclusive one stays exclusive
 	Notify       bool      `json:"notify,omitempty"`
 	Tail         int       `json:"tail"`
 	State        State     `json:"state"`
@@ -133,6 +144,21 @@ type Record struct {
 	SignalledAt  time.Time `json:"signalled_at,omitzero"`   // when SIGTERM went to its group
 	Notice       Notice    `json:"notice,omitempty"`
 	NoticeWhy    string    `json:"notice_why,omitempty"`
+
+	// The smart scheduler's sizing (spec 2026-11-05 §5.4). Asked is the
+	// submitter's claim as given (a 0 part was not claimed); Sources says
+	// where each part of Claim came from, and is empty on a record queued by
+	// a build before sizing, whose claim is left as it was.
+	Asked     Claim        `json:"asked,omitzero"`
+	Signature SignatureID  `json:"signature,omitempty"`
+	Unsized   string       `json:"unsized,omitempty"` // why the job has no signature
+	Sizing    Sizing       `json:"sizing,omitempty"`
+	Sources   ClaimSources `json:"sources,omitzero"`
+	Learned   int          `json:"learned,omitempty"`   // the runs its learned parts came from
+	AboveCap  bool         `json:"above_cap,omitempty"` // its memory from measured peaks was held to the cap
+	BelowKB   int64        `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
+	AgentWhy  string       `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
+	Adopted   bool         `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
 }
 
 // Exit is exit.json: how the command ended, written by the shim when it
@@ -143,6 +169,10 @@ type Exit struct {
 	Ended    time.Time `json:"ended"`
 	MaxRSSKB int64     `json:"max_rss_kb,omitempty"`
 	Error    string    `json:"error,omitempty"` // the exec failed; Code is then 127
+
+	CPUSeconds float64 `json:"cpu_seconds,omitempty"` // user and system time of the command and the descendants it waited for
+	ReadBytes  *int64  `json:"read_bytes,omitempty"`  // Linux: what it read from storage; nil when not measured
+	WriteBytes *int64  `json:"write_bytes,omitempty"` // Linux: what it wrote to storage, net of cancelled writes
 }
 
 // Submit is what a client sends to queue a job.

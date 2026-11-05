@@ -718,3 +718,17 @@ func TestSample_SeesAJobsWholeGroup(t *testing.T) {
 	require.NoError(t, SignalGroup(pid, syscall.SIGTERM))
 	awaitShimExit(t, dir)
 }
+
+func TestRunShim_RecordsTheCommandsCPUTimeAndIO(t *testing.T) {
+	dir := shimJob(t, []string{"sh", "-c", `i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; head -c 1048576 /dev/zero > out`})
+	startShim(t, dir)
+	e := awaitShimExit(t, dir)
+	assert.Equal(t, 0, e.Code)
+	assert.Greater(t, e.CPUSeconds, 0.0, "the busy loop's CPU time")
+	if runtime.GOOS == "linux" {
+		assert.NotNil(t, e.ReadBytes, "measured")
+		assert.NotNil(t, e.WriteBytes, "measured (0 on a tmpfs)")
+	} else {
+		assert.Nil(t, e.WriteBytes)
+	}
+}

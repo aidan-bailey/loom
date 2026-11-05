@@ -144,6 +144,7 @@ type jobFollower struct {
 	quiet   bool
 	queued  bool
 	started bool
+	sized   bool
 	last    string
 }
 
@@ -219,6 +220,12 @@ func (f *jobFollower) report(v core.JobView) {
 			f.d.say("job %d started after %s", v.ID, rounded(v.Started.Sub(v.Submitted)))
 		}
 		f.started = true
+	}
+	if !f.sized && v.Sizing == "" && !v.State.Finished() {
+		f.sized = true
+		if line := sizingLine(v); line != "" {
+			f.d.say("%s", line)
+		}
 	}
 }
 

@@ -35,9 +35,10 @@ func (m *Model) jobOwner(launch string) (owner InstanceID, unknown bool) {
 }
 
 // submitJob queues a job (spec §6.1, §5.9): it refuses first, on Windows, with
-// sched.ErrUnsupported; then it checks the submission against the bounds and
-// the caps, applies the default claim, writes spec.json and
-// jobs.json, and runs an admission pass. It replies only once both files are
+// sched.ErrUnsupported; then it checks the submission against the bounds,
+// the argv check (sched.CheckCommand) and the caps, sizes its claim from its
+// signature's belief (smart scheduler spec §5.4), writes spec.json and
+// jobs.json, marks the belief seen, and runs an admission pass. It replies only once both files are
 // written; a failed write refuses the request with the error and changes
 // nothing. warning is the unknown launch's text.
 func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err error) {
@@ -58,30 +59,31 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		}
 		return 0, "", fmt.Errorf("the folder %s can't be read: %w", s.Cwd, err)
 	}
+	if err := sched.CheckCommand(s.Argv, s.Env, s.Cwd); err != nil {
+		return 0, "", err
+	}
 	policy, paused := m.refreshPolicy()
 	if paused != "" {
 		return 0, "", fmt.Errorf("admission paused: %s", paused)
 	}
-	claim := s.Claim
-	if !claim.Exclusive {
-		if claim.CPUs == 0 {
-			claim.CPUs = policy.DefaultClaim.CPUs
-		}
-		if claim.MemoryGB == 0 {
-			claim.MemoryGB = policy.DefaultClaim.MemoryGB
-		}
+	now := time.Now()
+	sig, unsized := jobSignature(s.Argv, s.Cwd)
+	rec := sched.Record{
+		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
+		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now,
+		Asked: s.Claim, Unsized: unsized,
 	}
-	if err := sched.CheckClaim(claim, policy); err != nil {
+	if sig != nil {
+		rec.Signature = sig.ID()
+	}
+	q.sizeRecord(&rec, policy)
+	if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 		return 0, "", err
 	}
 
 	owner, unknown := m.jobOwner(s.Launch)
 	id = max(q.store.NextID, 1)
-	rec := sched.Record{
-		ID: id, Order: int64(id), Owner: uint64(owner), Description: strings.TrimSpace(s.Description),
-		Argv: slices.Clone(s.Argv), Cwd: s.Cwd, Claim: claim, Notify: s.Notify, Tail: s.Tail,
-		State: sched.Queued, Submitted: time.Now(),
-	}
+	rec.ID, rec.Order, rec.Owner = id, int64(id), uint64(owner)
 	prev := q.store
 	// The directory is made exclusively: NextID is past every directory the
 	// load saw, but a directory that appeared since (or a counter that went
@@ -113,6 +115,10 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		return 0, "", err
 	}
 	q.moved()
+	if sig != nil && q.beliefsErr == nil {
+		q.beliefs.Ensure(*sig, now)
+		m.saveBeliefsQuiet("submit")
+	}
 	if unknown {
 		warning = fmt.Sprintf("this shell's loom session (launch %s) isn't one the daemon serves: job %d has no owner, so no message will come", s.Launch, id)
 	}

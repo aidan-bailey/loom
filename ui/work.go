@@ -23,13 +23,14 @@ const workBarCells = 14
 const (
 	workIDW    = 4
 	workClaimW = 11
+	workSrcW   = 10 // the claim's source: learned·N, agent, yours, default
 	workTimeW  = 6
 )
 
 // workFixed is what a row spends on the marker, the ID, the claim, the time
 // and the gaps between the columns: the rest goes to the description, the
 // owner and the last column.
-const workFixed = 1 + 1 + 1 + workIDW + 2 + 2 + workClaimW + 2 + workTimeW + 2
+const workFixed = 1 + 1 + 1 + workIDW + 2 + 2 + workClaimW + 2 + workSrcW + 2 + workTimeW + 2
 
 var workTitleStyle, workSectionStyle, workDimStyle, workSelectedStyle lipgloss.Style
 
@@ -182,6 +183,9 @@ func RenderWork(width, height int, d WorkData) string {
 		out = append(out, " "+workErrStyle.Render("Admission paused: "+CleanText(q.Paused)))
 	default:
 		out = append(out, workBars(q)...)
+	}
+	if reported && q.Learning != "" {
+		out = append(out, " "+workErrStyle.Render("learning off: "+CleanText(q.Learning)))
 	}
 
 	rows := WorkRows(q.Jobs)
@@ -452,7 +456,7 @@ func workRow(j core.JobView, c workCols, now time.Time, selected bool) string {
 	if selected {
 		marker = "▸"
 	}
-	claim, claimStyle, timeText, extra := workRowFacts(j, now)
+	claim, claimStyle, src, timeText, extra := workRowFacts(j, now)
 
 	var plain, styled strings.Builder
 	add := func(text string, w int, st lipgloss.Style) {
@@ -476,6 +480,8 @@ func workRow(j core.JobView, c workCols, now time.Time, selected bool) string {
 	gap()
 	add(claim, workClaimW, claimStyle)
 	gap()
+	add(src, workSrcW, workDimStyle)
+	gap()
 	add(timeText, workTimeW, workDimStyle)
 	gap()
 	add(CleanText(extra), c.extra, workDimStyle)
@@ -498,22 +504,25 @@ func workOwner(j core.JobView) string {
 }
 
 // workRowFacts is what a row shows besides the job's name: the claim cell
-// (the outcome, for a finished job) with its style, the time cell, and the
-// last cell.
-func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgloss.Style, timeText, extra string) {
+// (the outcome, for a finished job) with its style, the claim's source
+// (smart scheduler spec §8), the time cell, and the last cell.
+func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgloss.Style, src, timeText, extra string) {
 	switch j.State {
 	case sched.Running:
 		extra = fmt.Sprintf("%.1fc  peak %s", j.CPU, workKB(j.PeakRSSKB))
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}
-		return j.Claim.String(), lipgloss.NewStyle(), workDur(now.Sub(j.Started)), extra
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workDur(now.Sub(j.Started)), extra
 	case sched.Queued:
 		extra = j.Waiting
 		if extra == "" {
 			extra = "waiting"
 		}
-		return j.Claim.String(), lipgloss.NewStyle(), workWait(now.Sub(j.Submitted)), extra
+		if j.Sizing != "" {
+			return "—", lipgloss.NewStyle(), "sizing", workWait(now.Sub(j.Submitted)), extra
+		}
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workWait(now.Sub(j.Submitted)), extra
 	}
 	claim, claimStyle = workResult(j)
 	timeText = "-"
@@ -533,7 +542,16 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 	if j.Notice == sched.NoticeUndelivered {
 		parts = append(parts, "not delivered")
 	}
-	return claim, claimStyle, timeText, strings.Join(parts, " · ")
+	return claim, claimStyle, "", timeText, strings.Join(parts, " · ")
+}
+
+// workClaim is a running or queued job's claim, with a "!" after a memory
+// held to the cap.
+func workClaim(j core.JobView) string {
+	if j.AboveCap {
+		return strings.Replace(j.Claim.String(), "G", "G!", 1)
+	}
+	return j.Claim.String()
 }
 
 // workResult is a finished job's outcome, and the style it is drawn in.

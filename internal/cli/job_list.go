@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -36,6 +37,9 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 	if q.Paused != "" {
 		fmt.Fprintf(w, "admission paused: %s\n", q.Paused)
 	}
+	if q.Learning != "" {
+		fmt.Fprintf(w, "learning off: %s\n", q.Learning)
+	}
 	var rows []core.JobView
 	finished := 0
 	for _, j := range q.Jobs {
@@ -64,8 +68,11 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 		if j.State == sched.Queued {
 			waits = j.Waiting
 		}
+		if j.Unsized != "" {
+			waits = strings.TrimPrefix(waits+"; not sized: "+j.Unsized, "; ")
+		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), j.Claim.String(), rounded(elapsed(j, now)), oneLine(waits))
+			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j), rounded(elapsed(j, now)), oneLine(waits))
 	}
 	return tw.Flush()
 }

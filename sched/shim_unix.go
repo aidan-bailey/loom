@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
@@ -168,12 +167,21 @@ func RunShim(jobDir string) int {
 	// checked for: Go delivers signals asynchronously, so no read of sigs
 	// here is reliable. The command starts and the daemon's SIGKILL, 10 s
 	// after the cancel, ends it, and the job settles as cancelled (spec §5.5).
+	before, measured := readIOCounters()
 	cmd, err := startCommand(spec, env)
 	if err != nil {
 		return shimReport(jobDir, Exit{Code: 127, Ended: time.Now(), Error: err.Error()})
 	}
 	waitErr := cmd.Wait()
-	return shimReport(jobDir, exitOf(cmd.ProcessState, waitErr))
+	exit := exitOf(cmd.ProcessState, waitErr)
+	if measured {
+		// The command and the descendants it reaped are in the shim's own
+		// counters now (smart scheduler spec §5.2).
+		if after, ok := readIOCounters(); ok {
+			exit.ReadBytes, exit.WriteBytes = ioDelta(before, after)
+		}
+	}
+	return shimReport(jobDir, exit)
 }
 
 // lockExclusive takes an exclusive flock on f, waiting for it: the daemon's
@@ -228,53 +236,10 @@ func startCommand(spec Spec, env []string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// resolveCommand finds the executable argv0 names the way a shell holding
-// env would. A name with a slash is taken as it is (a relative one is
-// relative to the job's folder, which exec.Cmd does). Any other is looked for
-// along env's PATH, the last PATH entry of env winning; an empty element is
-// the folder and a relative one is the folder's. The shim's own PATH is never
-// consulted: it is the daemon's, and the job must run the program its
-// submitter's shell would have run. A name found nowhere is an exec.Error
-// wrapping exec.ErrNotFound.
-func resolveCommand(argv0 string, env []string, cwd string) (string, error) {
-	if strings.Contains(argv0, "/") {
-		return argv0, nil
-	}
-	path, _ := lastEnvValue(env, "PATH")
-	for _, dir := range filepath.SplitList(path) {
-		if dir == "" {
-			dir = "."
-		}
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(cwd, dir)
-		}
-		candidate := filepath.Join(dir, argv0)
-		if isExecutableFile(candidate) {
-			return candidate, nil
-		}
-	}
-	return "", &exec.Error{Name: argv0, Err: exec.ErrNotFound}
-}
-
-// lastEnvValue returns the value of key in env, the last entry for it winning.
-func lastEnvValue(env []string, key string) (string, bool) {
-	for i := len(env) - 1; i >= 0; i-- {
-		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-// isExecutableFile reports whether path is a regular file with an execute bit.
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
 // exitOf describes how the command ended. Code is the exit code, or -1 and
 // the signal's name when a signal ended it; MaxRSSKB is the command's, and
-// its waited-for descendants', peak memory from rusage.
+// its waited-for descendants', peak memory from rusage, and CPUSeconds their
+// user and system time.
 func exitOf(ps *os.ProcessState, waitErr error) Exit {
 	if ps == nil {
 		return Exit{Code: 127, Ended: time.Now(), Error: fmt.Sprintf("waiting for the command: %v", waitErr)}
@@ -286,6 +251,7 @@ func exitOf(ps *os.ProcessState, waitErr error) Exit {
 	if ru, ok := ps.SysUsage().(*syscall.Rusage); ok && ru != nil {
 		exit.MaxRSSKB = maxRSSKB(ru)
 	}
+	exit.CPUSeconds = (ps.UserTime() + ps.SystemTime()).Seconds()
 	var exitErr *exec.ExitError
 	if waitErr != nil && !errors.As(waitErr, &exitErr) {
 		exit.Error = waitErr.Error()

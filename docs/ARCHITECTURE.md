@@ -22,7 +22,7 @@ Loom runs AI coding agents in parallel, each in its own git worktree and tmux se
 | `session/claudemod/` | The loom mod for Claude Code, embedded in the binary and written into each Claude launch | [`session/claudemod/CLAUDE.md`](../session/claudemod/CLAUDE.md) |
 | `account/` | Extra Claude accounts: config dirs, links, auth, usage | [`account/README.md`](../account/README.md) |
 | `config/` | `config.json`, `state.json`, the workspace registry, dir resolution | [`config/README.md`](../config/README.md), [`docs/specs/workspaces.md`](specs/workspaces.md) |
-| `sched/` | The work queue's logic and runtime: claims, caps and first-fit admission, the `jobs.json` store and per-job files, the hidden `loom job-shim` that runs each job detached, the lock probe, group signals and the `ps` usage sampler | [`sched/README.md`](../sched/README.md), [`sched/CLAUDE.md`](../sched/CLAUDE.md) |
+| `sched/` | The work queue's logic and runtime: claims, caps and first-fit admission, signatures, the `beliefs.json` registry and sizing from measured runs, the `jobs.json` store and per-job files, the hidden `loom job-shim` that runs each job detached (and measures its CPU time and I/O), the lock probe, group signals and the `ps` usage sampler | [`sched/README.md`](../sched/README.md), [`sched/CLAUDE.md`](../sched/CLAUDE.md) |
 | `internal/cli/` | `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep` and `loom job`, and the client half of `loom reset`: clients of the daemon | [`internal/cli/CLAUDE.md`](../internal/cli/CLAUDE.md) |
 | `cmd/` | `loom workspace migrate` (direct, under the lock) and the executor seam | [`cmd/CLAUDE.md`](../cmd/CLAUDE.md) |
 | `log/` | Structured and legacy logging | [`log/CLAUDE.md`](../log/CLAUDE.md) |
@@ -114,7 +114,7 @@ All under `~/.loom/` (the global dir) or a workspace's `<repo>/.loom/`.
 | `archive/claude-tmp/` | Archived Claude temp dirs (or under `claude_tmp_archive_dir`) | [`session/README.md`](../session/README.md) |
 | `archive/chats/` | Copies of Claude's chats for paused and ended sessions (or under `claude_tmp_archive_dir`) | [`session/README.md`](../session/README.md) |
 | `scripts/` (global dir) | User Lua scripts, loaded at startup | [`docs/specs/scripting.md`](specs/scripting.md) |
-| `jobs/` (global dir) | The work queue: `jobs.json` (every job's record, versioned, written only by the model), and per job `<id>/` with `spec.json` (argv, folder, the submitter's environment), `output.log`, and the shim's `run.lock`, `started.json` and `exit.json`; directories 0700, files 0600; a `jobs.json` that fails to load is left untouched and admission pauses | [`sched/README.md`](../sched/README.md), [`docs/claude/the-work-queue.md`](claude/the-work-queue.md) |
+| `jobs/` (global dir) | The work queue: `jobs.json` (every job's record, versioned, written only by the model), `beliefs.json` (each signature's measured runs, prior and notes, versioned, written only by the model; one that fails to load is left untouched and learning is off), and per job `<id>/` with `spec.json` (argv, folder, the submitter's environment), `output.log`, and the shim's `run.lock`, `started.json` and `exit.json`; directories 0700, files 0600; a `jobs.json` that fails to load is left untouched and admission pauses | [`sched/README.md`](../sched/README.md), [`docs/claude/the-work-queue.md`](claude/the-work-queue.md) |
 
 ## Logs and debugging
 

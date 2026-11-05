@@ -333,13 +333,13 @@ func TestJobSubmit_QueuesBehindAnExclusiveJobAndListShowsWhy(t *testing.T) {
 	t.Setenv(claudemod.EnvLaunch, "no-such-launch")
 	out, errOut, err := runJob(t, "submit", "-d", "next", "--", "true")
 	require.NoError(t, err)
-	assert.Equal(t, "job 2 queued (1st in line, 1 running)\n", out)
+	assert.Equal(t, "job 2 queued (1st in line, 1 running)\nsized 4c/6G (default)\n", out)
 	assert.Contains(t, errOut, "this shell's loom session (launch no-such-launch) isn't one the daemon serves: job 2 has no owner, so no message will come")
 
 	out, _, err = runJob(t, "list")
 	require.NoError(t, err)
 	assert.Regexp(t, `(?m)^1 +running +hog +- +exclusive +\S+ *$`, out)
-	assert.Regexp(t, `(?m)^2 +queued +next +- +\d+c/\d+G +\S+ +needs \d+ cores \(0 free\)$`, out)
+	assert.Regexp(t, `(?m)^2 +queued +next +- +\d+c/\d+G default +\S+ +needs \d+ cores \(0 free\)$`, out)
 
 	out, _, err = runJob(t, "cancel", "2")
 	require.NoError(t, err)
@@ -904,7 +904,7 @@ func TestJobWait_LosingTheDaemonSaysTheJobContinues(t *testing.T) {
 	_, errOut, err := runJob(t, "wait", "1")
 
 	assert.Equal(t, 125, exitCode(t, err))
-	assert.Equal(t, "loom: lost the daemon; job 1 may still be running (loom job wait 1 follows it again)\n", errOut)
+	assert.Equal(t, "loom: sized 4c/6G (default)\nloom: lost the daemon; job 1 may still be running (loom job wait 1 follows it again)\n", errOut)
 }
 
 // An interrupt that lands after the job ended reports its outcome, not that

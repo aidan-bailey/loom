@@ -70,6 +70,8 @@ func (m *Model) admitJobs() {
 			}
 		}
 	} else {
+		// Claims stay live until a job starts (smart scheduler spec §5.4).
+		m.resizeQueued(policy)
 		// A queued record whose lock could not be tested stays out of the
 		// walk (a shim may be behind it, and it would run the command again
 		// after it): it claims nothing and starts nothing.

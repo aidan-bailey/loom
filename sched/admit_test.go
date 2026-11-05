@@ -348,3 +348,15 @@ func TestAdmit_LeavesItsInputAlone(t *testing.T) {
 	_ = Admit(jobs, admitPolicy(), admitNow)
 	assert.Equal(t, before, jobs)
 }
+
+func TestAdmit_AJobBeingSizedWaitsAndIsNeverTheHead(t *testing.T) {
+	p := Policy{Caps: Caps{CPUs: 8, MemoryGB: 16, IOJobs: 2}, DefaultClaim: Claim{CPUs: 4, MemoryGB: 6}, StarveAfter: time.Minute}
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	jobs := []Record{
+		{ID: 1, Order: 1, State: Queued, Claim: Claim{CPUs: 4, MemoryGB: 6}, Sizing: SizingAsking, Submitted: now.Add(-time.Hour)},
+		{ID: 2, Order: 2, State: Queued, Claim: Claim{CPUs: 8, MemoryGB: 6}, Submitted: now},
+	}
+	d := Admit(jobs, p, now)
+	assert.Equal(t, []JobID{2}, d.Start, "the job being sized holds nothing back, starved or not")
+	assert.Equal(t, "being sized (asking the agent)", d.Waiting[1])
+}

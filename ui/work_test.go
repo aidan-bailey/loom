@@ -100,7 +100,8 @@ func TestWorkRows_SectionsInOrderAndRecentCapped(t *testing.T) {
 }
 
 func TestRenderWork_ShowsTheBarsTheSectionsAndTheTail(t *testing.T) {
-	out := ansi.Strip(RenderWork(120, 30, WorkData{Queue: workBusy(), Selected: 14, Tail: WorkTail{ID: 14, Lines: []string{"test orderbook::depth ... ok"}}, Now: workNow}))
+	// 132 columns: wide enough for the owner beside the claim's source column.
+	out := ansi.Strip(RenderWork(132, 30, WorkData{Queue: workBusy(), Selected: 14, Tail: WorkTail{ID: 14, Lines: []string{"test orderbook::depth ... ok"}}, Now: workNow}))
 	for _, want := range []string{
 		"Work queue · fresco", "w/esc back",
 		"CPU ██████████░░░░ 10/14 claimed · 11.2 in use",
@@ -402,4 +403,23 @@ func TestWorkFormatters(t *testing.T) {
 	assert.Equal(t, "640M", workKB(640<<10))
 	assert.Equal(t, "12K", workKB(12))
 	assert.Equal(t, "9.8 GB", workGB(10_276_045))
+}
+
+func TestRenderWork_ShowsEachClaimsSourceAndWhyLearningIsOff(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:     sched.Host{Name: "fresco"},
+		Policy:   sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}},
+		Learning: "beliefs.json could not be loaded: bad",
+		Jobs: []core.JobView{
+			{ID: 14, State: sched.Running, Description: "web-smoke", Started: now.Add(-time.Minute),
+				Claim: sched.Claim{CPUs: 8, MemoryGB: 16, IO: true}, Learned: 5,
+				Sources: sched.ClaimSources{CPUs: sched.SourceLearned, Memory: sched.SourceLearned, IO: sched.SourceLearned}},
+			{ID: 17, State: sched.Queued, Description: "clippy", Submitted: now, Sizing: sched.SizingAsking, Waiting: "being sized (asking the agent)"},
+		},
+	}
+	out := ansi.Strip(RenderWork(120, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "learning off: beliefs.json could not be loaded: bad")
+	assert.Contains(t, out, "learned·5")
+	assert.Contains(t, out, "sizing")
 }

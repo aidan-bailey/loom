@@ -204,6 +204,7 @@ func newJobSubmitCmd() *cobra.Command {
 				}
 				out := c.OutOrStdout()
 				d.printPlacement(out, v)
+				d.printSizing(out, id)
 				if sub.Launch == "" {
 					fmt.Fprintf(out, "no session to notify: follow it with loom job wait %d\n", id)
 				}

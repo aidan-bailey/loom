@@ -42,7 +42,7 @@ Out (§15): elastic cores, time-aware admission, exact cgroup accounting, warm a
 - **Prior:** the advisor's estimate for a signature with no measured runs. `sched.Prior`.
 - **Floor:** a peak that is only a lower bound of the job's true peak. It can raise a claim but never set one alone.
 - **Source:** where a part of a claim came from: `explicit`, `learned`, `agent`, `default` or `exclusive`. `sched.Source`; a claim's three are `sched.ClaimSources`.
-- **Sizing:** the step that gives a queued job its signature and, when its belief needs one, a prior (§5.4). `sched.Sizing` is `""` (sized), `pending` or `asking`.
+- **Sizing:** the step that gives a queued job its signature and claim at submit and, when its belief needs one, waits for a prior (§5.4). `sched.Sizing` is `""` (sized) or `asking`.
 - **Usual duration:** the median wall time of a belief's recent runs; with its P90 it drives ETAs and overdue marks (§5.5).
 - **Advisor:** the scheduler's agent, a headless `claude -p` run by the daemon (§5.6). The package is `sched/advisor`, not `agent`, because loom already says agent for a session's program; users see it as "the agent", and its config block is `scheduler.agent`.
 
@@ -52,9 +52,9 @@ Out (§15): elastic cores, time-aware admission, exact cgroup accounting, warm a
 
 A job's signature is resolved when it is sized (§5.4), in a model job:
 
-- **Repo and folder.** `git rev-parse --path-format=absolute --git-common-dir --show-toplevel` runs in the job's folder through `internalexec.GitCommand`, with a 5 s timeout. The repo is the common dir, symlinks resolved, so every worktree of a repository shares its beliefs; its display name is the name of the common dir's parent when the common dir is `.git`, and the common dir's own name otherwise. The folder is the job's folder relative to the top level, symlinks resolved on both, `.` at the top.
-  - When git answers that the folder is not in a repository, the repo is the folder itself and the folder is `.`.
-  - Any other failure (a timeout, no git, an unreadable repository) leaves the job without a signature: its claim comes from its flags and the default claim, its run teaches nothing, and the view and `list` say `not sized: <the error>`.
+- **Repo and folder.** `sched.FindRepo` walks up from the job's folder, symlinks resolved, to the first directory holding a `.git`. A `.git` directory is the repo's git dir; a `.git` file names a worktree's (or a submodule's) git dir in its `gitdir:` line, whose `commondir` file, when it has one, names the common dir. The repo is the common dir, symlinks resolved, so every worktree of a repository shares its beliefs; its display name is the name of the common dir's parent when the common dir is `.git`, and the common dir's own name otherwise. The folder is the job's folder relative to the directory holding the `.git`, `.` at the top. It reads files only, never runs git, so `submitJob` runs it on the loop and sizes the job at once (amended while planning: a `git rev-parse` there could block every client for its timeout).
+  - When no `.git` is found up to the root, the repo is the folder itself and the folder is `.`.
+  - Any other failure (an unreadable `.git`, a `gitdir:` that resolves nowhere) leaves the job without a signature: its claim comes from its flags and the default claim, its run teaches nothing, and the view and `list` say `not sized: <the error>`.
 - **Command.** `sched.Normalize` reads the argv from the front, applying the first rule that matches until none does:
   - `env` followed by only `NAME=value` operands (and an optional `--`) before the next word: `env` is dropped and each pair joins the signature's environment. An `env` with an option (`-i`, `-u`, `-C`, `-S`, …) ends normalisation, and the rest is kept as it is.
   - `direnv exec DIR`: the three words are dropped.
@@ -100,7 +100,7 @@ A job without a signature (§5.1) records nothing. A job with an explicit or exc
 - A belief is made when a job is sized against a signature that has none, and seen again at every later submit of it. At most 1,000 are kept: making one more drops the one least recently seen.
 - **Writes** follow a new belief, a recorded run, a stored prior or note, a recorded advisor failure, and a forget. A failed write keeps the change in memory, raises a notice, and is written with the next save, as the model's own `jobs.json` changes are.
 - **Loading.** The model loads the file at boot with `jobs.json` (`sched.LoadBeliefs`). A file that fails to load (unreadable, invalid, or a newer `version`: `sched.ErrNewerBeliefs`) is left untouched and never written. Learning is then off: jobs are sized from their flags and the default claim, no run is recorded, the advisor isn't called, a notice tells the next TUI, and the view and `list` say `learning off: <the reason>`. Admission carries on.
-- **Forgetting.** `ForgetBelief` drops a belief, for when its history no longer holds (a new toolchain, a rewritten build). Queued jobs of that signature are sized again from step 2 of §5.4, which makes a new, empty belief; a running job is unaffected.
+- **Forgetting.** `ForgetBelief` drops a belief, for when its history no longer holds (a new toolchain, a rewritten build). Queued jobs of that signature are given a new, empty belief and re-sized at the next pass; a running job is unaffected.
 
 ### 5.4 Sizing a job
 
@@ -123,14 +123,13 @@ The constants (1.15, 1.25, 2 GiB, 10 runs) are `sched`'s, not settings.
 
 **The step.**
 
-1. `SubmitJob` stores the job queued, its sizing `pending`. A job whose claim is exclusive, or names both `--cpus` and `--mem`, is sized at once from its flags (no I/O slot unless `--io`), and admission doesn't wait for it; its signature is still resolved, so its run teaches its belief.
-2. A model job resolves the signature (§5.1). Back on the loop, the job's belief is found or made, and the job's claim is computed from it.
-3. When the belief has no prior and lacks a learned value for a part the job doesn't claim explicitly, and the advisor is available (§5.6), the job's sizing becomes `asking`, and a prior request is queued for its signature. Jobs of the same signature share one request. When the prior arrives, each job waiting on it is sized. A job still `asking` `wait_seconds` after its submit is sized without it, from the default claim for what is missing.
-4. When the advisor isn't available, the missing parts take the default claim at once.
+1. `SubmitJob` resolves the signature (§5.1), computes the claim from the belief (if any) and the flags, and stores the job queued; the belief is made, or marked seen, once the job is stored. An exclusive job, or one naming both `--cpus` and `--mem`, is sized from its flags alone (no I/O slot unless `--io`); its signature is still resolved, so its run teaches its belief.
+2. When the belief has no prior and lacks a learned value for a part the job doesn't claim explicitly, and the advisor is available (§5.6), the job's sizing becomes `asking`, and a prior request is queued for its signature. Jobs of the same signature share one request. When the prior arrives, each job waiting on it is sized. A job still `asking` `wait_seconds` after its submit is sized without it, from the default claim for what is missing.
+3. When the advisor isn't available, the missing parts take the default claim at once.
 
-**A claim stays live until the job starts.** Each admission pass recomputes the claim of every queued job that isn't `pending` from its belief, its flags and the policy in effect: a pure step, with no git or advisor call. A run that settles meanwhile, a prior that arrives after the wait, or a cap edit applies to the jobs still queued, and a learned claim can never be left over a cap that was lowered. Explicit parts never change. The claim a job starts with is the one its hints and admission use from then on.
+**A claim stays live until the job starts.** Each admission pass recomputes the claim of every queued job from its belief, its flags and the policy in effect: a pure step, with no file read or advisor call. A run that settles meanwhile, a prior that arrives after the wait, or a cap edit applies to the jobs still queued, and a learned claim can never be left over a cap that was lowered. Explicit parts never change. The claim a job starts with is the one its hints and admission use from then on.
 
-The job's record keeps its signature ID, its sizing, the sources of its claim, and how many runs its learned parts came from. Admission skips a job whose sizing is `pending` or `asking`, with the reason `being sized` or `being sized (asking the agent)`; such a job is never the head. `MoveJobToFront` and `CancelJob` work on it as on any queued job; cancelling it leaves a request already sent to the advisor to finish, and its prior is stored. A job still `pending` or `asking` at boot is sized again from step 2, its wait counted from its submit.
+The job's record keeps its signature ID, its sizing, the sources of its claim, and how many runs its learned parts came from. Admission skips a job whose sizing is `asking`, with the reason `being sized (asking the agent)`; such a job is never the head. `MoveJobToFront` and `CancelJob` work on it as on any queued job; cancelling it leaves a request already sent to the advisor to finish, and its prior is stored. A job still `asking` at boot asks again, or, when the advisor is unavailable, is sized without it; its wait is counted from its submit.
 
 ### 5.5 Durations, the forecast and overdue marks
 
@@ -206,10 +205,11 @@ The global `config.json`'s `scheduler` block gains:
   - `sized 4c/20G (cores learned from 5 runs, memory yours); usually 2m`
   - `sized 4c/6G (default: the agent didn't answer in 60s)`
   - `being sized: asking the agent (up to 60s)`, when it isn't sized yet
+  - `not sized: <the reason>; it claims 4c/6G (the default)`, for a job without a signature
 
   The parentheses group the claim's parts by source, naming the parts only when the sources differ; the duration is `usually` from runs, `about` from a prior, and left out when unknown. When an explicit `--mem` is below the largest peak among the belief's last 10 runs, it adds `warning: --mem 12 is below what this command has used (13.8 GB)`. These lines go to stdout, as the reply does.
 - **`run` and `wait`.** Their stderr status lines add `loom: sized …`, with the same text, and once `loom: job 14 is overdue: 9m so far, usually 2m`.
-- **`list`.** The claim column shows the claim with its memory's source (`learned·5`, `agent`, `default`, `yours` or `exclusive`). A `usual` column shows `~2m`, or `1m10s/~2m` for a running job, and a queued job's wait column gives its forecast (`starts ~3m`) before its reason. A job being sized shows `—` as its claim and waits `being sized` or `being sized (asking the agent)`. A job with no signature waits or runs with `not sized: <the error>`.
+- **`list`.** The claim column shows the claim with its memory's source (`learned·5`, `agent`, `default`, `yours` or `exclusive`). A `usual` column shows `~2m`, or `1m10s/~2m` for a running job, and a queued job's wait column gives its forecast (`starts ~3m`) before its reason. A job being sized shows `—` as its claim and waits `being sized (asking the agent)`. A job with no signature waits or runs with `not sized: <the error>`.
 - **`loom job beliefs [--repo NAME]`** (new, `internal/cli/job_beliefs.go`). A header with the track record (`agent priors: 12 scored · memory within 25%: 9 · under on memory: 2 · duration ×1.4`), then a table: ID, repo, folder, command (cut to 40 characters), runs, claim with sources, usual duration, last seen. `--repo` keeps one repo by its display name.
 - **`loom job beliefs show ID`** prints one belief in full: signature, claim and sources, usual duration and P90, prior and score, notes, and its runs as a table (job, ended, outcome, claim, peak, busy cores, wall time, written).
 - **`loom job beliefs forget ID`** prints `forgot belief 3f9a1c2b7d10 (polyoxide · bash scripts/web-smoke.sh, 5 runs)`.
@@ -236,13 +236,13 @@ The global `config.json`'s `scheduler` block gains:
 
 - The claim column gains the memory source's tag, a running job's time column becomes `elapsed/~usual`, with `⚠` when it is overdue, and a queued job shows its forecast before its wait reason. A job peaking above the memory cap shows its claim as `22G!`.
 - When the advisor is unavailable or learning is off, one header line under the bars says so: `agent off: <the reason>` or `learning off: <the reason>`.
-- `b` opens the selected job's belief in the log pager, with the text of `beliefs show`; a job without a signature shows why instead. It is the Lua action `show_job_belief`, bound in `script/defaults.lua` and listed in `docs/specs/scripting.md`.
+- `b` opens the selected job's belief in the log pager, with the text of `beliefs show`; a job without a signature shows why instead. The work view handles it itself, as it does `enter`, `x`, `t`, `o` and `e` (amended while planning: those keys are the view's own, not Lua actions).
 
 ## 9. Loom's Claude context
 
 The work-queue paragraph in `session/loom_context_shared.md` becomes:
 
-> **Heavy work goes through loom's work queue.** This machine is shared by many loom sessions. Run builds, full test suites and benchmarks with `loom job submit -d "<what>" -- <cmd>` and carry on: a `[loom] job N` message brings the result. Or use `loom job run -d "<what>" -- <cmd>` with Bash's `run_in_background` when you need the output to continue. The scheduler sizes each job from what the same command used before, so pass `--cpus`, `--mem` or `--io` only to override it; use `--exclusive` for benchmarks. Give the command as separate words (`-- cargo build --release`), or `-- sh -c '…'` for a pipeline. Quick commands (`cargo check`, linters, git) run directly.
+> **Heavy work goes through loom's work queue.** This machine is shared by many loom sessions. Run builds, full test suites and benchmarks with `loom job submit -d "<what>" -- <cmd>` and carry on: a `[loom] job N` message brings the result. Or use `loom job run -d "<what>" -- <cmd>` with Bash's `run_in_background` when you need the output to continue. The scheduler sizes each job from what the same command used before, so pass `--cpus`, `--mem` or `--io` only to override it; use `--exclusive` for benchmarks. Give the command as separate words, the way a shell would split it, and run a pipeline through `sh -c '…'`. Quick commands (`cargo check`, linters, git) run directly.
 
 ## 10. Wire
 
@@ -259,13 +259,13 @@ The work-queue paragraph in `session/loom_context_shared.md` becomes:
 
 | Where | What |
 |---|---|
-| `sched/` | `Signature`, `SignatureID`, `Normalize`; `Run`, `Belief`, `Prior`, `Beliefs`, `LoadBeliefs`, `SaveBeliefs`, `ErrNewerBeliefs`; the pure sizing function with its sources, the usual duration, the overdue test and `Forecast`; `CheckCommand`; the shim's `cpu_seconds` and I/O fields in `Exit`, with the `/proc/self/io` reader in `ioacct_linux.go` and a stub in `ioacct_other.go`; the rules in `sched/CLAUDE.md`, the facts in `sched/README.md` |
+| `sched/` | `Signature`, `SignatureID`, `Normalize`, `FindRepo`; `Run`, `Belief`, `Prior`, `Beliefs`, `LoadBeliefs`, `SaveBeliefs`, `ErrNewerBeliefs`; the pure sizing function with its sources, the usual duration, the overdue test and `Forecast`; `CheckCommand`; the shim's `cpu_seconds` and I/O fields in `Exit`, with the `/proc/self/io` reader in `ioacct_linux.go` and a stub in `ioacct_other.go`; the rules in `sched/CLAUDE.md`, the facts in `sched/README.md` |
 | `sched/advisor/` (new) | Settings and their bounds; `AllowedEnv`; the request and answer types, the embedded prompt and schemas; building the user message; parsing and validating answers; running the CLI through `account.Command`. Its own `CLAUDE.md` and `README.md` |
 | `config/settings.go` | `SchedulerSettings.Agent`, kept by `SetSchedulerCaps` |
-| `core/` | The sizing step and live recomputation in admission passes; the git model job; the advisor's single-flight queue, usage guard, backoff and pause; recording runs at settle; surprise triggers; loading and saving `beliefs.json` in `Boot` and with the queue; `ReadBeliefs`, `ForgetBelief`; the new `JobView` and `QueueView` fields. `core/CLAUDE.md` is at its byte budget, so the model's rules go in `docs/claude/the-work-queue.md` |
+| `core/` | The sizing step at submit and live recomputation in admission passes; the advisor's single-flight queue, usage guard, backoff and pause; recording runs at settle; surprise triggers; loading and saving `beliefs.json` in `Boot` and with the queue; `ReadBeliefs`, `ForgetBelief`; the new `JobView` and `QueueView` fields. `core/CLAUDE.md` is at its byte budget, so the model's rules go in `docs/claude/the-work-queue.md` |
 | `core/rpc/` | Regenerated |
 | `internal/cli/` | The new `submit`, `run`, `wait` and `list` lines; `job_beliefs.go` |
-| `app/`, `ui/`, `script/defaults.lua` | The view's columns and header line, the `b` pager, `show_job_belief` |
+| `app/`, `ui/` | The view's columns and header line, the `b` pager |
 | `session/loom_context_shared.md` | §9 |
 | Docs | `USAGE.md` (the `agent` block, sizing, `loom job beliefs`, `b`); `docs/ARCHITECTURE.md` (`beliefs.json` in persistent state, the advisor as a daemon subprocess); `docs/specs/scripting.md`; `docs/claude/the-work-queue.md` |
 
@@ -275,7 +275,7 @@ All fail closed: nothing is guessed, and each says why.
 
 | Situation | Result |
 |---|---|
-| git can't answer for the job's folder (other than "not a repository") | No signature: flags and the default claim; nothing learned; `not sized: <the error>` |
+| The job's `.git` can't be read (other than none being found) | No signature: flags and the default claim; nothing learned; `not sized: <the error>` |
 | `beliefs.json` fails to load | Left untouched and never written; learning off: flags and default claims, no runs recorded, no advisor; a notice; admission carries on |
 | A failed write of `beliefs.json` | The change stays in memory, raises a notice, and is written with the next save |
 | The advisor is off, misconfigured, has no program or account, or is paused | Missing parts take the default claim at once; the header says why |
@@ -306,13 +306,14 @@ All fail closed: nothing is guessed, and each says why.
   No test calls a real model. An opt-in build tag runs the real advisor on a few commands from this repo and pins the CLI's flags and result shape.
 - **`core`**, through the production path with a real shim and a fake advisor program:
   - a learned belief sizes a job, and admission waits for nothing;
+  - a job in a worktree shares its main checkout's belief;
   - an unseen signature waits for a prior, and two jobs of it share one call;
   - a timeout sizes from the default, and a later prior still applies before start;
   - a settled run changes the next job's claim, and a queued job's claim follows;
   - each surprise triggers one reconcile, and the 6-hour limit holds;
   - the usage guard, the 10-minute retry and the 30-minute pause;
   - an unreadable `beliefs.json` turns learning off and is never written;
-  - `ForgetBelief`, and boot re-sizing a pending job;
+  - `ForgetBelief`, and boot asking again for a job left asking;
   - a fully explicit job starts at once and still records its run.
 - **`internal/cli`:** the `submit` lines, the explicit-memory warning, the follower's sized and overdue lines, `list` columns, `beliefs`, `show` and `forget`.
 - **`app`/`ui`:** the view's new columns and header line, and `b`.

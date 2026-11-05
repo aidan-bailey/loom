@@ -123,6 +123,16 @@ type queueState struct {
 	// reprobing is set while reprobeHeld runs, so the pass its settles bring
 	// does not test again.
 	reprobing bool
+
+	// beliefs is the registry of what each signature measured
+	// (beliefs.json), loaded with the queue (smart scheduler spec §5.3).
+	beliefs sched.Beliefs
+	// beliefsErr is why beliefs.json failed to load: learning is off and
+	// the file is never written.
+	beliefsErr error
+	// beliefsSaveFailed is set while the last save of beliefs.json failed,
+	// so a run of failures raises one notice.
+	beliefsSaveFailed bool
 }
 
 func newQueueState() *queueState {
@@ -215,6 +225,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	}
 	q.store = store
 	q.moved()
+	m.loadBeliefs()
 	m.markPendingNotices()
 	m.adoptJobs()
 	m.admitJobs()
@@ -405,12 +416,14 @@ func (m *Model) reprobeHeld() {
 // whose lock is held is adopted as running, one with an exit.json settles from
 // it, and either way it is never started twice. The pass runs here, before the
 // loop starts, so the first admission pass counts the jobs adopted. A job's
-// peak memory restarts from zero.
+// peak memory restarts from zero, and it is marked adopted, so its run's
+// peak counts only as a floor (smart scheduler spec §5.2).
 func (m *Model) adoptJobs() {
 	q := m.queue
 	for i := range q.store.Jobs {
 		if q.store.Jobs[i].State == sched.Running {
 			q.store.Jobs[i].PeakRSSKB = 0
+			q.store.Jobs[i].Adopted = true
 		}
 	}
 	pass := m.queuePassFor(true)

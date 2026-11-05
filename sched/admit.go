@@ -61,7 +61,8 @@ func shortfall(used, need Need, caps Caps) string {
 // then ID):
 //
 //  1. A job whose claim exceeds a cap is skipped and waits "over this host's
-//     caps"; it is never the head.
+//     caps"; it is never the head. A job being sized (Record.Sizing) waits
+//     with Sizing.Wait and is never the head either.
 //  2. The head is the first job that is not skipped. Once it has waited
 //     p.StarveAfter since it was submitted, Admit starts it if it fits and
 //     starts nothing else, so smaller jobs cannot pass a large one forever.
@@ -90,6 +91,10 @@ func Admit(jobs []Record, p Policy, now time.Time) Decision {
 
 	var line []Record // the jobs that can ever run, in queue order
 	for _, r := range queued {
+		if r.Sizing != "" {
+			d.Waiting[r.ID] = r.Sizing.Wait()
+			continue
+		}
 		if !p.usable() || r.Claim.exceeds(p.Caps) {
 			d.Waiting[r.ID] = waitOver
 			continue

@@ -18,6 +18,7 @@ type QueueView struct {
 	Settings  config.SchedulerSettings // as configured; a 0 field shows the default
 	Policy    sched.Policy             // in effect; zero while Paused != ""
 	Paused    string                   // why admission is paused; "" when it isn't
+	Learning  string                   // why learning is off; "" while it is on (smart scheduler spec §5.3)
 	Claimed   sched.Need               // what the running jobs' claims take
 	UsedCPU   float64                  // cores the running jobs use, last sampled
 	UsedRSSKB int64                    // memory they use, last sampled
@@ -51,6 +52,15 @@ type JobView struct {
 	Waiting          string
 	Notice           sched.Notice
 	NoticeWhy        string
+	// The smart scheduler's sizing (spec 2026-11-05 §5.4).
+	Signature sched.SignatureID
+	Sizing    sched.Sizing
+	Sources   sched.ClaimSources
+	Learned   int
+	AboveCap  bool
+	BelowKB   int64
+	Unsized   string
+	AgentWhy  string
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -168,6 +178,7 @@ func (m *Model) queueView() QueueView {
 		Settings: cloneSchedulerSettings(q.settings),
 		Policy:   q.policy,
 		Paused:   q.paused,
+		Learning: q.learningOff(),
 		Dir:      q.dir,
 	}
 	var running, queued, finished []sched.Record
@@ -228,6 +239,14 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		LogPath:      filepath.Join(sched.JobDir(q.dir, r.ID), sched.LogFile),
 		Notice:       r.Notice,
 		NoticeWhy:    r.NoticeWhy,
+		Signature:    r.Signature,
+		Sizing:       r.Sizing,
+		Sources:      r.Sources,
+		Learned:      r.Learned,
+		AboveCap:     r.AboveCap,
+		BelowKB:      r.BelowKB,
+		Unsized:      r.Unsized,
+		AgentWhy:     r.AgentWhy,
 	}
 	if r.Exit != nil {
 		e := *r.Exit

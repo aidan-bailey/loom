@@ -11,6 +11,14 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `hints.go` — `Hints`.
 - `store.go` — `Store`, `LoadStore`, `SaveStore` and `ErrNewerStore`.
 - `files.go` — the file names, `JobDir`, `CreateJobDir`, `RemoveJobDir`, and the codecs of `Spec`, `Started` and `Exit`.
+- `command.go` — `CheckCommand`, and the command lookup on the submitter's `PATH` that the shim and the check share.
+- `signature.go` — `SignatureID`, `Signature`, `NewSignature`, `Normalize`, `RepoName`.
+- `repo.go` — `FindRepo`.
+- `belief.go` — `Outcome`, `Run`, `RunOf`, `Prior`, `PriorScore`, `Note`, `AdvisorMarks`, `Belief`, `Beliefs`.
+- `beliefs_store.go` — `LoadBeliefs`, `SaveBeliefs`, `ErrNewerBeliefs`.
+- `size.go` — `Source`, `ClaimSources`, `Sized`, `Size`.
+- `durations.go` — `Usual`, `OverdueAfter`.
+- `ioacct.go`, `ioacct_linux.go`, `ioacct_other.go` — the shim's `/proc/self/io` counters.
 - `testmain_test.go` — isolates the loom dirs for the package's tests.
 
 ## Jobs
@@ -31,18 +39,29 @@ A `Claim` is whole cores and whole GB, whether the job is I/O-heavy (one of the 
 
 `Admit(jobs, policy, now)` returns the jobs to start and, for each queued job left waiting, why. It walks the queued jobs in queue order: a job over a cap is skipped (`over this host's caps`) and is never the head; once the head, the first job not skipped, has waited `StarveAfter` since it was submitted, it starts if it fits and nothing else starts (the others wait `waits for job <id>, which has waited past <m>m`); otherwise every job that fits what the running jobs and the earlier starts leave starts, first fit. A job that does not fit waits for cores (`needs <n> cores (<free> free)`), then GB (`needs <n> GB (<free> free)`), then I/O slots (`needs an I/O slot`, or `needs <n> I/O slots (<free> free)` for a need of more than one).
 
+## Signatures, beliefs and sizing
+
+The smart scheduler's half ([spec](../docs/superpowers/specs/2026-11-05-smart-scheduler-design.md)): what each command measured, and the claim that follows.
+
+- **Signature.** `FindRepo` finds the job's repository from git's files alone (the first `.git` up from its folder; a worktree's `gitdir:` and its `commondir` lead to the common dir), so every worktree of a repository shares one; `Normalize` strips wrapper programs (`env` with only `NAME=value` operands, `direnv exec DIR`, `nix develop|shell … -c`, `time`, `nice`, `ionice`) and keeps their pairs apart, sorted. A signature is the repo, the folder within it, the command and the pairs; its ID is 12 hex digits of their SHA-256.
+- **Runs.** `RunOf` turns a finished record into a run: a done run teaches memory (its peak, the larger of the sampled group peak and `max_rss`), cores (`cpu_seconds` over wall time) and I/O (`write_bytes`); a run that failed with an exit code teaches only its duration and gives its peak as a floor; a signal nobody requested or a cancel gives a floor only; an adopted run's peak is a floor; a start failure or a lost job teaches nothing.
+- **Size.** `Size(asked, belief, policy)` takes each part from the first source with a value: the flag, the belief's last 10 runs, its prior, the default claim. Memory is the largest peak plus 15% (a floor only raises it), held to the cap; cores are 1.25 × the median busy cores, at most the default claim's; an I/O slot goes to a median write of 2 GiB or more. `--cpus` with `--mem` makes the whole claim explicit. `ClaimSources.Tag` and `Describe` say where the parts came from.
+- **Durations.** `Usual` is the median and P90 of the last 10 runs that exited (done, or with an exit code), or the prior's duration; `OverdueAfter` is max(2 × P90, P90 + 5 min) once there are three.
+- **The argv check.** `CheckCommand` refuses a one-word command with spaces that names no program on the submitter's `PATH` (or, with a slash, no file in the job's folder).
+
 ## On disk
 
 Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files of mode 0600, written atomically.
 
 | Path | Holds |
 |---|---|
+| `beliefs.json` | `Beliefs`: `{"version": 1, "beliefs": [...]}`, at most 1,000 beliefs (least recently seen dropped), 20 runs and 5 notes each. `LoadBeliefs` never writes, and leaves a file that fails to load (`ErrNewerBeliefs` for a newer version, an ID that is not its signature's, a repeat) as it is |
 | `jobs.json` | `Store`: `{"version": 1, "next_id": N, "jobs": [...]}`. `LoadStore` never writes, leaves a file that fails to load alone, reports a newer version as `ErrNewerStore`, and raises `next_id` past every ID in the file and past every numeric directory under the jobs dir (a missing `jobs.json` included), failing the load when the dir can't be listed |
 | `<id>/spec.json` | `Spec`: argv, cwd, the submitter's environment, and the parallelism the start hints |
 | `<id>/output.log` | the command's stdout and stderr |
 | `<id>/run.lock` | the shim's lock, held while the job runs |
 | `<id>/started.json` | `Started`: the shim's pid and start time |
-| `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, and the start error if the exec failed |
+| `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, its CPU seconds, on Linux the bytes it read and wrote (from `/proc/self/io` after the shim reaps it), and the start error if the exec failed |
 
 `JobDir(dir, id)` is `<dir>/<id>`, `CreateJobDir` makes it only if it does not exist (a submit never writes into a directory it did not create), and `RemoveJobDir` removes it when retention drops a finished job.
 
