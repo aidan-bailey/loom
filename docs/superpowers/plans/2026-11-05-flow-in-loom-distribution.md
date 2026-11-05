@@ -1986,3 +1986,34 @@ loom job submit -d "flow-in-loom: race" -- env CC=clang CGO_ENABLED=1 go test -r
 (Filled in as packages land: P1's agent type, deviations, the gates' results.)
 
 - **P1, 2026-11-05, Claude Code on PATH:** all four premises held in one 13 s run. SubagentStart saw `flowprobe:probe-dev` and `flowprobetwo:probe-two` (two `--plugin-dir` flags both load). PreToolUse fired twice inside the plugin agent with `agent_type` `flowprobe:probe-dev`, the namespaced form, so `probedPrefix = "flow:"`. The preloaded `flowprobe:probe-habits` reached the agent, and the hook's exit 2 blocked `echo PROBE-BLOCKED` while `echo PROBE-ALLOWED` ran.
+- **P2 deviations:**
+  - The prompts call most scripts through a `<lib>` placeholder ("Below, `<lib>` is `$HOME/.claude/flow/lib`"), which step 5's script didn't cover. A second pass rewrote `python3 <lib>/X.py` to `loom flow <tool>`, and a third rewrote every prose `X.py` to `loom flow <tool>`, since no agent has the scripts on its PATH. `plan_join.py`'s "re-run plan_join.py" message, which `plan_packet.py` and the docs quote, became "re-run loom flow join", along with its tests.
+  - Hand edits beyond the plan's list:
+    - `/flow:init` writes the draft straight to `.claude/flow.toml`, keeping an earlier profile as `.claude/flow.toml.old` until the owner decides, and commits it in the repo.
+    - `/flow:supervise` and `/flow:draft` drop the shadowed-agents WARN.
+    - `/flow:retro` runs in a loom session on loom's repo and commits roster changes there as `chore(flow): retro <date>`.
+    - `records.md` describes the new roster ID and keeps the old form for records before the move.
+  - The Python tests needed more than step 8 named:
+    - `flowconf_test`'s fixture writes the repo's `.claude/flow.toml` (`repo_profile`), and the home-store and merge tests went.
+    - `doctor_test` builds a fake `FLOW_ROOT`.
+    - `check_agents_test` drops ten hook-placement tests and adds nine: hooks, the guarded list (missing entry, missing file, unknown mode, missing list), the developer index rules, the `flow:` preload, the private list, a doc's banned word.
+    - `check_plan_test` adds the `flow:` Developer case.
+  - Result: 351 tests plus the lint pass.
+  - `PROVENANCE.md` records the pins at the move as a table.
+- **P3 deviations:**
+  - `config.GetGlobalConfigDir` returns an error, so `flowDataDir` does too.
+  - Each flow command calls `loomErrors(c)`, so an error exit prints no usage.
+  - The test helper is `flowExit`, since `job_test.go` has an `exitCode`.
+  - Added `TestFlowGuard_TheShippedGuardBlocksADevelopersStash`: the real embedded `git_guard.py` through the Go front end.
+  - The CLAUDE.md lint wanted the doc paths written from the doc (`lib/check-agents.sh`), and a placeholder (`<repo>/.claude/flow.toml`) for paths outside the repo.
+- **P4 deviations:**
+  - `SaveSettings` now calls `applySessionConfig` (flags plus the context files) in place of `syncSessionFlags`, so the files follow a toggle at once.
+  - `TestLoomContext_NamesRealSessionFlags` also reads `loom_context_flow.md` and knows `loom flow`; a typo'd `loom flow chek-plan` fails it.
+  - `TestSubagentContext_FitsClaudesInlineCap` checks the brief with the flow fragment (~6.1 KB of 10,000).
+  - Mutation checks:
+    - Dropping `if guard != ""` in `prepareHooks` fails three launch tests.
+    - Reverting `SaveSettings` to `syncSessionFlags` fails the flow-setting test.
+- **P5, plugin check:**
+  - `claude plugin validate` on the plugin passes. It warns about README, licence and icon, which only the plugin directory's submission checks want.
+  - `claude --plugin-dir <plugin> plugin details flow` lists 5 skills and 12 agents, ~1,732 always-on tokens per session.
+  - A sandbox dev-build check was replaced by the probe plus the shipped-guard test above.
