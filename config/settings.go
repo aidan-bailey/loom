@@ -47,6 +47,11 @@ type Settings struct {
 	// SubagentTrackingEnabled), matching ClaudeLoomContext. Takes effect
 	// at once.
 	ClaudeSubagentTracking *bool `json:"claude_subagent_tracking,omitempty"`
+	// Flow controls whether new Claude sessions get the agent flow: the
+	// `flow` plugin, its git guard hook and its context fragment (see
+	// session.SetFlowEnabled). nil is treated as enabled (read via
+	// FlowEnabled), matching ClaudeLoomContext.
+	Flow *bool `json:"flow,omitempty"`
 	// ClaudePermissionMode is the --permission-mode value new Claude
 	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
 	// sets this explicitly to "default" rather than leaving it nil — nil
@@ -195,6 +200,7 @@ func (s Settings) Clone() Settings {
 	out.ClaudeRemoteControl = clonePtr(s.ClaudeRemoteControl)
 	out.ClaudeLoomContext = clonePtr(s.ClaudeLoomContext)
 	out.ClaudeSubagentTracking = clonePtr(s.ClaudeSubagentTracking)
+	out.Flow = clonePtr(s.Flow)
 	out.ClaudePermissionMode = clonePtr(s.ClaudePermissionMode)
 	out.HeadroomProxy = clonePtr(s.HeadroomProxy)
 	out.ClaudeModel = clonePtr(s.ClaudeModel)
@@ -316,6 +322,10 @@ func (s Settings) LoomContextEnabled() bool {
 func (s Settings) SubagentTrackingEnabled() bool {
 	return s.ClaudeSubagentTracking == nil || *s.ClaudeSubagentTracking
 }
+
+// FlowEnabled reports whether new Claude sessions get the agent flow. nil
+// (unset) is treated as enabled, mirroring LoomContextEnabled.
+func (s Settings) FlowEnabled() bool { return s.Flow == nil || *s.Flow }
 
 // PermissionMode returns the configured --permission-mode value,
 // defaulting to "default" when unset (nil). Deliberately unlocked, like

@@ -112,7 +112,7 @@ func (i *Instance) launchProgram(env LaunchEnv, launching bool) string {
 // that builds a tmux session for a launch goes through here.
 func (i *Instance) launchCommand(env LaunchEnv, launching bool) (program string, tmuxEnv []string) {
 	program = i.launchProgram(env, launching)
-	return program, append(InstanceEnv(env), i.modEnv()...)
+	return program, append(append(InstanceEnv(env), i.modEnv()...), i.flowEnv()...)
 }
 
 // Launches counts the instance's real launches: every Start(true),
@@ -139,6 +139,7 @@ func (i *Instance) resetHookLaunch() {
 	i.mu.Lock()
 	i.hookLaunchID = noHooksLaunchID
 	i.modEnvVars = nil
+	i.flowEnvVars = nil
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
 	i.claude.newLaunch(time.Now())
@@ -170,7 +171,9 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 // just untracked. It also adopts the new launch ID and resets the
 // tracker, so scan results from before this launch are dropped. When a
 // daemon serves the loom mod, it also writes the mod into the folder and
-// adds --plugin-dir (prepareMod). A non-empty brief is what each of the
+// adds --plugin-dir (prepareMod). When flow is on for the config dir, it
+// also writes flow into the folder and adds its plugin dir and the guard
+// hook (prepareFlow, flowGuardCommand). A non-empty brief is what each of the
 // launch's subagents but a fork is told at its start (subagentBrief,
 // hooks.Prepare).
 func (i *Instance) prepareHooks(program, claudeConfigDir, brief string) string {
@@ -190,21 +193,30 @@ func (i *Instance) prepareHooks(program, claudeConfigDir, brief string) string {
 	if why != "" {
 		i.getLogger().Info("claude_memory.unresolved", "reason", why)
 	}
-	launchID, err := hooks.Prepare(dir, memoryDir, brief)
+	guard := i.flowGuardCommand()
+	launchID, err := hooks.PrepareGuarded(dir, memoryDir, brief, guard)
 	if err != nil {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program
 	}
 	modEnv := i.prepareMod(dir, launchID)
+	var flowEnv []string
+	if guard != "" {
+		flowEnv = i.prepareFlow(dir)
+	}
 	i.mu.Lock()
 	i.hookLaunchID = launchID
 	i.modEnvVars = modEnv
+	i.flowEnvVars = flowEnv
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
 	i.mu.Unlock()
 	program = BuildSettingsCommand(program, hooks.SettingsPath(dir))
 	if modEnv != nil {
 		program = agent.ApplyClaudePluginDir(program, modDirOf(dir))
+	}
+	if flowEnv != nil {
+		program = agent.ApplyClaudePluginDir(program, filepath.Join(flowDirOf(dir), "plugin"))
 	}
 	return program
 }

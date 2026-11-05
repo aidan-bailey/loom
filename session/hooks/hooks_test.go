@@ -15,7 +15,7 @@ import (
 )
 
 func TestSettingsJSON_Golden(t *testing.T) {
-	got, err := SettingsJSON("/cfg/hooks/loom_x/events", "", "")
+	got, err := SettingsJSON("/cfg/hooks/loom_x/events", "", "", "")
 	require.NoError(t, err)
 
 	cmd := `f='/cfg/hooks/loom_x/events/'\"$(date +%s%N)-$$\"; { cat > \"$f.tmp\" && mv \"$f.tmp\" \"$f.json\"; } 2>/dev/null || cat >/dev/null`
@@ -44,14 +44,14 @@ func TestSettingsJSON_Golden(t *testing.T) {
 // An account session's memory dir rides in the same file, so it needs no
 // second --settings flag; without one the file is the hooks alone.
 func TestSettingsJSON_AutoMemoryDirectory(t *testing.T) {
-	got, err := SettingsJSON("/e", "/home/u/.claude/projects/-r/memory", "")
+	got, err := SettingsJSON("/e", "/home/u/.claude/projects/-r/memory", "", "")
 	require.NoError(t, err)
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(got, &doc))
 	assert.Equal(t, "/home/u/.claude/projects/-r/memory", doc["autoMemoryDirectory"])
 	assert.Contains(t, doc, "hooks")
 
-	got, err = SettingsJSON("/e", "", "")
+	got, err = SettingsJSON("/e", "", "", "")
 	require.NoError(t, err)
 	assert.NotContains(t, string(got), "autoMemoryDirectory")
 }
@@ -121,7 +121,7 @@ func TestPrepare_CreatesLayout(t *testing.T) {
 
 	settings, err := os.ReadFile(SettingsPath(dir))
 	require.NoError(t, err)
-	want, err := SettingsJSON(EventsDir(dir), "", "")
+	want, err := SettingsJSON(EventsDir(dir), "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, string(want), string(settings))
 
@@ -159,7 +159,7 @@ func TestPrepare_RejectsSingleQuote(t *testing.T) {
 // fork, and leaves the recorder's entry as it was; without one the
 // settings are the recorder's alone (TestSettingsJSON_Golden).
 func TestSettingsJSON_BriefsSubagentsButNotForks(t *testing.T) {
-	got, err := SettingsJSON("/e", "", "/h/subagent-context.json")
+	got, err := SettingsJSON("/e", "", "/h/subagent-context.json", "")
 	require.NoError(t, err)
 	var doc settingsDoc
 	require.NoError(t, json.Unmarshal(got, &doc))
@@ -174,7 +174,7 @@ func TestSettingsJSON_BriefsSubagentsButNotForks(t *testing.T) {
 		}
 	}
 
-	got, err = SettingsJSON("/e", "", "")
+	got, err = SettingsJSON("/e", "", "", "")
 	require.NoError(t, err)
 	var bare settingsDoc
 	require.NoError(t, json.Unmarshal(got, &bare))
@@ -224,7 +224,7 @@ func TestPrepare_WritesTheSubagentBrief(t *testing.T) {
 	assert.Equal(t, map[string]string{"hookEventName": "SubagentStart", "additionalContext": brief}, out["hookSpecificOutput"])
 	settings, err := os.ReadFile(SettingsPath(dir))
 	require.NoError(t, err)
-	want, err := SettingsJSON(EventsDir(dir), "", BriefPath(dir))
+	want, err := SettingsJSON(EventsDir(dir), "", BriefPath(dir), "")
 	require.NoError(t, err)
 	assert.Equal(t, string(want), string(settings))
 
@@ -234,4 +234,33 @@ func TestPrepare_WritesTheSubagentBrief(t *testing.T) {
 	settings, err = os.ReadFile(SettingsPath(dir))
 	require.NoError(t, err)
 	assert.NotContains(t, string(settings), "subagent-context.json")
+}
+
+func TestSettingsJSON_GuardsFlowsAgentsOnlyWhenAsked(t *testing.T) {
+	without, err := SettingsJSON("/e", "", "", "")
+	require.NoError(t, err)
+	assert.NotContains(t, string(without), "PreToolUse")
+
+	with, err := SettingsJSON("/e", "", "", "'/bin/loom' flow guard")
+	require.NoError(t, err)
+	var doc settingsDoc
+	require.NoError(t, json.Unmarshal(with, &doc))
+	require.Len(t, doc.Hooks["PreToolUse"], 1)
+	entry := doc.Hooks["PreToolUse"][0]
+	assert.Equal(t, "Bash|Write|Edit", entry.Matcher)
+	assert.Equal(t, []hookCommand{{Type: "command", Command: "'/bin/loom' flow guard", Timeout: 10}}, entry.Hooks)
+	for _, name := range HookEvents {
+		assert.Empty(t, doc.Hooks[name][0].Matcher, "the recorder's entries keep no matcher: %s", name)
+	}
+}
+
+func TestPrepareGuarded_WritesTheGuardIntoTheSettings(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "loom_x")
+	_, err := PrepareGuarded(dir, "", "", "'/bin/loom' flow guard")
+	require.NoError(t, err)
+	got, err := os.ReadFile(SettingsPath(dir))
+	require.NoError(t, err)
+	want, err := SettingsJSON(EventsDir(dir), "", "", "'/bin/loom' flow guard")
+	require.NoError(t, err)
+	assert.Equal(t, string(want), string(got))
 }

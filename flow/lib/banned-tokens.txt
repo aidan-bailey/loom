@@ -1,0 +1,15 @@
+# Words no agent or skill file may hold: each belongs to one repo, and the flow serves every repo.
+# One per line, matched case-insensitively as fixed strings. Lines starting with # are comments.
+# Entries match as case-insensitive substrings, so a hit inside an ordinary word means rephrase.
+# check-agents.sh also reads $FLOW_DATA/banned-tokens.txt (default ~/.loom/flow/banned-tokens.txt) when it exists: words that must not ship in loom's repo, such as client repo names.
+nix develop
+dev-postgres
+docs/agent-runs
+developer-habits
+verify-rust
+verify-frontend
+verify-affected
+.superpowers/drafts
+user_id
+tauri
+specta

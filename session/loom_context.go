@@ -33,24 +33,36 @@ var (
 	loomContextSessions []byte
 	//go:embed loom_context_subagent.md
 	loomContextSubagentHead []byte
+	//go:embed loom_context_flow.md
+	loomContextFlow []byte
 )
 
 // loomContextFile is a prompt file's content: head, then the shared
 // fragment ("Loom itself"), then the sessions fragment ("Other
-// sessions"), with a blank line at each seam (every fragment ends in one
-// newline). bytes.Join builds a slice of its own, so no append ever
-// writes into an embedded one.
-func loomContextFile(head []byte) []byte {
-	return bytes.Join([][]byte{head, loomContextShared, loomContextSessions}, []byte("\n"))
+// sessions"), then, withFlow, the flow fragment ("The agent flow"), with
+// a blank line at each seam (every fragment ends in one newline).
+// bytes.Join builds a slice of its own, so no append ever writes into an
+// embedded one.
+func loomContextFile(head []byte, withFlow bool) []byte {
+	parts := [][]byte{head, loomContextShared, loomContextSessions}
+	if withFlow {
+		parts = append(parts, loomContextFlow)
+	}
+	return bytes.Join(parts, []byte("\n"))
 }
 
 // subagentContextFile is a subagent's cut of the prompt whose head is
-// head: the subagent head, then head and the shared fragment. The
-// sessions fragment stays the parent's, since messaging and starting
-// sessions is its job. Loom's SubagentStart hook hands it to every
-// subagent but a fork (subagentBrief, hooks.Prepare).
-func subagentContextFile(head []byte) []byte {
-	return bytes.Join([][]byte{loomContextSubagentHead, head, loomContextShared}, []byte("\n"))
+// head: the subagent head, then head and the shared fragment, then,
+// withFlow, the flow fragment. The sessions fragment stays the parent's,
+// since messaging and starting sessions is its job. Loom's SubagentStart
+// hook hands it to every subagent but a fork (subagentBrief,
+// hooks.Prepare).
+func subagentContextFile(head []byte, withFlow bool) []byte {
+	parts := [][]byte{loomContextSubagentHead, head, loomContextShared}
+	if withFlow {
+		parts = append(parts, loomContextFlow)
+	}
+	return bytes.Join(parts, []byte("\n"))
 }
 
 // dirFlags is a boolean setting kept per config dir. Each workspace has its
@@ -81,11 +93,12 @@ func SetLoomContextEnabled(configDir string, enabled bool) { loomContextOn.set(c
 // LoomContextEnabled reports configDir's loom-context toggle.
 func LoomContextEnabled(configDir string) bool { return loomContextOn.get(configDir, false) }
 
-// WriteLoomContextFiles writes both prompt files (loomContextFile) into
-// configDir, (re)writing a file only when it is missing or its bytes
-// differ (so a loom upgrade refreshes the prose automatically). A no-op
-// when configDir is empty.
-func WriteLoomContextFiles(configDir string) error {
+// WriteLoomContextFiles writes both prompt files (loomContextFile, with
+// the flow fragment when withFlow) into configDir, (re)writing a file only
+// when it is missing or its bytes differ (so a loom upgrade or a change of
+// the flow setting refreshes the prose automatically). A no-op when
+// configDir is empty.
+func WriteLoomContextFiles(configDir string, withFlow bool) error {
 	if configDir == "" {
 		return nil
 	}
@@ -93,8 +106,8 @@ func WriteLoomContextFiles(configDir string) error {
 		name    string
 		content []byte
 	}{
-		{loomContextFileWorktree, loomContextFile(loomContextWorktreeHead)},
-		{loomContextFileWorkspace, loomContextFile(loomContextMainHead)},
+		{loomContextFileWorktree, loomContextFile(loomContextWorktreeHead, withFlow)},
+		{loomContextFileWorkspace, loomContextFile(loomContextMainHead, withFlow)},
 	}
 	for _, f := range files {
 		path := filepath.Join(configDir, f.name)
@@ -158,5 +171,5 @@ func subagentBrief(program, configDir string, isWorkspaceTerminal bool) string {
 	if isWorkspaceTerminal {
 		head = loomContextMainHead
 	}
-	return string(subagentContextFile(head))
+	return string(subagentContextFile(head, FlowEnabled(configDir)))
 }

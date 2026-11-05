@@ -250,3 +250,13 @@ func TestValidateBuildSweepAfterHours(t *testing.T) {
 		assert.Error(t, ValidateBuildSweepAfterHours(bad), bad)
 	}
 }
+
+func TestSettings_FlowEnabledDefaultsOnAndCloneCopiesIt(t *testing.T) {
+	assert.True(t, Settings{}.FlowEnabled())
+	off := false
+	s := Settings{Flow: &off}
+	assert.False(t, s.FlowEnabled())
+	c := s.Clone()
+	*s.Flow = true
+	assert.False(t, c.FlowEnabled(), "Clone deep-copies the pointer")
+}

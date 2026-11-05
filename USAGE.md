@@ -970,6 +970,19 @@ loom feedback close 3
 
 `grouper` takes the scheduler agent's fields and bounds (`wait_seconds` aside). A failed call leaves the note ungrouped, shown as its own row and retried 10 minutes later; three failed calls in a row pause the grouper until the daemon restarts or the block changes. With the grouper off, notes stay ungrouped rows.
 
+### Supervised Plans (the Agent Flow)
+
+Loom ships the agent flow: a pinned roster of subagents that runs an implementation plan story by story. Every Claude session loom launches gets it as the `flow` plugin, beside the loom mod, unless the `flow` setting is off:
+
+- `/flow:init` drafts the repo's profile, `.claude/flow.toml` (gates, landmines, review idioms), for you to commit;
+- `/flow:draft <plan>` has drafters write a plan's stories from its spec and skeleton;
+- `/flow:supervise <plan>` runs them: a supervisor dispatches a developer per story, a verifier for the gates and reviewers for each story and the whole, and asks you what the spec doesn't settle;
+- `/flow:retro` reads the run records and proposes changes to the roster or a profile.
+
+The four are yours to type; agents never start them. The agents are `flow:<name>` (`flow:verifier`, `flow:intermediate-dev`, …). A PreToolUse hook loom adds to each session, `loom flow guard`, blocks the git commands that would sweep or rewrite the shared worktree for the developers and the drafter. Each launch gets its own copy of the plugin and its tools in its hooks folder, so a session keeps the version it launched with. Run records and retros live in `~/.loom/flow/records/`. The tools the agents call are `loom flow <tool>` (see [Flow Subcommands](#flow-subcommands)); they need `python3` 3.11 or later on `PATH`.
+
+Coming from the standalone flow (`~/.claude/flow`, linked by its `install.sh`)? Once no supervised run uses the old copy, run its `install.sh --uninstall` (and again with `CLAUDE_CONFIG_DIR` set to each loom account's config dir), then `loom flow import ~/.claude/flow`: it copies the run records and prints where each repo's profile belongs.
+
 ### Session Recovery (orphaned worktrees)
 
 If Loom crashes or its state file loses track of a session, the worktree
@@ -1125,6 +1138,7 @@ loom [command]
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
 | `feedback` | File, list, show, fix and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
+| `flow` | The agent flow's tools: plans, profiles, gates and the git guard (see below, and [Supervised Plans](#supervised-plans-the-agent-flow)); runs without the daemon |
 
 ### Workspace Subcommands
 
@@ -1185,6 +1199,23 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `feedback show <thread \| nN>` | A thread with every note in full, or one note |
 | `feedback fix <thread> [-w <workspace>]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there) |
 | `feedback close <thread>` | Close a thread |
+
+### Flow Subcommands
+
+Inside a session loom launched, each tool runs from the session's own copy (`$LOOM_FLOW_ROOT`); outside one, from a temp copy of this binary's. A tool exits with its script's code, and 125 when it could not run (no `python3`, or a `$LOOM_FLOW_ROOT` that is not a flow root).
+
+| Command | Description |
+|---------|-------------|
+| `flow conf <key\|status\|show --for ROLE\|state\|drafts STEM\|vacuous FILE\|roster\|gates …\|doctor>` | The repo's flow key, profile and role blocks, its state and drafts directories, the gates to run, and the roster ID |
+| `flow check-plan <plan>` | Check that a plan is ready for the supervised option |
+| `flow packet`, `flow join`, `flow premises`, `flow conformance` | The drafting and review tools `/flow:draft` and the supervisor run |
+| `flow costs session [<id>] [--since T] [--until T]`, `flow costs records [FILE …]` | Token usage and API-price cost of a session's agents, or totals over run records |
+| `flow doctor` | Check that a supervised run can start here (`flow conf doctor`) |
+| `flow check-agents` | Lint the flow plugin's agents and skills |
+| `flow wait start <name> -- <cmd>`, `flow wait wait <name> [secs]` | Start a long step for an agent, and wait for it inside a turn |
+| `flow guard` | Loom's PreToolUse hook: the git guard for flow's developers and drafter (reads the hook's JSON on stdin) |
+| `flow path <file>` | The absolute path of a file in this session's copy of the plugin (`docs/dispatch.md`, …); inside a session only |
+| `flow import <checkout>` | Copy a standalone flow checkout's run records into `~/.loom/flow/records` (an identical one is skipped, a differing one refused and listed: exit 1) and print where each of its profiles belongs |
 
 ### Web Subcommands
 
@@ -1253,6 +1284,7 @@ Configuration is stored in `~/.loom/config.json` for the global workspace, and i
 | `headroom_proxy` | bool | `false` | Point Claude sessions' `ANTHROPIC_BASE_URL` at a Headroom proxy on `http://127.0.0.1:8787`, which you run yourself; turning it on turns `claude_remote_control` off, and the reverse |
 | `claude_loom_context` | bool | `true` | Give Claude sessions loom's context prompt (`--append-system-prompt-file`), which tells the agent about its worktree and `loom session`; their subagents, forks aside, get a cut of it at their start |
 | `claude_subagent_tracking` | bool | `true` | Show the subagents and teammates a Claude session runs (see [Subagent Tracking](#subagent-tracking)) |
+| `flow` | bool | `true` | Give Claude sessions the agent flow: the `flow` plugin, its git guard hook and its paragraph in loom's context (see [Supervised Plans](#supervised-plans-the-agent-flow)). Takes effect at each session's next launch |
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
 | `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off, at most `8760`, a year). Set it in Settings (`S`) → Build Sweep. See [Build Sweep](#build-sweep) |
 | `scheduler` | object | host defaults | The work queue's caps and default claim (global `config.json` only). See [Scheduler Caps](#scheduler-caps) |

@@ -1,0 +1,9 @@
+# The agents loom's git guard (`loom flow guard`) checks, by their name in the
+# flow plugin, and how. developer: every Bash call. drafter: every Bash, Write
+# and Edit call, with writes confined to the drafts directory
+# (git_guard.py --drafter). check-agents.sh fails an agent that can Write or
+# Edit and is missing here. One `<agent> <mode>` per line.
+junior-dev developer
+intermediate-dev developer
+senior-dev developer
+drafter drafter

@@ -55,14 +55,16 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	if isGlobalWS(ws) {
 		m.program = ws.cfg.GetProgram()
 	}
-	// Re-sync the session flags so an in-place change takes effect on the
-	// workspace's next session launch. Keyed by the context's config dir,
-	// which its instances carry, not the dir the settings were saved to.
+	// Re-sync the session flags, and rewrite the context files, which carry
+	// the flow fragment only while flow is on, so an in-place change takes
+	// effect on the workspace's next session launch. Keyed by the
+	// context's config dir, which its instances carry, not the dir the
+	// settings were saved to.
 	flagsDir := ""
 	if ws.ctx != nil {
 		flagsDir = ws.ctx.ConfigDir
 	}
-	syncSessionFlags(ws.cfg, flagsDir)
+	applySessionConfig(ws.cfg, flagsDir)
 	return nil
 }
 

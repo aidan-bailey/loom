@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteLoomContextFiles(t *testing.T) {
 	dir := t.TempDir()
-	assert.NoError(t, WriteLoomContextFiles(dir))
+	assert.NoError(t, WriteLoomContextFiles(dir, false))
 
 	wt := filepath.Join(dir, "claude-loom-context.md")
 	ws := filepath.Join(dir, "claude-loom-context-workspace.md")
@@ -35,7 +36,7 @@ func TestWriteLoomContextFiles(t *testing.T) {
 	// via os.SameFile (inode-robust) plus an mtime-unchanged signal.
 	before, err := os.Stat(ws)
 	assert.NoError(t, err)
-	assert.NoError(t, WriteLoomContextFiles(dir))
+	assert.NoError(t, WriteLoomContextFiles(dir, false))
 	after, err := os.Stat(ws)
 	assert.NoError(t, err)
 	assert.True(t, os.SameFile(before, after),
@@ -45,17 +46,17 @@ func TestWriteLoomContextFiles(t *testing.T) {
 
 	// stale content is rewritten
 	assert.NoError(t, os.WriteFile(wt, []byte("stale"), 0o644))
-	assert.NoError(t, WriteLoomContextFiles(dir))
+	assert.NoError(t, WriteLoomContextFiles(dir, false))
 	b, _ := os.ReadFile(wt)
 	assert.NotEqual(t, "stale", string(b))
 
 	// empty configDir is a no-op (no error)
-	assert.NoError(t, WriteLoomContextFiles(""))
+	assert.NoError(t, WriteLoomContextFiles("", false))
 }
 
 func TestLoomContextProgram(t *testing.T) {
 	dir := t.TempDir()
-	assert.NoError(t, WriteLoomContextFiles(dir))
+	assert.NoError(t, WriteLoomContextFiles(dir, false))
 	wtPath := filepath.Join(dir, "claude-loom-context.md")
 	wsPath := filepath.Join(dir, "claude-loom-context-workspace.md")
 
@@ -89,8 +90,8 @@ func TestLoomContextProgram(t *testing.T) {
 // launch reads the toggle of its own config dir, not the last one set.
 func TestLoomContextProgram_ReadsItsOwnConfigDirsToggle(t *testing.T) {
 	on, off := t.TempDir(), t.TempDir()
-	assert.NoError(t, WriteLoomContextFiles(on))
-	assert.NoError(t, WriteLoomContextFiles(off))
+	assert.NoError(t, WriteLoomContextFiles(on, false))
+	assert.NoError(t, WriteLoomContextFiles(off, false))
 	SetLoomContextEnabled(on, true)
 	SetLoomContextEnabled(off, false)
 
@@ -104,8 +105,8 @@ func TestLoomContextProgram_ReadsItsOwnConfigDirsToggle(t *testing.T) {
 // and starting sessions is its job.
 func TestSubagentContext_IsTheParentsWithoutOtherSessions(t *testing.T) {
 	for name, head := range map[string][]byte{"worktree": loomContextWorktreeHead, "workspace": loomContextMainHead} {
-		parent := string(loomContextFile(head))
-		cut := string(subagentContextFile(head))
+		parent := string(loomContextFile(head, false))
+		cut := string(subagentContextFile(head, false))
 
 		assert.Equal(t, string(loomContextSubagentHead)+"\n"+string(head)+"\n"+string(loomContextShared), cut, name)
 		assert.Contains(t, cut, "**Heavy work goes through loom's work queue.**", name)
@@ -120,7 +121,7 @@ func TestSubagentContext_IsTheParentsWithoutOtherSessions(t *testing.T) {
 // subagent a 2,000-character preview. A byte count bounds the characters.
 func TestSubagentContext_FitsClaudesInlineCap(t *testing.T) {
 	for name, head := range map[string][]byte{"worktree": loomContextWorktreeHead, "workspace": loomContextMainHead} {
-		assert.Less(t, len(subagentContextFile(head)), 10000, name)
+		assert.Less(t, len(subagentContextFile(head, true)), 10000, name+", with the flow fragment")
 	}
 }
 
@@ -129,11 +130,11 @@ func TestSubagentContext_FitsClaudesInlineCap(t *testing.T) {
 // program other than Claude.
 func TestSubagentBrief_FollowsTheParentsContext(t *testing.T) {
 	dir := t.TempDir()
-	assert.NoError(t, WriteLoomContextFiles(dir))
+	assert.NoError(t, WriteLoomContextFiles(dir, false))
 	SetLoomContextEnabled(dir, true)
 
-	assert.Equal(t, string(subagentContextFile(loomContextWorktreeHead)), subagentBrief("claude", dir, false))
-	assert.Equal(t, string(subagentContextFile(loomContextMainHead)), subagentBrief("claude", dir, true))
+	assert.Equal(t, string(subagentContextFile(loomContextWorktreeHead, false)), subagentBrief("claude", dir, false))
+	assert.Equal(t, string(subagentContextFile(loomContextMainHead, false)), subagentBrief("claude", dir, true))
 	assert.Empty(t, subagentBrief("aider", dir, false))
 
 	missing := t.TempDir()
@@ -142,4 +143,24 @@ func TestSubagentBrief_FollowsTheParentsContext(t *testing.T) {
 
 	SetLoomContextEnabled(dir, false)
 	assert.Empty(t, subagentBrief("claude", dir, false))
+}
+
+func TestLoomContext_TheFlowFragmentFollowsTheSetting(t *testing.T) {
+	on, off := t.TempDir(), t.TempDir()
+	require.NoError(t, WriteLoomContextFiles(on, true))
+	require.NoError(t, WriteLoomContextFiles(off, false))
+	for _, name := range []string{loomContextFileWorktree, loomContextFileWorkspace} {
+		withFlow, err := os.ReadFile(filepath.Join(on, name))
+		require.NoError(t, err)
+		without, err := os.ReadFile(filepath.Join(off, name))
+		require.NoError(t, err)
+		assert.Contains(t, string(withFlow), "## The agent flow", name)
+		assert.NotContains(t, string(without), "## The agent flow", name)
+	}
+	SetLoomContextEnabled(on, true)
+	SetFlowEnabled(on, true)
+	t.Cleanup(func() { SetLoomContextEnabled(on, false); SetFlowEnabled(on, false) })
+	assert.Contains(t, subagentBrief("claude", on, false), "## The agent flow")
+	SetFlowEnabled(on, false)
+	assert.NotContains(t, subagentBrief("claude", on, false), "## The agent flow")
 }

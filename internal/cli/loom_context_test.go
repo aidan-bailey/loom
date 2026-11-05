@@ -12,15 +12,15 @@ import (
 )
 
 // loomContextFragments are the loom-context fragments that teach
-// `loom job` ("Loom itself") and `loom session` ("Other sessions") to
-// every Claude session loom launches (session package,
-// WriteLoomContextFiles).
-var loomContextFragments = []string{"../../session/loom_context_shared.md", "../../session/loom_context_sessions.md"}
+// `loom job` ("Loom itself"), `loom session` ("Other sessions") and
+// `loom flow` ("The agent flow") to every Claude session loom launches
+// (session package, WriteLoomContextFiles).
+var loomContextFragments = []string{"../../session/loom_context_shared.md", "../../session/loom_context_sessions.md", "../../session/loom_context_flow.md"}
 
 // codeSpan is one inline code span: a run between single backticks.
 var codeSpan = regexp.MustCompile("`([^`]+)`")
 
-// Every `loom session <sub> …`, `loom job <sub> …` or `loom feedback <sub> …`
+// Every `loom session <sub> …`, `loom job <sub> …`, `loom feedback <sub> …` or `loom flow <sub> …`
 // span in the loom-context fragments names a real subcommand and flags it has,
 // and every span that is a bare flag one some subcommand of them has. An agent following
 // a stale line fails on an unknown command or flag, and nothing else would
@@ -32,7 +32,7 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 		require.NoError(t, err)
 		text.Write(b)
 	}
-	roots := map[string]*cobra.Command{"session": newSessionCmd(), "job": newJobCmd(), "feedback": newFeedbackCmd()}
+	roots := map[string]*cobra.Command{"session": newSessionCmd(), "job": newJobCmd(), "feedback": newFeedbackCmd(), "flow": newFlowCmd()}
 
 	var commands, bare int
 	for _, m := range codeSpan.FindAllStringSubmatch(text.String(), -1) {

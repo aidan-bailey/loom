@@ -432,15 +432,15 @@ func TestLaunchProgram_BriefsSubagentsOnlyWithTheLoomContext(t *testing.T) {
 		on, workspace bool
 		want          []byte // nil: no brief
 	}{
-		{"worktree", true, false, subagentContextFile(loomContextWorktreeHead)},
-		{"workspace terminal", true, true, subagentContextFile(loomContextMainHead)},
+		{"worktree", true, false, subagentContextFile(loomContextWorktreeHead, false)},
+		{"workspace terminal", true, true, subagentContextFile(loomContextMainHead, false)},
 		{"context off", false, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			inst := hooksInstance(t, "claude")
 			inst.IsWorkspaceTerminal = tc.workspace
-			require.NoError(t, WriteLoomContextFiles(inst.ConfigDir))
+			require.NoError(t, WriteLoomContextFiles(inst.ConfigDir, false))
 			SetLoomContextEnabled(inst.ConfigDir, tc.on)
 
 			got := inst.launchProgram(LaunchEnv{Program: "claude"}, true)

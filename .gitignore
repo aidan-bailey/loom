@@ -8,3 +8,6 @@ git-cliff/
 result
 .serena
 .superpowers/
+
+# Python bytecode from flow/lib test runs
+__pycache__/
