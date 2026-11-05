@@ -39,7 +39,8 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | `costs` | `agent_costs.py` |
 | `doctor` | `flowconf.py doctor` |
 | `check-agents` | `lib/check-agents.sh` |
-| `wait` | `lib/agent-wait.sh` |
+| `wait start NAME -- CMD`, `wait wait (NAME \| --job N) [SECONDS]` | Go: a step as a job in loom's queue, and a bounded wait for it |
+| `gates start (--story COMMIT… \| --final)`, `gates wait [RUN] [SECONDS]`, `gates cancel [RUN]` | Go: the gates as a chain of jobs, each step's verdict, and the resubmission after a final FAIL |
 | `guard` | Go: the PreToolUse hook |
 | `path FILE` | Go: the absolute path of a file in this session's plugin (inside a session only) |
 | `import CHECKOUT` | Go: copy a claude-flow checkout's `records/` into `<global dir>/flow/records`, and say where its profiles go |

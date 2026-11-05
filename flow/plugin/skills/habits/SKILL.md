@@ -94,13 +94,15 @@ which decisions are yours to make.
   prefix. A command still running at its Bash timeout moves to the background,
   and when it ends it wakes you to re-read your whole context, even after you
   have reported. Give a build or a test run a timeout it fits in (up to
-  600000 ms), and run one that may not fit through the waiting script, staying
-  in your turn until it ends:
-  `loom flow wait start <name> -- <command>`,
-  then `loom flow wait wait <name>`
-  as a foreground call with a 600000 ms timeout, repeated until it prints
-  `done <name> exit <status>`, or `lost <name>`, which is final: report it
-  (output in `<state>/agent-wait/<name>.log`).
+  600000 ms), and run one that may not fit as a job, staying in your turn
+  until it ends: `loom flow wait start <name> -- <command>` queues it in
+  loom's work queue and prints its job ID, then `loom flow wait wait <name>`
+  as a foreground call with a 600000 ms timeout, repeated while it prints
+  `running <name>: …`, until `done <name> exit <status>` or
+  `lost <name>: …`, which is final: report it (output in
+  `<state>/agent-wait/<name>.log`). A job you queued another way is
+  `loom flow wait wait --job <N>`. Never start a poll, a loop around
+  `sleep`: `start` refuses one, and what it would watch is a job to wait on.
   Never use `run_in_background` and never end your turn to wait: Claude Code
   counts an agent waiting that way as not running, and a supervisor whose
   agents are all not running is made to hand back mid-run. Don't report while
