@@ -213,7 +213,7 @@ func (m *Model) dispatchAdvisor() {
 		var in advisorInput
 		if why == "" {
 			var ok bool
-			if in, ok = m.advisorInputFor(c); !ok {
+			if in, ok = m.advisorInputFor(c, now); !ok {
 				why = "its job or belief is gone"
 			}
 		}
@@ -233,8 +233,8 @@ func (m *Model) dispatchAdvisor() {
 	}
 }
 
-// advisorInputFor captures what call c's job needs.
-func (m *Model) advisorInputFor(c advisorCall) (advisorInput, bool) {
+// advisorInputFor captures what call c's job needs, at now.
+func (m *Model) advisorInputFor(c advisorCall, now time.Time) (advisorInput, bool) {
 	q := m.queue
 	b := q.beliefOf(c.sig)
 	i := q.index(c.job)
@@ -254,9 +254,9 @@ func (m *Model) advisorInputFor(c advisorCall) (advisorInput, bool) {
 	}
 	switch c.kind {
 	case advisePrior:
-		in.known = m.knownBeliefs(b)
+		in.known = m.knownBeliefs(b, rec.Checkout, now)
 	case adviseReconcile:
-		in.belief, in.runs = m.known(*b), slices.Clone(b.Runs)
+		in.belief, in.runs = m.known(*b, rec.Checkout, now), slices.Clone(b.Runs)
 		if b.Prior != nil {
 			p := *b.Prior
 			in.prior = &p
@@ -265,10 +265,10 @@ func (m *Model) advisorInputFor(c advisorCall) (advisorInput, bool) {
 	return in, true
 }
 
-// knownBeliefs are the beliefs a prior for self is told of: up to
-// knownSameRepo of its repo and knownOtherRepos of others running the same
-// program, most recently seen first.
-func (m *Model) knownBeliefs(self *sched.Belief) []advisor.Known {
+// knownBeliefs are the beliefs a prior for self is told of, for a job in
+// checkout at now: up to knownSameRepo of its repo and knownOtherRepos of
+// others running the same program, most recently seen first.
+func (m *Model) knownBeliefs(self *sched.Belief, checkout string, now time.Time) []advisor.Known {
 	var same, other []sched.Belief
 	for _, b := range m.queue.beliefs.Beliefs {
 		switch {
@@ -284,18 +284,22 @@ func (m *Model) knownBeliefs(self *sched.Belief) []advisor.Known {
 	slices.SortFunc(other, recent)
 	var out []advisor.Known
 	for _, b := range same[:min(len(same), knownSameRepo)] {
-		out = append(out, m.known(b))
+		out = append(out, m.known(b, checkout, now))
 	}
 	for _, b := range other[:min(len(other), knownOtherRepos)] {
-		out = append(out, m.known(b))
+		out = append(out, m.known(b, checkout, now))
 	}
 	return out
 }
 
-// known is b as the advisor is told of it.
-func (m *Model) known(b sched.Belief) advisor.Known {
+// known is b as the advisor is told of it, for a job in checkout at now
+// (advisor run context spec §5.2).
+func (m *Model) known(b sched.Belief, checkout string, now time.Time) advisor.Known {
 	q := m.queue
-	k := advisor.Known{ID: b.ID, Repo: sched.RepoName(b.Repo), Folder: b.Folder, Command: slices.Clone(b.Command), Runs: len(b.Runs)}
+	k := advisor.Known{
+		ID: b.ID, Repo: sched.RepoName(b.Repo), Folder: b.Folder, Command: slices.Clone(b.Command),
+		Env: advisor.AllowedEnv(b.Env), Runs: len(b.Runs), Recent: advisor.RecentRuns(b.Runs, checkout, now),
+	}
 	if q.policy.Caps.CPUs > 0 {
 		s := sched.Size(sched.Claim{}, &b, q.policy)
 		k.Claim, k.Sources = s.Claim, s.Sources

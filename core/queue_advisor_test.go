@@ -1,9 +1,11 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -294,4 +296,69 @@ func TestSetSchedulerCaps_KeepsTheAgentBlock(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"model": "sonnet"`)
 	assert.Contains(t, string(data), `"cpus": 8`)
+}
+
+// wqCheckouts makes a repository's main checkout and one worktree of it from
+// git's files alone, which is all FindRepo reads, and returns both, resolved.
+func wqCheckouts(t *testing.T) (main, wt string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	main, wt = filepath.Join(root, "main"), filepath.Join(root, "wt")
+	gitdir := filepath.Join(main, ".git", "worktrees", "wt")
+	require.NoError(t, os.MkdirAll(gitdir, 0o755))
+	require.NoError(t, os.MkdirAll(wt, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "commondir"), []byte("../..\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644))
+	return main, wt
+}
+
+// wqKnown is the belief of command in a prior's request, as the advisor is
+// told of it.
+func wqKnown(t *testing.T, request string, command ...string) advisor.Known {
+	t.Helper()
+	var req advisor.PriorRequest
+	require.NoError(t, json.Unmarshal([]byte(request), &req))
+	for _, k := range req.Beliefs {
+		if slices.Equal(k.Command, command) {
+			return k
+		}
+	}
+	require.Failf(t, "no such belief", "%q in %s", command, request)
+	return advisor.Known{}
+}
+
+func TestAdvisor_KnownBeliefsCarryTheirRecentRuns(t *testing.T) {
+	m, calls := wqAdvisedModel(t, wqPriorAnswer, 0)
+	main, wt := wqCheckouts(t)
+	submit := func(cwd string, argv ...string) sched.JobID {
+		t.Helper()
+		sub := wqJob(t, argv...)
+		sub.Cwd = cwd
+		id, _, err := m.submitJob(sub)
+		require.NoError(t, err)
+		wqWait(t, "the prior", func() bool { wqPump(t, m); return wqRecord(t, m, id).Sizing == "" })
+		return id
+	}
+	first := submit(main, "env", "CC=clang", "API_TOKEN=s3cret", "sh", "-c", "exit 0")
+	assert.Equal(t, main, wqRecord(t, m, first).Checkout)
+	wqSettle(t, m, first)
+
+	here := submit(main, "sh", "-c", "exit 1")
+	there := submit(wt, "sh", "-c", "exit 2")
+	assert.Equal(t, main, wqRecord(t, m, here).Checkout)
+	assert.Equal(t, wt, wqRecord(t, m, there).Checkout, "a worktree is its own checkout of the same repository")
+
+	got := wqCalls(t, calls)
+	require.Len(t, got, 3, "one prior per command")
+	k := wqKnown(t, got[1], "sh", "-c", "exit 0")
+	assert.Equal(t, []string{"CC=clang"}, k.Env, "its pairs, less the one named like a secret")
+	require.Len(t, k.Recent, 1)
+	assert.Equal(t, sched.OutcomeDone, k.Recent[0].Outcome)
+	require.NotNil(t, k.Recent[0].Here)
+	assert.True(t, *k.Recent[0].Here, "the run was in the main checkout, as this job is")
+	k = wqKnown(t, got[2], "sh", "-c", "exit 0")
+	require.Len(t, k.Recent, 1)
+	require.NotNil(t, k.Recent[0].Here)
+	assert.False(t, *k.Recent[0].Here, "this job is in the worktree")
 }
