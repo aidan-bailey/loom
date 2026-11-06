@@ -78,12 +78,15 @@ const mockupCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe
 var apiRoutes = []struct {
 	pattern *regexp.Regexp
 	fixture string
+
+	// agent is the fixture for a request whose query names a subagent
+	// (?agent=), "" for a route that has none.
+	agent string
 }{
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/message$`), "message.json"},
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/turns$`), "turns.json"},
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json"},
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html"},
-	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json"},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/turns$`), "turns.json", "agent-turns.json"},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html", ""},
+	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json", ""},
 }
 
 func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +104,11 @@ func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
 					_, _ = w.Write(page)
 					return
 				}
-				body, err := c.fixture(rt.fixture)
+				name := rt.fixture
+				if rt.agent != "" && r.URL.Query().Get("agent") != "" {
+					name = rt.agent
+				}
+				body, err := c.fixture(name)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return

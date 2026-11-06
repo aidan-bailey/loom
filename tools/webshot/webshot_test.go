@@ -204,7 +204,7 @@ func TestCanned_ServesTheShellWithTheBuildTheSnapshotNames(t *testing.T) {
 
 func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
 	c, srv := cannedForTest(t)
-	for _, p := range []string{"/api/v1/sessions/1/message", "/api/v1/sessions/1/turns", "/api/v1/sessions/2/diff", "/api/v1/launch-defaults?workspace=loom"} {
+	for _, p := range []string{"/api/v1/sessions/1/turns", "/api/v1/sessions/2/diff", "/api/v1/launch-defaults?workspace=loom"} {
 		code, body := get(t, srv.URL+p)
 		assert.Equal(t, http.StatusOK, code, p)
 		assert.NotContains(t, body, `"now`, "%s: every relative time is filled", p)
@@ -216,6 +216,9 @@ func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
 	code, _ = get(t, srv.URL+"/api/v1/push-key")
 	assert.Equal(t, http.StatusNotFound, code)
 	assert.Equal(t, []string{"GET /api/v1/push-key"}, c.takeMisses())
+	code, _ = get(t, srv.URL+"/api/v1/sessions/1/message")
+	assert.Equal(t, http.StatusNotFound, code, "no screen draws the last message, so the canned loom has no answer for it")
+	assert.Equal(t, []string{"GET /api/v1/sessions/1/message"}, c.takeMisses())
 }
 
 func TestCanned_TheStreamStartsWithTheSnapshot(t *testing.T) {
@@ -233,30 +236,6 @@ func TestCanned_TheStreamStartsWithTheSnapshot(t *testing.T) {
 	require.True(t, strings.HasPrefix(data, "data: {"))
 	var snap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(data, "data: ")), &snap), "one line of JSON")
-}
-
-func TestFixture_TheLastMessageIsTheTreesText(t *testing.T) {
-	c := &cannedLoom{now: time.Now}
-	raw, err := c.fixture("snapshot.json")
-	require.NoError(t, err)
-	var snap struct {
-		Sessions map[string][]struct {
-			ID          int    `json:"id"`
-			LastMessage string `json:"last_message"`
-		} `json:"sessions"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &snap))
-	raw, err = c.fixture("message.json")
-	require.NoError(t, err)
-	var msg struct{ Text string }
-	require.NoError(t, json.Unmarshal(raw, &msg))
-	for _, s := range snap.Sessions["1"] {
-		if s.ID == 1 {
-			assert.Equal(t, msg.Text, s.LastMessage, "the app draws the tree only when its text is the session's last message")
-			return
-		}
-	}
-	t.Fatal("no session 1")
 }
 
 func TestFixture_TheTurnsHoldAnAgentStepAndAThinkingItem(t *testing.T) {
@@ -353,4 +332,41 @@ func TestRun_RendersEveryScreenInARealBrowser(t *testing.T) {
 		args = append(args, "-browser", which)
 	}
 	require.NoError(t, run(args), "every screen draws with no console error and no route the fixture lacks")
+}
+
+func TestPickScreens_TheAgentScreenIsSessionOnesRunningSubagent(t *testing.T) {
+	got, err := pickScreens("agent")
+	require.NoError(t, err)
+	assert.Equal(t, []screen{{"agent", "#s/1/agent/a1f00dcafe0001"}}, got)
+}
+
+func TestCanned_ASubagentsTurnsAreTheAgentFixture(t *testing.T) {
+	c, srv := cannedForTest(t)
+	_, plain := get(t, srv.URL+"/api/v1/sessions/1/turns")
+	var conversation map[string]any
+	require.NoError(t, json.Unmarshal([]byte(plain), &conversation))
+	assert.NotContains(t, conversation, "agent", "the conversation's page names no subagent")
+
+	code, body := get(t, srv.URL+"/api/v1/sessions/1/turns?agent=a1f00dcafe0001")
+	assert.Equal(t, http.StatusOK, code)
+	assert.NotContains(t, body, `"now`, "every relative time is filled")
+	var page struct {
+		Agent struct {
+			ID      string `json:"id"`
+			State   string `json:"state"`
+			Missing bool   `json:"missing"`
+		} `json:"agent"`
+		Turns []struct {
+			From string `json:"from"`
+			Text string `json:"text"`
+		} `json:"turns"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, "a1f00dcafe0001", page.Agent.ID)
+	assert.Equal(t, "running", page.Agent.State)
+	assert.False(t, page.Agent.Missing)
+	require.NotEmpty(t, page.Turns)
+	assert.Equal(t, "brief", page.Turns[0].From, "a subagent's page opens with its brief")
+	assert.Greater(t, strings.Count(page.Turns[0].Text, "\n"), 12, "long enough to fold after 12 lines")
+	assert.Empty(t, c.takeMisses())
 }
