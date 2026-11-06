@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -130,12 +131,8 @@ func someAvg10(data []byte) float64 {
 // but a loom job's scope (a base name loom-…-job-….scope), since a kill
 // reaches every process below the cgroup named.
 func CgroupKill(root, path string) error {
-	if err := checkCgroupPath(path); err != nil {
+	if err := checkJobScope(path, "kill"); err != nil {
 		return err
-	}
-	base := filepath.Base(path)
-	if !strings.HasPrefix(base, "loom-") || !strings.Contains(base, "-job-") || !strings.HasSuffix(base, ".scope") {
-		return fmt.Errorf("refusing to kill cgroup %s: not a loom job's scope", path)
 	}
 	f, err := os.OpenFile(filepath.Join(root, path, "cgroup.kill"), os.O_WRONLY, 0)
 	if err != nil {
@@ -149,6 +146,52 @@ func CgroupKill(root, path string) error {
 		return fmt.Errorf("write cgroup.kill: %w", werr)
 	}
 	return nil
+}
+
+// checkJobScope refuses path unless it is a clean absolute cgroup path whose
+// base name is a loom job's scope (loom-…-job-….scope); verb names what was
+// refused.
+func checkJobScope(path, verb string) error {
+	if err := checkCgroupPath(path); err != nil {
+		return err
+	}
+	base := filepath.Base(path)
+	if !strings.HasPrefix(base, "loom-") || !strings.Contains(base, "-job-") || !strings.HasSuffix(base, ".scope") {
+		return fmt.Errorf("refusing to %s cgroup %s: not a loom job's scope", verb, path)
+	}
+	return nil
+}
+
+// CgroupReclaim asks the kernel to reclaim kb of path's memory under root
+// through memory.reclaim (memory borrowing spec §7.1), anonymous pages
+// first (swappiness=200), and again without that argument when the kernel
+// refuses it as invalid. A write the kernel answers EAGAIN reclaimed less
+// than asked, and is no error. It refuses anything but a loom job's scope,
+// as CgroupKill does.
+func CgroupReclaim(root, path string, kb int64) error {
+	if err := checkJobScope(path, "reclaim from"); err != nil {
+		return err
+	}
+	write := func(arg string) error {
+		f, err := os.OpenFile(filepath.Join(root, path, "memory.reclaim"), os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		_, werr := f.Write([]byte(arg))
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		return werr
+	}
+	amount := strconv.FormatInt(kb<<10, 10)
+	err := write(amount + " swappiness=200")
+	if errors.Is(err, syscall.EINVAL) {
+		err = write(amount)
+	}
+	if err == nil || errors.Is(err, syscall.EAGAIN) {
+		return nil
+	}
+	return fmt.Errorf("write memory.reclaim: %w", err)
 }
 
 // SelfCgroup is this process's cgroup v2 path.
@@ -170,14 +213,17 @@ func parseSelfCgroup(data []byte) (string, error) {
 	return "", errors.New("no cgroup v2 entry in /proc/self/cgroup")
 }
 
-// parseMemAvailable is /proc/meminfo's MemAvailable, in KB.
-func parseMemAvailable(data []byte) (int64, error) {
+// meminfoKB is /proc/meminfo's key, in KB.
+func meminfoKB(data []byte, key string) (int64, error) {
 	for line := range strings.SplitSeq(string(data), "\n") {
-		if v, ok := strings.CutPrefix(line, "MemAvailable:"); ok {
+		if v, ok := strings.CutPrefix(line, key+":"); ok {
 			if fields := strings.Fields(v); len(fields) >= 1 {
 				return strconv.ParseInt(fields[0], 10, 64)
 			}
 		}
 	}
-	return 0, errors.New("no MemAvailable in /proc/meminfo")
+	return 0, fmt.Errorf("no %s in /proc/meminfo", key)
 }
+
+// parseMemAvailable is /proc/meminfo's MemAvailable, in KB.
+func parseMemAvailable(data []byte) (int64, error) { return meminfoKB(data, "MemAvailable") }

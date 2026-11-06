@@ -279,3 +279,18 @@ func TestResolve_Contain(t *testing.T) {
 
 // policyOff is a release_past_peaks (or contain) of false.
 var policyOff = false
+
+func TestResolve_Borrow(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		in   *bool
+		want bool
+	}{{"absent is off", nil, false}, {"false", &off, false}, {"true", &on, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Resolve(config.SchedulerSettings{Borrow: tc.in}, policyFresco)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Borrow)
+		})
+	}
+}

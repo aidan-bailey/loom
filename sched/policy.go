@@ -122,5 +122,6 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 		ReserveGB:        reserve,
 		CPUPressurePct:   pressure,
 		CPUOvercommit:    overcommit,
+		Borrow:           s.Borrow != nil && *s.Borrow,
 	}, nil
 }
