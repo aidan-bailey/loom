@@ -57,8 +57,10 @@ type prJSON struct {
 	URL    string `json:"url,omitempty"`
 }
 
-// agentJSON is one running subagent, as subagent.View has it.
+// agentJSON is one running subagent, as subagent.View has it. ID is the
+// agent id the app opens its page with (?agent=).
 type agentJSON struct {
+	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Idle        bool   `json:"idle"`
@@ -267,7 +269,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		s.Ahead, s.Behind = v.Ahead, v.Behind
 	}
 	for _, a := range v.Subagents {
-		s.Agents = append(s.Agents, agentJSON{Name: a.Name, Description: a.Description, Idle: a.Idle})
+		s.Agents = append(s.Agents, agentJSON{ID: a.ID, Name: a.Name, Description: a.Description, Idle: a.Idle})
 	}
 	for _, a := range v.Asks {
 		s.Asks = append(s.Asks, askOf(a))

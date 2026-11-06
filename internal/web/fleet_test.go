@@ -74,7 +74,7 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		}},
 		LastMessage:    "Should I delete the build dir?",
 		HasLastMessage: true,
-		Subagents:      []subagent.View{{Name: "explorer", Description: "reads the tree", Idle: true}},
+		Subagents:      []subagent.View{{ID: "a1f00dcafe0001", Name: "explorer", Description: "reads the tree", Idle: true}},
 		Diff:           git.DiffStats{Added: 12, Removed: 3, Content: "a long diff body"},
 		HasDiff:        true,
 		GitHub: github.State{
@@ -110,7 +110,7 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		"ahead": 2, "behind": 5, "parity_known": true,
 		"pr": {"number": 42, "state": "open", "checks": "failing"},
 		"account": "work",
-		"agents": [{"name": "explorer", "description": "reads the tree", "idle": true}],
+		"agents": [{"id": "a1f00dcafe0001", "name": "explorer", "description": "reads the tree", "idle": true}],
 		"remote_url": "https://claude.ai/code/session_01AbC",
 		"claude": true,
 		"mockup": {"screen": "layout.html", "changed": "2026-10-21T09:29:00Z", "fresh": true}
