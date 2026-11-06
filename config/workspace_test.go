@@ -192,6 +192,49 @@ func TestWorkspaceRegistryFindByPath(t *testing.T) {
 		ws := reg.FindByPath("/home/user/repo-fork")
 		assert.Nil(t, ws)
 	})
+
+	// The 2026-11-06 report: a workspace registered through a symlinked
+	// spelling (/home/u/Source -> /tb/Source) and a working directory in
+	// the resolved one, or the reverse, name one directory.
+	t.Run("matches through either spelling of a symlinked directory", func(t *testing.T) {
+		target, link := symlinkedDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "sub"), 0o755))
+
+		viaLink := &WorkspaceRegistry{Workspaces: []Workspace{{Name: "repo", Path: link}}}
+		if ws := viaLink.FindByPath(filepath.Join(target, "sub")); assert.NotNil(t, ws, "registered via the link") {
+			assert.Equal(t, "repo", ws.Name)
+		}
+
+		viaTarget := &WorkspaceRegistry{Workspaces: []Workspace{{Name: "repo", Path: target}}}
+		if ws := viaTarget.FindByPath(filepath.Join(link, "sub")); assert.NotNil(t, ws, "looked up via the link") {
+			assert.Equal(t, "repo", ws.Name)
+		}
+	})
+
+	t.Run("picks the deepest workspace once both spellings are resolved", func(t *testing.T) {
+		target, link := symlinkedDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "inner", "src"), 0o755))
+		reg := &WorkspaceRegistry{Workspaces: []Workspace{
+			{Name: "outer", Path: link},
+			{Name: "inner", Path: filepath.Join(target, "inner")},
+		}}
+
+		ws := reg.FindByPath(filepath.Join(link, "inner", "src"))
+
+		require.NotNil(t, ws)
+		assert.Equal(t, "inner", ws.Name)
+	})
+}
+
+// symlinkedDir is a directory with its symlinks resolved and a symlink to
+// it: two spellings of one directory.
+func symlinkedDir(t *testing.T) (target, link string) {
+	t.Helper()
+	target, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	link = filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(target, link))
+	return target, link
 }
 
 func TestWorkspaceRegistryGet(t *testing.T) {
