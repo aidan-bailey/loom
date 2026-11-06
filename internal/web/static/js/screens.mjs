@@ -10,6 +10,7 @@ import { Settings, SettingsHead } from "./settings.mjs";
 import { Turns } from "./turns.mjs";
 import { Changes } from "./changes.mjs";
 import { Mockup } from "./mockup.mjs";
+import { Agent, AgentHead } from "./agent.mjs";
 
 export const screens = {
   fleet: { Screen: Fleet, Head: FleetHead },
@@ -19,4 +20,5 @@ export const screens = {
   turns: { Screen: Turns, Head: SessionHead },
   changes: { Screen: Changes, Head: SessionHead },
   mockup: { Screen: Mockup, Head: SessionHead },
+  agent: { Screen: Agent, Head: AgentHead },
 };

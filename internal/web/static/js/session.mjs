@@ -116,22 +116,32 @@ function Tiles({ s, snap, now, diff }) {
   return tiles.length > 0 ? html`<div class="sc-tiles">${tiles}</div>` : null;
 }
 
+// AGENT_ID is what an agent id may hold for the app to link to its screen
+// (parseRoute's agent route).
+const AGENT_ID = /^[A-Za-z0-9_-]+$/;
+
 // Agents are the session's subagents by name, each running or idle, with its
-// description under it.
-function Agents({ agents }) {
+// description under it. A row that carries an id is a link to the agent's
+// screen.
+function Agents({ agents, sessionId }) {
   return html`
     <section class="sc-section">
       <h2 class="sc-rule">Agents ${agents.length}</h2>
-      ${agents.map(
-        (a, i) => html`<div key=${i} class="sc-agent">
+      ${agents.map((a, i) => {
+        const linked = Boolean(a.id) && AGENT_ID.test(a.id);
+        const inner = html`
           <div class="sc-row-top">
             <span class="sc-glyph" aria-hidden="true">${a.idle ? "○" : "◐"}</span>
             <span class="sc-row-title">${a.name}</span>
             <span class="sc-age">${a.idle ? "idle" : "running"}</span>
+            ${linked ? html`<${ChevronIcon} />` : null}
           </div>
           ${a.description ? html`<div class="sc-agent-desc">${a.description}</div>` : null}
-        </div>`,
-      )}
+        `;
+        return linked
+          ? html`<a key=${i} class="sc-agent sc-agent-link" href=${"#s/" + sessionId + "/agent/" + a.id}>${inner}</a>`
+          : html`<div key=${i} class="sc-agent">${inner}</div>`;
+      })}
     </section>
   `;
 }
@@ -196,7 +206,7 @@ export function Info({ snap, stale, route, go, act, toast, pending }) {
     <section class="sc-screen sc-session">
       <${SubLine} s=${s} snap=${snap} now=${now} />
       <${Tiles} s=${s} snap=${snap} now=${now} diff=${can.diff} />
-      ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} />` : null}
+      ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} sessionId=${s.id} />` : null}
 
       <section class="sc-actions">
         ${can.pause ? html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => run("pause")}>pause</button>` : null}
