@@ -109,23 +109,45 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 //  3. Otherwise (first fit) it starts every job, in order, that fits what
 //     the running jobs and the jobs started before it leave.
 //
+// Agent jobs (Kind KindAgent) are apart: each starts, in queue order, while
+// fewer than p.AgentJobs of its account run; they take nothing from the caps
+// and are never the head.
+//
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen. A policy without caps
 // (the zero Policy) starts nothing. The jobs slice is left as it is.
 func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
-	var queued []Record
+	var queued, agents []Record
+	running := map[string]int{} // running agent jobs per account key
 	for _, r := range jobs {
-		switch r.State {
-		case Running:
+		switch {
+		case r.Kind == KindAgent && r.State == Running:
+			running[r.AccountKey]++
+		case r.Kind == KindAgent && r.State == Queued:
+			agents = append(agents, r)
+		case r.State == Running:
 			f.count(r)
-		case Queued:
+		case r.State == Queued:
 			queued = append(queued, r)
 		}
 	}
-	slices.SortFunc(queued, func(a, b Record) int {
-		return cmp.Or(cmp.Compare(a.Order, b.Order), cmp.Compare(a.ID, b.ID))
-	})
+	byOrder := func(a, b Record) int { return cmp.Or(cmp.Compare(a.Order, b.Order), cmp.Compare(a.ID, b.ID)) }
+	// Agent jobs (flow in loom part 3a, spec §5.2) start by their account's
+	// limit, never by the caps, and are never a head; while admission has
+	// no usable policy they wait with no reason, so the view shows its.
+	slices.SortFunc(agents, byOrder)
+	for _, r := range agents {
+		switch {
+		case !p.usable():
+		case running[r.AccountKey] >= p.AgentJobs:
+			d.Waiting[r.ID] = fmt.Sprintf("waits for an agent slot (%d of %d running on this account)", running[r.AccountKey], p.AgentJobs)
+		default:
+			running[r.AccountKey]++
+			d.Start = append(d.Start, r.ID)
+		}
+	}
+	slices.SortFunc(queued, byOrder)
 
 	var line []Record // the jobs that can ever run, in queue order
 	for _, r := range queued {

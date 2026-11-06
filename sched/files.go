@@ -79,6 +79,7 @@ type Spec struct {
 	Cwd      string   `json:"cwd"`
 	Env      []string `json:"env"`
 	HintCPUs int      `json:"hint_cpus,omitempty"` // written when the job starts
+	Kind     string   `json:"kind,omitempty"`      // KindAgent: AgentHints, not Hints
 	// Scope is the scope the shim creates for the job (cgroup spec §5.1),
 	// written when it starts contained; nil runs it uncontained.
 	Scope *ScopeSpec `json:"scope,omitempty"`

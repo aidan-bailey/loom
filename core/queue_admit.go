@@ -21,6 +21,10 @@ const (
 	defaultHandshake = 5 * time.Second
 	// startPoll is how often a start job looks for started.json.
 	startPoll = 20 * time.Millisecond
+	// agentUncontained is why an agent job runs outside the jobs' slice: it
+	// claims nothing, so its scope would weigh least of all, and a contained
+	// job is the ladder's to squeeze, pause or requeue.
+	agentUncontained = "an agent job runs outside the jobs' slice"
 )
 
 var (
@@ -199,7 +203,9 @@ func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.
 	hint := rec.Claim.Need(policy.Caps).CPUs
 	var scope *sched.ScopeSpec
 	rec.Unit, rec.Cgroup, rec.Uncontained = "", "", ""
-	if why := q.containWhy(policy); why != "" {
+	if rec.Kind == sched.KindAgent {
+		rec.Uncontained = agentUncontained
+	} else if why := q.containWhy(policy); why != "" {
 		rec.Uncontained = why
 	} else {
 		scope = &sched.ScopeSpec{Unit: sched.ScopeName(q.dir, rec.ID, rec.Attempt), Slice: sched.SliceName(q.dir), CPUWeight: sched.CPUWeight(hint)}

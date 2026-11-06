@@ -32,6 +32,7 @@ var qvPolicy = sched.Policy{
 	ReserveGB:        4,
 	CPUPressurePct:   25,
 	CPUOvercommit:    2,
+	AgentJobs:        4,
 }
 
 // qvRecord is a record of the given state, ordered by its ID, with the

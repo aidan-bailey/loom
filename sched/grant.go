@@ -22,7 +22,9 @@ func SpareWidth(r Record, b *Belief) int {
 // Grant is what each job dec starts gets past its base claim (job scaling
 // spec §5.3), a pure function of its arguments: dec is Admit's decision
 // over jobs under p, and belief gives a record's belief (nil for none). It
-// grants nothing while a queued job waits for anything but the caps. The
+// grants nothing while a queued job waits for anything but the caps; agent
+// jobs are passed over, their waits stopping nothing and their starts
+// granted nothing (flow in loom part 3a). The
 // pool is the caps less the running jobs' holds (holds, as Admit counts
 // them), the starting jobs' base
 // claims and a reserve of the default claim. In dec's order, each job
@@ -34,8 +36,14 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 	if len(dec.Start) == 0 || !p.usable() {
 		return nil
 	}
-	for _, why := range dec.Waiting {
-		if why != waitOver {
+	agent := map[JobID]bool{}
+	for _, r := range jobs {
+		if r.Kind == KindAgent {
+			agent[r.ID] = true
+		}
+	}
+	for id, why := range dec.Waiting {
+		if why != waitOver && !agent[id] {
 			return nil
 		}
 	}
@@ -45,6 +53,9 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 	}
 	var used Need
 	for _, r := range jobs {
+		if agent[r.ID] {
+			continue
+		}
 		if _, ok := starting[r.ID]; ok {
 			starting[r.ID] = r
 			used = used.plus(r.Claim.Need(p.Caps))
@@ -57,6 +68,9 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 	memory := p.Caps.MemoryGB - used.MemoryGB - reserve.MemoryGB
 	var out map[JobID]Claim
 	for _, id := range dec.Start {
+		if agent[id] {
+			continue
+		}
 		r := starting[id]
 		b := belief(r)
 		for t := min(SpareWidth(r, b), r.Claim.CPUs+cores); t > r.Claim.CPUs; t-- {

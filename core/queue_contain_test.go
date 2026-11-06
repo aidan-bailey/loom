@@ -215,3 +215,34 @@ func TestQueueContain_TheBootProbesBeforeItsFirstAdmission(t *testing.T) {
 	assert.Equal(t, "no bus here", m2.queue.containWhy(m2.queue.policy), "the boot's failure says why")
 	assert.False(t, m2.queue.probing, "an idle queue probes no more")
 }
+
+// An agent job claims nothing, so a scope would give it the least CPU
+// weight, and a contained job is the ladder's to squeeze, freeze or requeue:
+// it runs outside the jobs' slice, while a build beside it is contained.
+func TestQueueContain_AnAgentJobRunsUncontained(t *testing.T) {
+	if queueGOOS != "linux" {
+		t.Skip("cgroups are Linux only")
+	}
+	m := wqLiveModel(t)
+	fake := &fakeConfiner{}
+	m.SetConfinerForTest(fake)
+	wqPump(t, m)
+	sub := wqJob(t, "true")
+	sub.Kind = sched.KindAgent
+	agent, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	rec := wqStarted(t, m, agent)
+	assert.Equal(t, agentUncontained, rec.Uncontained)
+	spec, err := sched.ReadSpec(m.queue.jobDir(agent))
+	require.NoError(t, err)
+	assert.Nil(t, spec.Scope, "the shim is asked for no scope")
+	for _, c := range fake.Calls() {
+		assert.False(t, strings.HasPrefix(c, "EnsureSlice"), "nor is the slice ensured for it: %s", c)
+	}
+
+	build := wqSubmit(t, m, "true")
+	wqStarted(t, m, build)
+	spec, err = sched.ReadSpec(m.queue.jobDir(build))
+	require.NoError(t, err)
+	assert.NotNil(t, spec.Scope, "a build job is still contained")
+}

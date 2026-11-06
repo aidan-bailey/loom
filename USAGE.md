@@ -1216,6 +1216,7 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 | `flow doctor` | Check that a supervised run can start here (`flow conf doctor`) |
 | `flow check-agents` | Lint the flow plugin's agents and skills |
 | `flow wait start <name> -- <cmd>`, `flow wait wait (<name> \| --job <N>) [secs]` | Queue a long step for an agent as a job and print its ID; wait for it inside a turn (75: still running, 70: lost); refuses polls |
+| `flow agent run <role> [--effort E] [--name N] < brief`, `flow agent wait [<id>] [secs]`, `flow agent answer <id> < answer`, `flow agent show\|list\|cancel [<id>]` | Run a flow agent headless as an agent job (inside a session: its account, flow root and permission mode, the git guard, your plugins off), wait for its report inside a turn (0: a report, 1: failed or cancelled, 75: running), and resume it with an answer |
 | `flow gates start (--story <commits>… \| --final)`, `flow gates wait [<run>] [secs]`, `flow gates cancel [<run>]` | Queue a story's gates or the final gates as a chain of jobs, wait for the run inside a turn and print each step's verdict (0: passed, 1: failed, 75: not ended), or cancel it |
 | `flow guard` | Loom's PreToolUse hook: the git guard for flow's developers and drafter (reads the hook's JSON on stdin) |
 | `flow path <file>` | The absolute path of a file in this session's copy of the plugin (`docs/dispatch.md`, …); inside a session only |
@@ -1419,6 +1420,7 @@ The work queue admits jobs against caps on the host's cores, memory and I/O-heav
     "default_claim": { "cpus": 4, "memory_gb": 6 },
     "starve_after_minutes": 10,
     "keep_finished": 50,
+    "agent_jobs": 4,
     "release_past_peaks": true,
     "contain": true,
     "jobs_cpu_weight": 50,
@@ -1440,6 +1442,7 @@ An absent or `0` field takes the host's default:
 | `default_claim.memory_gb` | the lesser of `6` and `memory_gb` | 1 to `memory_gb` |
 | `starve_after_minutes` | `10` | 1–1440 |
 | `keep_finished` | `50` | 1–10000 |
+| `agent_jobs` | `4` | 1–16: how many agent jobs (`loom flow agent`) of one account run at once; they claim nothing and are admitted apart from the caps |
 | `release_past_peaks` | `true` | `true` or `false`: let a running job reserve less than its claim once its own past runs show its peaks are behind it ([Holds](#the-work-queue)) |
 | `contain` | `true` | `true` or `false`: run each job in its own systemd scope ([Confinement](#the-work-queue)); Linux only |
 | `jobs_cpu_weight` | `50` | 1–10000: the jobs' slice's CPU weight; an agent's pane has 100 |

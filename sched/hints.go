@@ -48,3 +48,26 @@ func Hints(env []string, cpus int, id JobID) []string {
 	}
 	return append(out, EnvJob+"="+strconv.FormatInt(int64(id), 10))
 }
+
+// AgentHints is an agent job's environment (flow in loom part 3a, plan
+// amendment 5): env with SCCACHE_CLIENT_SIDE added when it lacks it and
+// LOOM_JOB set to id, and no parallelism variables, which a job with no
+// claim would get as 1.
+func AgentHints(env []string, id JobID) []string {
+	out := make([]string, 0, len(env)+2)
+	sccache := false
+	for _, e := range env {
+		name, _, _ := strings.Cut(e, "=")
+		switch name {
+		case EnvJob:
+			continue
+		case "SCCACHE_CLIENT_SIDE":
+			sccache = true
+		}
+		out = append(out, e)
+	}
+	if !sccache {
+		out = append(out, "SCCACHE_CLIENT_SIDE=1")
+	}
+	return append(out, EnvJob+"="+strconv.FormatInt(int64(id), 10))
+}

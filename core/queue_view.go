@@ -157,6 +157,8 @@ type JobView struct {
 	Requeues    int
 	LastRequeue string
 	NoRequeue   bool
+	// Agent runs (flow in loom part 3a): sched.KindAgent for an agent job.
+	Kind string
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -402,6 +404,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		CancelReason: r.CancelReason,
 		PeakRSSKB:    r.PeakRSSKB,
 		LogPath:      filepath.Join(sched.JobDir(q.dir, r.ID), sched.LogFile),
+		Kind:         r.Kind,
 		Notice:       r.Notice,
 		NoticeWhy:    r.NoticeWhy,
 		Signature:    r.Signature,

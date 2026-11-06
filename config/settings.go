@@ -157,6 +157,7 @@ type SchedulerSettings struct {
 	DefaultClaim       *ClaimSettings `json:"default_claim,omitempty"`
 	StarveAfterMinutes int            `json:"starve_after_minutes,omitempty"`
 	KeepFinished       int            `json:"keep_finished,omitempty"`
+	AgentJobs          int            `json:"agent_jobs,omitempty"` // agent jobs of one account that run at once (flow in loom part 3a)
 	Agent              *AgentSettings `json:"agent,omitempty"`
 	// ReleasePastPeaks lets a running job's hold fall below its claim once
 	// its own past runs show its peaks are behind it; absent means true.
