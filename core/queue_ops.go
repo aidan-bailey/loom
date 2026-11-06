@@ -304,10 +304,10 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 		return fmt.Errorf("config.json could not be read, so the caps were not saved: %w", err)
 	}
 	// The caps form never edits the agent block (smart scheduler spec §6),
-	// release_past_peaks (past-peak holds spec §8) nor the cgroup keys
-	// (cgroup spec §10): keep the file's.
+	// release_past_peaks (past-peak holds spec §8), the cgroup keys (cgroup
+	// spec §10) nor agent_jobs (flow in loom part 3a): keep the file's.
 	file := cfg.GetScheduler()
-	s.Agent = file.Agent
+	s.Agent, s.AgentJobs = file.Agent, file.AgentJobs
 	s.ReleasePastPeaks = file.ReleasePastPeaks
 	s.Contain, s.JobsCPUWeight = file.Contain, file.JobsCPUWeight
 	s.InteractiveReserveGB, s.CPUPressurePct, s.CPUOvercommit = file.InteractiveReserveGB, file.CPUPressurePct, file.CPUOvercommit
