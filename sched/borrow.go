@@ -26,8 +26,10 @@ func MayBorrow(r Record) bool {
 // is not tight, the ladder holds nothing off and no job is lent, it also
 // names the jobs dec left waiting on memory alone (dec.OnMemory) that start
 // as borrowers. It walks them in queue order and starts each that may borrow
-// (MayBorrow), passes the CPU and I/O gates and passes the borrow fit,
-// counting the running jobs, dec's starts and the borrowers before it.
+// (MayBorrow), names no lock another job holds (a running job, one of dec's
+// starts or a borrower before it), passes the CPU and I/O gates and passes
+// the borrow fit, counting the running jobs, dec's starts and the borrowers
+// before it.
 func Borrow(jobs []Record, dec Decision, p Policy, now time.Time, g Greedy) Borrowing {
 	var out Borrowing
 	all := runningPreds(jobs, g)
@@ -53,15 +55,23 @@ func Borrow(jobs []Record, dec Decision, p Policy, now time.Time, g Greedy) Borr
 		}
 	}
 	firmKB, preds := borrowLoad(jobs, g)
+	held := lockHolders(jobs)
 	for _, id := range dec.Start {
-		if r, ok := byID[id]; ok && r.Kind != KindAgent {
+		r, ok := byID[id]
+		if !ok {
+			continue
+		}
+		held.take(r)
+		if r.Kind != KindAgent {
 			f.take(r)
 			preds = append(preds, g.Predict(r, now))
 		}
 	}
 	for _, id := range dec.OnMemory {
+		// A job waiting on memory took no lock in AdmitGreedy's walk, so a
+		// later start may hold one it names.
 		r, ok := byID[id]
-		if !ok || !MayBorrow(r) || f.gate(r) != "" {
+		if !ok || !MayBorrow(r) || held.blocks(r) != "" || f.gate(r) != "" {
 			continue
 		}
 		cand := g.Predict(r, now)
@@ -69,6 +79,7 @@ func Borrow(jobs []Record, dec Decision, p Policy, now time.Time, g Greedy) Borr
 			continue
 		}
 		f.take(r)
+		held.take(r)
 		preds = append(preds, cand)
 		out.Start = append(out.Start, id)
 	}

@@ -1595,4 +1595,5 @@ Executed inline on 2026-11-06 on `aidanb/changing-resource-alocation`: P1 e8d3e5
 - **`requeueJob`'s log names the new attempt.** It logged the attempt after the new one: the record was already replaced when it read `Attempt+1`.
 - **`LentAt` is stamped when the freeze returns**, not at dispatch, so the reconcile's thawed-by-hand case trusts only passes that read the cgroup after the freeze.
 - **Mutation checks** (job 973): dropping `stepLadder`'s lent skip, the reconcile's lent case, or `requeueJob`'s give-back counting each turned a `TestQueueBorrow` test red.
+- **Merged with main's named job locks** (d5b044d9): a job left waiting on memory took no lock in `AdmitGreedy`'s walk, so `Borrow` now holds locks as `admitWith` does (running jobs, the decision's starts, earlier borrowers); `TestBorrow_KeepsNamedLocks` was red before the fix. The merge's two conflicts were fields added on both sides.
 - **Not fixed:** `cloneSchedulerSettings` (core) clones no `Contain` pointer, a gap from before this work.

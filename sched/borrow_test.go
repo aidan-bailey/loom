@@ -147,3 +147,17 @@ func TestBorrowFits(t *testing.T) {
 	assert.False(t, BorrowFits(jobs, g, 2, t0), "6 × 1.15 + 8 = 14.9 GB")
 	assert.False(t, BorrowFits(jobs, g, 9, t0), "no such job")
 }
+
+func TestBorrow_KeepsNamedLocks(t *testing.T) {
+	jobs := []Record{running(1, Claim{CPUs: 4, MemoryGB: 10}), locked(queued(2, Claim{CPUs: 2, MemoryGB: 2}), "port:4300"),
+		locked(queued(3, Claim{CPUs: 2, MemoryGB: 1}), "port:4300"), locked(queued(4, Claim{CPUs: 2, MemoryGB: 1}), "port:4400")}
+	g := borrowGreedy(jobs, map[JobID]int64{1: gb(4)})
+	assert.Equal(t, []JobID{2, 4}, Borrow(jobs, Decision{OnMemory: []JobID{2, 3, 4}}, borrowPolicy(), t0, g).Start,
+		"two borrowers on one lock: the first only")
+	assert.Equal(t, []JobID{4}, Borrow(jobs, Decision{Start: []JobID{3}, OnMemory: []JobID{2, 4}}, borrowPolicy(), t0, g).Start,
+		"a firm start of the pass holds its lock")
+	held := slices.Clone(jobs)
+	held[0] = locked(held[0], "port:4300")
+	assert.Equal(t, []JobID{4}, Borrow(held, Decision{OnMemory: []JobID{2, 4}}, borrowPolicy(), t0, g).Start,
+		"a running job holds its lock")
+}
