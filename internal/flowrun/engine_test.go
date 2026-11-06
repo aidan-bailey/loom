@@ -311,6 +311,31 @@ func TestRun_DoneWithNoCommitsIsAFailure(t *testing.T) {
 	assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev")
 }
 
+func TestRun_AFixerDoneWithNoCommitsIsNoted(t *testing.T) {
+	t.Run("in a story's fix round", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		f.noCommit["r-s1-fix1"] = true
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil) // any question fails the test
+		require.Equal(t, Done, st.Status)
+		assert.NotContains(t, f.submits(), "agent r-s1-fix2 intermediate-dev")
+		assert.Contains(t, f.submits(), "agent r-s1-review2 story-reviewer", "the re-review judges the findings")
+		assert.Contains(t, strings.Join(st.Notes, "\n"), "r-s1-fix1 reported done with no commits")
+	})
+	t.Run("in the final round, a kept Minor already fixed", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor b.go:2 two\nVERDICT: APPROVED\nSTATUS: DONE"}
+		f.noCommit["r-final-fix1"] = true
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "gates r-final-gates2", "the round is still gated")
+		assert.Contains(t, f.submits(), "agent r-final-review2 story-reviewer", "and re-reviewed")
+		assert.Contains(t, strings.Join(st.Notes, "\n"), "r-final-fix1 reported done with no commits")
+	})
+}
+
 func TestRun_LandminesRunAtXHighAndAFixAtItsPin(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}

@@ -388,7 +388,13 @@ func (e *engine) build(s *Story, prefix, role, brief string, fix bool) (Report, 
 			if err != nil {
 				return r, err
 			}
-			if head != before {
+			if head == before && fix {
+				// A fixer can find its findings fixed already (a kept Minor a
+				// later fix took care of); the gates and the re-review after
+				// every fix round judge that, so it's no failure.
+				e.note("%s: %s reported done with no commits; the re-review checks its findings", storyName(s), name)
+			}
+			if head != before || fix {
 				if !fix {
 					s.Row.Developer = role // the story's own developer, never a fixer
 				}
