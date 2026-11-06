@@ -479,6 +479,7 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 			if commits, err = e.commitsAt(name, base); err != nil {
 				return err
 			}
+			s.Row.Commits = len(commits) // for show while the story gates; done counts again
 		}
 		res, err := e.gates(name, commits)
 		if err != nil {

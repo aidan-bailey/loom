@@ -241,20 +241,29 @@ func removeString(s []string, target string) []string {
 	return out
 }
 
-// FindByPath finds a workspace whose Path matches or is a parent of the given path.
+// FindByPath finds a workspace whose Path matches or is a parent of the
+// given path. Both are compared canonically (CanonicalPath): a shell's
+// working directory is spelled as its $PWD, which can reach the registered
+// directory through another symlink (/tb/Source for a workspace registered
+// under ~/Source -> /tb/Source).
 func (r *WorkspaceRegistry) FindByPath(path string) *Workspace {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil
 	}
+	p := CanonicalPath(absPath)
 
-	// Pick the deepest (longest-path) match so a workspace registered at
-	// /repo/sub wins over one at /repo for paths under both.
-	best := -1
+	// Pick the deepest (longest canonical path) match so a workspace
+	// registered at /repo/sub wins over one at /repo for paths under both.
+	best, bestLen := -1, 0
 	for i, ws := range r.Workspaces {
-		if absPath == ws.Path || strings.HasPrefix(absPath, ws.Path+string(filepath.Separator)) {
-			if best == -1 || len(ws.Path) > len(r.Workspaces[best].Path) {
-				best = i
+		root := CanonicalPath(ws.Path)
+		if root == "" {
+			continue
+		}
+		if p == root || strings.HasPrefix(p, root+string(filepath.Separator)) {
+			if best == -1 || len(root) > bestLen {
+				best, bestLen = i, len(root)
 			}
 		}
 	}

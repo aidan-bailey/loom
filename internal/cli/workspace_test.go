@@ -33,7 +33,13 @@ func gitRepo(t *testing.T) string {
 // boots, with records (a JSON array, "" for none) in its state.json.
 func registered(t *testing.T, name, records string) config.Workspace {
 	t.Helper()
-	ws := config.Workspace{Name: name, Path: gitRepo(t)}
+	return registeredAt(t, name, gitRepo(t), records)
+}
+
+// registeredAt is registered for the repository at path, spelled as given.
+func registeredAt(t *testing.T, name, path, records string) config.Workspace {
+	t.Helper()
+	ws := config.Workspace{Name: name, Path: path}
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
 	require.NoError(t, reg.Add(ws.Name, ws.Path))
