@@ -96,11 +96,11 @@ const (
 
 // Item is one thing Claude's side of a turn holds.
 type Item struct {
-	Kind string // KindText, KindSteps, KindCompacted or KindNote
+	Kind string // KindText, KindThinking, KindSteps, KindCompacted or KindNote
 	// At is its record's timestamp; a steps item's is its first step's.
 	At time.Time
-	// Text is a text item's markdown (its first maxItem bytes; Cut says it
-	// was cut), or a note's line.
+	// Text is a text or thinking item's markdown (its first maxItem bytes;
+	// Cut says it was cut), or a note's line.
 	Text  string
 	Cut   bool
 	Error bool // a note that is an API error
@@ -113,7 +113,10 @@ type Item struct {
 
 // The kinds of Item.
 const (
-	KindText      = "text"
+	KindText = "text"
+	// KindThinking is a thinking block that holds text: Claude stores most
+	// as a signature alone, and those add nothing.
+	KindThinking  = "thinking"
 	KindSteps     = "steps"
 	KindCompacted = "compacted"
 	KindNote      = "note"

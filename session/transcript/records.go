@@ -77,6 +77,7 @@ type origin struct {
 type block struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
@@ -118,8 +119,8 @@ func decode(off int64, data []byte) entry {
 	return e
 }
 
-// assistant reads Claude's blocks: text items and steps, or an API error's
-// note.
+// assistant reads Claude's blocks: text and thinking items and steps, or an
+// API error's note.
 func (e *entry) assistant(r record) {
 	text, blocks := content(r.Message)
 	if text != "" {
@@ -148,6 +149,15 @@ func (e *entry) assistant(r record) {
 			}
 			t, cut := capBytes(b.Text, maxItem)
 			e.parts = append(e.parts, part{kind: KindText, text: t, cut: cut})
+			e.size += len(t)
+		case "thinking":
+			// Most are a signature alone; a redacted_thinking block has no
+			// text to show and falls through to nothing.
+			if strings.TrimSpace(b.Thinking) == "" {
+				continue
+			}
+			t, cut := capBytes(b.Thinking, maxItem)
+			e.parts = append(e.parts, part{kind: KindThinking, text: t, cut: cut})
 			e.size += len(t)
 		case "tool_use":
 			e.parts = append(e.parts, part{kind: partStep, step: Step{
