@@ -114,11 +114,13 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 		assert.Zero(t, f.stops)
 	})
 
-	t.Run("inside loom, an older daemon is used as it is", func(t *testing.T) {
+	t.Run("inside loom, a subcommand uses an older daemon as it is", func(t *testing.T) {
 		t.Cleanup(func() { tmux.UseServer("") })
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
 		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
-		c, err := f.link(ours, refusal).join(true)
+		link := f.link(ours, refusal)
+		link.useOlder = true
+		c, err := link.join(true)
 		require.NoError(t, err, "a rebuild must not stop every session's commands")
 		assert.Same(t, f.clients[0], c, "the older daemon's client")
 		require.NoError(t, c.FlushForTest(), "still open")
@@ -128,6 +130,20 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 			"a loom inside loom never replaces it; it upgrades when restarted from outside loom\n", f.stderr.String())
 		args := tmux.Command(context.Background(), "list-sessions").Args
 		assert.Equal(t, []string{"tmux", "-u", "-S", "/srv/older.sock", "list-sessions"}, args, "pinned to the daemon's server")
+	})
+
+	t.Run("inside loom, the TUI refuses an older daemon", func(t *testing.T) {
+		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
+		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
+		_, err := f.link(ours, refusal).join(true)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, refusal)
+		assert.Equal(t, "the loom daemon is 0.12.0 (v0.12.0 def), older than this loom (0.13.0 (v0.13.0 abc)), and "+
+			"this loom runs in loom's tmux session loom_agent, on the daemon's tmux server: a loom inside loom never "+
+			"replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)", err.Error())
+		assert.Zero(t, f.stops, "the user's daemon is never stopped")
+		assert.Error(t, f.clients[0].FlushForTest(), "its client was closed")
+		assert.Empty(t, f.stderr.String(), "nothing used, nothing replaced")
 	})
 
 	t.Run("inside loom, an older daemon of another protocol is refused", func(t *testing.T) {
@@ -143,6 +159,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 			stop:       func(int) error { t.Error("stopped the user's daemon"); return nil },
 			mayReplace: func(string) error { return refusal },
 			say:        sayTo(&stderr),
+			useOlder:   true,
 		}
 		_, err := link.join(true)
 		require.Error(t, err)

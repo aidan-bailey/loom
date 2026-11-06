@@ -36,6 +36,12 @@ type daemonLink struct {
 	stop       func(pid int) error
 	mayReplace func(daemonTmux string) error
 	say        func(string)
+	// useOlder: when mayReplace refuses, use an older daemon of this
+	// protocol as it is rather than refuse it. A subcommand's join
+	// (joinCLI), whose waits fail on a method the daemon lacks
+	// (rpc.Client.Unsupported); never the TUI's, whose requests would
+	// wait forever.
+	useOlder bool
 }
 
 // newerDaemonError is a join's error when the daemon's build is newer than
@@ -60,10 +66,11 @@ func (e *newerDaemonError) Is(target error) bool { return target == app.ErrDaemo
 // used as it is. A newer daemon is refused (newerDaemonError): this loom
 // must be upgraded. An older one is stopped and replaced with this build,
 // once, unless mayReplace refuses: a loom under development, run in a loom
-// pane, must never replace the user's daemon. Refused, an older daemon of
-// this protocol is used as it is, said through say, so a rebuild doesn't
-// stop every session's commands until the owner restarts it; one of
-// another protocol is refused. The stop names the daemon
+// pane, must never replace the user's daemon. Refused, a subcommand's join
+// (useOlder) uses an older daemon of this protocol as it is, said through
+// say, so a rebuild doesn't stop every session's commands until the owner
+// restarts it; a TUI's, or one of another protocol, is refused. The stop
+// names the daemon
 // compared, by its pid: another loom starting meanwhile may have replaced
 // it already, and the daemon it started must be left alone. The first dial
 // starts a daemon only when spawn; the dial after a stop always does,
@@ -84,7 +91,7 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 		if order == rpc.ClientNewer && !replaced {
 			refusal = d.mayReplace(peer.Tmux)
 		}
-		if refusal != nil && c != nil {
+		if refusal != nil && c != nil && d.useOlder {
 			// Inside loom, an older daemon of this protocol is used as
 			// it is: every method both builds know works, and one only
 			// this build knows fails alone (CodeUnsupported).
@@ -108,8 +115,12 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 		}
 		if refusal != nil {
 			peerName, ownName := describeBuilds(peer, d.own)
-			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s) and speaks another protocol, and %w: a loom inside loom never replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)",
-				peerName, ownName, refusal)
+			another := ""
+			if c == nil {
+				another = " and speaks another protocol"
+			}
+			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s)%s, and %w: a loom inside loom never replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)",
+				peerName, ownName, another, refusal)
 		}
 		// The stop can take a while: the old daemon finishes its
 		// lifecycle jobs and saves before it exits.
@@ -342,13 +353,16 @@ func buildDifferences(h, other rpc.Hello) string {
 
 // joinCLI connects a subcommand (internal/cli) to the daemon as the TUI's
 // startup join does (joinDaemon), starting one when none runs, and says on
-// stderr what it does meanwhile.
+// stderr what it does meanwhile; inside loom it uses an older daemon of
+// this protocol as it is (useOlder).
 func joinCLI() (*rpc.Client, error) {
 	globalDir, err := config.GetGlobalConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return joinDaemon(globalDir)
+	link := newDaemonLink(globalDir, false, sayTo(os.Stderr))
+	link.useOlder = true
+	return link.join(true)
 }
 
 // olderDaemon describes the daemon c reached when its build is older than

@@ -93,18 +93,33 @@ func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 
 // unknownToDaemon is err, explained when it is the daemon's answer to a
 // method it does not know (CodeUnsupported) and the daemon is an older
-// build (OlderDaemon): only a restart from outside loom upgrades it.
+// build (OlderDaemon): only a restart from outside loom upgrades it. An
+// error it explained already is left as it is: a wait (await) explains
+// the failure of a request answered by a Reply, withDaemon any other.
 func unknownToDaemon(rc *rpc.Client, err error) error {
 	var w *core.WireError
-	if OlderDaemon == nil || !errors.As(err, &w) || w.Code != core.CodeUnsupported {
+	var done *olderDaemonError
+	if OlderDaemon == nil || errors.As(err, &done) || !errors.As(err, &w) || w.Code != core.CodeUnsupported {
 		return err
 	}
 	older := OlderDaemon(rc)
 	if older == "" {
 		return err
 	}
-	return fmt.Errorf("%s, which does not know this command (%w); it is upgraded when it is restarted from outside loom", older, err)
+	return &olderDaemonError{older: older, err: err}
 }
+
+// olderDaemonError is a method an older daemon does not know, explained.
+type olderDaemonError struct {
+	older string
+	err   error
+}
+
+func (e *olderDaemonError) Error() string {
+	return fmt.Sprintf("%s, which does not know this command (%v); it is upgraded when it is restarted from outside loom", e.older, e.err)
+}
+
+func (e *olderDaemonError) Unwrap() error { return e.err }
 
 // events returns the events that arrived since the last call, the state
 // events first (the client's Sync), having written each Notice to errOut.
@@ -147,6 +162,10 @@ func (c *client) await(timeout time.Duration, done func([]core.Event) bool) (boo
 		}
 		if err := c.Err(); err != nil {
 			return false, fmt.Errorf("lost the loom daemon: %w", err)
+		}
+		if err := c.Unsupported(); err != nil {
+			// A Reply to a method the daemon does not know never comes.
+			return false, unknownToDaemon(c.Client, err)
 		}
 		if err := c.ctx.Err(); err != nil {
 			return false, err
