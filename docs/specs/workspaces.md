@@ -146,7 +146,7 @@ Source: `main.go`, `daemon_client.go` (`joinDaemon`), `app/app_init.go` (`startH
    - otherwise the startup workspace is opened in the classic (no-tab) slot. If it fails to load, loom exits with the error.
 4. **Startup overlays**: the registration prompt for a directory awaiting it, else, when starting in global mode with workspaces registered and no tabs restored, the startup workspace picker (one workspace, or Global).
 
-Path matching uses `FindByPath()`, which matches exact paths or parent directories (with separator check to avoid `/repo` matching `/repo-fork`), the deepest registered path winning.
+Path matching uses `FindByPath()`, which matches exact paths or parent directories (with separator check to avoid `/repo` matching `/repo-fork`), the deepest registered path winning. Both sides are compared canonically (symlinks resolved, `config.CanonicalPath`), so a shell whose working directory is spelled through another symlink than the registered path still finds its workspace.
 
 ## Tabs and Switching
 

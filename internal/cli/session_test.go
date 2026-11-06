@@ -66,6 +66,27 @@ func TestSessionList_TheWorkingDirectoryPicksTheWorkspace(t *testing.T) {
 	assert.Contains(t, out, "alpha")
 }
 
+// The 2026-11-06 report: the workspace registered through a symlinked
+// spelling (/home/u/Source -> /tb/Source) and the shell, a cd away, in
+// the resolved one. Every session command resolves the workspace this way.
+func TestSessionList_TheWorkingDirectoryPicksTheWorkspaceThroughASymlink(t *testing.T) {
+	isolateWorkspaces(t)
+	repo, err := filepath.EvalSymlinks(gitRepo(t))
+	require.NoError(t, err)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(repo, link))
+	registeredAt(t, "ws-a", link, pausedRecords)
+	serveDaemon(t, "true")
+	sub := filepath.Join(repo, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	t.Chdir(sub)
+
+	out, _, err := runSession(t, "", "list")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "alpha")
+}
+
 func TestSessionList_RefusesADirectoryNoWorkspaceHolds(t *testing.T) {
 	isolateWorkspaces(t)
 	registered(t, "ws-a", pausedRecords)

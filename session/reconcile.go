@@ -612,33 +612,13 @@ func (r resolvedScope) owns(dir string) bool {
 	return owned
 }
 
-// canonicalPath resolves p's symlinks, so two spellings of one directory
-// compare equal. A path that no longer exists (a deleted worktree)
-// resolves through its nearest existing ancestor. Returns "" for an empty
-// or relative path.
-func canonicalPath(p string) string {
-	if p == "" || !filepath.IsAbs(p) {
-		return ""
-	}
-	p = filepath.Clean(p)
-	rest := ""
-	for {
-		if resolved, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(resolved, rest)
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return filepath.Join(p, rest)
-		}
-		rest = filepath.Join(filepath.Base(p), rest)
-		p = parent
-	}
-}
+// canonicalPath is config.CanonicalPath: p with its symlinks resolved, so
+// two spellings of one directory compare equal, through its nearest
+// existing ancestor when p is gone; "" for an empty or relative path.
+func canonicalPath(p string) string { return config.CanonicalPath(p) }
 
-// CanonicalPath is canonicalPath for other packages: p with its symlinks
-// resolved, through its nearest existing ancestor when p is gone; "" for
-// an empty or relative path.
-func CanonicalPath(p string) string { return canonicalPath(p) }
+// CanonicalPath is config.CanonicalPath for session's callers.
+func CanonicalPath(p string) string { return config.CanonicalPath(p) }
 
 // pathWithin reports whether p is root or lies beneath it. Both must be
 // canonical, and root must not be a filesystem root: a component-wise
