@@ -130,6 +130,9 @@ type Policy struct {
 	ReserveGB      int `json:"reserve_gb"`
 	CPUPressurePct int `json:"cpu_pressure_pct"`
 	CPUOvercommit  int `json:"cpu_overcommit"`
+	// Borrow lets a job the firm fit holds back start as a borrower, which
+	// gives its memory back when memory is tight (memory borrowing spec §9).
+	Borrow bool `json:"borrow"`
 	// AgentJobs is how many agent jobs of one account run at once (flow in
 	// loom part 3a, spec §5.2).
 	AgentJobs int `json:"agent_jobs"`
@@ -228,6 +231,18 @@ type Record struct {
 	NoRequeue   bool      `json:"no_requeue,omitempty"`
 	Starved     bool      `json:"starved,omitempty"`
 
+	// Memory borrowing (spec 2026-11-06-memory-borrowing §7.3): whether it
+	// runs as a borrower, when it was lent (zero unless lent) and the
+	// seconds it was lent in this attempt, its give-back requeues across
+	// attempts, a requeue asked for as a give-back, and whether this attempt
+	// runs firm only (the one after a give-back requeue).
+	Borrower   bool      `json:"borrower,omitempty"`
+	LentAt     time.Time `json:"lent_at,omitzero"`
+	LentSecs   int64     `json:"lent_secs,omitempty"`
+	GaveBack   int       `json:"gave_back,omitempty"`
+	GivingBack bool      `json:"giving_back,omitempty"`
+	NoBorrow   bool      `json:"no_borrow,omitempty"`
+
 	// Agent runs (flow in loom part 3a, spec §5.2): the job's kind ("" for
 	// a build, KindAgent), and an agent job's account: its environment's
 	// CLAUDE_CONFIG_DIR ("" for the default account).
@@ -246,6 +261,16 @@ func (r Record) QueuedSince() time.Time {
 		return r.Submitted
 	}
 	return r.Ready
+}
+
+// LentFor is how long r has been lent in this attempt as of now: its
+// LentSecs, plus the current lend's length while it is lent.
+func (r Record) LentFor(now time.Time) time.Duration {
+	d := time.Duration(r.LentSecs) * time.Second
+	if !r.LentAt.IsZero() {
+		d += now.Sub(r.LentAt)
+	}
+	return d
 }
 
 // Exit is exit.json: how the command ended, written by the shim when it

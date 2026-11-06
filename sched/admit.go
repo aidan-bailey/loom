@@ -16,6 +16,10 @@ type Decision struct {
 	Start   []JobID          // in the order to start them; nil when none
 	Waiting map[JobID]string // why each queued job left waiting waits; never nil
 	Starved JobID            // the head the starvation guard started; 0 for none
+	// OnMemory is the queued jobs AdmitGreedy left waiting on its memory fit
+	// alone, in queue order: the jobs Borrow may start (memory borrowing
+	// spec §5.2). Admit leaves it nil.
+	OnMemory []JobID
 }
 
 // plus is the sum of two needs.

@@ -115,3 +115,27 @@ func TestParseMemAvailable(t *testing.T) {
 	_, err = parseMemAvailable([]byte("MemTotal: 1 kB\n"))
 	assert.Error(t, err)
 }
+
+func TestCgroupReclaim(t *testing.T) {
+	root := t.TempDir()
+	job := "/loom.slice/loom-ab-job-7-1.scope"
+	writeCgroup(t, root, job, map[string]string{"memory.reclaim": ""})
+	require.NoError(t, CgroupReclaim(root, job, 1<<20))
+	data, err := os.ReadFile(filepath.Join(root, job, "memory.reclaim"))
+	require.NoError(t, err)
+	assert.Equal(t, "1073741824 swappiness=200", string(data), "a GB, anonymous pages first")
+
+	writeCgroup(t, root, "/user.slice", map[string]string{"memory.reclaim": ""})
+	assert.ErrorContains(t, CgroupReclaim(root, "/user.slice", 1), "not a loom job's scope")
+	data, _ = os.ReadFile(filepath.Join(root, "/user.slice", "memory.reclaim"))
+	assert.Empty(t, data, "nothing written outside a job's scope")
+	assert.ErrorContains(t, CgroupReclaim(root, "/loom.slice/loom-ab-job-8-1.scope", 1), "memory.reclaim", "no such scope")
+}
+
+func TestParseSwapFree(t *testing.T) {
+	kb, err := meminfoKB([]byte("MemTotal: 1 kB\nSwapTotal:      15847932 kB\nSwapFree:       13065504 kB\n"), "SwapFree")
+	require.NoError(t, err)
+	assert.Equal(t, int64(13065504), kb)
+	_, err = meminfoKB([]byte("MemTotal: 1 kB\n"), "SwapFree")
+	assert.ErrorContains(t, err, "no SwapFree in /proc/meminfo")
+}

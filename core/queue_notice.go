@@ -265,10 +265,30 @@ func noticeHead(rec sched.Record, after string) string {
 		if after != "" {
 			wait += ", " + after
 		}
+		if note := borrowNote(rec); note != "" {
+			wait += ", " + note
+		}
 		return fmt.Sprintf("%s after %s (%s).", head, roundedDur(rec.Ended.Sub(rec.Started)), wait)
 	default:
 		return fmt.Sprintf("%s after %s in the queue.", head, roundedDur(rec.Ended.Sub(rec.QueuedSince())))
 	}
+}
+
+// borrowNote is what a borrower's end message adds (memory borrowing spec
+// §8): its give-back restarts and the time it was lent, "" for neither.
+func borrowNote(rec sched.Record) string {
+	var parts []string
+	switch rec.GaveBack {
+	case 0:
+	case 1:
+		parts = append(parts, "restarted once to lend memory back")
+	default:
+		parts = append(parts, fmt.Sprintf("restarted %d times to lend memory back", rec.GaveBack))
+	}
+	if rec.LentSecs > 0 {
+		parts = append(parts, "lent memory back for "+roundedDur(time.Duration(rec.LentSecs)*time.Second))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // startFailReason is why a job that never ran failed: the daemon's reason,

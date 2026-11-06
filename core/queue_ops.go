@@ -305,12 +305,14 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	}
 	// The caps form never edits the agent block (smart scheduler spec §6),
 	// release_past_peaks (past-peak holds spec §8), the cgroup keys (cgroup
-	// spec §10) nor agent_jobs (flow in loom part 3a): keep the file's.
+	// spec §10), agent_jobs (flow in loom part 3a) nor borrow (memory
+	// borrowing spec §9): keep the file's.
 	file := cfg.GetScheduler()
 	s.Agent, s.AgentJobs = file.Agent, file.AgentJobs
 	s.ReleasePastPeaks = file.ReleasePastPeaks
 	s.Contain, s.JobsCPUWeight = file.Contain, file.JobsCPUWeight
 	s.InteractiveReserveGB, s.CPUPressurePct, s.CPUOvercommit = file.InteractiveReserveGB, file.CPUPressurePct, file.CPUOvercommit
+	s.Borrow = file.Borrow
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)

@@ -1205,6 +1205,25 @@ func TestJobFollower_NoteAttempt(t *testing.T) {
 	assert.True(t, f.queued, "its next start is reported")
 }
 
+func TestJobFollower_BorrowLines(t *testing.T) {
+	f := &jobFollower{}
+	running := core.JobView{ID: 7, State: sched.Running, Borrower: true}
+	assert.Empty(t, f.noteAttempt(running), "the first view sets the attempt")
+	assert.Empty(t, f.noteLent(running))
+	running.LentAt = time.Now()
+	assert.Equal(t, "job 7 lent its memory back: paused", f.noteLent(running))
+	assert.Empty(t, f.noteLent(running), "said once")
+	running.LentAt = time.Time{}
+	assert.Equal(t, "job 7 resumed", f.noteLent(running))
+	lent := core.JobView{ID: 7, State: sched.Done, LentAt: time.Now()}
+	assert.Empty(t, f.noteLent(lent), "only a running job")
+	next := core.JobView{ID: 7, Attempt: 1, GaveBack: 1, LastRequeue: "it lent its memory back (1.0 GB free)"}
+	assert.Equal(t, "job 7 restarted to lend memory back; following its next attempt", f.noteAttempt(next))
+	again := core.JobView{ID: 7, Attempt: 2, GaveBack: 1, LastRequeue: "memory ran short (1.2 GB free)"}
+	assert.Equal(t, "job 7 requeued: memory ran short (1.2 GB free); following its next attempt", f.noteAttempt(again),
+		"the ladder's requeue after a give-back reads as the ladder's")
+}
+
 func TestJobFollower_NoteRung(t *testing.T) {
 	f := &jobFollower{}
 	running := core.JobView{ID: 7, State: sched.Running}

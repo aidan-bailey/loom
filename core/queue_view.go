@@ -40,6 +40,9 @@ type QueueView struct {
 	CPUPressure float64
 	// LadderErr is the ladder's last failed call, "" once one succeeds.
 	LadderErr string
+	// BorrowedKB is the running borrowers' predicted peaks, summed (memory
+	// borrowing spec §8).
+	BorrowedKB int64
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -163,6 +166,11 @@ type JobView struct {
 	Requeues    int
 	LastRequeue string
 	NoRequeue   bool
+	// Memory borrowing (spec 2026-11-06 §8): whether it runs as a borrower,
+	// when it was lent (zero unless lent), and its give-back requeues.
+	Borrower bool
+	LentAt   time.Time
+	GaveBack int
 	// Agent runs (flow in loom part 3a): sched.KindAgent for an agent job.
 	Kind string
 	// Named locks (--lock) it holds while it runs. A daemon from before
@@ -208,6 +216,10 @@ func cloneSchedulerSettings(s config.SchedulerSettings) config.SchedulerSettings
 	if s.ReleasePastPeaks != nil {
 		on := *s.ReleasePastPeaks
 		s.ReleasePastPeaks = &on
+	}
+	if s.Borrow != nil {
+		on := *s.Borrow
+		s.Borrow = &on
 	}
 	if s.Agent != nil {
 		a := *s.Agent
@@ -348,6 +360,11 @@ func (m *Model) queueView() QueueView {
 			end = later(end, p.End())
 		}
 		v.PeakKB = sched.PeakSum(preds, now, end)
+		for _, r := range running {
+			if p, ok := g.Running[r.ID]; ok && r.Borrower {
+				v.BorrowedKB += sched.PeakSum([]sched.Prediction{p}, now, p.End())
+			}
+		}
 		starts = sched.ForecastGreedy(q.store.Jobs, q.policy, now, g, m.usualOf, m.hostUsual())
 	} else {
 		starts = sched.Forecast(q.store.Jobs, q.policy, now, q.holding, m.usualOf, m.hostUsual())
@@ -436,6 +453,9 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Requeues:     r.Requeues,
 		LastRequeue:  r.LastRequeue,
 		NoRequeue:    r.NoRequeue,
+		Borrower:     r.Borrower,
+		LentAt:       r.LentAt,
+		GaveBack:     r.GaveBack,
 		Locks:        slices.Clone(r.Locks),
 	}
 	if r.Exit != nil {

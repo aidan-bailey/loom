@@ -91,6 +91,9 @@ func startedLine(v core.JobView) string {
 	case n > 1:
 		line += fmt.Sprintf(" with %d spare cores (%s)", n, v.Claim.Spared(v.Spare))
 	}
+	if v.Borrower {
+		line += " on borrowed memory"
+	}
 	return line
 }
 
@@ -126,6 +129,14 @@ func claimText(v core.JobView) string {
 	}
 	if v.State == sched.Running && v.Rung != "" {
 		text += " " + v.Rung.Text()
+	}
+	if v.State == sched.Running {
+		switch {
+		case !v.LentAt.IsZero():
+			text += " lent"
+		case v.Borrower:
+			text += " borrowing"
+		}
 	}
 	return text
 }

@@ -173,6 +173,10 @@ type SchedulerSettings struct {
 	InteractiveReserveGB int `json:"interactive_reserve_gb,omitempty"`
 	CPUPressurePct       int `json:"cpu_pressure_pct,omitempty"`
 	CPUOvercommit        int `json:"cpu_overcommit,omitempty"`
+	// Borrow lets a job greedy admission holds back start on memory the
+	// running jobs claim but don't use, giving it back when memory gets
+	// tight (memory borrowing spec §9); absent means false.
+	Borrow *bool `json:"borrow,omitempty"`
 }
 
 // AgentSettings is the scheduler block's "agent": the advisor, a headless
@@ -198,6 +202,7 @@ func (s SchedulerSettings) clone() SchedulerSettings {
 	out := s
 	out.DefaultClaim = clonePtr(s.DefaultClaim)
 	out.Contain = clonePtr(s.Contain)
+	out.Borrow = clonePtr(s.Borrow)
 	if s.Agent != nil {
 		a := *s.Agent
 		a.Enabled = clonePtr(s.Agent.Enabled)

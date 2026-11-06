@@ -378,6 +378,9 @@ func workBars(q core.QueueView) []string {
 		budget := int((q.BudgetKB + 1<<20 - 1) >> 20)
 		memFill = int((q.PeakKB + 1<<20 - 1) >> 20)
 		mem = fmt.Sprintf("budget %d GB · forecast peak %s · %s in use · %d claimed", budget, workGB(q.PeakKB), workGB(q.UsedRSSKB), q.Claimed.MemoryGB)
+		if q.BorrowedKB > 0 {
+			mem += " · borrowed " + workGB(q.BorrowedKB)
+		}
 		allowed := q.Policy.CPUOvercommit * caps.CPUs
 		cpuFill = q.Claimed.CPUs
 		cpu = fmt.Sprintf("%d claimed of %d allowed · %.1f in use · pressure %.0f%%", q.Claimed.CPUs, allowed, q.UsedCPU, q.CPUPressure)
@@ -569,6 +572,12 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		}
 		if j.Rung != "" {
 			extra += "  " + j.Rung.Text()
+		}
+		switch {
+		case !j.LentAt.IsZero():
+			extra += "  lent (memory) " + sched.RoughDuration(now.Sub(j.LentAt))
+		case j.Borrower:
+			extra += "  borrowing"
 		}
 		if j.CancelReason != "" {
 			extra = "cancelling"

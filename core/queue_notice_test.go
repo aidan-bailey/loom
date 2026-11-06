@@ -64,6 +64,12 @@ func TestJobQueue_ANoticeNamesItsJobsOutcome(t *testing.T) {
 	}{
 		{"exit 0", with(func(*sched.Record) {}),
 			prefix + `finished: exit 0 after 3m10s (1m42s in the queue).`},
+		{"a borrower restarted once", with(func(r *sched.Record) { r.GaveBack = 1 }),
+			prefix + `finished: exit 0 after 3m10s (1m42s in the queue, restarted once to lend memory back).`},
+		{"a borrower restarted twice and lent", with(func(r *sched.Record) { r.GaveBack, r.LentSecs = 2, 240 }),
+			prefix + `finished: exit 0 after 3m10s (1m42s in the queue, restarted 2 times to lend memory back, lent memory back for 4m0s).`},
+		{"a borrower lent only", with(func(r *sched.Record) { r.LentSecs = 61 }),
+			prefix + `finished: exit 0 after 3m10s (1m42s in the queue, lent memory back for 1m1s).`},
 		{"a non-zero exit", with(func(r *sched.Record) { r.State = sched.Failed; r.Exit = &sched.Exit{Code: 2} }),
 			prefix + `finished: exit 2 after 3m10s (1m42s in the queue).`},
 		{"a signal", with(func(r *sched.Record) { r.State = sched.Failed; r.Exit = &sched.Exit{Code: -1, Signal: "SIGKILL"} }),
