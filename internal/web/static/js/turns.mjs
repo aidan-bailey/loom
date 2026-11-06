@@ -22,7 +22,16 @@ const PROMPT_LINES = 12;
 // info tab) and coming back restores both before the first paint and then
 // refreshes, instead of loading at the bottom. Like the reply drafts it
 // lasts as long as the page.
+// Only the KEEP_MAX most recently touched sessions are kept, so an app
+// resumed over days does not hold every conversation it ever showed.
 const kept = new Map();
+const KEEP_MAX = 8;
+function keep(id, patch) {
+  const prev = kept.get(id) || {};
+  kept.delete(id);
+  kept.set(id, { ...prev, ...patch });
+  while (kept.size > KEEP_MAX) kept.delete(kept.keys().next().value);
+}
 
 // mergeTurns folds a page into the turns held: the first page and a reset
 // replace them, an earlier page goes before them, and a refresh replaces
@@ -263,12 +272,12 @@ export function useTurnPages({ id, agent, live }) {
 
   useEffect(() => {
     if (agent || !held) return;
-    kept.set(id, { ...(kept.get(id) || {}), held });
+    keep(id, { held });
   }, [held]);
 
   useEffect(() => {
     if (agent || id === undefined) return undefined;
-    const onScroll = () => kept.set(id, { ...(kept.get(id) || {}), scrollY: window.scrollY });
+    const onScroll = () => keep(id, { scrollY: window.scrollY });
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, [id, agent]);
@@ -370,6 +379,13 @@ function Conversation({ snap, stale, route, act, toast }) {
 // Turns is the screen at #s/<id>: the conversation of a Claude session, and
 // for any other program (which has no transcript to read) the info tab.
 export function Turns(props) {
+  if (!props.snap) {
+    return html`
+      <section class="sc-screen">
+        <p class="sc-dim sc-empty">Loading…</p>
+      </section>
+    `;
+  }
   const s = sessionOf(props.snap, props.route.id);
   if (s && !s.claude) return html`<${Info} ...${props} />`;
   return html`<${Conversation} ...${props} />`;
