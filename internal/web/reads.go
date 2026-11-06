@@ -9,6 +9,7 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/transcript"
 )
 
@@ -26,6 +27,22 @@ type turnsJSON struct {
 	Earlier *int64 `json:"earlier"`
 	Reset   bool   `json:"reset"`
 	Skipped int    `json:"skipped"`
+	// Agent describes the subagent whose turns the page holds; left out
+	// unless the query named one (?agent=).
+	Agent *agentPageJSON `json:"agent,omitempty"`
+}
+
+// agentPageJSON is a subagent page's agent (transcript.AgentInfo). State
+// is one of running, finished or unknown; Missing says the agent's
+// transcript file is not there, and Started is "" without a first record.
+type agentPageJSON struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Teammate    bool   `json:"teammate"`
+	State       string `json:"state"`
+	Started     string `json:"started"`
+	Missing     bool   `json:"missing"`
 }
 
 type turnJSON struct {
@@ -41,8 +58,9 @@ type turnJSON struct {
 }
 
 // itemJSON is one item of a turn. Its fields follow its kind: a text item
-// has blocks and truncated, a steps item total, failed and steps, a note
-// text and error; each has at.
+// has blocks and truncated, a thinking item text and truncated (plain text,
+// never a tree), a steps item total, failed and steps, a note text and
+// error; each has at.
 type itemJSON struct {
 	Kind      string     `json:"kind"`
 	At        string     `json:"at"`
@@ -56,10 +74,12 @@ type itemJSON struct {
 }
 
 type stepJSON struct {
-	Tool    string `json:"tool"`
-	Summary string `json:"summary"`
-	At      string `json:"at"`
-	State   string `json:"state"`
+	Tool     string `json:"tool"`
+	Summary  string `json:"summary"`
+	At       string `json:"at"`
+	State    string `json:"state"`
+	Agent    string `json:"agent,omitempty"`
+	Finished bool   `json:"finished"`
 }
 
 // patchJSON is a session's diff (git.Patch) as the app reads it.
@@ -101,6 +121,12 @@ func turnsOf(p transcript.Page) turnsJSON {
 		earlier := p.Earlier
 		out.Earlier = &earlier
 	}
+	if a := p.Agent; a != nil {
+		out.Agent = &agentPageJSON{
+			ID: a.ID, Type: a.Type, Description: a.Description, Teammate: a.Teammate,
+			State: a.State, Started: stamp(a.Started), Missing: a.Missing,
+		}
+	}
 	for _, t := range p.Turns {
 		tj := turnJSON{
 			ID: t.ID, At: stamp(t.At), From: t.From, Name: t.Name, Text: t.Text,
@@ -117,8 +143,13 @@ func turnsOf(p transcript.Page) turnsJSON {
 				ij.Total, ij.Failed = it.Total, it.Failed
 				ij.Steps = make([]stepJSON, 0, len(it.Steps))
 				for _, s := range it.Steps {
-					ij.Steps = append(ij.Steps, stepJSON{Tool: s.Tool, Summary: s.Summary, At: stamp(s.At), State: s.State})
+					ij.Steps = append(ij.Steps, stepJSON{
+						Tool: s.Tool, Summary: s.Summary, At: stamp(s.At), State: s.State,
+						Agent: s.Agent, Finished: s.Finished,
+					})
 				}
+			case transcript.KindThinking:
+				ij.Text, ij.Truncated = it.Text, it.Cut
 			case transcript.KindNote:
 				ij.Text, ij.Error = it.Text, it.Error
 			}
@@ -217,10 +248,15 @@ func (l *Layer) readTurns(w http.ResponseWriter, r *http.Request, device string)
 }
 
 // turnsQuery reads the turns route's query: before and after are byte
-// offsets, and at most one of them is set.
+// offsets, and at most one of them is set; agent, when not empty, is a
+// subagent's id (subagent.ValidAgentID), whose own turns are read in
+// place of the conversation's.
 func turnsQuery(r *http.Request) (transcript.Query, error) {
 	v := r.URL.Query()
-	q := transcript.Query{Conversation: v.Get("conversation")}
+	q := transcript.Query{Conversation: v.Get("conversation"), Agent: v.Get("agent")}
+	if q.Agent != "" && !subagent.ValidAgentID(q.Agent) {
+		return transcript.Query{}, fmt.Errorf("agent %q: not an agent id", q.Agent)
+	}
 	for _, c := range []struct {
 		name string
 		to   *int64

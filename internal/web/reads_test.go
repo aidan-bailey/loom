@@ -13,6 +13,8 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/subagent"
+	"github.com/aidan-bailey/loom/session/transcript"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,7 +99,7 @@ func TestAPI_TurnsIsAPageOfTheConversation(t *testing.T) {
 			"cut": false, "command": false, "partial": false,
 			"items": [
 				{"kind": "steps", "at": "2026-10-23T12:20:05Z", "total": 1,
-				 "steps": [{"tool": "Bash", "summary": "gh pr create", "at": "2026-10-23T12:20:05Z", "state": "pending"}]},
+				 "steps": [{"tool": "Bash", "summary": "gh pr create", "at": "2026-10-23T12:20:05Z", "state": "pending", "finished": false}]},
 				{"kind": "text", "at": "2026-10-23T12:20:09Z",
 				 "blocks": [{"t": "p", "c": [{"t": "text", "v": "Opened "}, {"t": "strong", "c": [{"t": "text", "v": "#318"}]}, {"t": "text", "v": "."}]}]}
 			]
@@ -126,6 +128,183 @@ func TestAPI_TurnsTakesItsCursorsAndRefusesBadOnes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.body, &page))
 	assert.True(t, page.Reset, "another conversation's turns are replaced")
 	assert.Len(t, page.Turns, 1)
+}
+
+func TestTurnsOf_MapsThinkingStepsAndTheAgentPage(t *testing.T) {
+	at := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	page := transcript.Page{
+		Conversation: webConv,
+		Turns: []transcript.Turn{{
+			At: at, From: transcript.FromBrief, Text: "Map the tree.",
+			Items: []transcript.Item{
+				{Kind: transcript.KindThinking, At: at, Text: "Still in design.", Cut: true},
+				{Kind: transcript.KindThinking, At: at, Text: "Next."},
+				{Kind: transcript.KindSteps, At: at, Total: 2, Steps: []transcript.Step{
+					{ID: "t1", Tool: "Agent", Summary: "map", At: at, State: transcript.StateDone, Agent: "a1f00dcafe0001", Finished: true},
+					{ID: "t2", Tool: "Bash", At: at, State: transcript.StatePending},
+				}},
+			},
+		}},
+		Agent: &transcript.AgentInfo{
+			ID: "a1f00dcafe0001", Type: "Explore", Description: "map", Teammate: true,
+			State: transcript.AgentRunning, Started: at, Missing: true,
+		},
+	}
+
+	got, err := json.Marshal(turnsOf(page))
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"conversation": "`+webConv+`",
+		"turns": [{
+			"id": 0, "at": "2026-11-06T09:00:00Z", "from": "brief", "name": "", "text": "Map the tree.",
+			"cut": false, "command": false, "partial": false,
+			"items": [
+				{"kind": "thinking", "at": "2026-11-06T09:00:00Z", "text": "Still in design.", "truncated": true},
+				{"kind": "thinking", "at": "2026-11-06T09:00:00Z", "text": "Next."},
+				{"kind": "steps", "at": "2026-11-06T09:00:00Z", "total": 2, "steps": [
+					{"tool": "Agent", "summary": "map", "at": "2026-11-06T09:00:00Z", "state": "done", "agent": "a1f00dcafe0001", "finished": true},
+					{"tool": "Bash", "summary": "", "at": "2026-11-06T09:00:00Z", "state": "pending", "finished": false}
+				]}
+			]
+		}],
+		"earlier": null, "reset": false, "skipped": 0,
+		"agent": {"id": "a1f00dcafe0001", "type": "Explore", "description": "map", "teammate": true,
+			"state": "running", "started": "2026-11-06T09:00:00Z", "missing": true}
+	}`, string(got), "a thinking item is text and truncated; a step names its agent only when it has one")
+
+	page.Agent = nil
+	got, err = json.Marshal(turnsOf(page))
+	require.NoError(t, err)
+	assert.NotContains(t, string(got), `"agent":{`, "a conversation page has no agent object")
+}
+
+// agentFixture writes a subagent's own transcript and meta file beside the
+// session's transcript, as Claude lays them out.
+func agentFixture(t *testing.T, inst *session.Instance, agentID, meta string, lines ...string) {
+	t.Helper()
+	_, path := inst.ClaudeSession()
+	dir := subagent.SubagentsDir(path)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	if meta != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-"+agentID+".meta.json"), []byte(meta), 0o600))
+	}
+	if len(lines) > 0 {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-"+agentID+".jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	}
+}
+
+func TestAPI_TurnsLinkAnAgentStepToItsSubagentAndKeepThinkingText(t *testing.T) {
+	inst := apiWithTranscript(t, "talk",
+		`{"type":"user","timestamp":"2026-11-06T09:00:00.000Z","promptSource":"typed","message":{"role":"user","content":"survey the tree"}}`,
+		`{"type":"assistant","timestamp":"2026-11-06T09:00:02.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"thinking","thinking":"Still in design: items 1 and 2 are worked out.","signature":"sig"},{"type":"redacted_thinking","data":"x"}]}}`,
+		`{"type":"assistant","timestamp":"2026-11-06T09:00:05.000Z","cwd":"/w","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_agent1","name":"Agent","input":{"description":"map the tree","subagent_type":"Explore","prompt":"Map the tree."}}]}}`,
+		`{"type":"assistant","timestamp":"2026-11-06T09:00:06.000Z","cwd":"/w","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_agent2","name":"Task","input":{"description":"later survey","prompt":"Survey."}}]}}`,
+		`{"type":"user","timestamp":"2026-11-06T09:00:40.000Z","toolUseResult":{"agentId":"a1f00dcafe0001","status":"completed"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_agent1","content":"done"}]}}`,
+		`{"type":"assistant","timestamp":"2026-11-06T09:00:45.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Mapped."}]}}`,
+	)
+	agentFixture(t, inst, "a1f00dcafe0001",
+		`{"agentType":"Explore","description":"map the tree","toolUseId":"toolu_agent1","finished":true}`)
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{inst}})
+
+	got := env.readAnswer(fmt.Sprintf("/api/v1/sessions/%d/turns", env.ids["talk"]))
+	require.Equal(t, http.StatusOK, got.status, "body: %s", got.body)
+
+	var page turnsJSON
+	require.NoError(t, json.Unmarshal(got.body, &page))
+	require.Len(t, page.Turns, 1)
+	assert.Nil(t, page.Agent, "a conversation page has no agent object")
+	var thinking []itemJSON
+	steps := map[string]stepJSON{}
+	for _, it := range page.Turns[0].Items {
+		switch it.Kind {
+		case transcript.KindThinking:
+			thinking = append(thinking, it)
+		case transcript.KindSteps:
+			for _, s := range it.Steps {
+				steps[s.Summary] = s
+			}
+		}
+	}
+	require.Len(t, thinking, 1, "a blank and a redacted thinking block add nothing")
+	assert.Equal(t, "Still in design: items 1 and 2 are worked out.", thinking[0].Text)
+	assert.False(t, thinking[0].Truncated)
+	assert.Empty(t, thinking[0].Blocks, "thinking crosses as text, not as a tree")
+
+	linked := steps["map the tree"]
+	assert.Equal(t, "Agent", linked.Tool)
+	assert.Equal(t, "a1f00dcafe0001", linked.Agent)
+	assert.True(t, linked.Finished, "meta says finished")
+	unlinked := steps["later survey"]
+	assert.Equal(t, "Task", unlinked.Tool)
+	assert.Empty(t, unlinked.Agent, "no meta and no result: no link is guessed")
+	assert.False(t, unlinked.Finished)
+
+	assert.Contains(t, string(got.body), `"agent":"a1f00dcafe0001"`)
+	assert.Contains(t, string(got.body), `"finished":true`)
+	assert.NotContains(t, string(got.body), `"agent":""`, "an unlinked step leaves the key out")
+}
+
+func TestAPI_TurnsOfASubagentAreItsOwnWithItsAgentPage(t *testing.T) {
+	inst := apiWithTranscript(t, "talk", talkLines...)
+	agentFixture(t, inst, "a1f00dcafe0001",
+		`{"agentType":"Explore","description":"map the tree","toolUseId":"toolu_agent1","finished":true}`,
+		`{"type":"user","isSidechain":true,"agentId":"a1f00dcafe0001","timestamp":"2026-11-06T09:00:01.000Z","message":{"role":"user","content":"Map the tree and report."}}`,
+		`{"type":"assistant","isSidechain":true,"agentId":"a1f00dcafe0001","timestamp":"2026-11-06T09:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Mapped."}]}}`,
+	)
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{inst}})
+	base := fmt.Sprintf("/api/v1/sessions/%d/turns", env.ids["talk"])
+
+	got := env.readAnswer(base + "?agent=a1f00dcafe0001")
+	require.Equal(t, http.StatusOK, got.status, "body: %s", got.body)
+	var page turnsJSON
+	require.NoError(t, json.Unmarshal(got.body, &page))
+	require.NotNil(t, page.Agent)
+	assert.Equal(t, agentPageJSON{
+		ID: "a1f00dcafe0001", Type: "Explore", Description: "map the tree",
+		State: transcript.AgentFinished, Started: "2026-11-06T09:00:01Z",
+	}, *page.Agent)
+	require.Len(t, page.Turns, 1)
+	assert.Equal(t, transcript.FromBrief, page.Turns[0].From)
+	assert.Equal(t, "Map the tree and report.", page.Turns[0].Text)
+	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "turns", session: env.ids["talk"], result: "200 ok"})
+
+	gone := env.readAnswer(base + "?agent=a2e2e2e2e2e2")
+	require.Equal(t, http.StatusOK, gone.status, "an agent with no file is a page, not an error; body: %s", gone.body)
+	var empty turnsJSON
+	require.NoError(t, json.Unmarshal(gone.body, &empty))
+	require.NotNil(t, empty.Agent)
+	assert.True(t, empty.Agent.Missing)
+	assert.Equal(t, "a2e2e2e2e2e2", empty.Agent.ID)
+	assert.Equal(t, transcript.AgentUnknown, empty.Agent.State, "no meta file, no state")
+	assert.Empty(t, empty.Agent.Started)
+	assert.Empty(t, empty.Turns)
+
+	main := env.readAnswer(base + "?agent=")
+	require.Equal(t, http.StatusOK, main.status, "body: %s", main.body)
+	var conv turnsJSON
+	require.NoError(t, json.Unmarshal(main.body, &conv))
+	assert.Nil(t, conv.Agent, "an empty agent reads the conversation")
+	require.Len(t, conv.Turns, 1)
+	assert.Equal(t, "open the PR", conv.Turns[0].Text)
+}
+
+func TestAPI_TurnsRefusesABadAgentID(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiWithTranscript(t, "talk", talkLines...)}})
+	base := fmt.Sprintf("/api/v1/sessions/%d/turns", env.ids["talk"])
+
+	for _, c := range []struct{ query, id string }{
+		{"?agent=..", ".."},
+		{"?agent=.", "."},
+		{"?agent=a%2Fb", "a/b"},
+		{"?agent=a%5Cb", `a\b`},
+		{"?agent=..%2F..%2Fx", "../../x"},
+	} {
+		status, out := env.do(http.MethodGet, base+c.query, nil)
+		assert.Equal(t, http.StatusBadRequest, status, c.query)
+		assert.Equal(t, fmt.Sprintf("agent %q: not an agent id", c.id), apiErrorOf(t, out), c.query)
+	}
+	assert.Empty(t, env.loop.JobsForTest(), "a refused query reaches no model")
 }
 
 func TestAPI_DiffIsTheWorktreesPatch(t *testing.T) {
