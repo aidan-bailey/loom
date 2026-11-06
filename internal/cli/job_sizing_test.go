@@ -76,4 +76,6 @@ func TestStartedLine(t *testing.T) {
 	assert.Equal(t, "job 21 started after 6s with 2 spare cores (4+2c/3G)", startedLine(v))
 	v.Claim, v.Spare = sched.Claim{CPUs: 5, MemoryGB: 3}, sched.Claim{CPUs: 1, MemoryGB: 1}
 	assert.Equal(t, "job 21 started after 6s with 1 spare core (4+1c/3G)", startedLine(v))
+	v.Claim, v.Spare, v.Borrower = sched.Claim{CPUs: 4, MemoryGB: 2}, sched.Claim{}, true
+	assert.Equal(t, "job 21 started after 6s on borrowed memory", startedLine(v), "memory borrowing spec §8")
 }

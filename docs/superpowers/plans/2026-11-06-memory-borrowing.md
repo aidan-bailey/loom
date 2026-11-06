@@ -1586,4 +1586,13 @@ func borrowNote(rec sched.Record) string {
 
 ## Execution notes
 
-(Filled in while executing.)
+Executed inline on 2026-11-06 on `aidanb/changing-resource-alocation`: P1 e8d3e5c8, P2 727bc536, P3 in the commit that adds these notes. Gate jobs: 968 (P1 red), 969 (P1: sched and config suites, live contract, vet, cross builds), 971/973/974/975 (P2: borrow tests, three mutation checks, the core and sched suites), 976 and 980 (P3: cli, ui, rpc, the docs lint).
+
+- **The live lend contract held at its first run.** A frozen 201 MB scope fell to 55 MB after `memory.reclaim` with 200 MB in swap, and its memory was intact after the thaw (systemd 261, kernel 7.2, zram).
+- **The protocol reference was regenerated in P2 as well as P3:** `Policy.Borrow`, added in P1, is part of the queue view on the wire. Adding fields is compatible, so `Protocol` is unchanged.
+- **Core tests check the temp cgroup root's `memory.reclaim` file** rather than a fake confiner's `Reclaim`: `CgroupReclaim` is a file write, not a D-Bus call, so the fake confiner is unchanged.
+- **The work view's per-job detail line (spec §8) was dropped.** The view has no per-job detail line; the row's state text (`borrowing`, `lent (memory) 3m`), the follower's lines and the end message carry it.
+- **`requeueJob`'s log names the new attempt.** It logged the attempt after the new one: the record was already replaced when it read `Attempt+1`.
+- **`LentAt` is stamped when the freeze returns**, not at dispatch, so the reconcile's thawed-by-hand case trusts only passes that read the cgroup after the freeze.
+- **Mutation checks** (job 973): dropping `stepLadder`'s lent skip, the reconcile's lent case, or `requeueJob`'s give-back counting each turned a `TestQueueBorrow` test red.
+- **Not fixed:** `cloneSchedulerSettings` (core) clones no `Contain` pointer, a gap from before this work.

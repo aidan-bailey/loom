@@ -38,6 +38,12 @@ func TestQueueBorrow_AJobBorrowsWhatAFirmJobLeaves(t *testing.T) {
 	rec := wqRecord(t, l.m, id)
 	assert.Equal(t, sched.Running, rec.State, "12 + 6 GB of claims pass 14, but 0.9 + 6 GB used fits: %q", l.m.queue.waiting[id])
 	assert.True(t, rec.Borrower)
+
+	v := l.m.queueView()
+	assert.Equal(t, int64(6<<20), v.BorrowedKB, "its 6 GB prediction is borrowed (memory borrowing spec §8)")
+	for _, j := range v.Jobs {
+		assert.Equal(t, j.ID == id, j.Borrower, "job %d", j.ID)
+	}
 }
 
 func TestQueueBorrow_OffByDefault(t *testing.T) {

@@ -25,6 +25,8 @@ The work scheduler's package. This file covers the logic half: the job types, th
 - `predict.go` — `Span`, `Prediction`, `Flat`, `Predict`, `PeakSum`, `WithMarginKB`.
 - `greedy.go` — `Greedy`, `Budget`, `AdmitGreedy` and its fitter.
 - `ladder.go` — `Rung`, `LadderJob`, `LadderInput`, `LadderState`, `Action`, `Ladder`, `MaxRequeues`.
+- `borrow.go` — `Borrowing`, `Borrow`, `MayBorrow`, `BorrowFits`.
+- `giveback.go` — `Tight`, `BorrowerJob`, `GiveBackInput`, `GiveBackState`, `GiveBack`, `ActLend`, `ActResume`.
 - `hold.go` — `HoldState`, `Hold`.
 - `ioacct.go`, `ioacct_linux.go`, `ioacct_other.go` — the shim's `/proc/self/io` counters.
 - `surprise.go` — `NeedsPrior`, `Surprise`, `ScorePrior`: when the advisor is asked, and how its priors are scored.
@@ -63,6 +65,10 @@ While jobs are contained ([cgroup spec](../docs/superpowers/specs/2026-11-05-cgr
 
 When greed loses ([cgroup spec](../docs/superpowers/specs/2026-11-05-cgroup-greedy-scheduler-design.md) §8), `Ladder` is one pure pass, at most one `Action`: memory is short while MemAvailable is below the reserve or the slice's memory pressure is 10% or more, and calm while it is 2 GB above the reserve with pressure under 2%. While short it climbs a rung on the victim (a job not exclusive, requeued fewer than `MaxRequeues` (2) times, and not paused with `NoRequeue`; one the starvation guard did not start before one it did; then the most recently started): squeeze (`MemoryHigh` at its working set, at least 64 MiB, since 0 is no limit), pause 15 s later, requeue 30 s after that. Once calm for 30 s it restores the oldest laddered job, one every 15 s. A record keeps its `Rung`, `RungAt`, `Laddered` (squeezed or paused in this attempt: the run teaches floors only, `RunOf`), `Requeues`, `LastRequeue`, the `Requeue` asked for, `NoRequeue` (`Submit.NoRequeue`) and `Starved`. `ArchiveAttempt` moves an attempt's `output.log`, `started.json` and `exit.json` into `attempt-<n>/`.
 
+
+## Borrowing
+
+With `Policy.Borrow` ([memory borrowing spec](../docs/superpowers/specs/2026-11-06-memory-borrowing-design.md)), `Borrow` runs after `AdmitGreedy` on its `Decision`, whose `OnMemory` names the jobs it left waiting on its memory fit alone (`greedyFit.gate` holds the other checks). It starts each that `MayBorrow` (not `NoRequeue`, exclusive or an agent job, below `MaxRequeues`, not `NoBorrow`) and passes the gates when the firm jobs at their measured use (`Greedy.Used`, plus the margin; at their prediction before a sample) and every borrower, lent ones included, at its prediction fit the budget; nothing borrows while `Greedy.Tight`, under a holdoff, or while a job is lent. Whatever `Borrow` says, it names in `Firm` the unlent borrowers today's fit now holds for. `GiveBack` is the pure pass beside `Ladder`: while `Tight` (headroom under the reserve plus 2 GB) it gives back the most recently started unlent borrower, one every 10 s, by `ActRequeue` under a 2-minute stake (time lent aside), when a freeze failed (`NoLend`), with no bus, or when `SwapFreeKB` is under its working set, else by `ActLend`; when not tight it resumes (`ActResume`) the earliest lent job whose `BorrowFits` holds, once lent 30 s. `CgroupReclaim` writes `memory.reclaim` (`<bytes> swappiness=200`, retried without the argument on EINVAL, EAGAIN no error) and shares `CgroupKill`'s refusal of anything but a job's scope; `ReadSwapFreeKB` reads `SwapFree`. A record keeps `Borrower`, `LentAt`, `LentSecs`, `GaveBack`, `GivingBack` and `NoBorrow`; `LentFor` is its time lent in this attempt.
 ## Signatures, beliefs and sizing
 
 The smart scheduler's half ([spec](../docs/superpowers/specs/2026-11-05-smart-scheduler-design.md)): what each command measured, and the claim that follows.
