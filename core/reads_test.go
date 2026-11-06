@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/transcript"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,64 @@ func TestReadTurns_RepliesWithAPageOfTheTranscript(t *testing.T) {
 	require.Len(t, rs[0].Turns.Turns, 1)
 	assert.Equal(t, "run it", rs[0].Turns.Turns[0].Text)
 	assert.Equal(t, "Done.", rs[0].Turns.Turns[0].Items[0].Text)
+}
+
+func TestReadTurns_PassesTheAgentQueryToTheReader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), readsConv+".jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(
+		`{"type":"user","timestamp":"2026-11-06T09:00:00.000Z","promptSource":"typed","message":{"role":"user","content":"survey the tree"}}`+"\n"), 0o600))
+	dir := subagent.SubagentsDir(path)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-a1f00dcafe0001.jsonl"), []byte(
+		`{"type":"user","isSidechain":true,"agentId":"a1f00dcafe0001","timestamp":"2026-11-06T09:00:01.000Z","message":{"role":"user","content":"Map the tree and report."}}`+"\n"+
+			`{"type":"assistant","isSidechain":true,"agentId":"a1f00dcafe0001","timestamp":"2026-11-06T09:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Mapped."}]}}`+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-a1f00dcafe0001.meta.json"),
+		[]byte(`{"agentType":"Explore","description":"map the tree","finished":true}`), 0o600))
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	inst := transcriptInst(t, "paused", path)
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	id := m.idOf(inst)
+
+	read := func(req ReqID, q transcript.Query) Reply {
+		t.Helper()
+		m.ReadTurns(id, q, req)
+		rs := replies(run(m, m.Drain()))
+		require.Len(t, rs, 1)
+		assert.Equal(t, req, rs[0].Req)
+		return rs[0]
+	}
+
+	conversation := read(10, transcript.Query{})
+	require.NoError(t, conversation.Err)
+	assert.Nil(t, conversation.Turns.Agent, "a read of the conversation has no agent page")
+	require.Len(t, conversation.Turns.Turns, 1)
+	assert.Equal(t, "survey the tree", conversation.Turns.Turns[0].Text)
+
+	sub := read(11, transcript.Query{Agent: "a1f00dcafe0001"})
+	require.NoError(t, sub.Err)
+	require.NotNil(t, sub.Turns.Agent, "Query.Agent reaches the reader and Page.Agent comes back")
+	assert.Equal(t, "a1f00dcafe0001", sub.Turns.Agent.ID)
+	assert.Equal(t, "Explore", sub.Turns.Agent.Type)
+	assert.Equal(t, transcript.AgentFinished, sub.Turns.Agent.State)
+	assert.False(t, sub.Turns.Agent.Missing)
+	require.Len(t, sub.Turns.Turns, 1)
+	assert.Equal(t, transcript.FromBrief, sub.Turns.Turns[0].From)
+	assert.Equal(t, "Map the tree and report.", sub.Turns.Turns[0].Text)
+	require.NotEmpty(t, sub.Turns.Turns[0].Items)
+	assert.Equal(t, "Mapped.", sub.Turns.Turns[0].Items[0].Text)
+
+	gone := read(12, transcript.Query{Agent: "a2e2e2e2e2e2"})
+	require.NoError(t, gone.Err, "an agent whose file is not there is a page, not a failure")
+	require.NotNil(t, gone.Turns.Agent)
+	assert.True(t, gone.Turns.Agent.Missing)
+	assert.Empty(t, gone.Turns.Turns)
+
+	bad := read(13, transcript.Query{Agent: "../x"})
+	require.Error(t, bad.Err)
+	assert.ErrorContains(t, bad.Err, "not an agent id")
+	assert.Nil(t, bad.Turns.Agent)
 }
 
 func TestReadTurns_RefusesASessionWhoseTranscriptIsUnknown(t *testing.T) {
