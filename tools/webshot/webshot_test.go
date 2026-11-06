@@ -259,13 +259,81 @@ func TestFixture_TheLastMessageIsTheTreesText(t *testing.T) {
 	t.Fatal("no session 1")
 }
 
+func TestFixture_TheTurnsHoldAnAgentStepAndAThinkingItem(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("turns.json")
+	require.NoError(t, err)
+	var page struct {
+		Turns []struct {
+			Items []struct {
+				Kind  string `json:"kind"`
+				Text  string `json:"text"`
+				Steps []struct {
+					Agent    string `json:"agent"`
+					Finished bool   `json:"finished"`
+				} `json:"steps"`
+			} `json:"items"`
+		} `json:"turns"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &page))
+	finished := map[string]bool{}
+	thinking := ""
+	for _, turn := range page.Turns {
+		for _, it := range turn.Items {
+			if it.Kind == "thinking" {
+				thinking = it.Text
+			}
+			for _, st := range it.Steps {
+				if st.Agent != "" {
+					finished[st.Agent] = st.Finished
+				}
+			}
+		}
+	}
+	require.Contains(t, finished, "a1f00dcafe0001", "the subagent the agent screen shows")
+	assert.False(t, finished["a1f00dcafe0001"], "it is still running: its link keeps the ◐")
+	require.Contains(t, finished, "a1f00dcafe0002")
+	assert.True(t, finished["a1f00dcafe0002"], "a finished one draws no ◐")
+	assert.NotEmpty(t, thinking, "a thinking item with text")
+}
+
+func TestFixture_SessionOnesAgentsCarryTheIdsTheTurnsLinkTo(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Sessions map[string][]struct {
+			ID     int `json:"id"`
+			Agents []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"agents"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	for _, s := range snap.Sessions["1"] {
+		if s.ID != 1 {
+			continue
+		}
+		require.Len(t, s.Agents, 2)
+		assert.Equal(t, "a1f00dcafe0001", s.Agents[0].ID, "recon, the running one")
+		assert.Equal(t, "a1f00dcafe0002", s.Agents[1].ID, "verifier, the idle one")
+		return
+	}
+	t.Fatal("no session 1")
+}
+
 func TestPickScreens(t *testing.T) {
 	all, err := pickScreens("")
 	require.NoError(t, err)
 	assert.Equal(t, screens, all)
-	two, err := pickScreens("turns, fleet")
+	two, err := pickScreens("conversation, fleet")
 	require.NoError(t, err)
-	assert.Equal(t, []screen{{"turns", "#s/1/turns"}, {"fleet", ""}}, two)
+	assert.Equal(t, []screen{{"conversation", "#s/1"}, {"fleet", ""}}, two)
+	for _, retired := range []string{"session", "turns"} {
+		_, err = pickScreens(retired)
+		assert.Error(t, err, "%s: a session opens on its conversation, and its old screens are gone", retired)
+	}
 	_, err = pickScreens("fleet,nope")
 	assert.Error(t, err)
 }

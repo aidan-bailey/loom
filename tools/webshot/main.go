@@ -6,7 +6,7 @@
 // --remote-debugging-pipe, and writes one PNG per screen.
 //
 //	go run ./tools/webshot -out /tmp/shots
-//	go run ./tools/webshot -out /tmp/shots -screens fleet,turns -guides
+//	go run ./tools/webshot -out /tmp/shots -screens fleet,conversation -guides
 //
 // It never touches a daemon, a session or the user's tmux server. Console
 // errors, uncaught exceptions and API routes the fixture can't answer are
@@ -38,13 +38,15 @@ type screen struct{ name, hash string }
 
 // screens are the routes webshot knows, in the order it renders them. The
 // session screens are of session 1 (working, with a PR, agents and a diff),
-// session 2 (waiting on a permission) and session 7 (your turn, with a
-// fresh brainstorm mockup).
+// session 2 (waiting on a permission: its conversation ends in the needs-you
+// box) and session 7 (your turn, with a fresh brainstorm mockup). A session
+// opens on its conversation; "info" is the tab that holds its tiles, agents
+// and actions.
 var screens = []screen{
 	{"fleet", ""},
-	{"session", "#s/1"},
+	{"conversation", "#s/1"},
 	{"waiting", "#s/2"},
-	{"turns", "#s/1/turns"},
+	{"info", "#s/1/info"},
 	{"diff", "#s/1/diff"},
 	{"mockup", "#s/7/mockup"},
 	{"mockup-full", "#s/7/mockup/full"},
