@@ -159,6 +159,9 @@ type JobView struct {
 	NoRequeue   bool
 	// Agent runs (flow in loom part 3a): sched.KindAgent for an agent job.
 	Kind string
+	// Named locks (--lock) it holds while it runs. A daemon from before
+	// locks sends none, which is how `loom job submit` tells it ignored them.
+	Locks []string
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -215,6 +218,7 @@ func cloneJobViews(jobs []JobView) []JobView {
 	out := slices.Clone(jobs)
 	for i := range out {
 		out[i].Argv = slices.Clone(out[i].Argv)
+		out[i].Locks = slices.Clone(out[i].Locks)
 		if e := out[i].Exit; e != nil {
 			c := *e
 			out[i].Exit = &c
@@ -425,6 +429,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Requeues:     r.Requeues,
 		LastRequeue:  r.LastRequeue,
 		NoRequeue:    r.NoRequeue,
+		Locks:        slices.Clone(r.Locks),
 	}
 	if r.Exit != nil {
 		e := *r.Exit

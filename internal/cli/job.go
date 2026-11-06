@@ -74,6 +74,7 @@ type claimFlags struct {
 	io, exclusive bool
 	after         int64
 	noRequeue     bool
+	locks         []string
 }
 
 // add registers the flags on c.
@@ -86,6 +87,7 @@ func (f *claimFlags) add(c *cobra.Command) {
 	fl.BoolVar(&f.exclusive, "exclusive", false, "Claim every cap, for a benchmark (not with --cpus, --mem or --io)")
 	fl.Int64Var(&f.after, "after", 0, "Run after job N ends done: held until then, and cancelled if it ends any other way")
 	fl.BoolVar(&f.noRequeue, "no-requeue", false, "Never requeue the job when memory runs short; pause it instead")
+	fl.StringArrayVar(&f.locks, "lock", nil, "Hold a named lock while it runs, such as port:4300: jobs naming the same lock take turns (repeatable)")
 }
 
 // claim is the claim the flags ask for. The daemon applies the default claim
@@ -132,8 +134,29 @@ func (f *claimFlags) submission(c *cobra.Command, args []string, notify bool, ta
 	return sched.Submit{
 		Argv: slices.Clone(args), Cwd: cwd, Env: os.Environ(), Description: desc, Claim: claim,
 		Notify: notify, Tail: tail, Launch: os.Getenv(claudemod.EnvLaunch), After: sched.JobID(f.after),
-		NoRequeue: f.noRequeue,
+		NoRequeue: f.noRequeue, Locks: slices.Clone(f.locks),
 	}, nil
+}
+
+// locksIgnored reports whether the daemon dropped the locks sub asked for:
+// one from before locks reads no Locks field and its view of the job (v)
+// carries none, so the job would run without them.
+func locksIgnored(sub sched.Submit, v core.JobView) bool {
+	return len(sub.Locks) > 0 && len(v.Locks) == 0
+}
+
+// refuseIgnoredLocks cancels job id when the daemon ignored its locks
+// (locksIgnored), and says so: a job that should wait its turn would run
+// beside the one holding its lock, and fail the way --lock exists to stop.
+func (d *client) refuseIgnoredLocks(sub sched.Submit, v core.JobView) error {
+	if !locksIgnored(sub, v) {
+		return nil
+	}
+	what := "cancelled"
+	if err := d.request(func(req core.ReqID) { d.CancelJob(v.ID, core.CancelFromCLI, req) }); err != nil {
+		what = fmt.Sprintf("not cancelled (%v): cancel it with loom job cancel %d", err, v.ID)
+	}
+	return fmt.Errorf("the loom daemon is older than this loom and ignores --lock, so job %d was %s; restart the daemon on this build to use locks", v.ID, what)
 }
 
 // oneLine maps every control character (a newline, a tab, an escape) to a
@@ -210,6 +233,9 @@ func newJobSubmitCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("job %d was submitted, but %w", id, err)
 				}
+				if err := d.refuseIgnoredLocks(sub, v); err != nil {
+					return err
+				}
 				out := c.OutOrStdout()
 				d.printPlacement(out, v)
 				d.printSizing(out, id)
@@ -282,7 +308,11 @@ func (d *client) printPlacement(out io.Writer, v core.JobView) {
 		return
 	}
 	n, running := queuePlace(d.Queue(), v.ID)
-	fmt.Fprintf(out, "job %d queued (%s in line, %d running)\n", v.ID, ordinal(n), running)
+	fmt.Fprintf(out, "job %d queued (%s in line, %d running)", v.ID, ordinal(n), running)
+	if strings.HasPrefix(v.Waiting, "waits for lock ") {
+		fmt.Fprintf(out, ": %s", v.Waiting)
+	}
+	fmt.Fprintln(out)
 }
 
 // resultRoute says where a submitted job's result will go (subagent job

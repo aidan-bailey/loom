@@ -89,6 +89,16 @@ func TestSubmit_Validate(t *testing.T) {
 		{"an agent job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{Exclusive: true} }, "an agent job claims nothing and runs after nothing"},
 		{"an agent job after another", func(s *Submit) { s.Kind, s.After = KindAgent, 3 }, "an agent job claims nothing and runs after nothing"},
 		{"an unknown kind", func(s *Submit) { s.Kind = "x" }, `unknown job kind "x"`},
+		{"a port lock", func(s *Submit) { s.Locks = []string{"port:4300"} }, ""},
+		{"locks of every allowed character", func(s *Submit) { s.Locks = []string{"a-Z_0.9:/x", "port:4310"} }, ""},
+		{"8 locks", func(s *Submit) { s.Locks = []string{"a", "b", "c", "d", "e", "f", "g", "h"} }, ""},
+		{"9 locks", func(s *Submit) { s.Locks = []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"} }, "9 locks: at most 8"},
+		{"an empty lock", func(s *Submit) { s.Locks = []string{""} }, `--lock "": a name is 1–64 of A–Z, a–z, 0–9 and . _ : / -`},
+		{"a lock of 64 characters", func(s *Submit) { s.Locks = []string{strings.Repeat("x", 64)} }, ""},
+		{"a lock of 65 characters", func(s *Submit) { s.Locks = []string{strings.Repeat("x", 65)} }, `--lock "` + strings.Repeat("x", 65) + `": a name is 1–64 of A–Z, a–z, 0–9 and . _ : / -`},
+		{"a lock with a space", func(s *Submit) { s.Locks = []string{"port 4300"} }, `--lock "port 4300": a name is 1–64 of A–Z, a–z, 0–9 and . _ : / -`},
+		{"a lock twice", func(s *Submit) { s.Locks = []string{"port:4300", "port:4300"} }, "--lock port:4300 is given twice"},
+		{"an agent job with a lock", func(s *Submit) { s.Kind, s.Locks = KindAgent, []string{"port:4300"} }, "an agent job takes no lock"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

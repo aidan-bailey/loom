@@ -472,7 +472,8 @@ func newJobRunCmd() *cobra.Command {
 				case err != nil:
 					return notSubmitted(err)
 				}
-				if _, err := d.awaitJob(id); err != nil {
+				v, err := d.awaitJob(id)
+				if err != nil {
 					if errors.Is(err, context.Canceled) {
 						return d.interrupted(id, signalled())
 					}
@@ -480,6 +481,9 @@ func newJobRunCmd() *cobra.Command {
 						return d.lostDaemon(id)
 					}
 					return d.mayStillRun(id, fmt.Sprintf("job %d was submitted, but %v", id, err))
+				}
+				if err := d.refuseIgnoredLocks(sub, v); err != nil {
+					return &ExitError{Code: exitNotRun, Msg: "loom: " + err.Error()}
 				}
 				return d.follow(c.OutOrStdout(), id, signalled, true)
 			})

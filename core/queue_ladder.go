@@ -237,6 +237,7 @@ func (m *Model) requeueJob(i int, why string, now time.Time) {
 		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, AboveCap: rec.AboveCap,
 		BelowKB: rec.BelowKB, AgentWhy: rec.AgentWhy, After: rec.After, Ready: rec.Ready,
 		Attempt: rec.Attempt + 1, Requeues: rec.Requeues + 1, LastRequeue: why, NoRequeue: rec.NoRequeue,
+		Locks: rec.Locks,
 	}
 	log.For("core").Warn("queue.requeued", "job", int64(rec.ID), "attempt", rec.Attempt+1, "why", why)
 	q.moved()

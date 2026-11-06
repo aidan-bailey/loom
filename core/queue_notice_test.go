@@ -113,23 +113,23 @@ func TestJobQueue_ANoticeCarriesTheLogsTail(t *testing.T) {
 	full := write("thirty.log", thirty.String())
 
 	assert.Equal(t, "HEAD\nLog: "+full+" (30 lines). Last 5 lines:\n\nline 26\nline 27\nline 28\nline 29\nline 30",
-		composeNotice("HEAD", full, 5))
-	assert.Equal(t, "HEAD\nLog: "+full+" (30 lines).", composeNotice("HEAD", full, 0),
+		composeNotice("HEAD", full, 5, false))
+	assert.Equal(t, "HEAD\nLog: "+full+" (30 lines).", composeNotice("HEAD", full, 0, false),
 		"--tail 0 names the log and sends none of it")
 
 	short := write("short.log", "a\nb")
-	assert.Equal(t, "HEAD\nLog: "+short+" (2 lines). Last 2 lines:\n\na\nb", composeNotice("HEAD", short, 20),
+	assert.Equal(t, "HEAD\nLog: "+short+" (2 lines). Last 2 lines:\n\na\nb", composeNotice("HEAD", short, 20, false),
 		"a last line without its newline counts")
 	one := write("one.log", "only\n")
-	assert.Equal(t, "HEAD\nLog: "+one+" (1 line). Last 1 line:\n\nonly", composeNotice("HEAD", one, 20))
+	assert.Equal(t, "HEAD\nLog: "+one+" (1 line). Last 1 line:\n\nonly", composeNotice("HEAD", one, 20, false))
 	empty := write("empty.log", "")
-	assert.Equal(t, "HEAD\nLog: "+empty+" (0 lines).", composeNotice("HEAD", empty, 20))
-	assert.Equal(t, "HEAD", composeNotice("HEAD", filepath.Join(dir, "never.log"), 20),
+	assert.Equal(t, "HEAD\nLog: "+empty+" (0 lines).", composeNotice("HEAD", empty, 20, false))
+	assert.Equal(t, "HEAD", composeNotice("HEAD", filepath.Join(dir, "never.log"), 20, false),
 		"a job that never ran has no log to name")
 
 	line := strings.Repeat("x", 99)
 	wide := write("wide.log", strings.Repeat(line+"\n", 100))
-	capped := composeNotice("HEAD", wide, 200)
+	capped := composeNotice("HEAD", wide, 200, false)
 	_, tail, found := strings.Cut(capped, ":\n\n")
 	require.True(t, found)
 	assert.LessOrEqual(t, len(tail), 4000, "at most the last 4,000 bytes")
@@ -422,4 +422,49 @@ func TestWithSubmitter_PutsItsLineAfterTheHead(t *testing.T) {
 	assert.Equal(t, "head\nline\nrest\nmore", withSubmitter("head\nrest\nmore", "line"))
 	assert.Equal(t, "head\nline", withSubmitter("head", "line"), "a job that never ran has a head alone")
 	assert.Equal(t, "(Submitted by your subagent a1; loom could not reach it: no reason was given.)", unreachableLine("a1", ""))
+}
+
+func TestLockHint(t *testing.T) {
+	for _, tc := range []struct {
+		name, line, want string
+	}{
+		{"playwright's web server", "Error: http://localhost:4300 is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true", "port:4300"},
+		{"node", "Error: listen EADDRINUSE: address already in use :::4310", "port:4310"},
+		{"a dev server", "Port 4200 is already in use.", "port:4200"},
+		{"an address with no port named", "bind: address already in use", "port:<N>"},
+		{"an ordinary failure", "test result: FAILED. 3 passed; 1 failed", ""},
+		{"a mere mention of a port", "listening on localhost:4300", ""},
+		{"something else already used", "error: the name foo is already used", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lockHint([]string{"before", tc.line, "after"})
+			if tc.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Equal(t, "Its log says a port was already in use. If another job binds it too, submit both with --lock "+tc.want+" so they take turns.", got)
+		})
+	}
+}
+
+func TestJobQueue_AFailedJobsNoticeHintsAtALock(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "out.log")
+	body := "Error: http://localhost:4300 is already used\n" + strings.Repeat("noise\n", 10)
+	require.NoError(t, os.WriteFile(logPath, []byte(body), 0o600))
+
+	hinted := composeNotice("HEAD", logPath, 2, true)
+	assert.Equal(t, "HEAD\nIts log says a port was already in use. If another job binds it too, submit both with --lock port:4300 so they take turns.\n"+
+		"Log: "+logPath+" (11 lines). Last 2 lines:\n\nnoise\nnoise", hinted,
+		"the hint reads past --tail, which still bounds the lines sent")
+	assert.Equal(t, "HEAD\nLog: "+logPath+" (11 lines). Last 2 lines:\n\nnoise\nnoise", composeNotice("HEAD", logPath, 2, false))
+
+	failed := sched.Record{State: sched.Failed, Exit: &sched.Exit{Code: 1}}
+	assert.True(t, wantsLockHint(failed))
+	locked := failed
+	locked.Locks = []string{"port:4300"}
+	assert.False(t, wantsLockHint(locked), "a job that holds a lock gets no hint")
+	assert.False(t, wantsLockHint(sched.Record{State: sched.Done, Exit: &sched.Exit{}}), "nor one that passed")
+	assert.False(t, wantsLockHint(sched.Record{State: sched.Cancelled}), "nor one cancelled")
+	assert.False(t, wantsLockHint(sched.Record{State: sched.Failed, Exit: &sched.Exit{Code: -1, Signal: "SIGKILL"}}), "nor one killed")
 }
