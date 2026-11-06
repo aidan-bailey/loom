@@ -86,8 +86,10 @@ type block struct {
 	Content   json.RawMessage `json:"content"`
 }
 
-// decode reads the line at off.
-func decode(off int64, data []byte) entry {
+// decode reads the line at off. In a subagent's file (agent) every record is
+// a sidechain record and is read, and the prompt at offset 0, the first
+// record, is the agent's brief.
+func decode(off int64, data []byte, agent bool) entry {
 	e := entry{off: off}
 	if data == nil {
 		e.bad = true
@@ -103,7 +105,7 @@ func decode(off int64, data []byte) entry {
 		return e
 	}
 	e.at, _ = time.Parse(time.RFC3339Nano, r.Timestamp)
-	if r.IsSidechain {
+	if r.IsSidechain && !agent {
 		return e
 	}
 	switch r.Type {
@@ -115,6 +117,9 @@ func decode(off int64, data []byte) entry {
 		e.assistant(r)
 	case "user":
 		e.user(r)
+	}
+	if agent && off == 0 && e.opens {
+		e.turn.From, e.turn.Name, e.turn.Command = FromBrief, "", false
 	}
 	return e
 }
