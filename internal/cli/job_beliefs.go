@@ -127,7 +127,7 @@ func writeBeliefs(w io.Writer, page sched.BeliefsPage, now time.Time) {
 		if v.Usual > 0 {
 			usual = "~" + sched.RoughDuration(v.Usual)
 		}
-		claim := claimText(core.JobView{Claim: v.Sized.Claim, Sources: v.Sized.Sources, Learned: v.Sized.Learned, AboveCap: v.Sized.AboveCap})
+		claim := claimText(core.JobView{Claim: v.Sized.Claim, Sources: v.Sized.Sources, Learned: v.Sized.Learned, FamilyRuns: v.Sized.FamilyRuns, AboveCap: v.Sized.AboveCap})
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", v.Belief.ID, v.RepoName, v.Belief.Folder,
 			cutTo(oneLine(beliefCommand(v)), 40), len(v.Belief.Runs), claim, scalesText(v.Scaling), usual,
 			sched.RoughDuration(now.Sub(v.Belief.LastSeen))+" ago")

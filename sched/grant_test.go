@@ -27,6 +27,9 @@ func TestGrant(t *testing.T) {
 	}
 
 	assert.Equal(t, 8, SpareWidth(learned(1, 4, 2), wide))
+	fromFamily := learned(1, 4, 2)
+	fromFamily.Sources.CPUs = SourceFamily
+	assert.Zero(t, SpareWidth(fromFamily, wide), "cores from the family are no grant's")
 	assert.Equal(t, map[JobID]Claim{1: {CPUs: 4, MemoryGB: 2}}, grant(wide, learned(1, 4, 2)),
 		"an idle host: 14 − 4 − the reserve's 4 leaves 6 cores; it takes 4, to its width of 8, and memory in proportion")
 	assert.Equal(t, map[JobID]Claim{1: {CPUs: 2, MemoryGB: 1}}, grant(wide, running(4), learned(1, 4, 2)),

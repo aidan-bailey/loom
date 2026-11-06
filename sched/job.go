@@ -184,11 +184,14 @@ type Record struct {
 	Unsized   string       `json:"unsized,omitempty"`  // why the job has no signature
 	Sizing    Sizing       `json:"sizing,omitempty"`
 	Sources   ClaimSources `json:"sources,omitzero"`
-	Learned   int          `json:"learned,omitempty"`   // the runs its learned parts came from
-	AboveCap  bool         `json:"above_cap,omitempty"` // its memory from measured peaks was held to the cap
-	BelowKB   int64        `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
-	AgentWhy  string       `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
-	Adopted   bool         `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
+	Learned   int          `json:"learned,omitempty"` // the runs its learned parts came from
+	// FamilyRuns is the family pool's runs its family parts came from
+	// (family sizing spec §5.3).
+	FamilyRuns int    `json:"family_runs,omitempty"`
+	AboveCap   bool   `json:"above_cap,omitempty"` // its memory from measured peaks was held to the cap
+	BelowKB    int64  `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
+	AgentWhy   string `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
+	Adopted    bool   `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
 
 	// Spare is what a grant added to its base claim when it started (job
 	// scaling spec §5.3); Claim is then the total.
@@ -230,6 +233,10 @@ type Record struct {
 	// CLAUDE_CONFIG_DIR ("" for the default account).
 	Kind       string `json:"kind,omitempty"`
 	AccountKey string `json:"account_key,omitempty"`
+
+	// Named locks (--lock): while it runs no other job naming one of them
+	// starts, so jobs that bind one port or share one fixture take turns.
+	Locks []string `json:"locks,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
@@ -273,6 +280,7 @@ type Submit struct {
 	After       JobID    `json:"after,omitempty"`      // the prerequisite (--after); 0 for none
 	NoRequeue   bool     `json:"no_requeue,omitempty"` // never requeued when memory runs short: paused instead (cgroup spec §8.2)
 	Kind        string   `json:"kind,omitempty"`       // "" for a build, KindAgent
+	Locks       []string `json:"locks,omitempty"`      // named locks it holds while it runs (--lock): a job naming one waits while another holds it
 }
 
 // totalBytes is the summed length of items.
@@ -290,7 +298,9 @@ func totalBytes(items []string) int {
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
 // folder is absolute; the prerequisite is not negative (0 is none); an agent
-// job claims nothing and runs after nothing, and no other kind is known. It does
+// job claims nothing and runs after nothing, and no other kind is known; at
+// most maxLocks locks, each a lock name (ValidLockName) given once, and none
+// on an agent job. It does
 // not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
@@ -334,7 +344,55 @@ func (s Submit) Validate() error {
 	case s.Kind == KindAgent && (s.Claim != Claim{} || s.After != 0):
 		return errors.New("an agent job claims nothing and runs after nothing")
 	}
+	return checkLocks(s.Locks, s.Kind)
+}
+
+// maxLocks is how many locks one job may name, and maxLockChars how long a
+// lock's name may be.
+const (
+	maxLocks     = 8
+	maxLockChars = 64
+)
+
+// checkLocks is Validate's check of a submission's locks: at most maxLocks,
+// each a valid name given once, and none on an agent job.
+func checkLocks(locks []string, kind string) error {
+	if len(locks) == 0 {
+		return nil
+	}
+	if kind == KindAgent {
+		return errors.New("an agent job takes no lock")
+	}
+	if len(locks) > maxLocks {
+		return fmt.Errorf("%d locks: at most %d", len(locks), maxLocks)
+	}
+	seen := make(map[string]bool, len(locks))
+	for _, l := range locks {
+		if !ValidLockName(l) {
+			return fmt.Errorf("--lock %q: a name is 1–%d of A–Z, a–z, 0–9 and . _ : / -", l, maxLockChars)
+		}
+		if seen[l] {
+			return fmt.Errorf("--lock %s is given twice", l)
+		}
+		seen[l] = true
+	}
 	return nil
+}
+
+// ValidLockName reports whether name is a lock's name: 1–maxLockChars
+// characters, each a letter, a digit or one of . _ : / -, as in port:4300.
+func ValidLockName(name string) bool {
+	if name == "" || len(name) > maxLockChars {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', strings.ContainsRune("._:/-", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // CheckClaim refuses a claim, its default already applied, that is over a cap

@@ -113,6 +113,10 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 // fewer than p.AgentJobs of its account run; they take nothing from the caps
 // and are never the head.
 //
+// Named locks (Record.Locks) come before the fit: a job naming a lock that
+// a running job holds waits "waits for lock NAME (job N)" and is never the
+// head; one naming a lock a job started earlier in the pass waits the same.
+//
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen. A policy without caps
 // (the zero Policy) starts nothing. The jobs slice is left as it is.
@@ -148,6 +152,7 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 		}
 	}
 	slices.SortFunc(queued, byOrder)
+	held := lockHolders(jobs)
 
 	var line []Record // the jobs that can ever run, in queue order
 	for _, r := range queued {
@@ -157,6 +162,12 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 		}
 		if !p.usable() || r.Claim.exceeds(p.Caps) {
 			d.Waiting[r.ID] = waitOver
+			continue
+		}
+		if why := held.blocks(r); why != "" {
+			// A running job holds its lock: it can't start until that one
+			// ends, so it is never the head either.
+			d.Waiting[r.ID] = why
 			continue
 		}
 		line = append(line, r)
@@ -179,12 +190,52 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 	}
 
 	for _, r := range line {
-		if why := f.fits(r); why != "" {
+		why := held.blocks(r)
+		if why == "" {
+			why = f.fits(r)
+		}
+		if why != "" {
 			d.Waiting[r.ID] = why
 			continue
 		}
 		f.take(r)
+		held.take(r)
 		d.Start = append(d.Start, r.ID)
 	}
 	return d
+}
+
+// locks maps each lock a running job, or one a pass starts, holds to that
+// job.
+type locks map[string]JobID
+
+// lockHolders is the locks the running jobs among jobs hold.
+func lockHolders(jobs []Record) locks {
+	held := locks{}
+	for _, r := range jobs {
+		if r.State == Running {
+			held.take(r)
+		}
+	}
+	return held
+}
+
+// take records r's locks as held by r.
+func (l locks) take(r Record) {
+	for _, name := range r.Locks {
+		if _, ok := l[name]; !ok {
+			l[name] = r.ID
+		}
+	}
+}
+
+// blocks says why r can't start for a lock another job holds, naming the
+// first in r's order, or "" when none of its locks is held.
+func (l locks) blocks(r Record) string {
+	for _, name := range r.Locks {
+		if id, ok := l[name]; ok && id != r.ID {
+			return fmt.Sprintf("waits for lock %s (job %d)", name, id)
+		}
+	}
+	return ""
 }

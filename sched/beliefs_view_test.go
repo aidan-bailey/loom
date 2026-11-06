@@ -54,7 +54,7 @@ func TestFormatBelief(t *testing.T) {
 	b.AddRun(run)
 	b.Prior = &Prior{CPUs: 4, MemoryGB: 12, IO: true, DurationSeconds: 300, Model: "opus", Effort: "low", At: t0.Add(-time.Hour), Note: "builds wasm, runs chromium", Score: PriorScore{Memory: 1.15}}
 	b.AddNote(Note{At: t0, Job: 6, Text: "the wasm build and chromium overlap"})
-	lines := FormatBelief(ViewBelief(b, szPolicy))
+	lines := FormatBelief(ViewBelief(b, nil, szPolicy))
 	text := strings.Join(lines, "\n")
 	require.NotEmpty(t, lines)
 	for _, want := range []string{
@@ -71,9 +71,20 @@ func TestFormatBelief(t *testing.T) {
 	}
 }
 
+func TestFormatBelief_Family(t *testing.T) {
+	v := ViewBelief(Belief{ID: "3f9a1c2b7d10", Signature: Signature{Repo: "/src/loom/.git", Folder: ".", Command: []string{"go", "test", "./sched"}}},
+		belief(Run{Outcome: OutcomeDone, PeakKB: 1 << 20, WallSeconds: 120}), szPolicy)
+	v.Family, v.FamilySize = "go test ./sched", 3
+	assert.True(t, v.UsualFromFamily)
+	text := strings.Join(FormatBelief(v), "\n")
+	assert.Contains(t, text, "family    go test ./sched (3 beliefs)")
+	assert.Contains(t, text, "about     2m (its family's runs)")
+	assert.Contains(t, text, "memory from 1 run of its family (go test ./sched)")
+}
+
 func TestFormatBelief_Scaling(t *testing.T) {
 	line := func(b *Belief) string {
-		for _, l := range FormatBelief(ViewBelief(*b, szPolicy)) {
+		for _, l := range FormatBelief(ViewBelief(*b, nil, szPolicy)) {
 			if strings.HasPrefix(l, "scaling") {
 				return l
 			}
@@ -92,7 +103,7 @@ func TestFormatBelief_NamesTheCommandItRunsAfter(t *testing.T) {
 	text := func(after SignatureID, command []string) []string {
 		s := sig
 		s.After = after
-		v := ViewBelief(Belief{ID: s.ID(), Signature: s}, Policy{})
+		v := ViewBelief(Belief{ID: s.ID(), Signature: s}, nil, Policy{})
 		v.After = command
 		return FormatBelief(v)
 	}
