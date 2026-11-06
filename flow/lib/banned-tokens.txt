@@ -2,6 +2,8 @@
 # One per line, matched case-insensitively as fixed strings. Lines starting with # are comments.
 # Entries match as case-insensitive substrings, so a hit inside an ordinary word means rephrase.
 # check-agents.sh also reads $FLOW_DATA/banned-tokens.txt (default ~/.loom/flow/banned-tokens.txt) when it exists: words that must not ship in loom's repo, such as client repo names.
+# A retired tool's name, so no prompt sends an agent to it.
+agent-wait.sh
 nix develop
 dev-postgres
 docs/agent-runs

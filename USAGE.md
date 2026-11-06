@@ -1215,7 +1215,8 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 | `flow costs session [<id>] [--since T] [--until T]`, `flow costs records [FILE …]` | Token usage and API-price cost of a session's agents, or totals over run records |
 | `flow doctor` | Check that a supervised run can start here (`flow conf doctor`) |
 | `flow check-agents` | Lint the flow plugin's agents and skills |
-| `flow wait start <name> -- <cmd>`, `flow wait wait <name> [secs]` | Start a long step for an agent, and wait for it inside a turn |
+| `flow wait start <name> -- <cmd>`, `flow wait wait (<name> \| --job <N>) [secs]` | Queue a long step for an agent as a job and print its ID; wait for it inside a turn (75: still running, 70: lost); refuses polls |
+| `flow gates start (--story <commits>… \| --final)`, `flow gates wait [<run>] [secs]`, `flow gates cancel [<run>]` | Queue a story's gates or the final gates as a chain of jobs, wait for the run inside a turn and print each step's verdict (0: passed, 1: failed, 75: not ended), or cancel it |
 | `flow guard` | Loom's PreToolUse hook: the git guard for flow's developers and drafter (reads the hook's JSON on stdin) |
 | `flow path <file>` | The absolute path of a file in this session's copy of the plugin (`docs/dispatch.md`, …); inside a session only |
 | `flow import <checkout>` | Copy a standalone flow checkout's run records into `~/.loom/flow/records` (an identical one is skipped, a differing one refused and listed: exit 1) and print where each of its profiles belongs |

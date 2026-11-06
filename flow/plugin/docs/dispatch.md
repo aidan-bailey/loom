@@ -338,11 +338,12 @@ that role's briefs: a developer gets the prefix, the services (to start, as
 written, before the tests that need them) and, on a deep story, the landmine
 notes; the verifier gets the services and the vacuous patterns; and a
 reviewer gets the prefix (it runs its check-only commands, such as the
-formatter check, inside it), the notes and the idioms. Per story it runs
-`loom flow conf gates --story <the story's commits>`, which expands `{packages}`
-to the Cargo packages the story changed and the packages that depend on them,
-and hands the verifier the lines it prints; after the last story it runs
-`loom flow conf gates --final`. `/flow:draft` runs `loom flow conf show --for drafter`
+formatter check, inside it), the notes and the idioms. Per story it hands the
+verifier the story's commits, and the verifier's
+`loom flow gates start --story <the story's commits>` expands `{packages}` to
+the Cargo packages the story changed and the packages that depend on them;
+after the last story the verifier runs `loom flow gates start --final`.
+`/flow:draft` runs `loom flow conf show --for drafter`
 once, which the supervisor's block leaves out, and pastes it into each
 drafter's brief: the prefix, the story gates, the generated globs, the
 landmine markers and notes, the idioms and the design registries.
@@ -648,21 +649,28 @@ cheapest developer, which is where a vacuous test is likeliest to survive.
 
 ## The verifier runs gates check-only
 
-`flow:verifier` (Haiku @ high) runs the lines `loom flow conf gates` printed — per
-story `--story <the story's commits>`, after the last story `--final` — and
-reports each step PASS, FAIL, FAIL (killed), VACUOUS or SKIPPED. Dispatch it in
-the background to keep build logs out of the controller's context while the
-compile wall-clock burns. Profile gates are check-only by definition: a
+`flow:verifier` (Haiku @ high) runs the gates through `loom flow gates` — per
+story `start --story <the story's commits>`, after the last story
+`start --final` — and reports the table `loom flow gates wait` prints, each
+step PASS, FAIL, FAIL (killed), FAIL (infra), VACUOUS or SKIPPED. Dispatch it
+in the background to keep build logs out of the controller's context while
+the compile wall-clock burns. Profile gates are check-only by definition: a
 formatter appears in its check form, and drift is a FAIL for a developer to
-apply. Story gates stop at the first FAIL; final gates all run, so one pass
-shows every failing CI job. A step a signal ended is FAIL (killed), an infra
-failure. Never run the verifier while a developer builds in the same
-worktree: both drive heavy builds.
+apply. `start` queues the gates in loom's work queue as a chain, each job
+after the one before, so the chain keeps its place in line and runs one gate
+at a time. A story's chain stops at its first FAIL; after a final gate fails,
+`wait` queues the gates after it again, so every final gate runs and one pass
+shows every failing CI job. The verdicts are the tool's: it reads each job's
+own exit, runs the profile's vacuous check on each output, and calls a step a
+signal ended FAIL (killed), an infra failure. Never run the verifier while a
+developer builds in the same worktree: both drive heavy builds.
 
-A step that can take more than a few minutes runs through
-`loom flow wait`, so the verifier waits inside its turn
-([why](#an-agent-waits-inside-its-turn)). Claude Code blocks a foreground
-`sleep`, and a background one returns at once and waits for nothing.
+`loom flow gates wait` waits at most 170 seconds a call, so the verifier waits
+inside its turn ([why](#an-agent-waits-inside-its-turn)). The run's record is
+in the state directory (`<state>/gates/<run>.json`): a verifier dispatched
+after another was made to hand back finishes the run with
+`loom flow gates wait <run>`, and `loom flow gates cancel <run>` ends one a
+story abandons.
 
 ## The developers' git guard and turn caps
 
@@ -772,34 +780,32 @@ Your report has not been delivered"), and an agent that has ended its turn to
 wait for a background command counts as not running. A supervisor whose only
 agent out is a verifier waiting that way is made to hand back mid-run.
 
-So the verifier and the developers run any step that can take more than a few
-minutes through `loom flow wait`.
-`start <name> -- <command>` detaches the command with `setsid`, its output in
-`<state>/agent-wait/<name>.log`, and `wait <name>`, a foreground call that
-blocks for at most 170 seconds inside a 600000 ms Bash timeout, prints
-`done <name> exit <status>` when the command ends or `running <name>` when it
-should be called again. That also keeps a gate alive past the Bash tool's
-ten-minute ceiling. The wait stays under three minutes because Claude Code
-2.1.316 moves a background subagent's foreground Bash call to the background
-once it has run 180 seconds, a cap set on Anthropic's side: in the 2026-11-03
-retro's runs it moved 717 waits of 540 seconds, and each moved wait left a
-process that later woke its agent with a notification. If a supervisor is
-made to hand back anyway, it names its agents still out in the state file and
-in its `REFRESH` report, and the manager forwards their late reports to the
-successor.
+So the verifier and the developers wait in bounded foreground calls: the
+verifier through `loom flow gates wait`, a developer through `loom flow wait`
+for any step that can take more than a few minutes.
+`start <name> -- <command>` queues the command in loom's work queue and prints
+its job ID, and `wait <name>`, a foreground call that blocks for at most 170
+seconds inside a 600000 ms Bash timeout, prints `done <name> exit <status>`
+when the job ends, `running <name>: job <N> …` with where it stands when it
+should be called again, or `lost <name>: …` for a job that ended without an
+exit of its own. Each call copies what the job's output gained to
+`<state>/agent-wait/<name>.log`, and `wait --job <N>` follows a job queued any
+other way. That also keeps a step alive past the Bash tool's ten-minute
+ceiling. The wait stays under three minutes because Claude Code 2.1.316 moves
+a background subagent's foreground Bash call to the background once it has
+run 180 seconds, a cap set on Anthropic's side: in the 2026-11-03 retro's runs
+it moved 717 waits of 540 seconds, and each moved wait left a process that
+later woke its agent with a notification. If a supervisor is made to hand back
+anyway, it names its agents still out in the state file and in its `REFRESH`
+report, and the manager forwards their late reports to the successor.
 
-Inside a loom session (`LOOM_LAUNCH` set, `loom` on `PATH`), `start` runs the
-command as `loom job run -d "<name>: <command>" -- <command>`, so the step
-waits in loom's work queue until its claim fits, and `wait` can print
-`running <name>` while the log shows only `loom: job N queued` lines. The
-exit status and the output are the job's; 125 means loom could not run it,
-with the reason in the log. Detached with `setsid` alone, a step escaped the
-queue: on 2026-11-05, 103 of one repo's 169 steps started this way ran
-beside the jobs the queue had admitted on what it took for free cores (the
-other 66 named `loom job run` themselves), and their sccache compiles landed
-in the shared sccache server, outside every job. A command
-that already starts with `loom` runs as given, so a step an agent queued
-itself isn't queued twice.
+Every step is a job, never a process beside the queue: on 2026-11-05, 103 of
+one repo's 169 steps ran detached on cores and memory the queue counted as
+free, and their compiles landed in the shared sccache server, outside every
+job. `start` refuses a poll, `sleep` or a shell loop around `sleep`, since a
+queued poll holds a claim doing nothing (six did that day): wait on the step
+it watches. It refuses a `loom …` command too, which is already a job to wait
+on with `--job <N>`.
 
 ## Effort is inherited when unpinned
 

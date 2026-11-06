@@ -131,6 +131,13 @@ class CheckAgentsTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("preloads 'habits'", out)
 
+    def test_a_retired_tools_name_fails(self):
+        (self.root / "plugin" / "agents" / "dev.md").write_text(AGENT.replace("what the brief says", "what lib/agent-wait.sh prints"))
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL [banned]", out)
+        self.assertIn("agent-wait.sh", out)
+
     def test_a_banned_word_in_a_skill_fails(self):
         (self.root / "plugin" / "skills" / "habits" / "SKILL.md").write_text(SKILL + "\nRun nix develop first.\n")
         code, out = self.lint()

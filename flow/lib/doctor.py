@@ -3,8 +3,7 @@
 FAIL, and exit 1, when this is not a flow root loom wrote (FLOW_ROOT: plugin/,
 lib/ and ROSTER); when the git guard (lib/git_guard.py, which loom's
 `loom flow guard` runs for the guarded agents) doesn't block `git stash` or
-doesn't let `git status` through; when `tail --pid` is missing (agent-wait.sh
-needs it); when the profile is missing or can't be used; when it lists no story
+doesn't let `git status` through; when the profile is missing or can't be used; when it lists no story
 gates; when the prefix fails; when a program a gate runs isn't on PATH inside the prefix, or the
 gate can't be parsed (doctor checks every command of a chain, a `for` loop and a `bash -c` script,
 a cargo plugin as `cargo-<sub>`, and `rustup` for `cargo +<toolchain>`); when the state
@@ -190,11 +189,6 @@ def root_problem() -> str | None:
     return None
 
 
-def tail_pid_problem() -> str | None:
-    result = subprocess.run(["tail", "--help"], capture_output=True, text=True)
-    return None if "--pid" in result.stdout else "`tail --pid` is missing; agent-wait.sh needs GNU tail"
-
-
 def state_problem(top: Path, profile: Profile | None) -> str | None:
     try:
         path = state_dir(top, profile)
@@ -252,7 +246,6 @@ def doctor(cwd: Path) -> tuple[list[str], int]:
 
     report("flow root", root_problem())
     report("guard", guard_problem())
-    report("tail --pid", tail_pid_problem())
     lines.append(f"PASS python {sys.version.split()[0]}")
     try:
         top = toplevel(cwd)

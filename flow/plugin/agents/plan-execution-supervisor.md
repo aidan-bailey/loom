@@ -87,10 +87,10 @@ review column and landmines are in the state file; you may also re-run
 3. When the developer reports, read its commits (`git log`) and its deviation
    list. Attribution lines naming the developer's own model are not a
    deviation.
-4. Run `loom flow conf gates --story <the story's commits>` and
-   dispatch `flow:verifier` with its output, the word "story", and the
-   `[verifier]` block. A `FAIL` line in that output is a gate the script
-   couldn't expand: it fails the story like any other gate.
+4. Dispatch `flow:verifier` with the word "story", the story's commits and
+   the `[verifier]` block; it runs `loom flow gates start --story <the
+   story's commits>`. A gate the script couldn't expand is a FAIL in its
+   table and fails the story like any other gate.
 5. Review the story once. Run
    `loom flow conformance <plan> --story <id> --base <story base> --head <story head>`:
    it lists the plan blocks that didn't land as written and the changed lines
@@ -131,9 +131,9 @@ concurrent heavy builds. Run a verifier only while no developer is building.
 
 ## After the last story
 
-1. Run `loom flow conf gates --final` and dispatch `flow:verifier` with
-   its output, the word "final", and the `[verifier]` block: the final gates all
-   run, each reported on its own.
+1. Dispatch `flow:verifier` with the word "final" and the `[verifier]` block;
+   it runs `loom flow gates start --final`, and the final gates all run, each
+   reported on its own.
 2. Dispatch `flow:code-quality-reviewer` once over the whole `BASE_SHA..HEAD` with
    an anti-seam brief and the `[reviewer]` block: contracts between stories,
    values one story produces that no other reads, units or limits that
