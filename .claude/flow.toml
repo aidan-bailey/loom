@@ -1,0 +1,115 @@
+schema = 1                      # flow profile schema version
+
+prefix = ""                     # flake.nix:122-138 defines a dev shell, but CI sets Go up with actions/setup-go (.github/workflows/build.yml, lint.yml, race.yml, docs.yml) and CLAUDE.md never builds inside it; go, gofmt and clang are on PATH here
+
+services = []                   # no CLAUDE.md names a service to start before tests; real-tmux tests start their own private server (CLAUDE.md:37)
+
+generated = [
+  "core/rpc/methods_gen.go",    # `go generate ./core/rpc` (CLAUDE.md:38; core/rpc/rpc.go:15)
+  "docs/specs/protocol.md",     # `go test ./core/rpc -run TestProtocolReference -update` (CLAUDE.md:38)
+  "CHANGELOG.md",               # git-cliff (CLAUDE.md:38)
+  "vendor/**",                  # go mod vendor writes it; Nix builds from it with vendorHash = null (flake.nix:60)
+]
+# Not listed: go.sum and flake.lock, which plan_conformance.py's COMMON_LOCKFILES matches by file name.
+
+[gates]
+story = [
+  "bash -c 'out=$(gofmt -l $(git ls-files \"*.go\" | grep -v \"^vendor/\")) || exit 1; if [ -n \"$out\" ]; then echo \"gofmt would reformat:\"; echo \"$out\"; exit 1; fi'",  # CLAUDE.md:56's check on its file list; gofmt -l exits 0 while it lists files, so a listing fails here, and so does gofmt's own error (an index entry for a deleted file, CLAUDE.md:40)
+  "CGO_ENABLED=0 go vet ./...",   # CLAUDE.md:57: the golangci-lint CI pins can't run here, so vet stands in
+  "CGO_ENABLED=0 go test ./...",  # CLAUDE.md:54; also runs the CLAUDE.md lint (CLAUDE.md:59) and every Enforced test
+]
+
+# One command per CI job.
+final = [
+  "bash -c 'CGO_ENABLED=0 go test ./... && for os in linux darwin; do for arch in amd64 arm64; do CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -o /dev/null . || exit 1; done; done'",  # build.yml `build` (Build Binary and Test): go test -v ./..., then the goos x goarch matrix's go build (build.yml:47-48,60,66); CGO off as CLAUDE.md:54 says, -v and the build/ output dropped
+  "CC=clang CGO_ENABLED=1 go test -race -count=1 ./...",  # race.yml `race` (race.yml:37) and build.yml `race` (build.yml:38-40), the same check twice; CC=clang because this machine has no gcc (CLAUDE.md:55)
+  "bash -c 'out=$(gofmt -l $(git ls-files \"*.go\" | grep -v \"^vendor/\")) || exit 1; if [ -n \"$out\" ]; then echo \"gofmt would reformat:\"; echo \"$out\"; exit 1; fi; CGO_ENABLED=0 go vet ./...'",  # lint.yml `golangci` (lint): its gofmt check (lint.yml:41-49), then go vet for golangci-lint v1.60.1 (lint.yml:35), which can't run here (CLAUDE.md:57)
+  "CGO_ENABLED=0 go test ./tools/claudemd/",  # docs.yml `claude-md` (docs.yml:25); its -idents step is advisory and exits 0 (docs.yml:27-30)
+  "GOOS=windows CGO_ENABLED=0 go build ./...",  # the release's GoReleaser build, check-only: it builds windows (.goreleaser.yaml:5-8) and no CI check job does (CLAUDE.md:39; internal/daemon/CLAUDE.md:36)
+]
+# Left out: `go test -tags e2e ./e2e/...` (CLAUDE.md:58) needs tmux, builds loom and starts daemons, and no CI
+# job runs it, so a story that changes the daemon, the join or a lifecycle names it in its Verify line (see idioms).
+# `nix build .#loom` (CLAUDE.md:61) builds from GitHub, not the worktree. LOOM_CLAUDEMD_STRICT=1 (CLAUDE.md:59) is advisory.
+
+vacuous = [
+  '\[no tests to run\]',                 # go test's `ok <pkg> <time|(cached)> [no tests to run]`, which a -run filter that matches nothing in a package prints (checked on go1.26.5). Every package with _test.go files defines a Test func today, so an unfiltered ./... run never prints it, and `[no test files]` is not matched. A name-filtered go test must name its package (`go test ./core/rpc -run TestX`), never ./..., where every package the filter misses prints it
+  '^testing: warning: no tests to run',  # the same, as the test binary prints it under -v
+]
+
+[build]
+exclusive = ["go"]
+# check_plan matches each entry as a substring of a story's Verify line, so "go" covers go test, go vet, go build,
+# go run and gofmt. Every Go run shares the build cache and the machine's CPU and memory, `go test ./...` runs many
+# package binaries at once and starts private tmux servers, and the race build is heavy; and a `go test ./...` beside
+# another story's half-made edits compiles them. Nearly every story's Verify line runs go, so stories run one at a time.
+
+[landmines]
+markers = [
+  "signal.Ignore(",           # internal/cli/CLAUDE.md:17; only a test holds it today
+  "os.RemoveAll(",            # account/CLAUDE.md:7,9; internal/devsandbox/CLAUDE.md:8; CLAUDE.md:26. Also test cleanup in many test files, where a light story names it in its Review line
+  '"worktree", "remove"',     # session/git/CLAUDE.md:11; the argv form (session/git/worktree_git.go:131, session/orphan.go:460), so prose about it doesn't match
+  '"stash", "drop"',          # session/git/CLAUDE.md:21; session/git/worktree_git.go:551
+  '"branch", "-D"',           # session/git/CLAUDE.md:28; session/CLAUDE.md:21; session/git/worktree_ops.go:511,644
+  '"send-keys"',              # session/tmux/CLAUDE.md:17; the argv form, so prose about send-keys doesn't match
+  "defer h.stopCore",         # app/CLAUDE.md:65; only the wrong form (the right one is `defer func() { h.stopCore() }()`), which no code holds today
+  "loom.lock",                # CLAUDE.md:33; internal/daemon/CLAUDE.md:9
+  "LC_ALL",                   # internal/exec/CLAUDE.md:7
+  "os.Environ()",             # internal/exec/CLAUDE.md:8; also builds non-git envs (account/auth.go:120, internal/devsandbox/)
+  "syscall.Kill(",            # internal/daemon/CLAUDE.md:15; internal/devsandbox/CLAUDE.md:7; internal/daemon/proc_unix.go:19,38
+]
+# Not markers: `exec.Command`, raw tmux and git argv, and model objects in the TUI are enforced by TestNoRawTmuxExec,
+# TestTmuxTargetsAreExact, TestNoRawGitGhExec and TestTUIHoldsNoModelObject, which the story gates run. `"kill-session"`
+# and `"kill-server"` sit in most tmux tests' mocks. `tea.Program.Send` appears only in comments, and the call is
+# `<program>.Send(`, while `.Send(` also names the core's message send.
+
+notes = [
+  "Ignoring a signal (`signal.Ignore`) in a process that execs a child. SIG_IGN is set at the OS level and survives exec, so Ctrl-C during `claude auth login` reaches neither loom nor claude; wrap the child in `signal.Notify`/`signal.Stop` as `runWithChildSignals` does (internal/cli/CLAUDE.md:17).",
+  "Deleting a tree (`os.RemoveAll`) at a path loom hasn't proved it owns. An account dir is acted on only through `OwnedDir`'s canonical path: a stored `lnk/..` cleans lexically to the right path while the kernel resolves the symlink first, and acting on the raw string once deleted real content outside the account's dir. A sandbox removes nothing outside `<BaseDir>/<Name>` or under a live daemon. Records, stashes, scratchpads and unshared account files are kept and reported, never dropped (account/CLAUDE.md:7,9; internal/devsandbox/CLAUDE.md:8; CLAUDE.md:26).",
+  "Running `git worktree remove` on a tree not proved absent or gutted. `clearWorktreePath` runs `worktree remove -f`, which deletes an unlocked, intact, dirty tree without a word; Setup's callers are the only guard (`decideResume` sends only an absent or gutted tree to a rebuild, `CrashRestart` refuses a non-intact one), a Paused session's tree is usually intact, and tests cover only a locked tree (session/git/CLAUDE.md:11; session/CLAUDE.md:20).",
+  "Dropping a stash anywhere but `DropStash`, or re-applying one `git stash list` no longer lists. `refs/stash` is shared by every worktree and `git stash drop` takes only a shifting stash@{N} position, so a blind drop deletes another session's stash; `DropStash` verifies the SHA git reports dropping and stores a wrong entry back. A dropped stash's commit survives until gc, so applying it by SHA resurrects dropped work (session/git/CLAUDE.md:21; session/CLAUDE.md:22).",
+  "Force-deleting a branch (`branch -D`) the current setup didn't create. A reused title checks out a branch an earlier session left behind, with its work, so failed-start cleanup deletes only the branch this setup created, and only when nothing can be running in the tree (session/git/CLAUDE.md:28; session/CLAUDE.md:21).",
+  "Building a tmux `send-keys` command outside `PressKeys`, above all `send-keys -l` for text. It fails past about 16 KiB (\"command too long\") and treats a trailing `;` as a command separator even after `--`; text goes through `load-buffer` + `paste-buffer -d -r` (`TypeText`, `SendPrompt`) and key names through `PressKeys` (session/tmux/CLAUDE.md:17).",
+  "Deferring a method value of the client `Run` holds (`defer h.stopCore()`). A rejoin replaces `home.conn` and `stopCore` (`resync`), so the value taken at `defer` closes the first client at return and leaks the last one and its wakes goroutine, which no test observes; defer a closure, `defer func() { h.stopCore() }()` (app/CLAUDE.md:65).",
+  "Removing or recreating `loom.lock`, or rewriting its record by rename. The daemon's flock is on the inode, so a waiter on the old inode and a holder of a new file both hold it, and two daemons writing one state.json drop each other's records, which come back as Recoverable orphans without their launch flags, conversation or account (CLAUDE.md:33; internal/daemon/CLAUDE.md:9).",
+  "Forcing `LC_ALL`, or any locale but `LC_MESSAGES=C`, on a git command. Callers classify git's English stderr (`isBranchAbsentErr`, `isWorktreeAbsentErr`), so the messages must be C, but `post-checkout` runs on every session create and resume and hooks such as overcommit break under an ASCII `LC_CTYPE`; `gitEnv` drops `LC_ALL` and `LANGUAGE` (internal/exec/CLAUDE.md:7).",
+  "Rebuilding a built command's `Env` from `os.Environ()` instead of appending to `c.Env`. It drops `GitCommand`'s locale pinning, so git's errors come back in the user's language and are misclassified silently; only `GitCommand` itself is tested, its call sites are Convention (internal/exec/CLAUDE.md:8).",
+  "Signalling a pid (`syscall.Kill`) not proved to be the process loom means. A stale lock record's pid may have been reused by an unrelated process or the user's own loom: `Stop` signals only a local pid whose arguments say `serve` (`servesLoom`), and a sandbox kills a lock holder only once `/proc/<pid>/exe` proves it a build in its bin dir; on a live, reused pid the gate is Convention (internal/daemon/CLAUDE.md:15; internal/devsandbox/CLAUDE.md:7).",
+  "Running loom itself (`./loom`, `go run .`, a built binary) or `loom serve stop` in a loom pane, or letting `LOOM_TMUX_SOCKET` or `LOOM_ALLOW_NESTED` past `replaceGuard`. A dev build there joins or replaces the user's daemon, `loom serve stop` takes every TUI offline, and a second loom's startup sweep once killed all 20 sessions on a shared tmux server; dev builds run through the `loom-dev` skill (`go run ./tools/loomdev`) (CLAUDE.md:32; internal/daemon/CLAUDE.md:25).",
+  "Calling `tea.Program.Send` (which the tmux notifier, `tmux.SetNotifier`'s hook, also is) from Update's own handlers or while holding a lock Update takes. Send blocks until Update returns, so the UI freezes totally; only the output pump and timer goroutines send (app/CLAUDE.md:16; session/tmux/CLAUDE.md:25).",
+  "Waiting on a client or calling the loop from the loop's goroutine, or writing to a connection from the server's own goroutine. A loop call made inside a loop call deadlocks and the TUI's requests have no timeout, so a wedged loop freezes every TUI; each connection's writer goroutine drains its queue so a stalled client never blocks the loop (core/CLAUDE.md:17; core/rpc/CLAUDE.md:19).",
+  "Sharing state across goroutines without its lock or a snapshot: a `tea.Cmd` body reading `m.*` or mutating shared state, a `Job` reading model state, a Lua engine dispatch outside `engine.mu`, `ptmx`, `monitor` or the emulator touched outside `stateMu`, or `stateMu` held across PTY or subprocess I/O. Only a -race run that overlaps the access finds these (app/CLAUDE.md:9; core/CLAUDE.md:16; script/CLAUDE.md:7; session/tmux/CLAUDE.md:21).",
+  "Killing or replacing a tmux session loom hasn't proved it owns. tmux names are per server, not per workspace, so ask `HeldElsewhere` first and change nothing when tmux can't answer; the orphan sweep kills only sessions it proves it owns, since \"not in my lists\" is no proof: a second loom's sweep once killed every loom session on a shared server (session/CLAUDE.md:27-28).",
+  "Acting on position instead of identity: the selection, a list index or a prefix match instead of an `InstanceID`, a canonical path or an exact tmux target; an ID acted on before `admit` (which refuses an ID no served workspace holds and an instance failing `precondition`); an ID counted instead of derived from the disk (`stableID`). Each lands an action on another session (CLAUDE.md:25; core/CLAUDE.md:15,20).",
+  "Falling back when something can't answer: the default Claude account when a session's is missing, which bills the wrong subscription; a status guessed when tmux or the roster can't say; a missing or malformed `background_tasks` list read as empty, which ends every running subagent row at once. Change nothing and say so (CLAUDE.md:24; session/CLAUDE.md:38,48; core/CLAUDE.md:33).",
+  "Typing into an agent's prompts from the wrong place: pasting a prompt into an open trust prompt; answering one from a status scan, when the daemon's launch watch answers them, so a scan's Enter lands on whatever the agent shows next; answering without a capture that shows the menu's cursor on the choice, answering a prompt twice, or answering an MCP server's dialog at all (core/CLAUDE.md:57-58; app/CLAUDE.md:39; session/tmux/CLAUDE.md:15).",
+  "Writing `state.json` around `Storage.writeLocked`, or from a command that doesn't hold the daemon's lock (`daemon.TakeLock`, through `StateWriteGuard`). writeLocked keeps undecodable records verbatim and refuses writes while its load latch is engaged, and an unlocked writer and the daemon overwrite each other's records (session/CLAUDE.md:10; cmd/CLAUDE.md:9; internal/daemon/CLAUDE.md:26).",
+  "Changing a `session.InstanceData` field without bumping `CurrentSchemaVersion`, adding its `Migrate` step and updating `workspace migrate`'s typed mirror and fixture. The mirror silently drops a field it lacks, and a forgotten bump fails nothing (session/CLAUDE.md:9; cmd/CLAUDE.md:8).",
+  "Changing a contract between builds without its version: removing or renaming an rpc method, event or field, or changing what one means, without bumping `rpc.Protocol`; the Claude mod's `Version`, manifest major version, `MOD_VERSION` and `/v<n>` path changed apart. An older peer misreads the new shape. Within the wire, never drop, reorder or coalesce a reply or a non-state event (a resync can't rebuild a lost Reply), and give a new fatal path a check that a normal shutdown can't trip it (core/rpc/CLAUDE.md:10,18,29; session/claudemod/CLAUDE.md:9).",
+  "Writing a config, state or registry file other than through `AtomicWriteFile`, or overwriting one that fails to parse instead of quarantining it (config/CLAUDE.md:11).",
+  "Leaving a new per-account file in the main config dir off the deny-list (`sharedDenyList` and `shared`, account/link.go). Everything else there is linked, so a credential or runtime file Claude starts writing is shared across accounts (account/CLAUDE.md:10).",
+  "Unix-only syscalls, process control or sockets outside `_unix.go` files. CI's matrix builds no Windows binary but the release does, so the break shows only at release; the final gates cross-build windows (CLAUDE.md:39; internal/daemon/CLAUDE.md:36).",
+  "Editing `vendor/` by hand, or running `gofmt -w .`, which rewrites vendored files. Nix builds from vendor/ (`vendorHash = null`, flake.nix:60), so vendor changes come only from `go mod vendor` (CLAUDE.md:56).",
+]
+
+[review]
+idioms = [
+  "Any new Core method, event or request: its comment tag in core/iface.go (rpc:local, rpc:cast, rpc:client or none), `go generate ./core/rpc` rerun and protocol.md regenerated, an EventTypes entry and coalescing key, forConn routing, a TUI applier (a missing applier passes the app suite), and admit/precondition parity with app/intents.go, whose cases are hand-written and compared by nothing (core/CLAUDE.md:9-11,15).",
+  "Every user-started lifecycle request carries a ReqID (opReq), and so does every new modal commit; check the pause, resume, push and recover paths for a new key, which are Convention only (app/CLAUDE.md:21,66).",
+  "Every new TUI action uses the InstanceID captured when the key's gate passed, re-reads any view held past its Update (viewByID), and runs syncViews/drain after a request that changes the model; it never reads back a cast's effect or decides from two live queries (app/CLAUDE.md:11-15,20).",
+  "A new full-screen modal state is added to handleMenuHighlighting's exclusion list and View()'s overlay placement list (only stateSettings and stateIssuePicker are tested), and mouse hit-tests use the topChromeHeight/listWidth offsets (app/CLAUDE.md:53,56; ui/CLAUDE.md:20).",
+  "A change to a key in script/defaults.lua also updates USAGE.md's Keyboard Reference, and a change to the Lua API or its error messages also updates docs/specs/scripting.md (script/CLAUDE.md:13-14).",
+  "A change to session.InstanceData bumps CurrentSchemaVersion, adds the Migrate step in session/storage_migrate.go, and updates the migrate mirror and its fixture; a forgotten bump or fixture fails nothing (session/CLAUDE.md:9; cmd/CLAUDE.md:8).",
+  "A change to the rpc wire's shape (a removed or renamed method, event or field, a changed meaning) bumps rpc.Protocol; added frame fields are optional, and `bye` stays ignorable (core/rpc/CLAUDE.md:10,35).",
+  "A new per-instance loop treats Recoverable like Paused and never persists it; a new unprompted model change saves through saveUnprompted; a new launch site calls watchLaunch and goes through Instance.launchCommand; a new way to drop or replace a mod link goes through endLink/modGone (core/CLAUDE.md:39,53,54,56; session/CLAUDE.md:36).",
+  "A new setting is a Settings field with a nil/empty-to-default getter, deep-copied in Clone when it is a pointer, slice or map (only some are tested); shared Config is touched only under its lock; shared files are written through AtomicWriteFile (config/CLAUDE.md:7,8,11).",
+  "A new agent program is a session/agent adapter, not an edit of session/tmux/tmux.go, and a new account entry in the main config dir is on the deny-list unless it should be shared (session/CLAUDE.md:52; account/CLAUDE.md:10).",
+  "New tests: an enforcement test is rooted at the repo and comes with a detection table (one without can silently never fail); every package whose tests reach config has a TestMain calling IsolateLoomDirs; real-tmux tests run on privateTmux/isolateTmux with short socket paths; mocks dispatch on cmd_test.TmuxSubcommand(argv) (CLAUDE.md:37; internal/testenv/CLAUDE.md:9,11; session/tmux/CLAUDE.md:29-31).",
+  "Tests build fixtures through the production path and give fakes the real component's geometry; both sides of every guard are pinned, and each term of a compound guard is mutation-checked (CLAUDE.md:66-67).",
+  "Docs follow code: a CLAUDE.md rule is self-sufficient and shaped as what, why, what breaks, then Enforced by a named test or Convention with the silent wrong result, within the size budgets; a lesson learned goes into docs/claude/ with the work (CLAUDE.md:88,93,101).",
+  "A change to the daemon, the join or a session lifecycle runs the e2e suite (`go test -tags e2e ./e2e/...`), which no CI job runs; a change to the mod (session/claudemod/mod/) runs the opt-in `LOOM_TEST_REAL_CLAUDE=1` RealClaude tests (CLAUDE.md:58; e2e/CLAUDE.md:16; internal/daemon/CLAUDE.md:38; session/claudemod/CLAUDE.md:13).",
+  "Commits are Conventional, scoped by package short name, and made with explicit `-- <paths>`, never `-a`, `git add -A` or `.`; no scratch file lands in the worktree; `version = \"X.Y.Z\"` in main.go keeps its exact shape (CLAUDE.md:40,47,85).",
+]
+
+[paths]
+state = ""
+records = ""
