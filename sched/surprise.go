@@ -3,25 +3,31 @@ package sched
 import "fmt"
 
 // NeedsPrior reports whether a job that asked for asked, of belief b (nil
-// for a signature with none yet), would take some part it didn't claim from
-// the default where an advisor's prior could give it (smart scheduler spec
-// §5.4): b has no prior, and a part not explicit has no learned value.
-func NeedsPrior(asked Claim, b *Belief) bool {
+// for a signature with none yet) and family pool family (nil for none),
+// would take some part it didn't claim from the default where an advisor's
+// prior could give it (smart scheduler spec §5.4, family sizing spec
+// §5.3): b has no prior, and a part not explicit has no learned value and
+// none from the family.
+func NeedsPrior(asked Claim, b, family *Belief) bool {
 	if asked.Exclusive || (b != nil && b.Prior != nil) {
 		return false
 	}
-	runs := b.recent()
+	runs, pool := b.recent(), family.recent()
 	_, busy := medianBusy(runs)
+	_, famBusy := medianBusy(pool)
 	_, full := largestPeak(runs, 0) // whether a peak is full doesn't depend on the cores
+	_, famFull := largestPeak(fullPeaks(pool), 0)
 	_, io := medianWrites(runs)
+	_, famIO := medianWrites(pool)
 	explicitIO := asked.IO || (asked.CPUs > 0 && asked.MemoryGB > 0)
-	return (asked.CPUs == 0 && !busy) || (asked.MemoryGB == 0 && !full) || (!explicitIO && !io)
+	return (asked.CPUs == 0 && !busy && !famBusy) || (asked.MemoryGB == 0 && !full && !famFull) || (!explicitIO && !io && !famIO)
 }
 
 // Surprise says how run surprises b, which has not recorded it yet (smart
 // scheduler spec §5.6, job scaling spec §5.5), or "" when it doesn't: a
 // peak above its memory claim when memory (the claim's memory source) was
-// learned, the agent's or the default; a SIGKILL nobody requested; more
+// learned, the family's, the agent's or the default; a SIGKILL nobody
+// requested; more
 // than overrunRatio × its claim's cores kept busy while b doesn't overrun;
 // or, with three duration runs before it, a wall time over three times or
 // under a third of their median, each scaled to the run's cores. All but
@@ -31,7 +37,7 @@ func Surprise(b *Belief, run Run, memory Source) string {
 		return ""
 	}
 	before := len(b.Runs) > 0
-	if before && (memory == SourceLearned || memory == SourceAgent || memory == SourceDefault) && run.PeakKB > int64(run.Claim.MemoryGB)*kbPerGB {
+	if before && (memory == SourceLearned || memory == SourceFamily || memory == SourceAgent || memory == SourceDefault) && run.PeakKB > int64(run.Claim.MemoryGB)*kbPerGB {
 		return fmt.Sprintf("it peaked at %.1f GB, above its %d GB claim", float64(run.PeakKB)/kbPerGB, run.Claim.MemoryGB)
 	}
 	if before && run.Outcome == OutcomeSignal && run.Signal == "SIGKILL" {

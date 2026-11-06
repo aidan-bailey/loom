@@ -119,7 +119,7 @@ func (q *queueState) beliefOf(id sched.SignatureID) *sched.Belief {
 // sizeRecord sets rec's claim from what it asked for, its belief and p
 // (spec §5.4), and reports whether anything changed.
 func (q *queueState) sizeRecord(rec *sched.Record, p sched.Policy) bool {
-	s := sched.Size(rec.Asked, q.beliefOf(rec.Signature), p)
+	s := sched.Size(rec.Asked, q.beliefOf(rec.Signature), nil, p)
 	if rec.Claim == s.Claim && rec.Sources == s.Sources && rec.Learned == s.Learned &&
 		rec.AboveCap == s.AboveCap && rec.BelowKB == s.BelowKB {
 		return false
@@ -158,7 +158,7 @@ func (m *Model) readBeliefs(query sched.BeliefQuery) (sched.BeliefsPage, error) 
 	page := sched.BeliefsPage{Track: sched.TrackRecord(q.beliefs.Beliefs)}
 	for _, b := range q.beliefs.Beliefs {
 		if query.Matches(b) {
-			v := sched.ViewBelief(b.Clone(), q.policy)
+			v := sched.ViewBelief(b.Clone(), nil, q.policy)
 			if b.After != "" && b.After != sched.AfterNone {
 				if p := q.beliefs.Find(b.After); p != nil {
 					v.After = slices.Clone(p.Command)

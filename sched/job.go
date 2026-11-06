@@ -184,11 +184,14 @@ type Record struct {
 	Unsized   string       `json:"unsized,omitempty"`  // why the job has no signature
 	Sizing    Sizing       `json:"sizing,omitempty"`
 	Sources   ClaimSources `json:"sources,omitzero"`
-	Learned   int          `json:"learned,omitempty"`   // the runs its learned parts came from
-	AboveCap  bool         `json:"above_cap,omitempty"` // its memory from measured peaks was held to the cap
-	BelowKB   int64        `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
-	AgentWhy  string       `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
-	Adopted   bool         `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
+	Learned   int          `json:"learned,omitempty"` // the runs its learned parts came from
+	// FamilyRuns is the family pool's runs its family parts came from
+	// (family sizing spec §5.3).
+	FamilyRuns int    `json:"family_runs,omitempty"`
+	AboveCap   bool   `json:"above_cap,omitempty"` // its memory from measured peaks was held to the cap
+	BelowKB    int64  `json:"below_kb,omitempty"`  // the recent peak an explicit memory claim is below
+	AgentWhy   string `json:"agent_why,omitempty"` // why it was sized without the advisor's prior after asking
+	Adopted    bool   `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
 
 	// Spare is what a grant added to its base claim when it started (job
 	// scaling spec §5.3); Claim is then the total.
