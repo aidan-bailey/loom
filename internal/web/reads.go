@@ -73,6 +73,8 @@ type itemJSON struct {
 	Steps     []stepJSON `json:"steps,omitempty"`
 }
 
+// stepJSON is one tool step. Agent is the subagent an Agent/Task step
+// launched, omitted when none was found; Finished says it has ended.
 type stepJSON struct {
 	Tool     string `json:"tool"`
 	Summary  string `json:"summary"`
