@@ -377,6 +377,10 @@ func readStarted(jobDir string) (*sched.Started, int) {
 // readMemAvailable reads the host's MemAvailable; tests replace it.
 var readMemAvailable = sched.ReadMemAvailableKB
 
+// readSwapFree is the host's SwapFree, in KB (memory borrowing spec §7.2);
+// a variable so tests can fix it.
+var readSwapFree = sched.ReadSwapFreeKB
+
 // sample takes the one process sample of a pass, within sampleTimeout.
 func sample() (*sched.Snapshot, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sampleTimeout)
@@ -508,6 +512,7 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 		m.admitJobs()
 	}
 	m.stepLadder(time.Now())
+	m.stepGiveBack(time.Now())
 }
 
 // noteSilent applies what a pass saw of a failed start's shim: its entry goes
@@ -604,7 +609,7 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 		log.For("core").Warn("queue.lost_group_killed", "job", int64(rec.ID), "pgid", ob.pid)
 	}
 	if why := m.requeueWhy(*rec, now); why != "" && !cancelled {
-		if !rec.NoRequeue && rec.Requeues < sched.MaxRequeues {
+		if rec.GivingBack || (!rec.NoRequeue && rec.Requeues < sched.MaxRequeues) {
 			m.requeueJob(i, why, now)
 			return
 		}
@@ -639,10 +644,20 @@ func (m *Model) applyUsage(r queuePassResult) {
 			q.cgroupLogged[ob.id] = ob.cgErr.Error()
 		}
 		if cg := ob.cg; cg != nil && !q.laddering {
+			lent := !rec.LentAt.IsZero()
+			if lent && !cg.Frozen && r.at.After(rec.LentAt) {
+				// Thawed by hand: a running borrower again (memory
+				// borrowing spec §10).
+				rec.LentSecs += int64(r.at.Sub(rec.LentAt).Seconds())
+				rec.LentAt, lent = time.Time{}, false
+				q.moved()
+			}
 			// The cgroup decides the rung (cgroup spec §15, 17): frozen is
-			// paused, a memory.high is squeezed, neither is none.
+			// paused, unless the job is lent (memory borrowing spec §7.3),
+			// a memory.high is squeezed, neither is none.
 			next := sched.Rung("")
 			switch {
+			case cg.Frozen && lent:
 			case cg.Frozen:
 				next = sched.RungPaused
 			case cg.HighKB > 0:

@@ -440,3 +440,82 @@ func TestAdmit_ReportsTheStarvedHead(t *testing.T) {
 	assert.Equal(t, []JobID{1}, d.Start)
 	assert.Zero(t, d.Starved)
 }
+
+// locked is r holding or wanting locks.
+func locked(r Record, locks ...string) Record {
+	r.Locks = locks
+	return r
+}
+
+// TestAdmit_Locks: a job waits while a running job, or one the pass started
+// first, holds a lock it names; jobs on other locks run side by side; and a
+// job blocked on a lock is never the starving head.
+func TestAdmit_Locks(t *testing.T) {
+	runAdmitCases(t, []admitCase{
+		{
+			name: "two jobs on one lock run one at a time",
+			jobs: []Record{
+				locked(queuedJob(1, admitSmall, time.Minute), "port:4300"),
+				locked(queuedJob(2, admitSmall, time.Minute), "port:4300"),
+			},
+			start:   []JobID{1},
+			waiting: map[JobID]string{2: "waits for lock port:4300 (job 1)"},
+		},
+		{
+			name: "a running job's lock holds the queued one back, and first fit passes it",
+			jobs: []Record{
+				locked(runningJob(1, admitSmall), "port:4300", "port:4310"),
+				locked(queuedJob(2, admitSmall, time.Minute), "port:4310"),
+				queuedJob(3, admitSmall, time.Minute),
+			},
+			start:   []JobID{3},
+			waiting: map[JobID]string{2: "waits for lock port:4310 (job 1)"},
+		},
+		{
+			name: "jobs on different locks run side by side",
+			jobs: []Record{
+				locked(runningJob(1, admitSmall), "port:4300"),
+				locked(queuedJob(2, admitSmall, time.Minute), "port:4400"),
+				locked(queuedJob(3, admitSmall, time.Minute), "port:4500"),
+			},
+			start: []JobID{2, 3},
+		},
+		{
+			name: "a lock is freed when its job is no longer running",
+			jobs: []Record{
+				locked(Record{ID: 1, Order: 1, State: Failed, Claim: admitSmall}, "port:4300"),
+				locked(queuedJob(2, admitSmall, time.Minute), "port:4300"),
+			},
+			start: []JobID{2},
+		},
+		{
+			name: "a job that does not fit takes no lock",
+			jobs: []Record{
+				runningJob(1, admitBig),
+				locked(queuedJob(2, admitBig, time.Minute), "port:4300"),
+				locked(queuedJob(3, admitSmall, time.Minute), "port:4300"),
+			},
+			start:   []JobID{3},
+			waiting: map[JobID]string{2: "needs 10 cores (4 free)"},
+		},
+		{
+			name: "a job blocked on a running job's lock is never the starving head",
+			jobs: []Record{
+				locked(runningJob(1, admitSmall), "port:4300"),
+				locked(queuedJob(2, admitSmall, 2*time.Hour), "port:4300"),
+				queuedJob(3, admitSmall, time.Minute),
+			},
+			start:   []JobID{3},
+			waiting: map[JobID]string{2: "waits for lock port:4300 (job 1)"},
+		},
+		{
+			name: "a starving head takes its lock and starts alone",
+			jobs: []Record{
+				locked(queuedJob(1, admitSmall, 2*time.Hour), "port:4300"),
+				locked(queuedJob(2, admitSmall, time.Minute), "port:4300"),
+			},
+			start:   []JobID{1},
+			waiting: map[JobID]string{2: "waits for job 1, which has waited past 10m"},
+		},
+	})
+}

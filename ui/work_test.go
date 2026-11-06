@@ -456,6 +456,26 @@ func TestRenderWork_ShowsTheLadder(t *testing.T) {
 	assert.Contains(t, out, "ladder: pause job 4: no freezer")
 }
 
+func TestRenderWork_ShowsBorrowers(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:       sched.Host{Name: "fresco"},
+		Policy:     sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}, CPUOvercommit: 2},
+		Greedy:     true,
+		BudgetKB:   19 << 20,
+		BorrowedKB: 6 << 20,
+		Jobs: []core.JobView{
+			{ID: 4, State: sched.Running, Description: "nextest", Started: now.Add(-time.Minute), Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Borrower: true},
+			{ID: 5, State: sched.Running, Description: "clippy", Started: now.Add(-time.Hour), Claim: sched.Claim{CPUs: 4, MemoryGB: 6},
+				Borrower: true, LentAt: now.Add(-3 * time.Minute)},
+		},
+	}
+	out := ansi.Strip(RenderWork(160, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "borrowing")
+	assert.Contains(t, out, "lent (memory) 3m")
+	assert.Contains(t, out, "· borrowed 6.0 GB")
+}
+
 func TestRenderWork_SaysWhyJobsRunUncontained(t *testing.T) {
 	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 	q := core.QueueView{

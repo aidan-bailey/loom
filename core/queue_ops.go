@@ -88,7 +88,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now, Ready: now, NoRequeue: s.NoRequeue,
-		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind,
+		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind, Locks: slices.Clone(s.Locks),
 	}
 	if s.Kind == sched.KindAgent {
 		rec.AccountKey = envValue(s.Env, "CLAUDE_CONFIG_DIR")
@@ -117,12 +117,12 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		rec.Signature = sig.ID()
 	}
 	if !unclaimed {
-		q.sizeRecord(&rec, policy)
+		q.sizeRecord(&rec, policy, sig)
 		if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 			return 0, "", err
 		}
 	}
-	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), now) {
+	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), q.familyPool(*sig), now) {
 		rec.Sizing = sched.SizingAsking
 	}
 
@@ -318,12 +318,14 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	}
 	// The caps form never edits the agent block (smart scheduler spec §6),
 	// release_past_peaks (past-peak holds spec §8), the cgroup keys (cgroup
-	// spec §10) nor agent_jobs (flow in loom part 3a): keep the file's.
+	// spec §10), agent_jobs (flow in loom part 3a) nor borrow (memory
+	// borrowing spec §9): keep the file's.
 	file := cfg.GetScheduler()
 	s.Agent, s.AgentJobs = file.Agent, file.AgentJobs
 	s.ReleasePastPeaks = file.ReleasePastPeaks
 	s.Contain, s.JobsCPUWeight = file.Contain, file.JobsCPUWeight
 	s.InteractiveReserveGB, s.CPUPressurePct, s.CPUOvercommit = file.InteractiveReserveGB, file.CPUPressurePct, file.CPUOvercommit
+	s.Borrow = file.Borrow
 	cfg.SetScheduler(s)
 	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
 		return fmt.Errorf("write the caps to config.json: %w", err)

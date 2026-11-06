@@ -114,7 +114,25 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 		assert.Zero(t, f.stops)
 	})
 
-	t.Run("inside loom, an older daemon is kept", func(t *testing.T) {
+	t.Run("inside loom, a subcommand uses an older daemon as it is", func(t *testing.T) {
+		t.Cleanup(func() { tmux.UseServer("") })
+		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
+		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
+		link := f.link(ours, refusal)
+		link.useOlder = true
+		c, err := link.join(true)
+		require.NoError(t, err, "a rebuild must not stop every session's commands")
+		assert.Same(t, f.clients[0], c, "the older daemon's client")
+		require.NoError(t, c.FlushForTest(), "still open")
+		assert.Zero(t, f.stops, "the user's daemon is never stopped")
+		assert.Equal(t, 1, f.dials)
+		assert.Equal(t, "loom: using the loom daemon as it is (0.12.0 (v0.12.0 def), older than this loom, 0.13.0 (v0.13.0 abc)): "+
+			"a loom inside loom never replaces it; it upgrades when restarted from outside loom\n", f.stderr.String())
+		args := tmux.Command(context.Background(), "list-sessions").Args
+		assert.Equal(t, []string{"tmux", "-u", "-S", "/srv/older.sock", "list-sessions"}, args, "pinned to the daemon's server")
+	})
+
+	t.Run("inside loom, the TUI refuses an older daemon", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
 		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
 		_, err := f.link(ours, refusal).join(true)
@@ -123,9 +141,34 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 		assert.Equal(t, "the loom daemon is 0.12.0 (v0.12.0 def), older than this loom (0.13.0 (v0.13.0 abc)), and "+
 			"this loom runs in loom's tmux session loom_agent, on the daemon's tmux server: a loom inside loom never "+
 			"replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)", err.Error())
-		assert.NotContains(t, err.Error(), tmux.EnvTmuxSocket, "another tmux server changes nothing")
 		assert.Zero(t, f.stops, "the user's daemon is never stopped")
-		assert.Empty(t, f.stderr.String(), "nothing replaced")
+		assert.Error(t, f.clients[0].FlushForTest(), "its client was closed")
+		assert.Empty(t, f.stderr.String(), "nothing used, nothing replaced")
+	})
+
+	t.Run("inside loom, an older daemon of another protocol is refused", func(t *testing.T) {
+		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
+		var stderr bytes.Buffer
+		link := daemonLink{
+			own: ours,
+			dial: func(bool) (*rpc.Client, rpc.Hello, int, error) {
+				peer := older
+				peer.Protocol = rpc.Protocol - 1
+				return nil, older, fakePID, &rpc.MismatchError{Peer: &peer}
+			},
+			stop:       func(int) error { t.Error("stopped the user's daemon"); return nil },
+			mayReplace: func(string) error { return refusal },
+			say:        sayTo(&stderr),
+			useOlder:   true,
+		}
+		_, err := link.join(true)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, refusal)
+		assert.Equal(t, "the loom daemon is 0.12.0 (v0.12.0 def), older than this loom (0.13.0 (v0.13.0 abc)) and speaks another protocol, and "+
+			"this loom runs in loom's tmux session loom_agent, on the daemon's tmux server: a loom inside loom never "+
+			"replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)", err.Error())
+		assert.NotContains(t, err.Error(), tmux.EnvTmuxSocket, "another tmux server changes nothing")
+		assert.Empty(t, stderr.String(), "nothing used, nothing replaced")
 	})
 
 	t.Run("a daemon that stays older after its replacement", func(t *testing.T) {
@@ -135,6 +178,31 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 		assert.Contains(t, err.Error(), "even after replacing it")
 		assert.Equal(t, 1, f.stops, "replaced once, not in a loop")
 	})
+}
+
+// TestOlderDaemon: a daemon older than this loom is described, so a method
+// only this build knows explains its failure; the same build and a newer
+// one are not.
+func TestOlderDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		peer  func(rpc.Hello) rpc.Hello
+		older bool
+	}{
+		{"the same build", func(h rpc.Hello) rpc.Hello { return h }, false},
+		{"an older release", func(h rpc.Hello) rpc.Hello { h.Exe, h.Version = "older", "0.0.1"; return h }, true},
+		{"a newer release", func(h rpc.Hello) rpc.Hello { h.Exe, h.Version = "newer", "999.0.0"; return h }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := olderThanSelf(tc.peer(rpc.Self()))
+			if !tc.older {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Contains(t, got, "the loom daemon is 0.0.1")
+			assert.Contains(t, got, ", older than this loom (")
+		})
+	}
 }
 
 // TestJoin_AnotherProtocol: a daemon of another protocol can't be talked

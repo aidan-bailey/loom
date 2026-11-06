@@ -12,8 +12,9 @@ const kbPerGB = 1 << 20
 // usualOf is a job's usual duration at its claimed cores, and whether it has
 // one (the view's forecast and greedy admission share it).
 func (m *Model) usualOf(r sched.Record) (time.Duration, bool) {
-	u, _, n, fromPrior := sched.Usual(m.queue.beliefOf(r.Signature), r.Claim.CPUs)
-	return u, n > 0 || fromPrior
+	q := m.queue
+	u, _, n, src := sched.Usual(q.beliefOf(r.Signature), q.poolOf(r.Signature), r.Claim.CPUs)
+	return u, n > 0 || src == sched.DurationPrior
 }
 
 // greedyInputs is what greedy admission needs now (cgroup spec §7), and
@@ -36,7 +37,7 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 		}
 		return fallback
 	}
-	g := sched.Greedy{Running: map[sched.JobID]sched.Prediction{}}
+	g := sched.Greedy{Running: map[sched.JobID]sched.Prediction{}, Used: map[sched.JobID]int64{}}
 	var used int64
 	for i := range q.store.Jobs {
 		rec := q.store.Jobs[i]
@@ -44,9 +45,13 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 			continue
 		}
 		used += q.usage[rec.ID].RSSKB
+		if u, ok := q.usage[rec.ID]; ok {
+			g.Used[rec.ID] = u.RSSKB
+		}
 		g.Running[rec.ID] = m.predictRunning(rec, now, expect)
 	}
 	g.BudgetKB = sched.Budget(used, avail, p)
+	g.Tight = sched.Tight(avail, int64(p.ReserveGB)*kbPerGB)
 	g.Holdoff = m.ladderHoldoff()
 	g.Predict = func(r sched.Record, start time.Time) sched.Prediction { return m.predictNew(r, start, expect) }
 	if q.slice != nil {
@@ -61,7 +66,9 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 // job using more than predicted counts flat at its use plus the margin.
 func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sched.Record) time.Duration) sched.Prediction {
 	q := m.queue
-	end := rec.Started.Add(expect(rec))
+	// A lent job's progress stood still while it was frozen (memory
+	// borrowing spec §6.4).
+	end := rec.Started.Add(expect(rec) + rec.LentFor(now))
 	if !end.After(now) {
 		end = now.Add(time.Minute)
 	}

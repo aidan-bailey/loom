@@ -138,6 +138,9 @@ type queueState struct {
 	// beliefsErr is why beliefs.json failed to load: learning is off and
 	// the file is never written.
 	beliefsErr error
+	// families memoizes the beliefs' families (family sizing spec §5.2);
+	// only the loop reads it.
+	families sched.Families
 	// beliefsSaveFailed is set while the last save of beliefs.json failed,
 	// so a run of failures raises one notice.
 	beliefsSaveFailed bool
@@ -169,6 +172,11 @@ type queueState struct {
 	sliceHighKB  int64
 	sliceSetting bool
 	oomAt        time.Time
+
+	// Memory borrowing (spec 2026-11-06 §6): the give-back machine's state,
+	// and the borrowers whose freeze failed, which are given back by requeue.
+	giveBack sched.GiveBackState
+	noLend   map[sched.JobID]bool
 }
 
 func newQueueState() *queueState {
@@ -183,6 +191,7 @@ func newQueueState() *queueState {
 		holding:    map[sched.JobID]sched.Need{},
 		unprobed:   map[sched.JobID]error{},
 		lockLogged: map[sched.JobID]string{},
+		noLend:     map[sched.JobID]bool{},
 
 		cgroupRoot:   sched.CgroupRoot,
 		cgroupLogged: map[sched.JobID]string{},

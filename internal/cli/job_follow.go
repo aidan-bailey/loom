@@ -151,6 +151,10 @@ type jobFollower struct {
 	attempt     int
 	attemptSeen bool
 	rung        sched.Rung
+	// A borrower's (memory borrowing spec §8): whether it was lent when last
+	// seen, and its give-back requeues.
+	lent     bool
+	gaveBack int
 }
 
 // noteAttempt notices a requeue: a view of a later attempt than the last
@@ -158,14 +162,32 @@ type jobFollower struct {
 // say; "" otherwise.
 func (f *jobFollower) noteAttempt(v core.JobView) string {
 	if !f.attemptSeen {
-		f.attempt, f.attemptSeen = v.Attempt, true
+		f.attempt, f.attemptSeen, f.gaveBack = v.Attempt, true, v.GaveBack
 		return ""
 	}
 	if v.Attempt == f.attempt {
 		return ""
 	}
-	f.attempt, f.off, f.started, f.queued, f.last, f.rung = v.Attempt, 0, false, true, "", ""
+	f.attempt, f.off, f.started, f.queued, f.last, f.rung, f.lent = v.Attempt, 0, false, true, "", "", false
+	if v.GaveBack > f.gaveBack {
+		f.gaveBack = v.GaveBack
+		return fmt.Sprintf("job %d restarted to lend memory back; following its next attempt", v.ID)
+	}
 	return fmt.Sprintf("job %d requeued: %s; following its next attempt", v.ID, v.LastRequeue)
+}
+
+// noteLent is the line for a borrower lent or resumed (memory borrowing
+// spec §8), "" for none.
+func (f *jobFollower) noteLent(v core.JobView) string {
+	lent := !v.LentAt.IsZero()
+	if v.State != sched.Running || lent == f.lent {
+		return ""
+	}
+	f.lent = lent
+	if lent {
+		return fmt.Sprintf("job %d lent its memory back: paused", v.ID)
+	}
+	return fmt.Sprintf("job %d resumed", v.ID)
 }
 
 // noteRung is the line for a running job's rung change, "" for none.
@@ -269,6 +291,9 @@ func (f *jobFollower) report(v core.JobView) {
 		}
 		f.started = true
 		if line := f.noteRung(v); line != "" {
+			f.d.say("%s", line)
+		}
+		if line := f.noteLent(v); line != "" {
 			f.d.say("%s", line)
 		}
 		if ran := time.Since(v.Started); !f.overdue && v.OverdueAfter > 0 && ran > v.OverdueAfter {
@@ -472,7 +497,8 @@ func newJobRunCmd() *cobra.Command {
 				case err != nil:
 					return notSubmitted(err)
 				}
-				if _, err := d.awaitJob(id); err != nil {
+				v, err := d.awaitJob(id)
+				if err != nil {
 					if errors.Is(err, context.Canceled) {
 						return d.interrupted(id, signalled())
 					}
@@ -480,6 +506,9 @@ func newJobRunCmd() *cobra.Command {
 						return d.lostDaemon(id)
 					}
 					return d.mayStillRun(id, fmt.Sprintf("job %d was submitted, but %v", id, err))
+				}
+				if err := d.refuseIgnoredLocks(sub, v); err != nil {
+					return &ExitError{Code: exitNotRun, Msg: "loom: " + err.Error()}
 				}
 				return d.follow(c.OutOrStdout(), id, signalled, true)
 			})

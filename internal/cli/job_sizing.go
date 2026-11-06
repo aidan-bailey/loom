@@ -60,13 +60,13 @@ func sizingLine(v core.JobView) string {
 	case v.Unsized != "":
 		return fmt.Sprintf("not sized: %s; it claims %s (the default)", v.Unsized, v.Claim)
 	}
-	text := v.Sources.Describe(v.Learned)
+	text := v.Sources.Describe(v.Learned, v.FamilyRuns, v.Family)
 	if text == "default" && v.AgentWhy != "" {
 		text += ": " + v.AgentWhy
 	}
 	line := fmt.Sprintf("sized %s (%s)", v.Claim.Spared(v.Spare), text)
 	switch {
-	case v.Usual > 0 && v.UsualFromPrior:
+	case v.Usual > 0 && (v.UsualFromPrior || v.UsualFromFamily):
 		line += "; about " + sched.RoughDuration(v.Usual)
 	case v.Usual > 0:
 		line += "; usually " + sched.RoughDuration(v.Usual)
@@ -90,6 +90,9 @@ func startedLine(v core.JobView) string {
 		line += fmt.Sprintf(" with 1 spare core (%s)", v.Claim.Spared(v.Spare))
 	case n > 1:
 		line += fmt.Sprintf(" with %d spare cores (%s)", n, v.Claim.Spared(v.Spare))
+	}
+	if v.Borrower {
+		line += " on borrowed memory"
 	}
 	return line
 }
@@ -118,7 +121,7 @@ func claimText(v core.JobView) string {
 	if v.AboveCap {
 		text = strings.Replace(text, "G", "G!", 1)
 	}
-	if tag := v.Sources.Tag(v.Learned); tag != "" {
+	if tag := v.Sources.Tag(v.Learned, v.FamilyRuns); tag != "" {
 		text += " " + tag
 	}
 	if v.State == sched.Running && v.Holds != (sched.Need{}) {
@@ -126,6 +129,14 @@ func claimText(v core.JobView) string {
 	}
 	if v.State == sched.Running && v.Rung != "" {
 		text += " " + v.Rung.Text()
+	}
+	if v.State == sched.Running {
+		switch {
+		case !v.LentAt.IsZero():
+			text += " lent"
+		case v.Borrower:
+			text += " borrowing"
+		}
 	}
 	return text
 }

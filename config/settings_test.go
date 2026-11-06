@@ -143,13 +143,16 @@ func TestSettings_SchedulerBlockRoundTrips(t *testing.T) {
 // its default claim are its own; an absent block and an absent default claim
 // stay absent.
 func TestSettings_CloneCopiesTheSchedulerBlock(t *testing.T) {
-	s := Settings{Scheduler: &SchedulerSettings{CPUs: 8, DefaultClaim: &ClaimSettings{CPUs: 2, MemoryGB: 3}}}
+	on := true
+	s := Settings{Scheduler: &SchedulerSettings{CPUs: 8, DefaultClaim: &ClaimSettings{CPUs: 2, MemoryGB: 3}, Borrow: &on}}
 	c := s.Clone()
 	c.Scheduler.CPUs = 1
 	c.Scheduler.DefaultClaim.CPUs = 99
 	c.Scheduler.DefaultClaim.MemoryGB = 99
+	*c.Scheduler.Borrow = false
 	assert.Equal(t, 8, s.Scheduler.CPUs)
 	assert.Equal(t, ClaimSettings{CPUs: 2, MemoryGB: 3}, *s.Scheduler.DefaultClaim)
+	assert.True(t, *s.Scheduler.Borrow, "the borrow switch is its own (memory borrowing spec §9)")
 
 	assert.Nil(t, Settings{}.Clone().Scheduler, "an absent block stays absent")
 	noClaim := Settings{Scheduler: &SchedulerSettings{CPUs: 8}}.Clone()

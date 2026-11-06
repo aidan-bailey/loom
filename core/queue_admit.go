@@ -69,9 +69,10 @@ func (m *Model) admitJobs() {
 	m.reprobeHeld()
 	policy, paused := m.refreshPolicy()
 	waiting := map[sched.JobID]string{}
-	var start []sched.JobID
+	var start, borrow []sched.JobID
 	var spare map[sched.JobID]sched.Claim
 	var starved sched.JobID
+	var pred func(sched.Record, time.Time) sched.Prediction
 	if paused == "" {
 		m.maybeProbeConfiner(policy)
 	}
@@ -102,16 +103,27 @@ func (m *Model) admitJobs() {
 			})
 		}
 		var dec sched.Decision
-		if g, ok := m.greedyInputs(policy, now); ok {
+		var bor sched.Borrowing
+		g, greedy := m.greedyInputs(policy, now)
+		if greedy {
 			dec = sched.AdmitGreedy(jobs, policy, now, g)
+			bor = sched.Borrow(jobs, dec, policy, now, g)
+			m.makeFirm(bor.Firm)
 		} else {
 			dec = sched.Admit(jobs, policy, now, q.holding)
 		}
 		maps.Copy(waiting, dec.Waiting)
-		start, starved = dec.Start, dec.Starved
+		granted := dec
+		granted.Waiting = maps.Clone(dec.Waiting)
+		for _, id := range bor.Start {
+			delete(waiting, id)
+			delete(granted.Waiting, id)
+		}
+		start, starved, borrow, pred = dec.Start, dec.Starved, bor.Start, g.Predict
 		// Spare cores for the jobs it starts, when nothing else waits (job
-		// scaling spec §5.3).
-		spare = sched.Grant(dec, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
+		// scaling spec §5.3); a borrower gets none (memory borrowing spec
+		// §5.2).
+		spare = sched.Grant(granted, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()
@@ -121,6 +133,13 @@ func (m *Model) admitJobs() {
 	for _, id := range start {
 		if i := q.index(id); i >= 0 && q.store.Jobs[i].State == sched.Queued {
 			m.startJob(i, policy, now, spare[id], id == starved)
+			started = true
+		}
+	}
+	for _, id := range borrow {
+		if i := q.index(id); i >= 0 && q.store.Jobs[i].State == sched.Queued {
+			m.startJob(i, policy, now, sched.Claim{}, id == starved)
+			m.markBorrower(i, pred, now)
 			started = true
 		}
 	}
@@ -318,6 +337,11 @@ func (m *Model) deliverJobStarted(r jobStarted) {
 	rec := &q.store.Jobs[i]
 	if r.uncontained != "" {
 		rec.Uncontained = r.uncontained
+		if rec.Borrower {
+			// Nothing could give it back (memory borrowing spec §10).
+			rec.Borrower = false
+			log.For("core").Warn("queue.borrowed_uncontained", "job", int64(rec.ID), "why", r.uncontained)
+		}
 	}
 	if r.err != nil {
 		rec.Failure = r.err.Error()

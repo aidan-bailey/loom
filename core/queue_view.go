@@ -40,6 +40,9 @@ type QueueView struct {
 	CPUPressure float64
 	// LadderErr is the ladder's last failed call, "" once one succeeds.
 	LadderErr string
+	// BorrowedKB is the running borrowers' predicted peaks, summed (memory
+	// borrowing spec §8).
+	BorrowedKB int64
 }
 
 // AgentView is the work queue's advisor as a client sees it (smart
@@ -119,10 +122,14 @@ type JobView struct {
 	Sizing    sched.Sizing
 	Sources   sched.ClaimSources
 	Learned   int
-	AboveCap  bool
-	BelowKB   int64
-	Unsized   string
-	AgentWhy  string
+	// FamilyRuns is the family pool's runs its family parts came from,
+	// Family its family's label ("" for none) (family sizing spec §6).
+	FamilyRuns int
+	Family     string
+	AboveCap   bool
+	BelowKB    int64
+	Unsized    string
+	AgentWhy   string
 	// Durations (smart scheduler spec §5.5): the belief's usual duration
 	// and P90 (0 for none; UsualFromPrior when they are the agent's
 	// estimate), how long the job may run before it is overdue (0 for
@@ -130,8 +137,10 @@ type JobView struct {
 	Usual          time.Duration
 	P90            time.Duration
 	UsualFromPrior bool
-	OverdueAfter   time.Duration
-	StartsAt       time.Time
+	// UsualFromFamily says Usual and P90 are its family pool's.
+	UsualFromFamily bool
+	OverdueAfter    time.Duration
+	StartsAt        time.Time
 	// Job scaling (spec 2026-11-05-job-scaling §5.3): what a grant added to
 	// a started job's base claim, and the width a grant could widen a
 	// queued job to (0 when none could).
@@ -157,8 +166,16 @@ type JobView struct {
 	Requeues    int
 	LastRequeue string
 	NoRequeue   bool
+	// Memory borrowing (spec 2026-11-06 §8): whether it runs as a borrower,
+	// when it was lent (zero unless lent), and its give-back requeues.
+	Borrower bool
+	LentAt   time.Time
+	GaveBack int
 	// Agent runs (flow in loom part 3a): sched.KindAgent for an agent job.
 	Kind string
+	// Named locks (--lock) it holds while it runs. A daemon from before
+	// locks sends none, which is how `loom job submit` tells it ignored them.
+	Locks []string
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -200,6 +217,10 @@ func cloneSchedulerSettings(s config.SchedulerSettings) config.SchedulerSettings
 		on := *s.ReleasePastPeaks
 		s.ReleasePastPeaks = &on
 	}
+	if s.Borrow != nil {
+		on := *s.Borrow
+		s.Borrow = &on
+	}
 	if s.Agent != nil {
 		a := *s.Agent
 		if a.Enabled != nil {
@@ -215,6 +236,7 @@ func cloneJobViews(jobs []JobView) []JobView {
 	out := slices.Clone(jobs)
 	for i := range out {
 		out[i].Argv = slices.Clone(out[i].Argv)
+		out[i].Locks = slices.Clone(out[i].Locks)
 		if e := out[i].Exit; e != nil {
 			c := *e
 			out[i].Exit = &c
@@ -338,6 +360,11 @@ func (m *Model) queueView() QueueView {
 			end = later(end, p.End())
 		}
 		v.PeakKB = sched.PeakSum(preds, now, end)
+		for _, r := range running {
+			if p, ok := g.Running[r.ID]; ok && r.Borrower {
+				v.BorrowedKB += sched.PeakSum([]sched.Prediction{p}, now, p.End())
+			}
+		}
 		starts = sched.ForecastGreedy(q.store.Jobs, q.policy, now, g, m.usualOf, m.hostUsual())
 	} else {
 		starts = sched.Forecast(q.store.Jobs, q.policy, now, q.holding, m.usualOf, m.hostUsual())
@@ -371,7 +398,7 @@ func (m *Model) queueView() QueueView {
 func (m *Model) hostUsual() time.Duration {
 	var all []time.Duration
 	for i := range m.queue.beliefs.Beliefs {
-		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i], 0); n > 0 {
+		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i], nil, 0); n > 0 {
 			all = append(all, u)
 		}
 	}
@@ -411,6 +438,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Sizing:       r.Sizing,
 		Sources:      r.Sources,
 		Learned:      r.Learned,
+		FamilyRuns:   r.FamilyRuns,
 		AboveCap:     r.AboveCap,
 		BelowKB:      r.BelowKB,
 		Unsized:      r.Unsized,
@@ -425,13 +453,24 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Requeues:     r.Requeues,
 		LastRequeue:  r.LastRequeue,
 		NoRequeue:    r.NoRequeue,
+		Borrower:     r.Borrower,
+		LentAt:       r.LentAt,
+		GaveBack:     r.GaveBack,
+		Locks:        slices.Clone(r.Locks),
 	}
 	if r.Exit != nil {
 		e := *r.Exit
 		jv.Exit = &e
 	}
 	b := q.beliefOf(r.Signature)
-	jv.Usual, jv.P90, _, jv.UsualFromPrior = sched.Usual(b, r.Claim.CPUs)
+	var family *sched.Belief
+	if b != nil {
+		family = q.familyPool(b.Signature)
+	}
+	var src sched.DurationSource
+	jv.Usual, jv.P90, _, src = sched.Usual(b, family, r.Claim.CPUs)
+	jv.UsualFromPrior, jv.UsualFromFamily = src == sched.DurationPrior, src == sched.DurationFamily
+	jv.Family = q.familyLabel(b)
 	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID

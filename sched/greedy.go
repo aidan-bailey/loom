@@ -18,6 +18,12 @@ type Greedy struct {
 	Predict     func(r Record, start time.Time) Prediction
 	CPUPressure float64 // the jobs slice's cpu.pressure "some" avg10
 	Holdoff     string  // set: nothing starts, and this is why (the ladder)
+	// Borrowing (memory borrowing spec §5.2): each running job's measured
+	// memory now, in KB (its working set, or its session's RSS when
+	// uncontained; absent before its first sample), and whether memory is
+	// tight (Tight).
+	Used  map[JobID]int64
+	Tight bool
 }
 
 // Budget is the memory greedy admission packs into, in KB (cgroup spec
@@ -32,7 +38,10 @@ func Budget(usedKB, availKB int64, p Policy) int64 {
 // same queue walk, over-cap skip and starvation guard, a pure function of
 // its arguments.
 func AdmitGreedy(jobs []Record, p Policy, now time.Time, g Greedy) Decision {
-	return admitWith(jobs, p, now, &greedyFit{p: p, g: g, now: now})
+	f := &greedyFit{p: p, g: g, now: now}
+	d := admitWith(jobs, p, now, f)
+	d.OnMemory = f.onMemory
+	return d
 }
 
 // greedyFit counts running jobs by their predictions and claimed cores.
@@ -43,8 +52,9 @@ type greedyFit struct {
 	preds     []Prediction
 	cores     int
 	slots     int
-	exclusive JobID // a running or started exclusive job
-	any       bool  // a job runs or has started
+	exclusive JobID   // a running or started exclusive job
+	any       bool    // a job runs or has started
+	onMemory  []JobID // the jobs fits failed on memory alone
 }
 
 func (f *greedyFit) count(r Record) {
@@ -70,7 +80,10 @@ func (f *greedyFit) add(r Record, pred Prediction) {
 	f.preds = append(f.preds, pred)
 }
 
-func (f *greedyFit) fits(r Record) string {
+// gate is why r can't start for anything but memory: the ladder's holdoff,
+// an exclusive job, the CPU fit or the I/O slots (cgroup spec §7.3); ""
+// when none holds it.
+func (f *greedyFit) gate(r Record) string {
 	limit := f.p.CPUOvercommit * f.p.Caps.CPUs
 	switch {
 	case f.g.Holdoff != "":
@@ -88,11 +101,19 @@ func (f *greedyFit) fits(r Record) string {
 	case r.Claim.IO && f.slots >= f.p.Caps.IOJobs:
 		return "needs an I/O slot"
 	}
+	return ""
+}
+
+func (f *greedyFit) fits(r Record) string {
+	if why := f.gate(r); why != "" || r.Claim.Exclusive {
+		return why
+	}
 	cand := f.g.Predict(r, f.now)
 	end := cand.End()
 	if PeakSum(append(slices.Clone(f.preds), cand), f.now, end) <= f.g.BudgetKB {
 		return ""
 	}
+	f.onMemory = append(f.onMemory, r.ID)
 	need := (PeakSum([]Prediction{cand}, f.now, end) + kbPerGB - 1) / kbPerGB
 	left := max(0, f.g.BudgetKB-PeakSum(f.preds, f.now, end)) / kbPerGB
 	return fmt.Sprintf("needs ~%d GB at its peak (forecast leaves %d)", need, left)

@@ -40,7 +40,8 @@ func (m *Model) stepLadder(now time.Time) {
 	}
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State != sched.Running || rec.Cgroup == "" || rec.Requeue != "" {
+		// A lent job is the give-back machine's (memory borrowing spec §7.3).
+		if rec.State != sched.Running || rec.Cgroup == "" || rec.Requeue != "" || !rec.LentAt.IsZero() {
 			continue
 		}
 		if rec.CancelReason != "" {
@@ -227,6 +228,14 @@ func (m *Model) requeueJob(i int, why string, now time.Time) {
 	floor.State, floor.Ended = sched.Cancelled, now
 	q.forgetRunning(rec.ID)
 	m.recordRun(floor, nil)
+	// A give-back requeue counts toward GaveBack, not MaxRequeues, makes
+	// the next attempt firm only and sends no message (memory borrowing spec
+	// §6.3).
+	giveBack := rec.GivingBack
+	requeues, gaveBack := rec.Requeues+1, rec.GaveBack
+	if giveBack {
+		requeues, gaveBack = rec.Requeues, rec.GaveBack+1
+	}
 	claim := rec.Claim
 	claim.CPUs -= rec.Spare.CPUs
 	claim.MemoryGB -= rec.Spare.MemoryGB
@@ -234,11 +243,15 @@ func (m *Model) requeueJob(i int, why string, now time.Time) {
 		ID: rec.ID, Order: rec.Order, Owner: rec.Owner, Agent: rec.Agent, Description: rec.Description,
 		Argv: rec.Argv, Cwd: rec.Cwd, Claim: claim, Notify: rec.Notify, Tail: rec.Tail, State: sched.Queued,
 		Submitted: rec.Submitted, Asked: rec.Asked, Signature: rec.Signature, Checkout: rec.Checkout,
-		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, AboveCap: rec.AboveCap,
+		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, FamilyRuns: rec.FamilyRuns, AboveCap: rec.AboveCap,
 		BelowKB: rec.BelowKB, AgentWhy: rec.AgentWhy, After: rec.After, Ready: rec.Ready,
-		Attempt: rec.Attempt + 1, Requeues: rec.Requeues + 1, LastRequeue: why, NoRequeue: rec.NoRequeue,
+		Attempt: rec.Attempt + 1, Requeues: requeues, LastRequeue: why, NoRequeue: rec.NoRequeue,
+		GaveBack: gaveBack, NoBorrow: giveBack, Locks: rec.Locks,
 	}
-	log.For("core").Warn("queue.requeued", "job", int64(rec.ID), "attempt", rec.Attempt+1, "why", why)
+	log.For("core").Warn("queue.requeued", "job", int64(rec.ID), "attempt", rec.Attempt, "why", why, "give_back", giveBack)
 	q.moved()
-	m.sendRequeueNotice(*rec, why)
+	delete(q.noLend, rec.ID)
+	if !giveBack {
+		m.sendRequeueNotice(*rec, why)
+	}
 }
