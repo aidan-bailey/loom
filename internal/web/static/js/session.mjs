@@ -118,7 +118,7 @@ function Tiles({ s, snap, now, diff }) {
 
 // AGENT_ID is what an agent id may hold for the app to link to its screen
 // (parseRoute's agent route).
-const AGENT_ID = /^[A-Za-z0-9_-]+$/;
+export const AGENT_ID = /^[A-Za-z0-9_-]+$/;
 
 // Agents are the session's subagents by name, each running or idle, with its
 // description under it. A row that carries an id is a link to the agent's

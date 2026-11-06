@@ -10,6 +10,7 @@ import { screens } from "./screens.mjs";
 import { Pair, AddToHome, needsInstall } from "./pair.mjs";
 import { checkPush } from "./push.mjs";
 import { allSessions, fleetGroups, nextInGroup } from "./fleet.mjs";
+import { AGENT_ID } from "./session.mjs";
 import { StatusRow } from "./chrome.mjs";
 
 const buildMeta = document.querySelector('meta[name="loom-build"]');
@@ -32,8 +33,8 @@ export function parseRoute(hash) {
   if (h === "new") return { name: "new" };
   if (h === "settings") return { name: "settings" };
   if (h === "pair") return { name: "pair" };
-  const a = h.match(/^s\/(\d+)\/agent\/([A-Za-z0-9_-]+)$/);
-  if (a) return { name: "agent", id: Number(a[1]), agent: a[2] };
+  const a = h.match(/^s\/(\d+)\/agent\/([^/]+)$/);
+  if (a && AGENT_ID.test(a[2])) return { name: "agent", id: Number(a[1]), agent: a[2] };
   const m = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup|info))?(\/full)?$/);
   if (m && (!m[3] || m[2] === "mockup")) {
     const id = Number(m[1]);

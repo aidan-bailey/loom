@@ -8,7 +8,7 @@ import { html, useState, useEffect, useRef, useLayoutEffect } from "../lib/preac
 import { call } from "./api.mjs";
 import { sessionOf, ago, markSeen } from "./fleet.mjs";
 import { Markdown } from "./markdown.mjs";
-import { Info, actionsFor } from "./session.mjs";
+import { Info, actionsFor, AGENT_ID } from "./session.mjs";
 import { NeedsYou } from "./needs.mjs";
 import { ReplyBox, useRun } from "./reply.mjs";
 
@@ -16,9 +16,6 @@ import { ReplyBox, useRun } from "./reply.mjs";
 // is Running; PROMPT_LINES how many lines of a prompt show before "more".
 const POLL = 5000;
 const PROMPT_LINES = 12;
-// LINKABLE is what an agent id may hold for the app to link to its screen
-// (parseRoute's agent route); a step with another id is a plain row.
-const LINKABLE = /^[A-Za-z0-9_-]+$/;
 
 // kept holds each session's conversation as it was left, by session id: the
 // turns held and the scroll position. Leaving the screen (a subagent's, the
@@ -87,7 +84,7 @@ function Prompt({ t }) {
 // the subagent's screen, ending in "›", with ◐ while the agent has not
 // finished.
 function Step({ st, live, now, sessionId }) {
-  const linked = Boolean(st.agent) && LINKABLE.test(st.agent);
+  const linked = Boolean(st.agent) && AGENT_ID.test(st.agent);
   const running = live && st.state === "pending";
   let glyph = "";
   let cls = "sc-dim";
