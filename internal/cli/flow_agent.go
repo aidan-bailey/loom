@@ -472,39 +472,54 @@ func newFlowAgentCancelCmd() *cobra.Command {
 				return err
 			}
 			return flowDaemon(c, func(d *client) error {
-				unlock, err := lockAgents(dir)
-				if err != nil {
+				run, cancelled, err := d.cancelAgentRun(dir, name)
+				switch {
+				case run == nil:
 					return err
-				}
-				defer unlock()
-				run, err := readAgentRun(agentPath(dir, name))
-				if err != nil {
-					return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
-				}
-				if run.ended() {
+				case !cancelled:
 					fmt.Fprintf(c.OutOrStdout(), "nothing to cancel: %s is %s\n", name, run.Status)
 					return nil
 				}
-				// A job that has ended already is only marked: its cancel
-				// would be refused.
-				var refused error
-				d.events()
-				if v, ok := jobOf(d.Queue(), run.current().ID); ok && !v.State.Finished() {
-					refused = d.cancelJobs([]sched.JobID{v.ID})
-				}
-				run.current().Read = true
-				run.Status = agentCancelled
-				if err := saveAgentRun(dir, run); err != nil {
-					return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v", err)}
-				}
 				fmt.Fprintf(c.OutOrStdout(), "cancelled %s: job %d\n", name, run.current().ID)
-				if refused != nil {
-					return &ExitError{Code: exitNotRun}
-				}
-				return nil
+				return err
 			})
 		},
 	}
+}
+
+// cancelAgentRun cancels agent run name's job if it hasn't ended and marks
+// the run cancelled, under the lock: the run, whether it was cancelled (a
+// run that has ended is left as it is), and the refusal of its job's
+// cancel. A nil run is a record it couldn't read.
+func (d *client) cancelAgentRun(dir, name string) (*agentRun, bool, error) {
+	unlock, err := lockAgents(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	run, err := readAgentRun(agentPath(dir, name))
+	if err != nil {
+		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
+	}
+	if run.ended() {
+		return run, false, nil
+	}
+	// A job that has ended already is only marked: its cancel would be
+	// refused.
+	var refused error
+	d.events()
+	if v, ok := jobOf(d.Queue(), run.current().ID); ok && !v.State.Finished() {
+		refused = d.cancelJobs([]sched.JobID{v.ID})
+	}
+	run.current().Read = true
+	run.Status = agentCancelled
+	if err := saveAgentRun(dir, run); err != nil {
+		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v", err)}
+	}
+	if refused != nil {
+		return run, true, &ExitError{Code: exitNotRun}
+	}
+	return run, true, nil
 }
 
 func agentPath(dir, id string) string { return filepath.Join(dir, id+".json") }

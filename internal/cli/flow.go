@@ -58,7 +58,7 @@ func newFlowCmd() *cobra.Command {
 			},
 		})
 	}
-	cmd.AddCommand(newFlowGuardCmd(), newFlowPathCmd(), newFlowImportCmd(), newFlowWaitCmd(), newFlowGatesCmd(), newFlowAgentCmd())
+	cmd.AddCommand(newFlowGuardCmd(), newFlowPathCmd(), newFlowImportCmd(), newFlowWaitCmd(), newFlowGatesCmd(), newFlowAgentCmd(), newFlowRunCmd())
 	return cmd
 }
 
