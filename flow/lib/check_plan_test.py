@@ -1,5 +1,6 @@
 """Tests for check_plan.py. Run from lib/: python3 -m unittest -q check_plan_test.py"""
 
+import json
 import os
 import subprocess
 import sys
@@ -66,7 +67,7 @@ GOOD = textwrap.dedent(
 )
 
 
-def run(text: str, spec: bool = True, profile: str | None = PROFILE) -> tuple[int, str]:
+def run(text: str, spec: bool = True, profile: str | None = PROFILE, as_json: bool = False) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["git", "-C", tmp, "init", "-q"], check=True, capture_output=True, env=CLEAN_ENV)
         if profile is not None:
@@ -81,7 +82,8 @@ def run(text: str, spec: bool = True, profile: str | None = PROFILE) -> tuple[in
         # No test reads the real home store: FLOW_HOME points at a directory with no profiles.
         env = {**CLEAN_ENV, "FLOW_HOME": str(Path(tmp, "flow-home"))}
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(plan)], capture_output=True, text=True, env=env, cwd=tmp
+            [sys.executable, str(SCRIPT), *(["--json"] if as_json else []), str(plan)],
+            capture_output=True, text=True, env=env, cwd=tmp
         )
         return result.returncode, result.stdout
 
@@ -249,6 +251,44 @@ def tiered(*stories, review=None):
 def line_of(text, needle):
     """The 1-based line of the first line of `text` that is exactly `needle`."""
     return text.split("\n").index(needle) + 1
+
+
+class JsonTest(unittest.TestCase):
+    """`--json`, which loom flow run reads (flow in loom part 3b)."""
+
+    def test_gives_each_story_its_lines_and_fields(self):
+        code, out = run(GOOD.replace("- **Files:** `a/route.rs`, `a/store.rs`", "- **Files:** `a/route.rs`, `a/store.rs`\n- **Review:** light (one route)"), as_json=True)
+        self.assertEqual(code, 0, out)
+        got = json.loads(out)
+        self.assertEqual(got["spec"], "docs/spec.md")
+        self.assertIsNone(got["plan_review"])
+        stories = got["stories"]
+        self.assertEqual([s["id"] for s in stories], ["1", "2", "3"])
+        lines = GOOD.splitlines()
+        self.assertEqual(stories[0]["line"], lines.index("## Story 1: Store") + 1)
+        self.assertEqual(stories[0]["end"], lines.index("## Story 2: UI"), "the line before the next story")
+        self.assertEqual(stories[2]["end"], len(lines) + 1, "the plan's last line")
+        self.assertEqual(stories[1]["developer"], "intermediate-dev", "backticks and flow: trimmed")
+        self.assertEqual(stories[2]["tier"], "light")
+        self.assertEqual(stories[0]["review"], "full", "no Plan review line vouches for nothing")
+        self.assertEqual(stories[0]["verify"], "`cargo nextest run -p a store`")
+        self.assertEqual(stories[1]["interfaces"], "uses `Store::get` from Story 1")
+        self.assertEqual(stories[0]["landmines"], [])
+
+    def test_a_story_ends_before_a_later_h2(self):
+        code, out = run(GOOD + "\n## Execution notes\n\nlater\n", as_json=True)
+        self.assertEqual(code, 0, out)
+        lines = (GOOD + "\n## Execution notes\n\nlater\n").splitlines()
+        self.assertEqual(json.loads(out)["stories"][2]["end"], lines.index("## Execution notes"))
+
+    def test_a_failing_plan_prints_its_fail_lines(self):
+        code, out = run(GOOD.replace("- **Interfaces:** none\n", ""), as_json=True)
+        self.assertEqual(code, 1, out)
+        self.assertTrue(out.startswith("FAIL "), out)
+
+    def test_json_takes_one_plan(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--json"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
 
 
 class ReviewLineTest(unittest.TestCase):

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/aidan-bailey/loom/config"
@@ -25,6 +26,33 @@ const headlessPreamble = "You run headless as a loom agent job: nobody can messa
 	"or with `STATUS: NEEDS_CONTEXT` and then a line `QUESTION: <your question>`, whose answer resumes you. " +
 	"Run long steps through `loom flow wait`, as your rules say."
 
+// reviewPreamble follows headlessPreamble for a reviewer's run (flow in loom
+// part 3b, spec §5.6): loom flow run routes a review by these lines. The
+// wording is the one the part 3b probe saw followed (2026-11-06).
+const reviewPreamble = "Before your STATUS line, end your report with one line `FINDING: <severity> <file>:<line> <the fix>` per issue, " +
+	"the severity being Critical, Important or Minor, followed by the word design when the fix needs a decision the spec doesn't make " +
+	"(`FINDING: Important design a.go:12 <the fix>`), one line `PLAN: <the problem>` " +
+	"per problem in the plan's own code, and then `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`. Write no FINDING or PLAN line when there is none."
+
+// developerPreamble follows headlessPreamble for a developer's run (part 3b,
+// planning amendment 6): the run's record counts these lines.
+const developerPreamble = "Before your STATUS line, list each deviation from the plan on its own line `DEVIATION: <what and why>`."
+
+// rolePreamble is headlessPreamble with role's own lines.
+func rolePreamble(role string) string {
+	switch role {
+	case "story-reviewer", "code-quality-reviewer":
+		return headlessPreamble + " " + reviewPreamble
+	case "junior-dev", "intermediate-dev", "senior-dev":
+		return headlessPreamble + " " + developerPreamble
+	}
+	return headlessPreamble
+}
+
+// agentTurnCap is an agent run's status when its job stopped at its turn
+// cap (part 3b, spec §6): no report, but its session resumes.
+const agentTurnCap = "TURN_CAP"
+
 // envAgentRole names the flow agent an agent job runs. The guard doesn't
 // need it (the hook's agent_type names the agent, spec §2a, 12); it is the
 // job's own record of its role.
@@ -38,12 +66,17 @@ var agentStatuses = []string{"DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLO
 
 // agentCommand is the argv of an agent job (spec §5.4): a first run when
 // session is "", else a resume of it with prompt as the answer. settings is
-// agentSettings' JSON.
-func agentCommand(program, role, effort, mode, root, settings, prompt, session string) []string {
+// agentSettings' JSON. maxTurns, when positive, is passed as --max-turns:
+// `--agent` doesn't apply a definition's maxTurns (part 3b's probe,
+// 2026-11-06), so each job carries it.
+func agentCommand(program, role, effort string, maxTurns int, mode, root, settings, prompt, session string) []string {
 	argv := []string{program, "-p", prompt, "--agent", "flow:" + role,
 		"--plugin-dir", filepath.Join(root, "plugin"), "--settings", settings}
 	if session != "" {
 		argv = append(argv, "--resume", session)
+	}
+	if maxTurns > 0 {
+		argv = append(argv, "--max-turns", strconv.Itoa(maxTurns))
 	}
 	if mode != "" && mode != "default" {
 		argv = append(argv, "--permission-mode", mode)
@@ -233,6 +266,50 @@ func frontmatterSkills(definition []byte) []string {
 	return skills
 }
 
+// frontmatterMaxTurns is a definition's `maxTurns:` value, 0 when it has none.
+func frontmatterMaxTurns(definition []byte) int {
+	front, ok := frontmatter(definition)
+	if !ok {
+		return 0
+	}
+	for _, line := range strings.Split(front, "\n") {
+		if v, ok := strings.CutPrefix(line, "maxTurns:"); ok {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// agentArgv is the argv of a first agent job of role with brief, run in cwd
+// from the flow root root (spec §5.4), or an *ExitError saying why not: an
+// unknown role, an empty or oversized brief, a preloaded skill or the
+// settings it can't read.
+func agentArgv(root, role, effort, cwd string, brief []byte) ([]string, error) {
+	definition, ok := agentDefinition(root, role)
+	if !ok {
+		return nil, &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: the flow plugin has no agent %s", role)}
+	}
+	switch {
+	case strings.TrimSpace(string(brief)) == "":
+		return nil, &ExitError{Code: exitUsage, Msg: "loom flow agent: the brief is empty; give it on stdin"}
+	case len(brief) > maxBrief:
+		return nil, &ExitError{Code: exitUsage, Msg: "loom flow agent: the brief is at most 48 KiB"}
+	}
+	skills, err := preloadedSkills(root, role, definition)
+	if err != nil {
+		return nil, &ExitError{Code: exitNotRun, Msg: "loom flow agent: " + err.Error()}
+	}
+	settings, err := runSettings(cwd)
+	if err != nil {
+		return nil, err
+	}
+	return agentCommand(agentProgram(), role, effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings,
+		rolePreamble(role)+"\n\n"+skills+string(brief), ""), nil
+}
+
 // frontmatter is the text between a file's opening `---` line and the next.
 func frontmatter(b []byte) (string, bool) {
 	text := strings.ReplaceAll(string(b), "\r\n", "\n")
@@ -316,6 +393,7 @@ func readResult(log []byte) (agentResult, error) {
 		return res, errors.New("it ended with no result")
 	}
 	var result struct {
+		Subtype string  `json:"subtype"`
 		IsError bool    `json:"is_error"`
 		Cost    float64 `json:"total_cost_usd"`
 		Turns   int     `json:"num_turns"`
@@ -325,6 +403,12 @@ func readResult(log []byte) (agentResult, error) {
 		return res, fmt.Errorf("its result can't be read: %w", err)
 	}
 	res.CostUSD, res.Turns = result.Cost, result.Turns
+	// A turn cap ends the job with an error result and no report, but its
+	// session resumes (part 3b's probe, 2026-11-06).
+	if result.Subtype == "error_max_turns" {
+		res.Status = agentTurnCap
+		return res, nil
+	}
 	if result.IsError {
 		return res, errors.New("it ended with an error result")
 	}

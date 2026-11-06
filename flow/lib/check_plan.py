@@ -31,18 +31,23 @@ lists no tiers at all. The output says per story whether the plan review vouches
 the line lists, or a deep story of a line written before tiers).
 
 Usage: check_plan.py PLAN.md [PLAN.md ...]
+       check_plan.py --json PLAN.md
 
 The markers and the exclusive builds come from the profile of the repo holding each plan
 (flowconf.py); a plan whose repo has no usable profile fails. For a plan that passes it prints the
 spec's path, its plan review, each story's developer, file count, whether its Verify line holds an
 exclusive build, its tier, whether the plan review vouches for it and the landmine markers its code
 holds, then the pairs of stories that may run at once: disjoint files and at most one exclusive
-build. Exit 0 when every plan passes, 1 when any fails, 2 on a usage error.
+build. With --json, a plan that passes prints one JSON object instead: its spec, its plan review and
+each story's id, first and last plan lines, developer, tier, review column, landmines, Interfaces and
+Verify lines, which loom flow run reads (flow in loom part 3b); a failing one prints its FAIL lines.
+Exit 0 when every plan passes, 1 when any fails, 2 on a usage error.
 """
 
 from __future__ import annotations
 
 import itertools
+import json
 import posixpath
 import re
 import sys
@@ -86,6 +91,8 @@ class Story:
     sid: str
     line: int
     fields: dict[str, str] = field(default_factory=dict)
+    # The story's last plan line: the line before the next story or H2 heading, or the plan's last.
+    end: int = 0
     tasks: int = 0
     # Each fenced line inside the story's section, with its plan line number.
     code: list[tuple[int, str]] = field(default_factory=list)
@@ -121,7 +128,8 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
     current: Story | None = None
     in_header = False
     fenced = False
-    for n, line in enumerate(text.splitlines(), 1):
+    lines = text.splitlines()
+    for n, line in enumerate(lines, 1):
         if FENCE_RE.match(line):
             fenced = not fenced
             continue
@@ -129,6 +137,8 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
             if current is not None:
                 current.code.append((n, line))
             continue
+        if current is not None and (STORY_RE.match(line) or H2_RE.match(line)):
+            current.end = n - 1
         named = SPEC_RE.match(line)
         if named and not stories and spec is None:
             paths = CODE_RE.findall(named.group(1))
@@ -150,6 +160,8 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
             header = FIELD_RE.match(line)
             if header:
                 current.fields[header.group(1)] = header.group(2).strip()
+    if current is not None:
+        current.end = len(lines)
     return stories, problems, spec
 
 
@@ -304,9 +316,23 @@ def parallel_safe(stories: list[Story], exclusive: Sequence[str]) -> list[tuple[
     ]
 
 
+def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str]) -> dict:
+    """A story as `--json` gives it, for loom flow run (flow in loom part 3b)."""
+    return {
+        "id": story.sid, "line": story.line, "end": story.end,
+        "developer": story.fields["Developer"].strip("` ").removeprefix("flow:"),
+        "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full",
+        "landmines": [marker for marker, _ in markers_in(story, markers)],
+        "interfaces": story.fields.get("Interfaces", ""), "verify": story.fields.get("Verify", ""),
+    }
+
+
 def main(argv: list[str]) -> int:
-    if not argv:
-        print("usage: check_plan.py PLAN.md [PLAN.md ...]", file=sys.stderr)
+    as_json = bool(argv) and argv[0] == "--json"
+    if as_json:
+        argv = argv[1:]
+    if not argv or (as_json and len(argv) != 1):
+        print("usage: check_plan.py [--json PLAN.md | PLAN.md [PLAN.md ...]]", file=sys.stderr)
         return 2
     failed = False
     for arg in argv:
@@ -340,8 +366,13 @@ def main(argv: list[str]) -> int:
             for problem in problems:
                 print(f"FAIL [plan] {arg}: {problem}")
             continue
-        print(f"OK: {arg}: {len(stories)} stories; spec {spec}")
         review = plan_review(text)
+        if as_json:
+            vouch = vouched(review, stories)
+            print(json.dumps({"spec": spec, "plan_review": review,
+                              "stories": [story_json(s, vouch, profile.markers) for s in stories]}))
+            continue
+        print(f"OK: {arg}: {len(stories)} stories; spec {spec}")
         print(f"  Plan review: {review}" if review else "  Plan review: none recorded, so every story gets the full code-quality review")
         vouch = vouched(review, stories)
         for story in stories:

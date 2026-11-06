@@ -20,6 +20,7 @@ only the estimate beyond it is booked. It reads files only and costs no model to
 
     agent_costs.py session [SESSION] [--since ISO] [--until ISO]
     agent_costs.py records [FILE ...]
+    agent_costs.py run RUN
 
 `session` prints markdown tables and closes with an `<!-- agent-costs {...} -->`
 comment carrying the same totals as JSON. SESSION is a session id, a session
@@ -28,7 +29,10 @@ current worktree. `records` reads those comments from run records and totals
 them across runs, for a retro: without FILEs, every record in the home store
 ($FLOW_DATA/records/<key>/*.md). Records from more than one repo directory get
 a table each, then a pooled one. A run that spanned several manager sessions
-carries one comment per session, and its sessions are summed into one run.
+carries one comment per session, and its sessions are summed into one run. `run` prices a loom flow
+run (flow in loom part 3b): its manager sessions as `main` and each headless agent run by its role,
+over the run's window, read from the run's state file and the agent records it names; a second
+`<!-- agent-costs-managers {...} -->` comment gives each manager session's models.
 
 Prices are Anthropic API list prices, read from prices.toml beside this script;
 on a subscription read them as relative weights for comparing agents, not as a bill.
@@ -392,6 +396,55 @@ def find_session(arg: str | None) -> Path:
     return sessions[-1]
 
 
+def run_report(run: str) -> str:
+    """A loom flow run's agents (flow in loom part 3b): each manager session and its subagents as `main`,
+    and each headless agent run by its role, over the run's window, from <state>/runs/RUN.json and the
+    agent records it names. The comment carries the run and each manager session's models."""
+    import flowconf  # noqa: PLC0415  (flow_data is imported above; the rest only here)
+
+    top = flowconf.toplevel(Path.cwd())
+    state = flowconf.state_dir(top, flowconf.optional_profile(top))
+    try:
+        st = json.loads((state / "runs" / f"{run}.json").read_text())
+    except (OSError, ValueError) as err:
+        sys.exit(f"agent_costs: the run {run}: {err}")
+    since, until = parse_time(st.get("start")), parse_time(st.get("end"))
+    entries: list[tuple[str, str, Path, bool]] = []
+    managers: dict[str, str] = {}
+    for sid in st.get("managers") or []:
+        path = locate_session(sid)
+        if path is None:
+            print(f"agent_costs: no transcript for manager session {sid}", file=sys.stderr)
+            continue
+        label = f"manager {sid[:8]}"
+        managers[label] = sid
+        entries += [("main", label, path, True), *subagent_entries(path)]
+    for name in st.get("agents") or []:
+        try:
+            rec = json.loads((state / "agents" / f"{name}.json").read_text())
+        except (OSError, ValueError) as err:
+            print(f"agent_costs: the agent run {name}: {err}", file=sys.stderr)
+            continue
+        path = locate_session(rec.get("session") or "")
+        if path is None:
+            print(f"agent_costs: no transcript for agent run {name}", file=sys.stderr)
+            continue
+        entries.append((rec.get("role", "?"), name, path, True))
+    models_of: dict[str, set[str]] = {}
+    report = agents_report(f"Run `{run}`" + (f", {since.isoformat()} to {until.isoformat() if until else 'end'}" if since else ""),
+                           entries, since, until, {"session": run, "run": run}, models_of)
+    # The managers' models go in a comment of their own: the totals comment's shape stays the one records reads.
+    return report + "\n" + f"<!-- agent-costs-managers {json.dumps({sid: sorted(models_of.get(label, ())) for label, sid in managers.items()}, sort_keys=True)} -->"
+
+
+def locate_session(sid: str) -> Path | None:
+    """The transcript of session sid under the projects root, or None."""
+    if not sid:
+        return None
+    matches = sorted(projects_root().glob(f"*/{sid}.jsonl"))
+    return matches[0] if len(matches) == 1 else None
+
+
 def fmt(n: float, usd: bool = False) -> str:
     if usd:
         return f"${n:,.4f}" if n < 1 else f"${n:,.2f}"
@@ -410,19 +463,35 @@ USAGE_HEADER = ("Requests | Input | Output | Cache read | Write 5m | Write 1h | 
 USAGE_COLUMNS = len(USAGE_HEADER.split(" | "))
 
 
-def session_report(main: Path, since: datetime | None, until: datetime | None) -> str:
-    agents: list[tuple[str, str, Usage, set[str]]] = []
-    ratios: dict[str, float] = {}
-    usage, models, ratios["main session"] = transcript_usage(main, since, until)
-    agents.append(("main", "main session", usage, models))
-    subagents = main.with_suffix("") / "subagents"
-    for path in sorted(subagents.glob("agent-*.jsonl")):
+def subagent_entries(main: Path) -> list[tuple[str, str, Path, bool]]:
+    """A main transcript's subagents, as agents_report takes them: type, label, transcript, kept when idle."""
+    entries = []
+    for path in sorted((main.with_suffix("") / "subagents").glob("agent-*.jsonl")):
         meta_path = path.with_name(path.stem + ".meta.json")
         meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+        label = f"{path.stem.removeprefix('agent-')[:7]} {meta.get('description', '')}".strip()
+        entries.append((meta.get("agentType", "?"), label, path, False))
+    return entries
+
+
+def session_report(main: Path, since: datetime | None, until: datetime | None) -> str:
+    entries = [("main", "main session", main, True), *subagent_entries(main)]
+    title = f"Session `{main.stem}`" + (f", {since.isoformat()} to {until.isoformat() if until else 'end'}" if since else "")
+    return agents_report(title, entries, since, until, {"session": main.stem})
+
+
+def agents_report(title: str, entries: list[tuple[str, str, Path, bool]], since: datetime | None,
+                  until: datetime | None, extra: dict, models_of: dict[str, set[str]] | None = None) -> str:
+    """The tables and the agent-costs comment over entries (type, label, transcript, kept when idle); extra
+    goes into the comment's data, and models_of, when given, gets each entry's models by label."""
+    agents: list[tuple[str, str, Usage, set[str]]] = []
+    ratios: dict[str, float] = {}
+    for kind, label, path, keep in entries:
         usage, models, ratio = transcript_usage(path, since, until)
-        if usage.requests:
-            label = f"{path.stem.removeprefix('agent-')[:7]} {meta.get('description', '')}".strip()
-            agents.append((meta.get("agentType", "?"), label, usage, models))
+        if models_of is not None:
+            models_of[label] = models
+        if keep or usage.requests:
+            agents.append((kind, label, usage, models))
             ratios[label] = ratio
     by_type: dict[str, tuple[int, Usage]] = {}
     total = Usage()
@@ -431,7 +500,7 @@ def session_report(main: Path, since: datetime | None, until: datetime | None) -
         summed.add(usage)
         by_type[kind] = (count + 1, summed)
         total.add(usage)
-    lines = [f"Session `{main.stem}`" + (f", {since.isoformat()} to {until.isoformat() if until else 'end'}" if since else ""), "",
+    lines = [title, "",
              "### Cost by agent", "", f"| Agent | Type | Model | {USAGE_HEADER} |",
              "|---|---|---|" + "---:|" * USAGE_COLUMNS]
     for kind, label, usage, models in agents:
@@ -452,7 +521,7 @@ def session_report(main: Path, since: datetime | None, until: datetime | None) -
               f"{MAX_CHARS_PER_TOKEN}, else {DEFAULT_CHARS_PER_TOKEN}), and priced at the model's output rate. "
               "Where a transcript logs a request's final output count, the thinking already in it is taken off. "
               "It is not billing data. USD incl. est. is USD plus that estimate."]
-    data = {"session": main.stem, "since": since.isoformat() if since else None,
+    data = {**extra, "since": since.isoformat() if since else None,
             "until": until.isoformat() if until else None,
             "by_type": {kind: {"agents": count, **asdict(usage)} for kind, (count, usage) in by_type.items()},
             # chars_per_token is recorded for diagnosis only; no report or `records` reads it back.
@@ -543,9 +612,14 @@ def main(argv: list[str]) -> int:
     session.add_argument("--until", help="ISO time: skip requests after it")
     records = sub.add_parser("records", help="total run records' costs (default: every record in the home store)")
     records.add_argument("files", nargs="*")
+    run = sub.add_parser("run", help="price a loom flow run's manager sessions and agent runs")
+    run.add_argument("run", help="the run's ID, as loom flow run list prints it")
     args = parser.parse_args(argv)
     if args.command == "session":
         print(session_report(find_session(args.session), parse_time(args.since), parse_time(args.until)))
+        return 0
+    if args.command == "run":
+        print(run_report(args.run))
         return 0
     text, code = records_report(args.files or home_records())
     print(text, file=sys.stderr if code else sys.stdout)
