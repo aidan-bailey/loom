@@ -543,6 +543,12 @@ Params: `{"s":{},"req":0}`
 
 Result: `{}`
 
+### ConfigureBorrow (request)
+
+Params: `{"on":false}`
+
+Result: `{}`
+
 ### ReadBeliefs (request)
 
 Params: `{"q":{},"req":0}`

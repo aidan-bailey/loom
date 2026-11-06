@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -8,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestSettingsCfg() *config.Config {
@@ -186,5 +188,45 @@ func TestSettingsOverlay_BuildSweepRefusesABadValue(t *testing.T) {
 			_, ok := so.TakeBuildSweepRequest()
 			assert.False(t, ok)
 		})
+	}
+}
+
+// borrowLine is the Job Borrowing row of so's render.
+func borrowLine(t *testing.T, so *SettingsOverlay) string {
+	t.Helper()
+	for line := range strings.SplitSeq(so.Render(), "\n") {
+		if strings.Contains(line, "Job Borrowing") {
+			return line
+		}
+	}
+	t.Fatal("no Job Borrowing row")
+	return ""
+}
+
+func TestSettingsOverlay_BorrowRowShowsTheGlobalSetting(t *testing.T) {
+	so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	assert.Contains(t, borrowLine(t, so), "off (all workspaces)")
+	so.SetBorrow(true)
+	assert.Contains(t, borrowLine(t, so), "on (all workspaces)")
+}
+
+// TestSettingsOverlay_BorrowToggleIsARequestNotAWorkspaceSetting: the
+// setting is global, so Enter asks the caller for the opposite value, and
+// the workspace's settings neither change nor save.
+func TestSettingsOverlay_BorrowToggleIsARequestNotAWorkspaceSetting(t *testing.T) {
+	for _, from := range []bool{false, true} {
+		cfg := newTestSettingsCfg()
+		so := NewSettingsOverlay(cfg, false, "")
+		so.SetBorrow(from)
+		so.cursor = int(settingsFieldBorrow)
+		closed, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+		assert.False(t, closed)
+		assert.False(t, changed, "the workspace's settings are not saved")
+		assert.Nil(t, cfg.Scheduler, "nor changed")
+		on, ok := so.TakeBorrowRequest()
+		require.True(t, ok)
+		assert.Equal(t, !from, on)
+		_, ok = so.TakeBorrowRequest()
+		assert.False(t, ok, "taken once")
 	}
 }

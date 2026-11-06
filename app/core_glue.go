@@ -173,6 +173,11 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
 	case core.QueueChanged:
 		m.queue = ev.View
+		// Job borrowing is global: another client's toggle reaches an
+		// open settings overlay here.
+		if so := m.settingsOverlay(); so != nil {
+			so.SetBorrow(queueBorrows(ev.View))
+		}
 		m.syncJobBadges()
 	case core.FeedbackChanged:
 		m.feedback = ev.View
