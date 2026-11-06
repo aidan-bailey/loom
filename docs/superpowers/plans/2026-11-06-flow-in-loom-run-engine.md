@@ -2113,4 +2113,40 @@ short.
 
 ## Execution notes
 
-(Filled in as the packages land: the probe's outcomes, amendments found while building, gates and job numbers.)
+Executed inline on 2026-11-06.
+
+- **P1, ccb40b47.** On Claude Code 2.1.318:
+  - Premise 1 failed: `--agent` ignores a definition's `maxTurns` (5 turns against a cap of 2).
+  - Premise 2 held: `--max-turns 2` ends the run with `subtype: error_max_turns`, `is_error: true` and no result text.
+  - Premise 3 held: a resume of a capped run continues its session.
+  - Premise 4 held after rewording. The first preamble's `[design]` notation was copied literally (`FINDING: Important [design] x.go:3 …`). The shipped wording spells it out (`FINDING: Important design a.go:12 <the fix>`), and the parser also accepts `[design]`.
+
+  So agent jobs pass `--max-turns` from the definition (P3), on resumes too. Premise 1 is now logged, not asserted.
+- **P2, 912f24cc.** Built as planned, with two differences:
+  - A run job's `Uncontained` reason is its own (`runUncontained`).
+  - The pause test pumps the shims' starts before the pause, as the agent test does.
+
+  All five mutations went red.
+- **P3, 887f921d.** Built as planned, with these differences:
+  - `check_plan.py --json` takes one plan only.
+  - `MARKERS:` matches a marker as a substring of an uncovered line.
+  - `agent_costs.py run` puts the managers' models in a second comment, `<!-- agent-costs-managers {…} -->`, not in the totals comment, whose shape `records` reads (amendment 11 changed).
+  - `rolePreamble` uses P1's wording.
+
+  `bash flow/lib/test.sh`: 341 tests and the agent lint passed. All four Go mutations went red.
+- **P4, edc4da5b.** Built from the plan's code, with two fixes the tests found:
+  - A story's base is the head the engine last recorded (`e.head`), not a memoized fresh read. A fresh read absorbed a commit made outside the run, so the tree check never fired. It also broke the followed-agent case.
+  - A fix round no longer sets the row's Developer (`if !fix`).
+
+  Mutations:
+  - Seven of eight went red.
+  - Removing the agent memo survived: following an existing run by name already prevents a resubmit, so the memo only saves a re-follow.
+  - Replaced it with two that bite, and both went red: names from a counter that outlives a pass, and HEAD read without its memo.
+- **P5.** Built as planned, with these differences:
+  - The wait method is `waitFlowRun`, since `waitRun` is the gate runner's.
+  - The adapter awaits a just-queued job's view before following it.
+  - `cancelAgentRun` is factored out of 3a's `cancel`.
+  - The test fixture commits its plan files, so the tree is clean.
+  - `core/CLAUDE.md` is 29 bytes under its budget, so the pause's spare is a rule in `docs/claude/the-work-queue.md` and in `internal/cli/CLAUDE.md`'s engine rule, not in core's.
+
+  Mutations: three of four went red. The fourth (dropping `answer`'s status check) survived because a running run has no open question and `State.Answer` refuses it too: two layers.

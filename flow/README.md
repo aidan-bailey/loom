@@ -1,6 +1,6 @@
 # flow
 
-The agent flow: supervised plan execution with a pinned roster of subagents. Drafters write a plan's stories from its spec and skeleton (`/flow:draft`); a supervisor runs them story by story, dispatching a developer per story, a verifier for the gates and reviewers for each story and the whole (`/flow:supervise`); each run leaves a record, and an owner-started retro turns the records into roster changes (`/flow:retro`). `/flow:init` drafts a repo's profile. The rules every controller follows are in [`plugin/docs/dispatch.md`](plugin/docs/dispatch.md); the records' format in [`plugin/docs/records.md`](plugin/docs/records.md).
+The agent flow: supervised plan execution with a pinned roster of subagents. Drafters write a plan's stories from its spec and skeleton (`/flow:draft`); a supervisor runs them story by story, dispatching a developer per story, a verifier for the gates and reviewers for each story and the whole (`/flow:supervise`); or loom's run engine runs them, a Go process that dispatches each step as a headless agent job and asks the manager every judgement (`/flow:run`, `loom flow run`, in [`../internal/flowrun`](../internal/flowrun)); each run leaves a record, and an owner-started retro turns the records into roster changes (`/flow:retro`). `/flow:init` drafts a repo's profile. The rules every controller follows are in [`plugin/docs/dispatch.md`](plugin/docs/dispatch.md); the records' format in [`plugin/docs/records.md`](plugin/docs/records.md).
 
 Moved into loom from the private claude-flow repo at d937675 on 2026-11-05. Its history, its evidence document and its pin provenance before the move stay there. Design: [`../docs/superpowers/specs/2026-11-05-flow-in-loom-distribution-design.md`](../docs/superpowers/specs/2026-11-05-flow-in-loom-distribution-design.md).
 
@@ -10,7 +10,7 @@ Moved into loom from the private claude-flow repo at d937675 on 2026-11-05. Its 
 |---|---|
 | `plugin/.claude-plugin/plugin.json` | the plugin's manifest, name `flow` |
 | `plugin/agents/` | the 12 pinned agents: `drafter`, `plan-execution-supervisor`, `junior-dev`, `intermediate-dev`, `senior-dev`, `verifier`, `spec-reviewer`, `code-quality-reviewer`, `story-reviewer`, `premise-check`, `recon`, `glance` |
-| `plugin/skills/` | `init`, `draft`, `supervise` and `retro` (owner-started, `disable-model-invocation: true`) and `habits` (preloaded by the developers) |
+| `plugin/skills/` | `init`, `draft`, `supervise`, `run` and `retro` (owner-started, `disable-model-invocation: true`) and `habits` (preloaded by the developers) |
 | `plugin/docs/` | `plugin/docs/dispatch.md`, `plugin/docs/records.md` |
 | `lib/` | the Python and bash tools, their tests (`*_test.py`, `lib/test.sh`), `lib/guarded-agents.txt`, `lib/banned-tokens.txt`, `lib/prices.toml` |
 | `embed.go` | the Go package: the embed, `Write`, `RosterID`, `Guarded`, `GuardedMode`, `IsRoot` |
@@ -18,7 +18,7 @@ Moved into loom from the private claude-flow repo at d937675 on 2026-11-05. Its 
 
 ## Names
 
-Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, `/flow:supervise`, `/flow:retro` and `flow:habits`, and the agents `flow:<name>` (`flow:verifier`, …). Plans name a story's developer bare (`intermediate-dev`); `check_plan.py` also reads `flow:intermediate-dev`.
+Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, `/flow:supervise`, `/flow:run`, `/flow:retro` and `flow:habits`, and the agents `flow:<name>` (`flow:verifier`, …). Plans name a story's developer bare (`intermediate-dev`); `check_plan.py` also reads `flow:intermediate-dev`.
 
 ## A launch's copy
 

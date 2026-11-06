@@ -672,6 +672,37 @@ after another was made to hand back finishes the run with
 `loom flow gates wait <run>`, and `loom flow gates cancel <run>` ends one a
 story abandons.
 
+## The run engine (`/flow:run`)
+
+`/flow:run <plan>` runs a plan drafted for `/flow:supervise` without the Opus
+supervisor. `loom flow run start` queues an engine, a Go process running as a
+`run` job, that takes the supervisor's mechanical steps itself:
+
+- it dispatches each developer, fixer, reviewer and premise-check as a
+  headless agent job (`loom flow agent`), with the briefs the supervisor
+  wrote;
+- it routes a story by its tier, its review column and the conformance
+  markers;
+- it runs the profile's services and the gates itself, so no
+  `flow:verifier` is dispatched;
+- it reads a review's `FINDING:`, `PLAN:` and `VERDICT:` lines, which the
+  headless preamble asks reviewers for;
+- it writes the run's record.
+
+It asks the manager every judgement as a typed question: a NEEDS_CONTEXT,
+an intermediate's BLOCKED, a design finding, a premise's DESIGN verdict,
+findings a fix round left open, a second gate failure, a failed agent, a
+tree that moved. The manager waits on `loom flow run wait` in a background
+Bash, which costs no turns, and answers with `loom flow run answer`. 3c's
+judge will answer what the spec settles.
+
+The engine replays. Each step has a fixed name (`<run>-s3-dev2`) and a
+memoized result in `<state>/runs/<run>.json`, so an engine lost mid-run
+carries on, through `loom flow run resume`, without submitting a step twice.
+Stories run one at a time. Pausing the manager's session spares the run's
+jobs; killing it ends the run. Agents run with `--max-turns` from their
+definitions, since `--agent` ignores `maxTurns`.
+
 ## The developers' git guard and turn caps
 
 The `flow:habits` skill's git rules are backed by a hook. Claude ignores
