@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -35,6 +36,14 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.handleError(err))
 		}
 		so.SetBuildSweep(m.core.BuildSweep().AfterHours)
+	}
+	if on, ok := so.TakeBorrowRequest(); ok {
+		// Job borrowing is global: the model writes it to the global
+		// config.json, whichever workspace this overlay edits.
+		if err := m.core.ConfigureBorrow(on); err != nil {
+			cmds = append(cmds, m.handleError(err))
+		}
+		so.SetBorrow(queueBorrows(m.core.Queue()))
 	}
 
 	if changed {
@@ -74,3 +83,7 @@ func (m *home) applySettingsChange(old, cur config.Settings) {
 		m.program = program
 	}
 }
+
+// queueBorrows reports whether the queue's scheduler block turns job
+// borrowing on (borrow setting spec).
+func queueBorrows(v core.QueueView) bool { return v.Settings.Borrow != nil && *v.Settings.Borrow }

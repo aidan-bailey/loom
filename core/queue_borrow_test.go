@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,4 +157,45 @@ func TestQueueBorrow_ABorrowerBecomesFirm(t *testing.T) {
 	rec.Borrower, rec.Claim = true, sched.Claim{CPUs: 2, MemoryGB: 6}
 	wqSubmit(t, l.m, "sleep", "30") // a pass runs: 6 GB alone fits 14
 	assert.False(t, l.rec(t, id).Borrower)
+}
+
+// TestConfigureBorrow_SetsOnlyThatKeyOfTheGlobalConfig: the request writes
+// scheduler.borrow into the queue's global config.json, keeps every other
+// key, and the policy follows (borrow setting spec).
+func TestConfigureBorrow_SetsOnlyThatKeyOfTheGlobalConfig(t *testing.T) {
+	m := wqModel(t)
+	path := filepath.Join(m.queue.cfgDir, config.ConfigFileName)
+	require.NoError(t, os.WriteFile(path, []byte(`{"theme": "nord", "scheduler": {"cpus": 4, "cpu_overcommit": 3}}`), 0o644))
+
+	require.NoError(t, m.ConfigureBorrow(true))
+	cfg, err := config.ReadConfigFrom(m.queue.cfgDir)
+	require.NoError(t, err)
+	s := cfg.GetScheduler()
+	require.NotNil(t, s.Borrow)
+	assert.True(t, *s.Borrow)
+	assert.Equal(t, 4, s.CPUs)
+	assert.Equal(t, 3, s.CPUOvercommit)
+	assert.Equal(t, "nord", cfg.GetTheme())
+	assert.True(t, m.queue.policy.Borrow, "the policy follows")
+	v := m.queueView().Settings.Borrow
+	require.NotNil(t, v, "and the view")
+	assert.True(t, *v)
+
+	require.NoError(t, m.ConfigureBorrow(false))
+	assert.False(t, m.queue.policy.Borrow)
+}
+
+func TestConfigureBorrow_RefusesAnUnreadableGlobalConfig(t *testing.T) {
+	m := wqModel(t)
+	path := filepath.Join(m.queue.cfgDir, config.ConfigFileName)
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+	assert.ErrorContains(t, m.ConfigureBorrow(true), "configure borrowing")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "{not json", string(data), "left byte for byte")
+}
+
+func TestConfigureBorrow_RefusesAQueueNotLoaded(t *testing.T) {
+	m := NewForTest(Options{})
+	assert.ErrorIs(t, m.ConfigureBorrow(true), errQueueNotLoaded)
 }

@@ -131,7 +131,7 @@ A lent run's timing and curve are distorted: it sets `Laddered`, so it teaches m
 
 ## 9. Configuration
 
-The global `config.json` `scheduler` block gains `borrow` (bool, default `false`): borrowing and give-backs, in greedy mode only. A caps-form edit keeps it, as every key it doesn't show (`setSchedulerCaps`). Turning it off stops new borrowing; running borrowers carry on and a lent job still resumes. The thresholds are `sched` constants: the 2 GB tight margin (the ladder's calm margin), the 2-minute stake, 10 s between give-backs, and 30 s from a lend to a resume.
+The global `config.json` `scheduler` block gains `borrow` (bool, default `false`): borrowing and give-backs, in greedy mode only; the settings menu's Job Borrowing row sets it too ([borrow setting](2026-11-06-borrow-setting-design.md)). A caps-form edit keeps it, as every key it doesn't show (`setSchedulerCaps`). Turning it off stops new borrowing; running borrowers carry on and a lent job still resumes. The thresholds are `sched` constants: the 2 GB tight margin (the ladder's calm margin), the 2-minute stake, 10 s between give-backs, and 30 s from a lend to a resume.
 
 ## 10. Failure handling
 

@@ -324,6 +324,34 @@ func (m *Model) setSchedulerCaps(s config.SchedulerSettings) error {
 	return nil
 }
 
+// ConfigureBorrow turns job borrowing on or off (scheduler.borrow, borrow
+// setting spec) in the queue's global config.json, whichever workspace asks
+// (Core.ConfigureBorrow). The file is read strictly and only that key
+// changes; a served workspace on that dir takes the block in memory, and an
+// admission pass rereads it. When the queue isn't loaded, or the file can't
+// be read or written, nothing changes.
+func (m *Model) ConfigureBorrow(on bool) error {
+	q := m.queue
+	if !q.ready() {
+		return errQueueNotLoaded
+	}
+	cfg, err := readGlobalConfig(q.cfgDir)
+	if err != nil {
+		return fmt.Errorf("configure borrowing: %w", err)
+	}
+	s := cfg.GetScheduler()
+	s.Borrow = &on
+	cfg.SetScheduler(s)
+	if err := config.SaveConfigTo(cfg, q.cfgDir); err != nil {
+		return fmt.Errorf("configure borrowing: %w", err)
+	}
+	if ws := m.wsByConfigDir(q.cfgDir); ws != nil && ws.cfg != nil {
+		ws.cfg.SetScheduler(s)
+	}
+	m.admitJobs()
+	return nil
+}
+
 // readGlobalConfig decodes dir's config.json in full over the defaults, as
 // config.LoadConfigFrom does for a file that decodes (a missing file is the
 // defaults too). It differs where LoadConfigFrom would rename a file that

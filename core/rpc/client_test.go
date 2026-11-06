@@ -862,3 +862,11 @@ func TestConfigureBuildSweep_ReachesTheModelOverTheWire(t *testing.T) {
 	assert.Equal(t, 12, c.BuildSweep().AfterHours)
 	assert.ErrorContains(t, c.ConfigureBuildSweep(-1), "0 (off)")
 }
+
+// TestConfigureBorrow_CrossesTheWire: the request reaches the model, and its
+// refusal crosses as an error (a model with no queue refuses it).
+func TestConfigureBorrow_CrossesTheWire(t *testing.T) {
+	t.Setenv(config.EnvHome, t.TempDir())
+	c := pair(t, core.StartForTest(core.NewForTest(core.Options{})))
+	assert.ErrorContains(t, c.ConfigureBorrow(true), "the work queue isn't loaded")
+}

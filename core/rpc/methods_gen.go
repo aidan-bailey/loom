@@ -756,6 +756,15 @@ type SetSchedulerCapsParams struct {
 type SetSchedulerCapsResult struct {
 }
 
+// ConfigureBorrowParams are ConfigureBorrow's parameters on the wire.
+type ConfigureBorrowParams struct {
+	On bool `json:"on"`
+}
+
+// ConfigureBorrowResult is ConfigureBorrow's result on the wire; an error travels in the reply.
+type ConfigureBorrowResult struct {
+}
+
 // ReadBeliefsParams are ReadBeliefs's parameters on the wire.
 type ReadBeliefsParams struct {
 	Q   sched.BeliefQuery `json:"q"`
@@ -905,6 +914,7 @@ var methods = []methodInfo{
 	{Name: "MoveJobToFront", Kind: kindRequest, Params: MoveJobToFrontParams{}, Result: MoveJobToFrontResult{}},
 	{Name: "NotifyJob", Kind: kindRequest, Params: NotifyJobParams{}, Result: NotifyJobResult{}},
 	{Name: "SetSchedulerCaps", Kind: kindRequest, Params: SetSchedulerCapsParams{}, Result: SetSchedulerCapsResult{}},
+	{Name: "ConfigureBorrow", Kind: kindRequest, Params: ConfigureBorrowParams{}, Result: ConfigureBorrowResult{}},
 	{Name: "ReadBeliefs", Kind: kindRequest, Params: ReadBeliefsParams{}, Result: ReadBeliefsResult{}},
 	{Name: "ForgetBelief", Kind: kindRequest, Params: ForgetBeliefParams{}, Result: ForgetBeliefResult{}},
 	{Name: "ReadAgent", Kind: kindRequest, Params: ReadAgentParams{}, Result: ReadAgentResult{}},
@@ -1500,6 +1510,13 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.SetSchedulerCaps(p.S, p.Req)
 		return SetSchedulerCapsResult{}, nil, true
+	case "ConfigureBorrow":
+		var p ConfigureBorrowParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.ConfigureBorrow(p.On)
+		return ConfigureBorrowResult{}, err, true
 	case "ReadBeliefs":
 		var p ReadBeliefsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -2054,6 +2071,12 @@ func (c *Client) NotifyJob(id sched.JobID, req core.ReqID) {
 func (c *Client) SetSchedulerCaps(s config.SchedulerSettings, req core.ReqID) {
 	var r SetSchedulerCapsResult
 	c.noteRefused(c.requestNoErr("SetSchedulerCaps", SetSchedulerCapsParams{S: s, Req: req}, &r), req)
+}
+
+// ConfigureBorrow is core.Core's ConfigureBorrow (request).
+func (c *Client) ConfigureBorrow(on bool) error {
+	var r ConfigureBorrowResult
+	return c.request("ConfigureBorrow", ConfigureBorrowParams{On: on}, &r)
 }
 
 // ReadBeliefs is core.Core's ReadBeliefs (request).

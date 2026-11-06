@@ -193,6 +193,11 @@ func (l *Loop) ConfigureBuildSweep(afterHours int) error {
 	return get(l, func(m *Model) error { return m.ConfigureBuildSweep(afterHours) })
 }
 
+// ConfigureBorrow runs Model.ConfigureBorrow on the loop.
+func (l *Loop) ConfigureBorrow(on bool) error {
+	return get(l, func(m *Model) error { return m.ConfigureBorrow(on) })
+}
+
 // ConfigureWeb runs Model.ConfigureWeb on the loop.
 func (l *Loop) ConfigureWeb(listen, origin string) error {
 	return get(l, func(m *Model) error { return m.ConfigureWeb(listen, origin) })

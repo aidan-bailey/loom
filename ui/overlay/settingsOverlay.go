@@ -23,6 +23,7 @@ const (
 	settingsFieldClaudePreferences
 	settingsFieldTheme
 	settingsFieldBuildSweep
+	settingsFieldBorrow
 	settingsFieldAccounts
 	settingsFieldCount
 )
@@ -43,6 +44,8 @@ func (f settingsField) label() string {
 		return "Theme"
 	case settingsFieldBuildSweep:
 		return "Build Sweep"
+	case settingsFieldBorrow:
+		return "Job Borrowing"
 	case settingsFieldAccounts:
 		return "Accounts"
 	}
@@ -99,6 +102,13 @@ type SettingsOverlay struct {
 	// row never touches cfg.
 	buildSweepHours int
 	buildSweepReq   *int
+
+	// borrow is the global job borrowing setting the Job Borrowing row
+	// shows (SetBorrow), and borrowReq a toggle waiting for the caller
+	// (TakeBorrowRequest). The setting is global, so the row never touches
+	// cfg.
+	borrow    bool
+	borrowReq *bool
 
 	lastErr error
 }
@@ -200,6 +210,9 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		return false, true
 	case settingsFieldBuildSweep:
 		s.startTextEdit(settingsFieldBuildSweep, "Build Sweep: hours unused (0 = off, all workspaces)", strconv.Itoa(s.buildSweepHours))
+	case settingsFieldBorrow:
+		on := !s.borrow
+		s.borrowReq = &on
 	case settingsFieldAccounts:
 		s.accounts = NewAccountsManager(s.accountRows)
 		s.accounts.SetNotice(s.accountNotice)
@@ -310,6 +323,22 @@ func (s *SettingsOverlay) TakeBuildSweepRequest() (int, bool) {
 	hours := *s.buildSweepReq
 	s.buildSweepReq = nil
 	return hours, true
+}
+
+// SetBorrow supplies the setting the Job Borrowing row shows: the global
+// scheduler.borrow, which the caller reads from the model's queue view.
+func (s *SettingsOverlay) SetBorrow(on bool) { s.borrow = on }
+
+// TakeBorrowRequest returns and clears the value a Job Borrowing toggle
+// asked for. Callers poll it after HandleKeyPress and send it to the model
+// (Core.ConfigureBorrow).
+func (s *SettingsOverlay) TakeBorrowRequest() (bool, bool) {
+	if s.borrowReq == nil {
+		return false, false
+	}
+	on := *s.borrowReq
+	s.borrowReq = nil
+	return on, true
 }
 
 // TakeAccountRequest returns and clears the Accounts screen's pending
@@ -430,6 +459,11 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 			return "off (all workspaces)"
 		}
 		return fmt.Sprintf("%dh (all workspaces)", s.buildSweepHours)
+	case settingsFieldBorrow:
+		if s.borrow {
+			return "on (all workspaces)"
+		}
+		return "off (all workspaces)"
 	case settingsFieldAccounts:
 		return fmt.Sprintf("(%d) →", max(len(s.accountRows)-1, 0))
 	}

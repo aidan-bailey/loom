@@ -175,6 +175,7 @@ func editBuildSweep(m *home, value string) {
 	for i := 0; i < 20; i++ {
 		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
 	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Job Borrowing
 	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Build Sweep
 	press(tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 16; i++ {
@@ -237,4 +238,33 @@ func TestSettingsBuildSweep_AChangeElsewhereRefreshesTheRow(t *testing.T) {
 	_ = m.drainCore()
 
 	assert.Contains(t, so.Render(), "24h (all workspaces)")
+}
+
+// toggleBorrow presses Enter on the Job Borrowing row.
+func toggleBorrow(m *home) {
+	press := func(msg tea.KeyPressMsg) { handleStateSettingsKey(m, msg) }
+	for i := 0; i < 20; i++ {
+		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
+	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Job Borrowing
+	press(tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
+// TestSettingsBorrow_ReachesTheModel: the toggle is ConfigureBorrow, whose
+// refusal (this package's models have no queue) reaches the error line.
+func TestSettingsBorrow_ReachesTheModel(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	openSettingsForTest(t, m)
+	toggleBorrow(m)
+	assert.Contains(t, m.errBox.String(), "the work queue isn't loaded")
+}
+
+// TestSettingsBorrow_AQueueChangeRefreshesTheRow: another client's toggle
+// reaches an open overlay with its QueueChanged.
+func TestSettingsBorrow_AQueueChangeRefreshesTheRow(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+	on := true
+	_ = m.applyCoreEvent(core.QueueChanged{View: core.QueueView{Settings: config.SchedulerSettings{Borrow: &on}}})
+	assert.Contains(t, so.Render(), "on (all workspaces)")
 }
