@@ -356,6 +356,16 @@ func TestRun_GateFailures(t *testing.T) {
 		assert.Equal(t, "gates:r-s1-gates1", st.Question.Key)
 		assert.Equal(t, KindGateFailure, st.Question.Kind)
 	})
+	t.Run("a story parked at its gates counts its commits", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = Report{Status: "DONE"}
+		f.gates["r-s1-gates1"] = GateResult{Ended: "infra", Table: "FAIL (infra)"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "gating", st.Stories[0].Row.Status)
+		assert.Equal(t, 1, st.Stories[0].Row.Commits, "show prints the commits a gating story's gates run over")
+	})
 	t.Run("a failing service is infra, and the gates aren't started", func(t *testing.T) {
 		f := newFake()
 		f.serviceErr = errors.New("db: exit 1")
