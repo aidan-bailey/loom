@@ -88,6 +88,11 @@ func TestSubmit_Validate(t *testing.T) {
 		{"an agent job with io", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{IO: true} }, "an agent job claims nothing and runs after nothing"},
 		{"an agent job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{Exclusive: true} }, "an agent job claims nothing and runs after nothing"},
 		{"an agent job after another", func(s *Submit) { s.Kind, s.After = KindAgent, 3 }, "an agent job claims nothing and runs after nothing"},
+		{"a bare run job", func(s *Submit) { s.Kind = KindRun }, ""},
+		{"a run job with cpus", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{CPUs: 1} }, "a run job claims nothing and runs after nothing"},
+		{"a run job with io", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{IO: true} }, "a run job claims nothing and runs after nothing"},
+		{"a run job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{Exclusive: true} }, "a run job claims nothing and runs after nothing"},
+		{"a run job after another", func(s *Submit) { s.Kind, s.After = KindRun, 3 }, "a run job claims nothing and runs after nothing"},
 		{"an unknown kind", func(s *Submit) { s.Kind = "x" }, `unknown job kind "x"`},
 		{"a port lock", func(s *Submit) { s.Locks = []string{"port:4300"} }, ""},
 		{"locks of every allowed character", func(s *Submit) { s.Locks = []string{"a-Z_0.9:/x", "port:4310"} }, ""},
@@ -99,6 +104,7 @@ func TestSubmit_Validate(t *testing.T) {
 		{"a lock with a space", func(s *Submit) { s.Locks = []string{"port 4300"} }, `--lock "port 4300": a name is 1–64 of A–Z, a–z, 0–9 and . _ : / -`},
 		{"a lock twice", func(s *Submit) { s.Locks = []string{"port:4300", "port:4300"} }, "--lock port:4300 is given twice"},
 		{"an agent job with a lock", func(s *Submit) { s.Kind, s.Locks = KindAgent, []string{"port:4300"} }, "an agent job takes no lock"},
+		{"a run job with a lock", func(s *Submit) { s.Kind, s.Locks = KindRun, []string{"port:4300"} }, "a run job takes no lock"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

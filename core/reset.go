@@ -130,7 +130,7 @@ func (m *Model) Reset(id WorkspaceID, req ReqID) error {
 	for _, inst := range ws.insts {
 		owners[m.idOf(inst)] = true
 	}
-	m.cancelOwnerJobs(owners, "because the session was reset")
+	m.cancelOwnerJobs(owners, "because the session was reset", false)
 	ws.insts = nil
 	ws.resetting, ws.terminalUnsettled = true, false
 	ctx, storage, registry, exec, label := *ws.ctx, ws.storage, m.registryCopy(), m.executor(), ws.Label()

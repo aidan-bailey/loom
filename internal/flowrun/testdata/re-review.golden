@@ -1,0 +1,9 @@
+Re-review a fix round of Story 2 in the plan p.md: the fix's commits are h4..h6. Check that each finding below is fixed, and review the fix itself.
+
+- Critical a.go:3 guard it
+- Minor (design) b.go:9 rename
+
+[reviewer]
+Prefix: none
+Landmine notes:
+    Never drop a stash.

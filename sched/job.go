@@ -248,6 +248,10 @@ type Record struct {
 	// CLAUDE_CONFIG_DIR ("" for the default account).
 	Kind       string `json:"kind,omitempty"`
 	AccountKey string `json:"account_key,omitempty"`
+	// Run is the run job (KindRun) this job was submitted under, from its
+	// environment's LOOM_FLOW_RUN (flow in loom part 3b, planning amendment
+	// 1): a pause spares it. 0 for any other job.
+	Run JobID `json:"run,omitempty"`
 
 	// Named locks (--lock): while it runs no other job naming one of them
 	// starts, so jobs that bind one port or share one fixture take turns.
@@ -292,6 +296,16 @@ type Exit struct {
 // caps, and never sized. A build job's kind is "".
 const KindAgent = "agent"
 
+// KindRun is a flow run engine's kind (flow in loom part 3b, spec §5.2): a
+// process that drives a plan's agents and gates, started at once, outside
+// the caps, the advisor and the agent limit, and never sized.
+const KindRun = "run"
+
+// Unclaimed reports whether a job of kind claims nothing: an agent or a run
+// job. Such jobs are never sized, granted or contained, and get no
+// parallelism hints.
+func Unclaimed(kind string) bool { return kind == KindAgent || kind == KindRun }
+
 // Submit is what a client sends to queue a job.
 type Submit struct {
 	Argv        []string `json:"argv"`
@@ -323,9 +337,9 @@ func totalBytes(items []string) int {
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
 // folder is absolute; the prerequisite is not negative (0 is none); an agent
-// job claims nothing and runs after nothing, and no other kind is known; at
-// most maxLocks locks, each a lock name (ValidLockName) given once, and none
-// on an agent job. It does
+// or run job claims nothing and runs after nothing, and no other kind is
+// known; at most maxLocks locks, each a lock name (ValidLockName) given once,
+// and none on an agent or run job. It does
 // not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
@@ -364,10 +378,12 @@ func (s Submit) Validate() error {
 		return fmt.Errorf("--after is %d: it must be a job ID", s.After)
 	}
 	switch {
-	case s.Kind != "" && s.Kind != KindAgent:
+	case s.Kind != "" && s.Kind != KindAgent && s.Kind != KindRun:
 		return fmt.Errorf("unknown job kind %q", s.Kind)
 	case s.Kind == KindAgent && (s.Claim != Claim{} || s.After != 0):
 		return errors.New("an agent job claims nothing and runs after nothing")
+	case s.Kind == KindRun && (s.Claim != Claim{} || s.After != 0):
+		return errors.New("a run job claims nothing and runs after nothing")
 	}
 	return checkLocks(s.Locks, s.Kind)
 }
@@ -380,13 +396,16 @@ const (
 )
 
 // checkLocks is Validate's check of a submission's locks: at most maxLocks,
-// each a valid name given once, and none on an agent job.
+// each a valid name given once, and none on an agent or run job.
 func checkLocks(locks []string, kind string) error {
 	if len(locks) == 0 {
 		return nil
 	}
-	if kind == KindAgent {
+	switch kind {
+	case KindAgent:
 		return errors.New("an agent job takes no lock")
+	case KindRun:
+		return errors.New("a run job takes no lock")
 	}
 	if len(locks) > maxLocks {
 		return fmt.Errorf("%d locks: at most %d", len(locks), maxLocks)

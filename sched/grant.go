@@ -23,8 +23,8 @@ func SpareWidth(r Record, b *Belief) int {
 // spec §5.3), a pure function of its arguments: dec is Admit's decision
 // over jobs under p, and belief gives a record's belief (nil for none). It
 // grants nothing while a queued job waits for anything but the caps; agent
-// jobs are passed over, their waits stopping nothing and their starts
-// granted nothing (flow in loom part 3a). The
+// and run jobs are passed over, their waits stopping nothing and their starts
+// granted nothing (flow in loom parts 3a and 3b). The
 // pool is the caps less the running jobs' holds (holds, as Admit counts
 // them), the starting jobs' base
 // claims and a reserve of the default claim. In dec's order, each job
@@ -38,7 +38,7 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 	}
 	agent := map[JobID]bool{}
 	for _, r := range jobs {
-		if r.Kind == KindAgent {
+		if Unclaimed(r.Kind) {
 			agent[r.ID] = true
 		}
 	}

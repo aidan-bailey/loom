@@ -13,6 +13,7 @@ refused by name, so a typo can't silently drop a landmine.
     flowconf.py show --for ROLE    one role's values for its briefs; supervisor
                                    prints its own and every other role's block
                                    but the drafter's, which is /flow:draft's
+    flowconf.py services           the profile's services, one per line, as written
     flowconf.py state              the state directory, made if missing, with
                                    its agent-reports/ subdirectory
     flowconf.py drafts STEM        the drafts directory of the plan whose file
@@ -411,6 +412,7 @@ def main(argv: list[str]) -> int:
     show_parser = sub.add_parser("show", help="one role's values, for its briefs")
     show_parser.add_argument("--for", dest="role", choices=(*ROLES, DRAFTER), required=True)
     sub.add_parser("state", help="the state directory, made if missing")
+    sub.add_parser("services", help="the profile's services, one per line, as written")
     drafts_parser = sub.add_parser("drafts", help="a plan's drafts directory, made if missing and kept out of git")
     drafts_parser.add_argument("stem", metavar="STEM", help="the plan's file name without .md")
     vacuous_parser = sub.add_parser("vacuous", help="the lines of a gate's output that match gates.vacuous")
@@ -434,6 +436,10 @@ def main(argv: list[str]) -> int:
         elif args.command == "show":
             top = toplevel(cwd)
             print(show(load_profile(top), args.role, top))
+        elif args.command == "services":
+            # Raw, for loom flow run's engine, which runs each before a gate run (flow in loom part 3b).
+            for service in load_profile(toplevel(cwd)).services:
+                print(service)
         elif args.command == "state":
             top = toplevel(cwd)
             path = state_dir(top, optional_profile(top))

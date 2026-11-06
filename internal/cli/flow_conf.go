@@ -193,3 +193,105 @@ func (d *client) cancelJobs(ids []sched.JobID) error {
 	}
 	return first
 }
+
+// runTools runs flow's scripts for loom flow run (flow in loom part 3b);
+// tests replace newRunTools.
+type runTools interface {
+	// Doctor is `flowconf.py doctor`'s output, and whether it has no FAIL.
+	Doctor() (out string, ok bool, err error)
+	// CheckPlan is `check_plan.py --json PLAN`'s JSON, or its FAIL lines.
+	CheckPlan(plan string) (json []byte, fails string, err error)
+	Show() (string, error)       // flowconf.py show --for supervisor
+	Services() ([]string, error) // flowconf.py services
+	Key() (string, error)        // flowconf.py key
+	// Premises is plan_premises.py's output when it flagged anything, else "".
+	Premises(plan, rev string) (string, error)
+	Conformance(plan, story, base, head string) (string, error)
+	Costs(run string) (string, error) // agent_costs.py run RUN
+}
+
+// newRunTools is the runTools of the flow root root.
+var newRunTools = func(root string) runTools { return scriptTools{root: root} }
+
+// scriptTools runs flow's scripts from root.
+type scriptTools struct{ root string }
+
+// run is script's stdout, its exit code, and an error naming it when it
+// could not run or exited with a code not in ok.
+func (s scriptTools) run(script string, ok []int, args ...string) (string, int, error) {
+	var out, errOut bytes.Buffer
+	code, err := flowScript(s.root, script, args, strings.NewReader(""), &out, &errOut)
+	switch {
+	case err != nil:
+		return "", 0, fmt.Errorf("%s: %w", script, err)
+	case !slices.Contains(ok, code):
+		return "", code, fmt.Errorf("%s exited %d: %s", script, code, strings.TrimSpace(errOut.String()))
+	}
+	return out.String(), code, nil
+}
+
+func (s scriptTools) Doctor() (string, bool, error) {
+	out, _, err := s.run("flowconf.py", []int{0, 1}, "doctor")
+	if err != nil {
+		return "", false, err
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "FAIL") {
+			return out, false, nil
+		}
+	}
+	return out, true, nil
+}
+
+func (s scriptTools) CheckPlan(plan string) ([]byte, string, error) {
+	out, code, err := s.run("check_plan.py", []int{0, 1}, "--json", plan)
+	if err != nil {
+		return nil, "", err
+	}
+	if code == 1 {
+		return nil, out, nil
+	}
+	return []byte(out), "", nil
+}
+
+func (s scriptTools) Show() (string, error) {
+	out, _, err := s.run("flowconf.py", []int{0}, "show", "--for", "supervisor")
+	return out, err
+}
+
+func (s scriptTools) Services() ([]string, error) {
+	out, _, err := s.run("flowconf.py", []int{0}, "services")
+	if err != nil {
+		return nil, err
+	}
+	var services []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimRight(l, "\r"); l != "" {
+			services = append(services, l)
+		}
+	}
+	return services, nil
+}
+
+func (s scriptTools) Key() (string, error) {
+	out, _, err := s.run("flowconf.py", []int{0}, "key")
+	return strings.TrimSpace(out), err
+}
+
+func (s scriptTools) Premises(plan, rev string) (string, error) {
+	out, code, err := s.run("plan_premises.py", []int{0, 1}, plan, "--rev", rev)
+	if err != nil || code == 0 {
+		return "", err
+	}
+	return out, nil
+}
+
+func (s scriptTools) Conformance(plan, story, base, head string) (string, error) {
+	out, _, err := s.run("plan_conformance.py", []int{0, 1}, plan, "--story", story, "--base", base, "--head", head)
+	return out, err
+}
+
+func (s scriptTools) Costs(run string) (string, error) {
+	out, _, err := s.run("agent_costs.py", []int{0}, "run", run)
+	return out, err
+}

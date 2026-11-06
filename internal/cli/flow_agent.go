@@ -96,31 +96,21 @@ func newFlowAgentRunCmd() *cobra.Command {
 				return err
 			}
 			role := args[0]
-			definition, ok := agentDefinition(root, role)
-			if !ok {
+			if _, ok := agentDefinition(root, role); !ok {
 				return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: the flow plugin has no agent %s", role)}
 			}
 			if name != "" && !flowName.MatchString(name) {
 				return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: bad name %q", name)}
 			}
 			brief, err := io.ReadAll(io.LimitReader(c.InOrStdin(), maxBrief+1))
-			switch {
-			case err != nil:
-				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the brief: %v", err)}
-			case strings.TrimSpace(string(brief)) == "":
-				return &ExitError{Code: exitUsage, Msg: "loom flow agent: the brief is empty; give it on stdin"}
-			case len(brief) > maxBrief:
-				return &ExitError{Code: exitUsage, Msg: "loom flow agent: the brief is at most 48 KiB"}
-			}
-			skills, err := preloadedSkills(root, role, definition)
 			if err != nil {
-				return &ExitError{Code: exitNotRun, Msg: "loom flow agent: " + err.Error()}
+				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the brief: %v", err)}
 			}
 			cwd, err := os.Getwd()
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the working directory: %v", err)}
 			}
-			settings, err := runSettings(cwd)
+			argv, err := agentArgv(root, role, effort, cwd, brief)
 			if err != nil {
 				return err
 			}
@@ -129,7 +119,6 @@ func newFlowAgentRunCmd() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			argv := agentCommand(agentProgram(), role, effort, agentPermissionMode(), root, settings, headlessPreamble+"\n\n"+skills+string(brief), "")
 			return flowDaemon(c, func(d *client) error {
 				return d.startAgent(c.OutOrStdout(), dir, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd}, argv, brief)
 			})
@@ -316,7 +305,7 @@ func printAgentEnd(out io.Writer, dir string, run *agentRun) error {
 func newFlowAgentAnswerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "answer ID < ANSWER",
-		Short: "Resume an agent run at NEEDS_CONTEXT or BLOCKED with an answer on stdin",
+		Short: "Resume an agent run at NEEDS_CONTEXT, BLOCKED or TURN_CAP with an answer on stdin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -358,14 +347,15 @@ func (d *client) answerAgent(out io.Writer, dir, id, root, answer string) error 
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
-	if run.Status != "NEEDS_CONTEXT" && run.Status != "BLOCKED" {
-		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT or BLOCKED takes an answer", id, run.Status)}
+	if run.Status != "NEEDS_CONTEXT" && run.Status != "BLOCKED" && run.Status != agentTurnCap {
+		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT, BLOCKED or TURN_CAP takes an answer", id, run.Status)}
 	}
 	settings, err := runSettings(run.Cwd)
 	if err != nil {
 		return err
 	}
-	argv := agentCommand(agentProgram(), run.Role, run.Effort, agentPermissionMode(), root, settings, answer, run.Session)
+	definition, _ := agentDefinition(root, run.Role)
+	argv := agentCommand(agentProgram(), run.Role, run.Effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session)
 	jobID, err := d.queueAgent(run, argv)
 	if err != nil {
 		return err
@@ -482,39 +472,54 @@ func newFlowAgentCancelCmd() *cobra.Command {
 				return err
 			}
 			return flowDaemon(c, func(d *client) error {
-				unlock, err := lockAgents(dir)
-				if err != nil {
+				run, cancelled, err := d.cancelAgentRun(dir, name)
+				switch {
+				case run == nil:
 					return err
-				}
-				defer unlock()
-				run, err := readAgentRun(agentPath(dir, name))
-				if err != nil {
-					return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
-				}
-				if run.ended() {
+				case !cancelled:
 					fmt.Fprintf(c.OutOrStdout(), "nothing to cancel: %s is %s\n", name, run.Status)
 					return nil
 				}
-				// A job that has ended already is only marked: its cancel
-				// would be refused.
-				var refused error
-				d.events()
-				if v, ok := jobOf(d.Queue(), run.current().ID); ok && !v.State.Finished() {
-					refused = d.cancelJobs([]sched.JobID{v.ID})
-				}
-				run.current().Read = true
-				run.Status = agentCancelled
-				if err := saveAgentRun(dir, run); err != nil {
-					return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v", err)}
-				}
 				fmt.Fprintf(c.OutOrStdout(), "cancelled %s: job %d\n", name, run.current().ID)
-				if refused != nil {
-					return &ExitError{Code: exitNotRun}
-				}
-				return nil
+				return err
 			})
 		},
 	}
+}
+
+// cancelAgentRun cancels agent run name's job if it hasn't ended and marks
+// the run cancelled, under the lock: the run, whether it was cancelled (a
+// run that has ended is left as it is), and the refusal of its job's
+// cancel. A nil run is a record it couldn't read.
+func (d *client) cancelAgentRun(dir, name string) (*agentRun, bool, error) {
+	unlock, err := lockAgents(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	run, err := readAgentRun(agentPath(dir, name))
+	if err != nil {
+		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
+	}
+	if run.ended() {
+		return run, false, nil
+	}
+	// A job that has ended already is only marked: its cancel would be
+	// refused.
+	var refused error
+	d.events()
+	if v, ok := jobOf(d.Queue(), run.current().ID); ok && !v.State.Finished() {
+		refused = d.cancelJobs([]sched.JobID{v.ID})
+	}
+	run.current().Read = true
+	run.Status = agentCancelled
+	if err := saveAgentRun(dir, run); err != nil {
+		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v", err)}
+	}
+	if refused != nil {
+		return run, true, &ExitError{Code: exitNotRun}
+	}
+	return run, true, nil
 }
 
 func agentPath(dir, id string) string { return filepath.Join(dir, id+".json") }

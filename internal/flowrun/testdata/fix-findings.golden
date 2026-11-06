@@ -1,0 +1,14 @@
+Fix these review findings in Story 2. Its commits are h1..h4; its section is plan lines 200-299 of p.md.
+
+- Critical a.go:3 guard it
+- Minor (design) b.go:9 rename
+- Plan: the loop never ends
+
+Commit each fix. Run the story's Verify command (go test ./x) before you report DONE.
+
+[developer]
+Prefix for every build and test command: none
+Services: none
+Landmine notes (deep stories only):
+    Never drop a stash.
+    Never run loom.

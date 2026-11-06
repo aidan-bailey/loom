@@ -12,11 +12,11 @@ type Borrowing struct {
 }
 
 // MayBorrow reports whether queued job r may start as a borrower (memory
-// borrowing spec §5.1): it is not --no-requeue, exclusive or an agent job,
+// borrowing spec §5.1): it is not --no-requeue, exclusive, an agent job or a run job,
 // it has been requeued fewer than MaxRequeues times, and it is not the
 // attempt after a give-back requeue.
 func MayBorrow(r Record) bool {
-	return !r.NoRequeue && !r.Claim.Exclusive && r.Kind != KindAgent && r.Requeues < MaxRequeues && !r.NoBorrow
+	return !r.NoRequeue && !r.Claim.Exclusive && !Unclaimed(r.Kind) && r.Requeues < MaxRequeues && !r.NoBorrow
 }
 
 // Borrow is the borrowing pass (memory borrowing spec §5.2–§5.3), a pure
@@ -50,7 +50,7 @@ func Borrow(jobs []Record, dec Decision, p Policy, now time.Time, g Greedy) Borr
 	f := &greedyFit{p: p, g: g, now: now}
 	for _, r := range jobs {
 		byID[r.ID] = r
-		if r.State == Running && r.Kind != KindAgent {
+		if r.State == Running && !Unclaimed(r.Kind) {
 			f.count(r)
 		}
 	}
@@ -62,7 +62,7 @@ func Borrow(jobs []Record, dec Decision, p Policy, now time.Time, g Greedy) Borr
 			continue
 		}
 		held.take(r)
-		if r.Kind != KindAgent {
+		if !Unclaimed(r.Kind) {
 			f.take(r)
 			preds = append(preds, g.Predict(r, now))
 		}
@@ -105,7 +105,7 @@ func BorrowFits(jobs []Record, g Greedy, id JobID, now time.Time) bool {
 // measured, and a borrower, lent or not, at its prediction.
 func borrowLoad(jobs []Record, g Greedy) (firmKB int64, preds []Prediction) {
 	for _, r := range jobs {
-		if r.State != Running || r.Kind == KindAgent {
+		if r.State != Running || Unclaimed(r.Kind) {
 			continue
 		}
 		if used, ok := g.Used[r.ID]; ok && used > 0 && !r.Borrower {
@@ -117,12 +117,12 @@ func borrowLoad(jobs []Record, g Greedy) (firmKB int64, preds []Prediction) {
 	return firmKB, preds
 }
 
-// runningPreds is every running job's prediction but agent jobs', as
+// runningPreds is every running job's prediction but agent and run jobs', as
 // AdmitGreedy counts them: the firm fit's terms (memory borrowing spec §5.3).
 func runningPreds(jobs []Record, g Greedy) []Prediction {
 	var preds []Prediction
 	for _, r := range jobs {
-		if r.State == Running && r.Kind != KindAgent {
+		if r.State == Running && !Unclaimed(r.Kind) {
 			preds = append(preds, runningPred(r, g))
 		}
 	}

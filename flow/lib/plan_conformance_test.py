@@ -168,6 +168,22 @@ class PlanConformanceTest(unittest.TestCase):
         self.assertIn("doesn't name: docs/notes.md", out)
         self.assertNotIn("cargo test", out)
 
+    def test_a_marker_in_an_uncovered_line_is_listed(self):
+        # loom flow run gives a vouched story the full review when one is there (flow in loom part 3b).
+        self.write({".claude/flow.toml": 'schema = 1\n[landmines]\nmarkers = ["first()", "glue()", "absent("]\n'})
+        self.commit("markers")
+        self.base = self.rev()
+        self.write({"crate/src/lib.rs": HEAD_LIB, "crate/src/new.rs": HEAD_NEW})
+        self.commit("story 1")
+        _, out = self.run_script()
+        self.assertIn("MARKERS: glue()\n", out, "only the uncovered glue holds one; first() is in a covered block")
+
+    def test_no_marker_line_without_one(self):
+        self.write({"crate/src/lib.rs": HEAD_LIB, "crate/src/new.rs": HEAD_NEW})
+        self.commit("story 1")
+        _, out = self.run_script()
+        self.assertNotIn("MARKERS:", out)
+
     def test_a_file_matching_a_generated_glob_is_counted_not_listed(self):
         self.write({"crate/src/lib.rs": HEAD_LIB, "crate/src/new.rs": HEAD_NEW, "crate/src/schema.gen.rs": "one\ntwo\n"})
         self.commit("story 1")

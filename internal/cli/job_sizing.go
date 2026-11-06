@@ -111,8 +111,8 @@ func memoryWarning(v core.JobView) string {
 // and a running job's hold after it when that is below its claim
 // (past-peak holds spec §7).
 func claimText(v core.JobView) string {
-	if v.Kind == sched.KindAgent {
-		return "agent"
+	if sched.Unclaimed(v.Kind) {
+		return v.Kind
 	}
 	if v.Sizing != "" {
 		return "—"

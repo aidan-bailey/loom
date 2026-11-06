@@ -234,7 +234,22 @@ def main(argv: list[str]) -> int:
     if generated:
         print(f"Generated, not listed: {', '.join(generated)}")
     print(f"Changed files the story's **Files** line doesn't name: {', '.join(outside) if outside else 'none'}")
+    found = uncovered_markers(tree, uncovered, profile.markers)
+    if found:
+        print(f"MARKERS: {', '.join(found)}")
     return 1 if missed or uncovered else 0
+
+
+def uncovered_markers(tree: "Tree", uncovered: list[tuple[str, list[int]]], markers: list[str]) -> list[str]:
+    """The profile's landmine markers an uncovered changed line holds, in the profile's order: a vouched
+    story with one gets the full review (flow in loom part 3b's engine reads the MARKERS line)."""
+    found = set()
+    for path, rest in uncovered:
+        lines = tree.lines(path) or []
+        for n in rest:
+            if 0 < n <= len(lines):
+                found.update(m for m in markers if m in lines[n - 1])
+    return [m for m in markers if m in found]
 
 
 if __name__ == "__main__":

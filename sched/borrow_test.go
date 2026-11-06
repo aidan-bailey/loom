@@ -78,6 +78,7 @@ func TestBorrow_WhoMayBorrow(t *testing.T) {
 		{"the attempt after a give-back", func(r *Record) { r.NoBorrow = true }, false},
 		{"exclusive", func(r *Record) { r.Claim.Exclusive = true }, false},
 		{"an agent job", func(r *Record) { r.Kind = KindAgent }, false},
+		{"a run job", func(r *Record) { r.Kind = KindRun }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := queued(2, Claim{CPUs: 4, MemoryGB: 6})

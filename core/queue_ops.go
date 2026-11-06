@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,20 +74,32 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		return 0, "", err
 	}
 	now := time.Now()
-	// An agent job (flow in loom part 3a, spec §5.2) is never sized: no
-	// signature, no claim, no advisor; it records its account.
-	agentJob := s.Kind == sched.KindAgent
+	// An agent job (flow in loom part 3a, spec §5.2) or a run job (part 3b)
+	// is never sized: no signature, no claim, no advisor; an agent job
+	// records its account.
+	unclaimed := sched.Unclaimed(s.Kind)
 	sig, checkout, unsized := jobSignature(s.Argv, s.Cwd)
-	if agentJob {
+	if unclaimed {
 		sig, checkout, unsized = nil, "", "an agent job is never sized"
+		if s.Kind == sched.KindRun {
+			unsized = "a run job is never sized"
+		}
 	}
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now, Ready: now, NoRequeue: s.NoRequeue,
 		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind, Locks: slices.Clone(s.Locks),
 	}
-	if agentJob {
+	if s.Kind == sched.KindAgent {
 		rec.AccountKey = envValue(s.Env, "CLAUDE_CONFIG_DIR")
+	}
+	// A job a flow run submitted (its environment's LOOM_FLOW_RUN names a
+	// run job) records the run, which a pause spares (part 3b, planning
+	// amendment 1). Any other value is ignored.
+	if n, err := strconv.ParseInt(envValue(s.Env, "LOOM_FLOW_RUN"), 10, 64); err == nil {
+		if i := q.index(sched.JobID(n)); i >= 0 && q.store.Jobs[i].Kind == sched.KindRun {
+			rec.Run = sched.JobID(n)
+		}
 	}
 	if prereq != nil {
 		// A dependent (dependent jobs spec §5.1): held while its
@@ -103,7 +116,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	if sig != nil {
 		rec.Signature = sig.ID()
 	}
-	if !agentJob {
+	if !unclaimed {
 		q.sizeRecord(&rec, policy, sig)
 		if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 			return 0, "", err
@@ -386,8 +399,11 @@ func readGlobalConfig(dir string) (*config.Config, error) {
 // time let the first's settle start a later session's job, only to cancel it.
 // Neither waits for the jobs to exit. The owners are sent no notice for them
 // (the flag is cleared), and the jobs of other owners and of none (owner 0,
-// whether or not the set holds it) are not touched.
-func (m *Model) cancelOwnerJobs(owners map[InstanceID]bool, reason string) {
+// whether or not the set holds it) are not touched. A pause spares a flow
+// run's jobs (spareRuns: its run jobs and the jobs with a Run): the run goes
+// on while its manager is paused, and a kill, which removes the worktree,
+// ends it (part 3b, planning amendment 1).
+func (m *Model) cancelOwnerJobs(owners map[InstanceID]bool, reason string, spareRuns bool) {
 	q := m.queue
 	if q == nil || !q.ready() || len(owners) == 0 {
 		return
@@ -398,6 +414,9 @@ func (m *Model) cancelOwnerJobs(owners map[InstanceID]bool, reason string) {
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
 		if rec.Owner == 0 || !owners[InstanceID(rec.Owner)] || rec.State.Finished() {
+			continue
+		}
+		if spareRuns && (rec.Kind == sched.KindRun || rec.Run != 0) {
 			continue
 		}
 		found = true

@@ -35,6 +35,46 @@ def totals(out):
     return json.loads(re.search(r"<!-- agent-costs (\{.*\}) -->", out).group(1))
 
 
+class RunReportTest(unittest.TestCase):
+    """`run`: a loom flow run's managers and headless agent runs (flow in loom part 3b)."""
+
+    def test_prices_the_managers_and_each_agent_run_by_role(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+            state = repo / ".git" / "flow"
+            (state / "runs").mkdir(parents=True)
+            (state / "agents").mkdir()
+            (state / "runs" / "r.json").write_text(json.dumps({
+                "managers": ["msess"], "agents": ["r-s1-dev1", "r-s1-review1"],
+                "start": "2026-11-06T10:00:00Z", "end": "2026-11-06T12:00:00Z"}))
+            (state / "agents" / "r-s1-dev1.json").write_text(json.dumps({"role": "intermediate-dev", "session": "dsess"}))
+            (state / "agents" / "r-s1-review1.json").write_text(json.dumps({"role": "story-reviewer", "session": "gone"}))
+            cfg = root / "cfg"
+            (cfg / "projects" / "p").mkdir(parents=True)
+            (cfg / "projects" / "p" / "msess.jsonl").write_text(
+                record("m1", "claude-opus-5-5", "2026-11-06T10:05:00Z", input_tokens=10, output_tokens=10))
+            (cfg / "projects" / "p" / "dsess.jsonl").write_text("\n".join([
+                record("d1", "claude-sonnet-5-5", "2026-11-06T10:10:00Z", input_tokens=10, output_tokens=10),
+                record("d0", "claude-sonnet-5-5", "2026-11-06T09:00:00Z", input_tokens=10, output_tokens=10),  # before the run
+            ]))
+            result = subprocess.run([sys.executable, str(SCRIPT), "run", "r"], capture_output=True, text=True, cwd=repo,
+                                    env={**env, "CLAUDE_CONFIG_DIR": str(cfg)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = totals(result.stdout)
+            self.assertEqual(data["run"], "r")
+            self.assertEqual(data["by_type"]["main"]["requests"], 1)
+            self.assertEqual(data["by_type"]["intermediate-dev"]["requests"], 1, "only the run's window counts")
+            self.assertNotIn("story-reviewer", data["by_type"], "an agent run without a transcript is skipped")
+            self.assertIn("no transcript for agent run r-s1-review1", result.stderr)
+            self.assertIn("| r-s1-dev1 | intermediate-dev |", result.stdout)
+            managers = json.loads(re.search(r"<!-- agent-costs-managers (\{.*\}) -->", result.stdout).group(1))
+            self.assertEqual(managers, {"msess": ["claude-opus-5-5"]})
+
+
 class AgentCostsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

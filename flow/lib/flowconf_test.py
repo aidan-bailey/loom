@@ -200,6 +200,15 @@ class FlowconfTest(unittest.TestCase):
         self.assertIn("Design registries", block)
         self.assertNotIn("{packages}", block)
 
+    def test_services_prints_each_raw_on_its_own_line(self):
+        self.repo_profile('schema = 1\nservices = ["docker compose up -d db, cache", "echo `a`"]\n')
+        code, out, err = self.run_cli("services")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "docker compose up -d db, cache\necho `a`\n")
+        self.repo_profile("schema = 1\n")
+        code, out, err = self.run_cli("services")
+        self.assertEqual((code, out), (0, ""), err)
+
     def test_show_for_drafter_prints_its_block(self):
         self.repo_profile()
         code, out, err = self.run_cli("show", "--for", "drafter")

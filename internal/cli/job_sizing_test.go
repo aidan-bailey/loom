@@ -57,6 +57,7 @@ func TestMemoryWarning(t *testing.T) {
 
 func TestClaimText(t *testing.T) {
 	assert.Equal(t, "agent", claimText(core.JobView{Kind: sched.KindAgent}), "an agent job claims nothing")
+	assert.Equal(t, "run", claimText(core.JobView{Kind: sched.KindRun}), "nor does a run job")
 	assert.Equal(t, "8c/16G io learned·5", claimText(core.JobView{Claim: sched.Claim{CPUs: 8, MemoryGB: 16, IO: true}, Sources: srcs(sched.SourceLearned, sched.SourceLearned, sched.SourceLearned), Learned: 5}))
 	assert.Equal(t, "4c/22G! learned·2", claimText(core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 22}, Sources: srcs(sched.SourceDefault, sched.SourceLearned, sched.SourceDefault), Learned: 2, AboveCap: true}))
 	assert.Equal(t, "—", claimText(core.JobView{Sizing: sched.SizingAsking}))

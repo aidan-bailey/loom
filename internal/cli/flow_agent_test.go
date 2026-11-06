@@ -15,7 +15,7 @@ import (
 // fakeAgentClaude is a claude that writes its argv and environment under
 // $FAKE_CLAUDE_LOG and answers in stream-json by its prompt, its report
 // ending in status lines as a headless agent's does (spec §2a, 9): ASK →
-// NEEDS_CONTEXT; BROKEN → no result; FAILING → an error result; BADSTATUS →
+// NEEDS_CONTEXT; CAPPED → the turn cap's error result; BROKEN → no result; FAILING → an error result; BADSTATUS →
 // a status no report has; NOSTATUS → none; MUTE → NEEDS_CONTEXT with no
 // question; anything else, or a resume → DONE.
 const fakeAgentClaude = `#!/bin/sh
@@ -39,6 +39,7 @@ case "$prompt" in
   *BADSTATUS*) result false 'x\nSTATUS: MAYBE';;
   *NOSTATUS*) result false 'just words';;
   *MUTE*) result false 'x\nSTATUS: NEEDS_CONTEXT';;
+  *CAPPED*) printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"total_cost_usd":0.1,"session_id":"sess-1"}'; exit 1;;
   *ASK*) result false 'need one\n**STATUS: NEEDS_CONTEXT**\nQUESTION: ` + "`Which colour?`" + `';;
   *) result false 'all done\nSTATUS: DONE';;
 esac
@@ -106,7 +107,7 @@ func TestFlowAgent_RunWaitDone(t *testing.T) {
 	b, err = os.ReadFile(filepath.Join(logDir, "0.args"))
 	require.NoError(t, err)
 	args := string(b)
-	prompt := headlessPreamble + "\n\nYour preloaded skill flow:habits:\n\nHABIT-TEXT\n\nBuild story 1."
+	prompt := rolePreamble("intermediate-dev") + "\n\nYour preloaded skill flow:habits:\n\nHABIT-TEXT\n\nBuild story 1."
 	assert.True(t, strings.HasPrefix(args, "-p\n"+prompt+"\n--agent\nflow:intermediate-dev\n"), args)
 	assert.Contains(t, args, "--effort\nxhigh\n")
 	assert.Contains(t, args, "--output-format\nstream-json\n")
@@ -245,4 +246,62 @@ func TestStatusLines(t *testing.T) {
 		assert.Equal(t, c.status, status, "%q", c.report)
 		assert.Equal(t, c.question, question, "%q", c.report)
 	}
+}
+
+// A job that stops at its turn cap ends its run TURN_CAP, which answer
+// resumes on its session (flow in loom part 3b, spec §6).
+func TestFlowAgent_ATurnCapIsResumable(t *testing.T) {
+	_, _, logDir := agentFixture(t, "intermediate-dev")
+	_, _, err := runAgent(t, "CAPPED work", "run", "intermediate-dev", "--name", "c1")
+	require.NoError(t, err)
+
+	out, _, err := runAgent(t, "", "wait", "c1", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done c1: TURN_CAP\n"), out)
+
+	out, _, err = runAgent(t, "Continue from where you stopped.", "answer", "c1")
+	require.NoError(t, err, out)
+	assert.Equal(t, "resumed c1: job 2\n", out)
+	out, _, err = runAgent(t, "", "wait", "c1", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done c1: DONE\n"), out)
+	b, err := os.ReadFile(filepath.Join(logDir, "1.args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "--resume\nsess-1\n")
+}
+
+// Reviewers and developers get their own report lines after the headless
+// preamble, and a definition's maxTurns becomes --max-turns (part 3b's probe:
+// --agent doesn't apply it).
+func TestAgentArgv_RolePreamblesAndMaxTurns(t *testing.T) {
+	agentFixture(t)
+	root := os.Getenv(flow.EnvRoot)
+	write := func(role, front string) {
+		p := filepath.Join(root, "plugin", "agents", role+".md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+		require.NoError(t, os.WriteFile(p, []byte("---\nname: "+role+"\n"+front+"---\n\nBody.\n"), 0o600))
+	}
+	write("story-reviewer", "model: opus\n")
+	write("intermediate-dev", "model: sonnet\nmaxTurns: 250\n")
+	write("recon", "model: sonnet\n")
+	cwd := t.TempDir()
+	argvOf := func(role string) string {
+		argv, err := agentArgv(root, role, "", cwd, []byte("Go."))
+		require.NoError(t, err)
+		return strings.Join(argv, "\n")
+	}
+	review, dev, recon := argvOf("story-reviewer"), argvOf("intermediate-dev"), argvOf("recon")
+	assert.Contains(t, review, reviewPreamble)
+	assert.NotContains(t, review, developerPreamble)
+	assert.Contains(t, dev, developerPreamble)
+	assert.NotContains(t, dev, reviewPreamble)
+	assert.NotContains(t, recon, reviewPreamble)
+	assert.NotContains(t, recon, developerPreamble)
+	assert.Contains(t, dev, "\n--max-turns\n250\n")
+	assert.NotContains(t, review, "--max-turns", "no maxTurns, no flag")
+
+	_, err := agentArgv(root, "nobody", "", cwd, []byte("Go."))
+	assert.Equal(t, exitUsage, exitCode(t, err))
+	_, err = agentArgv(root, "recon", "", cwd, []byte("  "))
+	assert.Equal(t, exitUsage, exitCode(t, err))
 }

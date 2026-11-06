@@ -1,6 +1,7 @@
 # Run records
 
-One file per supervised plan run, written by the manager when the run ends, at
+One file per supervised plan run, written by the manager when the run ends
+(under `/flow:run`, by loom's run engine itself, whatever the run's end), at
 `~/.loom/flow/records/<key>/<YYYY-MM-DD>-<plan stem without its leading date>.md`,
 where `<key>` is what `loom flow conf key` prints for the repo (plan file names are
 dated already, so the date is not written twice). That directory is no
@@ -39,6 +40,13 @@ A record has four parts.
      as it commits the plan, with its sessions, their window, their logged
      cost and the plan's length. A plan written without `/flow:draft` has
      none, and its record leaves the line out.
+
+   - `- Ended:` and `- Engine:`, in a record loom's run engine wrote
+     (`/flow:run`): how the run ended (`done`, `stopped` or `cancelled`), and
+     `loom flow run (flow in loom part 3b)`. Its Cost is
+     `loom flow costs run <run>`'s output, which prices the manager's sessions
+     as `main` and each headless agent run by its role, and its Notes list
+     every question the engine asked with its answer.
 
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.
