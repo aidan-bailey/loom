@@ -20,6 +20,13 @@ const PROMPT_LINES = 12;
 // (parseRoute's agent route); a step with another id is a plain row.
 const LINKABLE = /^[A-Za-z0-9_-]+$/;
 
+// kept holds each session's conversation as it was left, by session id: the
+// turns held and the scroll position. Leaving the screen (a subagent's, the
+// info tab) and coming back restores both before the first paint and then
+// refreshes, instead of loading at the bottom. Like the reply drafts it
+// lasts as long as the page.
+const kept = new Map();
+
 // mergeTurns folds a page into the turns held: the first page and a reset
 // replace them, an earlier page goes before them, and a refresh replaces
 // every held turn from its first turn on. skipped stays set once a page
@@ -197,7 +204,7 @@ export function TurnList({ turns, live, now, remote, sessionId }) {
 // where it was, or moves to the bottom for a first page and for a refresh
 // that lands while the reader is at the bottom.
 export function useTurnPages({ id, agent, live }) {
-  const [held, setHeld] = useState(null);
+  const [held, setHeld] = useState(() => (agent ? null : (kept.get(id) || {}).held || null));
   const [err, setErr] = useState("");
   const heldRef = useRef(null);
   const loading = useRef(false);
@@ -250,6 +257,25 @@ export function useTurnPages({ id, agent, live }) {
     }
   }
 
+  // A conversation that was kept is scrolled back to where it was left,
+  // before the first paint; a subagent's page is not kept.
+  useLayoutEffect(() => {
+    const k = agent ? undefined : kept.get(id);
+    if (k && k.scrollY !== undefined && heldRef.current) window.scrollTo(0, k.scrollY);
+  }, [id, agent]);
+
+  useEffect(() => {
+    if (agent || !held) return;
+    kept.set(id, { ...(kept.get(id) || {}), held });
+  }, [held]);
+
+  useEffect(() => {
+    if (agent || id === undefined) return undefined;
+    const onScroll = () => kept.set(id, { ...(kept.get(id) || {}), scrollY: window.scrollY });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [id, agent]);
+
   useLayoutEffect(() => {
     const a = anchor.current;
     anchor.current = null;
@@ -260,7 +286,9 @@ export function useTurnPages({ id, agent, live }) {
 
   useEffect(() => {
     alive.current = true;
-    load("newest");
+    // Turns kept from an earlier visit are refreshed from their newest turn;
+    // anything else opens at the newest page.
+    load(heldRef.current ? "refresh" : "newest");
     return () => {
       alive.current = false;
     };
@@ -297,7 +325,10 @@ function Conversation({ snap, stale, route, act, toast }) {
   // The stream changing the session's status or last message refreshes the
   // newest turn; so does the poll while the session is Running.
   const sig = s ? s.status + "\n" + (s.last_message || "") : "";
+  const sigSeen = useRef(sig);
   useEffect(() => {
+    if (sigSeen.current === sig) return;
+    sigSeen.current = sig;
     if (held) load("refresh");
   }, [sig]);
 
