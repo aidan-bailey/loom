@@ -167,6 +167,16 @@ type Step struct {
 	Summary string
 	At      time.Time
 	State   string // StatePending, StateDone, StateFailed or StateInterrupted
+	// Agent is the subagent an Agent or Task step launched: the id of the
+	// sidecar naming the step's tool_use id (toolUseId), else the one the
+	// step's result names (toolUseResult.agentId). "" for another tool, and
+	// for a step no agent is found for: no link is guessed.
+	Agent string
+	// Finished says an Agent or Task step's agent has ended: the sidecar's
+	// finished key when it has one, else whether the step has a result that
+	// is not a background launch's (status async_launched). False for
+	// another tool.
+	Finished bool
 }
 
 // The states of a Step.
@@ -207,6 +217,7 @@ func Read(path, conversation string, q Query) (Page, error) {
 		return Page{}, fmt.Errorf("transcript %s: %w", path, err)
 	}
 	page.Conversation = conversation
+	linkAgents(path, page.Turns)
 	return page, nil
 }
 

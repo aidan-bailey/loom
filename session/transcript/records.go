@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/session/hooks"
+	"github.com/aidan-bailey/loom/session/subagent"
 )
 
 // entry is what one line adds to the conversation.
@@ -36,6 +37,9 @@ type part struct {
 	cut   bool
 	error bool
 	step  Step
+	// status is a partResult's toolUseResult.status; its step's Agent is the
+	// agent that result names.
+	status string
 }
 
 const (
@@ -63,6 +67,7 @@ type record struct {
 	IsAPIErrorMessage         bool            `json:"isApiErrorMessage"`
 	Origin                    json.RawMessage `json:"origin"`
 	Message                   json.RawMessage `json:"message"`
+	ToolUseResult             json.RawMessage `json:"toolUseResult"`
 }
 
 // origin is a user record's origin, where Claude writes one.
@@ -192,6 +197,11 @@ func (e *entry) user(r record) {
 		}
 	}
 	if len(results) > 0 {
+		// toolUseResult describes one result: with several in a record it
+		// names none of them.
+		if len(results) == 1 {
+			results[0].step.Agent, results[0].status = agentResult(r.ToolUseResult)
+		}
 		e.parts = results
 		return
 	}
@@ -406,4 +416,29 @@ func under(dir, p string) string {
 		return p
 	}
 	return rel
+}
+
+// statusAsyncLaunched is the toolUseResult status of an agent launched in
+// the background: its tool_result settles at launch, not at the agent's end.
+const statusAsyncLaunched = "async_launched"
+
+// agentResult reads a tool result's toolUseResult for the agent it names and
+// its status. Only a result that mentions an agent is decoded: other tools'
+// results can be large. An agent id that could escape the subagents folder
+// is dropped.
+func agentResult(raw json.RawMessage) (agent, status string) {
+	if !bytes.Contains(raw, []byte(`"agentId"`)) && !bytes.Contains(raw, []byte(statusAsyncLaunched)) {
+		return "", ""
+	}
+	var r struct {
+		AgentID string `json:"agentId"`
+		Status  string `json:"status"`
+	}
+	if json.Unmarshal(raw, &r) != nil {
+		return "", ""
+	}
+	if !subagent.ValidAgentID(r.AgentID) {
+		r.AgentID = ""
+	}
+	return r.AgentID, r.Status
 }

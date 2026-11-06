@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aidan-bailey/loom/session/hooks"
@@ -39,6 +40,7 @@ func readAgent(path, conversation string, q Query) (Page, error) {
 		return Page{}, fmt.Errorf("transcript %s: %w", file, err)
 	}
 	page.Conversation = conversation
+	linkAgents(path, page.Turns)
 	info := agentInfo(path, q.Agent, f, size)
 	page.Agent = &info
 	return page, nil
@@ -109,4 +111,94 @@ func firstRecord(r io.ReaderAt, size int64) (time.Time, string) {
 		brief = hooks.CapSummary(e.turn.Text)
 	}
 	return e.at, brief
+}
+
+// isAgentTool reports whether tool launches a subagent: Claude calls the
+// tool Agent, older versions Task.
+func isAgentTool(tool string) bool { return tool == "Agent" || tool == "Task" }
+
+func hasAgentStep(turns []Turn) bool {
+	for _, t := range turns {
+		for _, it := range t.Items {
+			for _, s := range it.Steps {
+				if isAgentTool(s.Tool) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// metaIndex is what a subagents folder's sidecars say.
+type metaIndex struct {
+	byAgent map[string]subagent.Meta
+	// byTool maps a launching tool_use id to its agent; "" marks an id two
+	// sidecars claim, which links neither.
+	byTool map[string]string
+}
+
+// listMeta reads the sidecars in dir. An unreadable folder or sidecar is
+// left out: its steps stay unlinked.
+func listMeta(dir string) metaIndex {
+	idx := metaIndex{byAgent: map[string]subagent.Meta{}, byTool: map[string]string{}}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return idx
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".meta.json") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(name, "agent-"), ".meta.json")
+		if !subagent.ValidAgentID(id) {
+			continue
+		}
+		m, ok := readMeta(filepath.Join(dir, name))
+		if !ok {
+			continue
+		}
+		idx.byAgent[id] = m
+		if m.ToolUseID == "" {
+			continue
+		}
+		if prev, claimed := idx.byTool[m.ToolUseID]; claimed && prev != id {
+			idx.byTool[m.ToolUseID] = ""
+		} else {
+			idx.byTool[m.ToolUseID] = id
+		}
+	}
+	return idx
+}
+
+// linkAgents settles the Agent and Finished of the Agent and Task steps of
+// turns, in place, from the sidecars of the conversation whose transcript is
+// at path. The builder has set each step's Agent and Finished from its
+// result; a sidecar naming the step's tool_use id overrides the agent, and
+// the finished key of the step's agent's sidecar overrides Finished. The
+// folder is listed once, and only when a step needs it. A nested agent's
+// sidecar sits in the same folder as the conversation's.
+func linkAgents(path string, turns []Turn) {
+	if !hasAgentStep(turns) {
+		return
+	}
+	idx := listMeta(subagent.SubagentsDir(path))
+	for ti := range turns {
+		for ii := range turns[ti].Items {
+			steps := turns[ti].Items[ii].Steps
+			for si := range steps {
+				s := &steps[si]
+				if !isAgentTool(s.Tool) {
+					continue
+				}
+				if id := idx.byTool[s.ID]; id != "" {
+					s.Agent = id
+				}
+				if m, ok := idx.byAgent[s.Agent]; ok && m.Finished != nil {
+					s.Finished = *m.Finished
+				}
+			}
+		}
+	}
 }
