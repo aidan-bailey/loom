@@ -47,6 +47,33 @@ func removeTestSlice(t *testing.T, slice string) {
 	}
 }
 
+// TestConfiner_Live_OutlivesItsDialContext pins that a confiner keeps working
+// after the context it was made with ends: the daemon's probes dial with a
+// timeout they cancel on return, and godbus closes a connection once its dial
+// context is done, so every confiner the daemon made died with its probe
+// ("dbus: connection closed by user") and no job was contained.
+func TestConfiner_Live_OutlivesItsDialContext(t *testing.T) {
+	addr := os.Getenv(testenv.EnvRealDBus)
+	if addr == "" {
+		t.Skip("no user bus")
+	}
+	t.Setenv(testenv.EnvDBus, addr)
+	dial, cancelDial := context.WithTimeout(context.Background(), 10*time.Second)
+	c, err := NewConfiner(dial)
+	cancelDial()
+	require.NoError(t, err)
+	defer c.Close()
+	// godbus closes a connection from a goroutine of its own once the
+	// context ends; give it the moment that takes.
+	time.Sleep(100 * time.Millisecond)
+
+	slice := fmt.Sprintf("loom_test%d_dial.slice", os.Getpid())
+	t.Cleanup(func() { removeTestSlice(t, slice) })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, c.EnsureSlice(ctx, slice, SliceProps{CPUWeight: 30, MemoryMaxBytes: 1 << 30}))
+}
+
 // TestConfiner_Live runs the confiner against the real user manager, on a
 // test slice and scope of its own (cgroup spec §13.3). Opt in with
 // -tags systemd_live; it is skipped without a user bus.

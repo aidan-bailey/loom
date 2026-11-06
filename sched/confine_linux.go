@@ -10,15 +10,48 @@ import (
 )
 
 // systemdConfiner is the Confiner of the user's systemd, on the session bus.
-type systemdConfiner struct{ conn *sddbus.Conn }
+type systemdConfiner struct {
+	conn *sddbus.Conn
+	stop context.CancelFunc // ends the context the connection lives by
+}
 
-// NewConfiner connects to the user's service manager.
+// NewConfiner connects to the user's service manager. ctx bounds the
+// connecting only: godbus closes a connection once the context it was dialed
+// with ends, so the connection is dialed with a context of its own, which
+// Close ends.
 func NewConfiner(ctx context.Context) (Confiner, error) {
-	conn, err := sddbus.NewUserConnectionContext(ctx)
+	c, err := dialConfiner(ctx, sddbus.NewUserConnectionContext)
 	if err != nil {
-		return nil, fmt.Errorf("connect to the user's systemd: %w", err)
+		return nil, err
 	}
-	return &systemdConfiner{conn: conn}, nil
+	return c, nil
+}
+
+// dialConfiner is NewConfiner with its dial, which a test replaces. A dial
+// that fails or outlasts ctx ends the connection's context, which closes a
+// connection the dial makes late.
+func dialConfiner(ctx context.Context, dial func(context.Context) (*sddbus.Conn, error)) (*systemdConfiner, error) {
+	life, stop := context.WithCancel(context.WithoutCancel(ctx))
+	type dialed struct {
+		conn *sddbus.Conn
+		err  error
+	}
+	got := make(chan dialed, 1)
+	go func() {
+		conn, err := dial(life)
+		got <- dialed{conn: conn, err: err}
+	}()
+	select {
+	case d := <-got:
+		if d.err != nil {
+			stop()
+			return nil, fmt.Errorf("connect to the user's systemd: %w", d.err)
+		}
+		return &systemdConfiner{conn: d.conn, stop: stop}, nil
+	case <-ctx.Done():
+		stop()
+		return nil, fmt.Errorf("connect to the user's systemd: %w", ctx.Err())
+	}
 }
 
 // prop is a unit property of any D-Bus value.
@@ -98,4 +131,7 @@ func (c *systemdConfiner) Thaw(ctx context.Context, unit string) error {
 	return nil
 }
 
-func (c *systemdConfiner) Close() { c.conn.Close() }
+func (c *systemdConfiner) Close() {
+	c.conn.Close()
+	c.stop()
+}
