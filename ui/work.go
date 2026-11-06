@@ -668,8 +668,8 @@ func workStarts(at, now time.Time) string {
 // ("4+2c/3G", job scaling spec §7), with a "!" after a memory held to the
 // cap.
 func workClaim(j core.JobView) string {
-	if j.Kind == sched.KindAgent {
-		return "agent"
+	if sched.Unclaimed(j.Kind) {
+		return j.Kind
 	}
 	text := j.Claim.Spared(j.Spare)
 	if j.AboveCap {

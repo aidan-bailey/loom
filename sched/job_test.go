@@ -88,6 +88,11 @@ func TestSubmit_Validate(t *testing.T) {
 		{"an agent job with io", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{IO: true} }, "an agent job claims nothing and runs after nothing"},
 		{"an agent job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindAgent, Claim{Exclusive: true} }, "an agent job claims nothing and runs after nothing"},
 		{"an agent job after another", func(s *Submit) { s.Kind, s.After = KindAgent, 3 }, "an agent job claims nothing and runs after nothing"},
+		{"a bare run job", func(s *Submit) { s.Kind = KindRun }, ""},
+		{"a run job with cpus", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{CPUs: 1} }, "a run job claims nothing and runs after nothing"},
+		{"a run job with io", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{IO: true} }, "a run job claims nothing and runs after nothing"},
+		{"a run job, exclusive", func(s *Submit) { s.Kind, s.Claim = KindRun, Claim{Exclusive: true} }, "a run job claims nothing and runs after nothing"},
+		{"a run job after another", func(s *Submit) { s.Kind, s.After = KindRun, 3 }, "a run job claims nothing and runs after nothing"},
 		{"an unknown kind", func(s *Submit) { s.Kind = "x" }, `unknown job kind "x"`},
 	}
 	for _, tc := range tests {

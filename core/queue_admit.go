@@ -25,6 +25,8 @@ const (
 	// claims nothing, so its scope would weigh least of all, and a contained
 	// job is the ladder's to squeeze, pause or requeue.
 	agentUncontained = "an agent job runs outside the jobs' slice"
+	// runUncontained is why a flow run engine's job (part 3b) does: likewise.
+	runUncontained = "a run job runs outside the jobs' slice"
 )
 
 var (
@@ -203,7 +205,9 @@ func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.
 	hint := rec.Claim.Need(policy.Caps).CPUs
 	var scope *sched.ScopeSpec
 	rec.Unit, rec.Cgroup, rec.Uncontained = "", "", ""
-	if rec.Kind == sched.KindAgent {
+	if rec.Kind == sched.KindRun {
+		rec.Uncontained = runUncontained
+	} else if rec.Kind == sched.KindAgent {
 		rec.Uncontained = agentUncontained
 	} else if why := q.containWhy(policy); why != "" {
 		rec.Uncontained = why

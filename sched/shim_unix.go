@@ -168,7 +168,7 @@ func RunShim(jobDir string) int {
 	// spec.Env, the hint variables it lacks and LOOM_JOB, and the command
 	// runs with exactly that.
 	env := Hints(spec.Env, max(spec.HintCPUs, 1), spec.ID)
-	if spec.Kind == KindAgent {
+	if Unclaimed(spec.Kind) {
 		env = AgentHints(spec.Env, spec.ID)
 	}
 	// A SIGTERM that reached this shim before the command starts is not

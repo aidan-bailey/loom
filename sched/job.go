@@ -230,6 +230,10 @@ type Record struct {
 	// CLAUDE_CONFIG_DIR ("" for the default account).
 	Kind       string `json:"kind,omitempty"`
 	AccountKey string `json:"account_key,omitempty"`
+	// Run is the run job (KindRun) this job was submitted under, from its
+	// environment's LOOM_FLOW_RUN (flow in loom part 3b, planning amendment
+	// 1): a pause spares it. 0 for any other job.
+	Run JobID `json:"run,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
@@ -259,6 +263,16 @@ type Exit struct {
 // headless Claude process, admitted by a per-account limit, never by the
 // caps, and never sized. A build job's kind is "".
 const KindAgent = "agent"
+
+// KindRun is a flow run engine's kind (flow in loom part 3b, spec §5.2): a
+// process that drives a plan's agents and gates, started at once, outside
+// the caps, the advisor and the agent limit, and never sized.
+const KindRun = "run"
+
+// Unclaimed reports whether a job of kind claims nothing: an agent or a run
+// job. Such jobs are never sized, granted or contained, and get no
+// parallelism hints.
+func Unclaimed(kind string) bool { return kind == KindAgent || kind == KindRun }
 
 // Submit is what a client sends to queue a job.
 type Submit struct {
@@ -290,7 +304,7 @@ func totalBytes(items []string) int {
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
 // folder is absolute; the prerequisite is not negative (0 is none); an agent
-// job claims nothing and runs after nothing, and no other kind is known. It does
+// or run job claims nothing and runs after nothing, and no other kind is known. It does
 // not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
@@ -329,10 +343,12 @@ func (s Submit) Validate() error {
 		return fmt.Errorf("--after is %d: it must be a job ID", s.After)
 	}
 	switch {
-	case s.Kind != "" && s.Kind != KindAgent:
+	case s.Kind != "" && s.Kind != KindAgent && s.Kind != KindRun:
 		return fmt.Errorf("unknown job kind %q", s.Kind)
 	case s.Kind == KindAgent && (s.Claim != Claim{} || s.After != 0):
 		return errors.New("an agent job claims nothing and runs after nothing")
+	case s.Kind == KindRun && (s.Claim != Claim{} || s.After != 0):
+		return errors.New("a run job claims nothing and runs after nothing")
 	}
 	return nil
 }

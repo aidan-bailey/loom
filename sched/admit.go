@@ -111,17 +111,22 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 //
 // Agent jobs (Kind KindAgent) are apart: each starts, in queue order, while
 // fewer than p.AgentJobs of its account run; they take nothing from the caps
-// and are never the head.
+// and are never the head. Run jobs (Kind KindRun) start at once, take
+// nothing from the caps and are never the head.
 //
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen. A policy without caps
 // (the zero Policy) starts nothing. The jobs slice is left as it is.
 func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
-	var queued, agents []Record
+	var queued, agents, runs []Record
 	running := map[string]int{} // running agent jobs per account key
 	for _, r := range jobs {
 		switch {
+		case r.Kind == KindRun && r.State == Queued:
+			runs = append(runs, r)
+		case r.Kind == KindRun:
+			// A running run job takes nothing from the caps.
 		case r.Kind == KindAgent && r.State == Running:
 			running[r.AccountKey]++
 		case r.Kind == KindAgent && r.State == Queued:
@@ -133,6 +138,14 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 		}
 	}
 	byOrder := func(a, b Record) int { return cmp.Or(cmp.Compare(a.Order, b.Order), cmp.Compare(a.ID, b.ID)) }
+	// Run jobs (flow in loom part 3b, spec §5.2) start at once while
+	// admission has a usable policy, and are never a head.
+	slices.SortFunc(runs, byOrder)
+	for _, r := range runs {
+		if p.usable() {
+			d.Start = append(d.Start, r.ID)
+		}
+	}
 	// Agent jobs (flow in loom part 3a, spec §5.2) start by their account's
 	// limit, never by the caps, and are never a head; while admission has
 	// no usable policy they wait with no reason, so the view shows its.
