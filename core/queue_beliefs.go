@@ -116,15 +116,51 @@ func (q *queueState) beliefOf(id sched.SignatureID) *sched.Belief {
 	return q.beliefs.Find(id)
 }
 
-// sizeRecord sets rec's claim from what it asked for, its belief and p
-// (spec §5.4), and reports whether anything changed.
-func (q *queueState) sizeRecord(rec *sched.Record, p sched.Policy) bool {
-	s := sched.Size(rec.Asked, q.beliefOf(rec.Signature), p)
-	if rec.Claim == s.Claim && rec.Sources == s.Sources && rec.Learned == s.Learned &&
+// familyPool is sig's family pool among the beliefs (family sizing spec
+// §5.2): nil while learning is off, for a signature with no family, and
+// for a family with no other runs.
+func (q *queueState) familyPool(sig sched.Signature) *sched.Belief {
+	if q.beliefsErr != nil {
+		return nil
+	}
+	return q.families.Pool(q.beliefs.Beliefs, sig)
+}
+
+// poolOf is the family pool of signature id, through its belief's
+// signature: nil when it has no belief.
+func (q *queueState) poolOf(id sched.SignatureID) *sched.Belief {
+	if b := q.beliefOf(id); b != nil {
+		return q.familyPool(b.Signature)
+	}
+	return nil
+}
+
+// familyLabel is the label of b's family, "" for none and for a nil b.
+func (q *queueState) familyLabel(b *sched.Belief) string {
+	if b == nil {
+		return ""
+	}
+	if f, ok := q.families.Of(b.Signature); ok {
+		return f.Label()
+	}
+	return ""
+}
+
+// sizeRecord sets rec's claim from what it asked for, its belief, its
+// family pool and p (spec §5.4, family sizing spec §5.3), and reports
+// whether anything changed. sig is the submit's signature, whose belief
+// may not exist yet; a re-size passes nil and finds it through the belief.
+func (q *queueState) sizeRecord(rec *sched.Record, p sched.Policy, sig *sched.Signature) bool {
+	family := q.poolOf(rec.Signature)
+	if sig != nil {
+		family = q.familyPool(*sig)
+	}
+	s := sched.Size(rec.Asked, q.beliefOf(rec.Signature), family, p)
+	if rec.Claim == s.Claim && rec.Sources == s.Sources && rec.Learned == s.Learned && rec.FamilyRuns == s.FamilyRuns &&
 		rec.AboveCap == s.AboveCap && rec.BelowKB == s.BelowKB {
 		return false
 	}
-	rec.Claim, rec.Sources, rec.Learned, rec.AboveCap, rec.BelowKB = s.Claim, s.Sources, s.Learned, s.AboveCap, s.BelowKB
+	rec.Claim, rec.Sources, rec.Learned, rec.FamilyRuns, rec.AboveCap, rec.BelowKB = s.Claim, s.Sources, s.Learned, s.FamilyRuns, s.AboveCap, s.BelowKB
 	return true
 }
 
@@ -139,7 +175,7 @@ func (m *Model) resizeQueued(p sched.Policy) {
 		if !rec.State.Waiting() || rec.Sources == (sched.ClaimSources{}) {
 			continue
 		}
-		if q.sizeRecord(rec, p) {
+		if q.sizeRecord(rec, p, nil) {
 			q.moved()
 		}
 	}
@@ -158,7 +194,10 @@ func (m *Model) readBeliefs(query sched.BeliefQuery) (sched.BeliefsPage, error) 
 	page := sched.BeliefsPage{Track: sched.TrackRecord(q.beliefs.Beliefs)}
 	for _, b := range q.beliefs.Beliefs {
 		if query.Matches(b) {
-			v := sched.ViewBelief(b.Clone(), q.policy)
+			v := sched.ViewBelief(b.Clone(), q.familyPool(b.Signature), q.policy)
+			if label := q.familyLabel(&b); label != "" {
+				v.Family, v.FamilySize = label, q.families.Members(q.beliefs.Beliefs, b.Signature)
+			}
 			if b.After != "" && b.After != sched.AfterNone {
 				if p := q.beliefs.Find(b.After); p != nil {
 					v.After = slices.Clone(p.Command)

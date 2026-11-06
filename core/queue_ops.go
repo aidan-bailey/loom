@@ -104,12 +104,12 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		rec.Signature = sig.ID()
 	}
 	if !agentJob {
-		q.sizeRecord(&rec, policy)
+		q.sizeRecord(&rec, policy, sig)
 		if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 			return 0, "", err
 		}
 	}
-	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), now) {
+	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), q.familyPool(*sig), now) {
 		rec.Sizing = sched.SizingAsking
 	}
 

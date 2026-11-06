@@ -119,10 +119,14 @@ type JobView struct {
 	Sizing    sched.Sizing
 	Sources   sched.ClaimSources
 	Learned   int
-	AboveCap  bool
-	BelowKB   int64
-	Unsized   string
-	AgentWhy  string
+	// FamilyRuns is the family pool's runs its family parts came from,
+	// Family its family's label ("" for none) (family sizing spec §6).
+	FamilyRuns int
+	Family     string
+	AboveCap   bool
+	BelowKB    int64
+	Unsized    string
+	AgentWhy   string
 	// Durations (smart scheduler spec §5.5): the belief's usual duration
 	// and P90 (0 for none; UsualFromPrior when they are the agent's
 	// estimate), how long the job may run before it is overdue (0 for
@@ -130,8 +134,10 @@ type JobView struct {
 	Usual          time.Duration
 	P90            time.Duration
 	UsualFromPrior bool
-	OverdueAfter   time.Duration
-	StartsAt       time.Time
+	// UsualFromFamily says Usual and P90 are its family pool's.
+	UsualFromFamily bool
+	OverdueAfter    time.Duration
+	StartsAt        time.Time
 	// Job scaling (spec 2026-11-05-job-scaling §5.3): what a grant added to
 	// a started job's base claim, and the width a grant could widen a
 	// queued job to (0 when none could).
@@ -375,7 +381,7 @@ func (m *Model) queueView() QueueView {
 func (m *Model) hostUsual() time.Duration {
 	var all []time.Duration
 	for i := range m.queue.beliefs.Beliefs {
-		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i], 0); n > 0 {
+		if u, _, n, _ := sched.Usual(&m.queue.beliefs.Beliefs[i], nil, 0); n > 0 {
 			all = append(all, u)
 		}
 	}
@@ -415,6 +421,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Sizing:       r.Sizing,
 		Sources:      r.Sources,
 		Learned:      r.Learned,
+		FamilyRuns:   r.FamilyRuns,
 		AboveCap:     r.AboveCap,
 		BelowKB:      r.BelowKB,
 		Unsized:      r.Unsized,
@@ -436,7 +443,14 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		jv.Exit = &e
 	}
 	b := q.beliefOf(r.Signature)
-	jv.Usual, jv.P90, _, jv.UsualFromPrior = sched.Usual(b, r.Claim.CPUs)
+	var family *sched.Belief
+	if b != nil {
+		family = q.familyPool(b.Signature)
+	}
+	var src sched.DurationSource
+	jv.Usual, jv.P90, _, src = sched.Usual(b, family, r.Claim.CPUs)
+	jv.UsualFromPrior, jv.UsualFromFamily = src == sched.DurationPrior, src == sched.DurationFamily
+	jv.Family = q.familyLabel(b)
 	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID

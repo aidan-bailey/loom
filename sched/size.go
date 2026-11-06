@@ -26,6 +26,7 @@ const (
 	SourceAgent     Source = "agent"
 	SourceDefault   Source = "default"
 	SourceExclusive Source = "exclusive"
+	SourceFamily    Source = "family" // the family pool's runs (family sizing spec §5.3)
 )
 
 // ClaimSources are where each part of a claim came from.
@@ -36,12 +37,14 @@ type ClaimSources struct {
 }
 
 // Tag is the short source shown beside a claim: its memory's (learned·N,
-// agent, yours, default); "" for an exclusive claim, and for a record from
-// before sizing.
-func (s ClaimSources) Tag(learned int) string {
+// family·N, agent, yours, default); "" for an exclusive claim, and for a
+// record from before sizing.
+func (s ClaimSources) Tag(learned, familyRuns int) string {
 	switch s.Memory {
 	case SourceLearned:
 		return fmt.Sprintf("learned·%d", learned)
+	case SourceFamily:
+		return fmt.Sprintf("family·%d", familyRuns)
 	case SourceAgent:
 		return "agent"
 	case SourceExplicit:
@@ -53,10 +56,11 @@ func (s ClaimSources) Tag(learned int) string {
 }
 
 // Describe says where a claim's parts came from, for the CLI and the
-// belief pager: one source for all three as "learned from 5 runs";
+// belief pager: one source for all three as "learned from 5 runs" (the
+// family's as "from 6 runs of its family (<label>)");
 // otherwise each source with its parts, in the order cores, memory, I/O:
 // "cores and I/O learned from 5 runs, memory yours".
-func (s ClaimSources) Describe(learned int) string {
+func (s ClaimSources) Describe(learned, familyRuns int, familyLabel string) string {
 	type group struct {
 		src   Source
 		parts []string
@@ -75,22 +79,31 @@ func (s ClaimSources) Describe(learned int) string {
 	add(s.Memory, "memory")
 	add(s.IO, "I/O")
 	if len(groups) == 1 {
-		return groups[0].src.describe(learned)
+		return groups[0].src.describe(learned, familyRuns, familyLabel)
 	}
 	out := make([]string, len(groups))
 	for i, g := range groups {
-		out[i] = JoinAnd(g.parts) + " " + g.src.describe(learned)
+		out[i] = JoinAnd(g.parts) + " " + g.src.describe(learned, familyRuns, familyLabel)
 	}
 	return strings.Join(out, ", ")
 }
 
-func (src Source) describe(learned int) string {
+func (src Source) describe(learned, familyRuns int, familyLabel string) string {
 	switch src {
 	case SourceLearned:
 		if learned == 1 {
 			return "learned from 1 run"
 		}
 		return fmt.Sprintf("learned from %d runs", learned)
+	case SourceFamily:
+		runs := "1 run"
+		if familyRuns != 1 {
+			runs = fmt.Sprintf("%d runs", familyRuns)
+		}
+		if familyLabel == "" {
+			return "from " + runs + " of its family"
+		}
+		return fmt.Sprintf("from %s of its family (%s)", runs, familyLabel)
 	case SourceAgent:
 		return "the agent's estimate"
 	case SourceExplicit:
@@ -111,39 +124,46 @@ func JoinAnd(words []string) string {
 
 // Sized is a claim and where each of its parts came from.
 type Sized struct {
-	Claim    Claim
-	Sources  ClaimSources
-	Learned  int   // the runs a learned part came from (the last window); 0 when no part is learned
-	AboveCap bool  // memory from measured peaks was held to the memory cap
-	BelowKB  int64 // the largest recent peak an explicit memory claim is below; 0 when it isn't
+	Claim   Claim
+	Sources ClaimSources
+	Learned int // the runs a learned part came from (the last window); 0 when no part is learned
+	// FamilyRuns is the family pool's runs a family part came from; 0 when
+	// no part is the family's (family sizing spec §5.3).
+	FamilyRuns int
+	AboveCap   bool  // memory from measured peaks was held to the memory cap
+	BelowKB    int64 // the largest recent peak an explicit memory claim is below; 0 when it isn't
 }
 
-// Size is a job's claim (spec §5.4), a pure function of what it asked for
-// (a 0 part was not claimed), its belief (nil when it has none) and the
-// policy in effect, whose caps it must have. Each part takes the first
-// source with a value: the flag, the belief's last window runs, the
-// belief's prior, the default claim. Memory learns from a done run's peak
-// with a margin, and a floor only raises it (a run with spare cores counts
-// as largestPeak says); cores learn from busy cores, never past the default
-// claim's unless the command overruns (job scaling spec §5.2), then up to
-// the cap; an I/O slot from bytes written. --cpus with --mem makes the
-// whole claim explicit. A part that isn't explicit is held within the
-// policy: cores at most the default claim's (an overrunner's at most the
-// cap), memory at most the cap.
-func Size(asked Claim, b *Belief, p Policy) Sized {
+// Size is a job's claim (spec §5.4, family sizing spec §5.3), a pure
+// function of what it asked for (a 0 part was not claimed), its belief
+// (nil when it has none), its family pool (nil for none) and the policy in
+// effect, whose caps it must have. Each part takes the first source with a
+// value: the flag, the belief's last window runs, the family pool's runs,
+// the belief's prior, the default claim. Memory learns from a done run's
+// peak with a margin, and a floor only raises it (a run with spare cores
+// counts as largestPeak says); only the family's full peaks size memory,
+// and its floors neither size nor raise it. Cores learn from busy cores,
+// never past the default claim's unless the command overruns (job scaling
+// spec §5.2), then up to the cap; a family never makes an overrunner. An
+// I/O slot comes from bytes written. --cpus with --mem makes the whole
+// claim explicit. A part that isn't explicit is held within the policy:
+// cores at most the default claim's (an overrunner's at most the cap),
+// memory at most the cap.
+func Size(asked Claim, b, family *Belief, p Policy) Sized {
 	if asked.Exclusive {
 		return Sized{Claim: Claim{Exclusive: true}, Sources: ClaimSources{SourceExclusive, SourceExclusive, SourceExclusive}}
 	}
-	runs := b.recent()
+	runs, pool := b.recent(), family.recent()
 	var prior *Prior
 	if b != nil {
 		prior = b.Prior
 	}
 	var s Sized
-	learned := false
+	learned, fromFamily := false, false
 
 	sc := ScalingOf(b)
 	busy, haveBusy := medianBusy(runs)
+	famBusy, haveFamBusy := medianBusy(pool)
 	switch {
 	case asked.CPUs > 0:
 		s.Claim.CPUs, s.Sources.CPUs = asked.CPUs, SourceExplicit
@@ -155,6 +175,9 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 	case haveBusy:
 		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*busy)), 1, p.DefaultClaim.CPUs), SourceLearned
 		learned = true
+	case haveFamBusy:
+		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*famBusy)), 1, p.DefaultClaim.CPUs), SourceFamily
+		fromFamily = true
 	case prior != nil:
 		s.Claim.CPUs, s.Sources.CPUs = clampInt(prior.CPUs, 1, p.DefaultClaim.CPUs), SourceAgent
 	default:
@@ -162,6 +185,8 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 	}
 
 	peakKB, full := largestPeak(runs, s.Claim.CPUs)
+	famKB, famFull := largestPeak(fullPeaks(pool), s.Claim.CPUs)
+	evidence := peakKB // the peak a claim above the cap was measured from
 	switch {
 	case asked.MemoryGB > 0:
 		s.Claim.MemoryGB, s.Sources.Memory = asked.MemoryGB, SourceExplicit
@@ -171,6 +196,13 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 	case full:
 		s.Claim.MemoryGB, s.Sources.Memory = withMargin(peakKB), SourceLearned
 		learned = true
+	case famFull:
+		s.Claim.MemoryGB, s.Sources.Memory = withMargin(famKB), SourceFamily
+		fromFamily = true
+		evidence = max(peakKB, famKB)
+		if peakKB > 0 {
+			s.Claim.MemoryGB = max(s.Claim.MemoryGB, withMargin(peakKB))
+		}
 	default:
 		s.Claim.MemoryGB, s.Sources.Memory = p.DefaultClaim.MemoryGB, SourceDefault
 		if prior != nil {
@@ -181,18 +213,22 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 		}
 	}
 	if s.Sources.Memory != SourceExplicit && s.Claim.MemoryGB > p.Caps.MemoryGB {
-		s.AboveCap = peakKB > 0 && withMargin(peakKB) > p.Caps.MemoryGB
+		s.AboveCap = evidence > 0 && withMargin(evidence) > p.Caps.MemoryGB
 		s.Claim.MemoryGB = p.Caps.MemoryGB
 	}
 	s.Claim.MemoryGB = max(s.Claim.MemoryGB, 1)
 
 	writes, haveIO := medianWrites(runs)
+	famWrites, haveFamIO := medianWrites(pool)
 	switch {
 	case asked.IO || (asked.CPUs > 0 && asked.MemoryGB > 0):
 		s.Claim.IO, s.Sources.IO = asked.IO, SourceExplicit
 	case haveIO:
 		s.Claim.IO, s.Sources.IO = writes >= ioThreshold, SourceLearned
 		learned = true
+	case haveFamIO:
+		s.Claim.IO, s.Sources.IO = famWrites >= ioThreshold, SourceFamily
+		fromFamily = true
 	case prior != nil:
 		s.Claim.IO, s.Sources.IO = prior.IO, SourceAgent
 	default:
@@ -201,7 +237,17 @@ func Size(asked Claim, b *Belief, p Policy) Sized {
 	if learned {
 		s.Learned = len(runs)
 	}
+	if fromFamily {
+		s.FamilyRuns = len(pool)
+	}
 	return s
+}
+
+// fullPeaks is the runs among runs whose peak is full: a family member's
+// floor neither sizes nor raises another job's claim (family sizing spec
+// §5.3).
+func fullPeaks(runs []Run) []Run {
+	return slices.DeleteFunc(slices.Clone(runs), func(r Run) bool { return !r.FullPeak() })
 }
 
 // withMargin is the memory claim for a peak of kb: the peak plus

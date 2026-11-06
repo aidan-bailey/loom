@@ -67,7 +67,7 @@ func TestSize(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := Size(c.asked, c.b, c.policy)
+			s := Size(c.asked, c.b, nil, c.policy)
 			assert.Equal(t, c.want, s.Claim)
 			assert.Equal(t, c.sources, s.Sources)
 			assert.Equal(t, c.learned, s.Learned)
@@ -82,71 +82,145 @@ func TestSize(t *testing.T) {
 			runs = append(runs, done(1<<20, 0, 10))
 		}
 		runs = append(runs, done(20<<20, 0, 10)) // the eleventh, oldest
-		assert.Equal(t, 2, Size(Claim{}, belief(runs...), szPolicy).Claim.MemoryGB)
+		assert.Equal(t, 2, Size(Claim{}, belief(runs...), nil, szPolicy).Claim.MemoryGB)
 	})
 
 	t.Run("runs with spare cores", func(t *testing.T) {
 		spare := at(10, 9.0)
 		spare.Spare, spare.PeakKB = 6, 12<<20
-		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 6}, Size(Claim{}, belief(spare, at(4, 3.8)), szPolicy).Claim,
+		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 6}, Size(Claim{}, belief(spare, at(4, 3.8)), nil, szPolicy).Claim,
 			"beside a full peak without spare cores, 12 GB at 10 cores is a floor of 4.8 GB at 4")
-		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 14}, Size(Claim{}, belief(spare), szPolicy).Claim,
+		assert.Equal(t, Claim{CPUs: 4, MemoryGB: 14}, Size(Claim{}, belief(spare), nil, szPolicy).Claim,
 			"alone, its peak counts as it is")
 	})
 }
 
 func TestClaimSources_Describe(t *testing.T) {
 	L, A, D, E := SourceLearned, SourceAgent, SourceDefault, SourceExplicit
-	assert.Equal(t, "learned from 5 runs", ClaimSources{L, L, L}.Describe(5))
-	assert.Equal(t, "learned from 1 run", ClaimSources{L, L, L}.Describe(1))
-	assert.Equal(t, "the agent's estimate", ClaimSources{A, A, A}.Describe(0))
-	assert.Equal(t, "default", ClaimSources{D, D, D}.Describe(0))
-	assert.Equal(t, "cores and I/O learned from 1 run, memory yours", ClaimSources{L, E, L}.Describe(1))
-	assert.Equal(t, "cores yours, memory learned from 2 runs, I/O default", ClaimSources{E, L, D}.Describe(2))
+	assert.Equal(t, "learned from 5 runs", ClaimSources{L, L, L}.Describe(5, 0, ""))
+	assert.Equal(t, "learned from 1 run", ClaimSources{L, L, L}.Describe(1, 0, ""))
+	assert.Equal(t, "the agent's estimate", ClaimSources{A, A, A}.Describe(0, 0, ""))
+	assert.Equal(t, "default", ClaimSources{D, D, D}.Describe(0, 0, ""))
+	assert.Equal(t, "cores and I/O learned from 1 run, memory yours", ClaimSources{L, E, L}.Describe(1, 0, ""))
+	assert.Equal(t, "cores yours, memory learned from 2 runs, I/O default", ClaimSources{E, L, D}.Describe(2, 0, ""))
+	F := SourceFamily
+	assert.Equal(t, "from 6 runs of its family (go test ./sched)", ClaimSources{F, F, F}.Describe(0, 6, "go test ./sched"))
+	assert.Equal(t, "cores and I/O learned from 3 runs, memory from 1 run of its family (sleep 0)", ClaimSources{L, F, L}.Describe(3, 1, "sleep 0"))
 }
 
 func TestClaimSources_Tag(t *testing.T) {
-	assert.Equal(t, "learned·5", ClaimSources{Memory: SourceLearned}.Tag(5))
-	assert.Equal(t, "agent", ClaimSources{Memory: SourceAgent}.Tag(0))
-	assert.Equal(t, "yours", ClaimSources{Memory: SourceExplicit}.Tag(0))
-	assert.Equal(t, "default", ClaimSources{Memory: SourceDefault}.Tag(0))
-	assert.Equal(t, "", ClaimSources{Memory: SourceExclusive}.Tag(0))
-	assert.Equal(t, "", ClaimSources{}.Tag(0), "a record from before sizing")
+	assert.Equal(t, "learned·5", ClaimSources{Memory: SourceLearned}.Tag(5, 0))
+	assert.Equal(t, "family·6", ClaimSources{Memory: SourceFamily}.Tag(0, 6))
+	assert.Equal(t, "agent", ClaimSources{Memory: SourceAgent}.Tag(0, 0))
+	assert.Equal(t, "yours", ClaimSources{Memory: SourceExplicit}.Tag(0, 0))
+	assert.Equal(t, "default", ClaimSources{Memory: SourceDefault}.Tag(0, 0))
+	assert.Equal(t, "", ClaimSources{Memory: SourceExclusive}.Tag(0, 0))
+	assert.Equal(t, "", ClaimSources{}.Tag(0, 0), "a record from before sizing")
 }
 
 func TestUsualAndOverdueAfter(t *testing.T) {
 	sec := func(s float64) Run { return Run{Outcome: OutcomeDone, WallSeconds: s} }
 	b := belief(sec(60), sec(120), sec(90), Run{Outcome: OutcomeCancelled, WallSeconds: 900}, Run{Outcome: OutcomeFailed, WallSeconds: 100})
-	usual, p90, n, fromPrior := Usual(b, 0)
+	usual, p90, n, src := Usual(b, nil, 0)
 	assert.Equal(t, 95*time.Second, usual, "the median of 60, 90, 100 and 120")
 	assert.Equal(t, 120*time.Second, p90)
 	assert.Equal(t, 4, n)
-	assert.False(t, fromPrior)
+	assert.Equal(t, DurationLearned, src)
 	assert.Equal(t, 7*time.Minute, OverdueAfter(b, 0), "max(2 × 2m, 2m + 5m)")
 
 	few := belief(sec(60), sec(60))
 	assert.Zero(t, OverdueAfter(few, 0), "fewer than three duration runs")
 
 	prior := &Belief{Prior: &Prior{DurationSeconds: 300}}
-	usual, p90, n, fromPrior = Usual(prior, 0)
+	usual, p90, n, src = Usual(prior, nil, 0)
 	assert.Equal(t, 5*time.Minute, usual)
 	assert.Equal(t, 5*time.Minute, p90)
 	assert.Zero(t, n)
-	assert.True(t, fromPrior)
+	assert.Equal(t, DurationPrior, src)
 
-	usual, _, n, fromPrior = Usual(nil, 0)
+	usual, _, n, src = Usual(nil, nil, 0)
 	assert.Zero(t, usual)
 	assert.Zero(t, n)
-	assert.False(t, fromPrior)
+	assert.Equal(t, DurationNone, src)
 
 	t.Run("at other cores", func(t *testing.T) {
 		b := belief(at(3, 2.74), at(3, 2.74), at(3, 2.74)) // p ≈ 0.953; 100 s at 3 cores
-		usual, p90, n, _ := Usual(b, 4)
+		usual, p90, n, _ := Usual(b, nil, 4)
 		assert.Equal(t, 78*time.Second, usual, "100 s × f(4) ÷ f(3)")
 		assert.Equal(t, 78*time.Second, p90)
 		assert.Equal(t, 3, n)
-		usual, _, _, _ = Usual(b, 0)
+		usual, _, _, _ = Usual(b, nil, 0)
 		assert.Equal(t, 100*time.Second, usual, "0 cores: as measured")
 		assert.Equal(t, 378*time.Second, OverdueAfter(b, 4), "max(2 × 78 s, 78 s + 5m)")
 	})
+}
+
+func TestSize_FromTheFamily(t *testing.T) {
+	const peak138 = 14_422_836 // 13.8 GB
+	F, L, D, A, E := SourceFamily, SourceLearned, SourceDefault, SourceAgent, SourceExplicit
+	fam := belief(done(5<<20, 20, 10)) // 2 busy cores, 5 GB
+	failedBig := Run{Outcome: OutcomeFailed, PeakKB: peak138, WallSeconds: 30}
+	adopted := Run{Outcome: OutcomeDone, Adopted: true, PeakKB: 1 << 20, CPUSeconds: 10, WallSeconds: 10}
+	io3 := done(1<<20, 10, 10)
+	io3.WriteBytes = int64p(3 << 30)
+	capped := Policy{Caps: Caps{CPUs: 14, MemoryGB: 14, IOJobs: 2}, DefaultClaim: Claim{CPUs: 4, MemoryGB: 6}}
+	cases := []struct {
+		name       string
+		asked      Claim
+		b, family  *Belief
+		policy     Policy
+		want       Claim
+		sources    ClaimSources
+		learned    int
+		familyRuns int
+		above      bool
+	}{
+		{"the family fills what the job lacks", Claim{}, nil, fam, szPolicy, Claim{CPUs: 3, MemoryGB: 6}, ClaimSources{F, F, D}, 0, 1, false},
+		{"the job's own runs win", Claim{}, belief(done(1<<20, 10, 10)), fam, szPolicy, Claim{CPUs: 2, MemoryGB: 2}, ClaimSources{L, L, D}, 1, 0, false},
+		{"parts mix: own cores, family memory", Claim{}, belief(adopted), fam, szPolicy, Claim{CPUs: 2, MemoryGB: 6}, ClaimSources{L, F, D}, 1, 1, false},
+		{"a job's own failed peak raises a family claim", Claim{}, belief(failedBig), fam, szPolicy, Claim{CPUs: 3, MemoryGB: 16}, ClaimSources{F, F, D}, 0, 1, false},
+		{"a family member's failed peak neither sizes", Claim{}, nil, belief(failedBig), szPolicy, Claim{CPUs: 4, MemoryGB: 6}, all(D), 0, 0, false},
+		{"nor raises", Claim{}, nil, belief(done(1<<20, 10, 10), failedBig), szPolicy, Claim{CPUs: 2, MemoryGB: 2}, ClaimSources{F, F, D}, 0, 2, false},
+		{"a family never makes an overrunner", Claim{}, nil, belief(at(4, 7.81)), szPolicy, Claim{CPUs: 4, MemoryGB: 2}, ClaimSources{F, F, D}, 0, 1, false},
+		{"explicit wins over the family", Claim{MemoryGB: 3}, nil, fam, szPolicy, Claim{CPUs: 3, MemoryGB: 3}, ClaimSources{F, E, D}, 0, 1, false},
+		{"the family wins over the prior", Claim{}, &Belief{Prior: &Prior{CPUs: 6, MemoryGB: 12, IO: true}}, fam, szPolicy,
+			Claim{CPUs: 3, MemoryGB: 6, IO: true}, ClaimSources{F, F, A}, 0, 1, false},
+		{"a family claim above the cap", Claim{}, nil, belief(done(peak138, 0, 93)), capped, Claim{CPUs: 4, MemoryGB: 14}, ClaimSources{D, F, D}, 0, 1, true},
+		{"the family's I/O", Claim{}, nil, belief(io3), szPolicy, Claim{CPUs: 2, MemoryGB: 2, IO: true}, all(F), 0, 1, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := Size(c.asked, c.b, c.family, c.policy)
+			assert.Equal(t, c.want, s.Claim)
+			assert.Equal(t, c.sources, s.Sources)
+			assert.Equal(t, c.learned, s.Learned)
+			assert.Equal(t, c.familyRuns, s.FamilyRuns)
+			assert.Equal(t, c.above, s.AboveCap)
+		})
+	}
+}
+
+func TestUsual_FromTheFamily(t *testing.T) {
+	sec := func(s float64) Run { return Run{Outcome: OutcomeDone, WallSeconds: s} }
+	fam := belief(sec(60), sec(120), sec(90))
+	usual, p90, n, src := Usual(nil, fam, 4)
+	assert.Equal(t, 90*time.Second, usual)
+	assert.Equal(t, 120*time.Second, p90)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, DurationFamily, src)
+
+	usual, _, n, src = Usual(belief(sec(30)), fam, 0)
+	assert.Equal(t, 30*time.Second, usual, "the job's own runs win")
+	assert.Equal(t, 1, n)
+	assert.Equal(t, DurationLearned, src)
+
+	prior := &Belief{Prior: &Prior{DurationSeconds: 300}}
+	usual, _, _, src = Usual(prior, fam, 0)
+	assert.Equal(t, 90*time.Second, usual, "the family before the prior")
+	assert.Equal(t, DurationFamily, src)
+
+	scaling := belief(at(3, 2.74), at(3, 2.74), at(3, 2.74)) // 100 s at 3 cores, 78 s at 4 as its own
+	usual, _, _, _ = Usual(nil, scaling, 4)
+	assert.Equal(t, 100*time.Second, usual, "a family's durations are unscaled")
+	assert.Zero(t, OverdueAfter(&Belief{}, 0), "overdue reads only the job's own runs")
 }
