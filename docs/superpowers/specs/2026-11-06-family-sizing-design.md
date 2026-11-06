@@ -1,6 +1,6 @@
 # Family sizing: learning from a job's near relatives
 
-Status: design approved 2026-11-06.
+Status: design approved 2026-11-06; amended while planning (marked *amended while planning*).
 
 Builds on [the smart scheduler](2026-11-05-smart-scheduler-design.md), [job scaling](2026-11-05-job-scaling-design.md) and [dependent jobs](2026-11-05-dependent-jobs-design.md).
 
@@ -76,13 +76,13 @@ Out (§12): changing `SignatureID`, families across repos, borrowing curves or p
 - It fails, and the job has no family, on: an unbalanced quote, `$(…)` or backquote; an unquoted `(`, `)`, `{` or `}` outside `$(…)`; a here-document (`<<`); a word `if`, `then`, `else`, `elif`, `fi`, `for`, `while`, `until`, `do`, `done`, `case`, `esac` or `function` in command position.
 
 **Each step**, in order:
-1. Leading `NAME=value` words (`isAssignment`) are dropped.
+1. Leading `NAME=value` words (`isAssignment`) are dropped, then the rest goes through `Normalize`, so `env`, `nice`, `time` and the other wrappers are removed inside a script as they are from an argv (*amended while planning*).
 2. A step whose program is `tail`, `head`, `grep`, `sed`, `wc`, `sort`, `cat`, `echo`, `true`, `export` or `set` is dropped whole.
 3. The program word becomes `programWord` of it (an absolute path's base name, a relative path cleaned).
 4. The step's string, by program:
    - **`cd`:** `cd DIR`, DIR as written. `cd prader-app && pnpm test` and `cd prader-admin && pnpm test` are two families.
    - **`cargo`:** the subcommand is the first word that starts with neither `-` nor `+`; for `nextest`, the word after it joins it (`nextest run`). Kept, in this order: `--workspace` (also written `--all`), `--doc`, `--release`, then the crates of `-p X`, `--package X` and `--package=X`, sorted and de-duplicated, each as `-p X`. Everything else is ignored: test filters, `--lib`, `--all-features`, `--exclude`, `--no-fail-fast`, everything after `--`.
-   - **`go`:** the subcommand is the first word that doesn't start with `-`. Kept, in this order: `-race`, `-tags V` (from `-tags V` or `-tags=V`), then the package patterns (words that are `.` or start with `./` or `../`), sorted and de-duplicated. Everything else is ignored, `-run`, `-count` and `-v` included.
+   - **`go`:** the subcommand is the first word that doesn't start with `-`. Kept, in this order: `-race`, `-tags V` (from `-tags V` or `-tags=V`), then the package patterns (words that are `.` or start with `./` or `../`, one trailing `/` dropped so `./sched/` is `./sched`, *amended while planning*), sorted and de-duplicated. Everything else is ignored, `-run`, `-count` and `-v` included.
    - **Anything else:** the program and its first two words that don't start with `-`: `pnpm exec playwright`, `python3 scripts/gen-architecture-tables.py`, `bash scripts/verify-affected.sh`, `make test`.
 5. The steps are de-duplicated and sorted.
 
@@ -92,9 +92,14 @@ The job has no family when the lexer fails or when no step but `cd` steps remain
 
 `sched.FamilyPool(bs *Beliefs, self *Belief) *Belief` is pure. It returns nil when `self` is nil or has no family, or no other belief of its family has a run; otherwise a belief whose `Runs` are the runs of every belief of `self`'s family but `self`, sorted newest first by `Ended` (ties by `Job`), cut to `window`. It has no ID, signature, prior or notes.
 
-Each belief's family is computed once — when `LoadBeliefs` reads it and when `Beliefs.Ensure` creates it — and kept in an unexported field of `Belief`, so the admission pass, which re-sizes every waiting job (`resizeQueued`), parses no command. `FamilyPool` computes the family of a belief that lacks it (a belief built in a test).
+*Amended while planning:* the pool is found from a signature, not a belief, since a submit sizes its job before `Beliefs.Ensure` makes the belief. Families are memoized in a `sched.Families` the model's queue state holds, keyed by signature ID (an ID names one signature, so an entry never goes stale; the memo starts over past `2 × MaxBeliefs` entries), so the admission pass, which re-sizes every waiting job (`resizeQueued`), parses no command. An unexported field on `Belief` was rejected: `assert.Equal` compares unexported fields, so every round-trip test of `beliefs.json` would break, and a belief doesn't exist yet at a job's first sizing.
 
-The model reads a pool through `queueState.familyPool(b *sched.Belief) *sched.Belief`, nil while learning is off (`beliefsErr`), like `beliefOf`.
+- `Families.Of(sig Signature) (Family, bool)`;
+- `Families.Pool(bs []Belief, sig Signature) *Belief`: the pool of §5.2's first paragraph, `sig`'s own belief excluded by ID;
+- `Families.Members(bs []Belief, sig Signature) int`: the beliefs of `sig`'s family, its own included;
+- `Families.Kin(a, b *Belief) (same bool, shared int)`: for §5.5.
+
+The model reads a pool through `queueState.familyPool(sig sched.Signature) *sched.Belief`, nil while learning is off (`beliefsErr`), and `queueState.poolOf(id SignatureID)`, through the belief's signature (nil without one). `sizeRecord` takes the submit's signature, nil from `resizeQueued`.
 
 ### 5.3 Sizing
 
@@ -112,7 +117,7 @@ The model reads a pool through `queueState.familyPool(b *sched.Belief) *sched.Be
 
 ### 5.4 Durations, surprises, and what stays exact
 
-- **`Usual(b, family *Belief, cores int) (usual, p90 time.Duration, n int, src DurationSource)`.** `DurationSource` is `DurationLearned`, `DurationFamily`, `DurationPrior` or `DurationNone`, in place of today's `fromPrior` bool. It takes the job's own duration runs, scaled as today; with none, the pool's duration runs, unscaled (a pool mixes members whose scaling differs); with none of those, the prior's duration; else none.
+- **`Usual(b, family *Belief, cores int) (usual, p90 time.Duration, n int, src DurationSource)`.** `DurationSource` is `DurationLearned`, `DurationFamily`, `DurationPrior` or `DurationNone`, in place of today's `fromPrior` bool. The views keep their `UsualFromPrior` field and gain `UsualFromFamily` (*amended while planning*: the wire keeps its field names). It takes the job's own duration runs, scaled as today; with none, the pool's duration runs, unscaled (a pool mixes members whose scaling differs); with none of those, the prior's duration; else none.
 - **`OverdueAfter`** calls `Usual(b, nil, cores)`: overdue needs 3 of the job's own duration runs. A family of filtered runs must not flag a full suite overdue.
 - **`Surprise`** counts a peak above a `family`-sourced memory claim as it counts one above a learned claim, so the advisor's reconcile runs on the job's own belief.
 - **Unchanged, own runs only:** `Predict` and `CurvedRuns` (the greedy admission's curves), `Hold` and `profiledRuns`, `ScalingOf`, and `Grant`, which already lends only to a job whose cores are `learned` — a family-sourced job gets no spare cores. A pooled curve or profile could release memory a job still needs.
@@ -133,8 +138,9 @@ A settled run is recorded only in its own belief (`recordRun`), as today. Since 
 ## 6. Display
 
 - **The tag** (`ClaimSources.Tag`): `family·N` for a family-sourced memory claim, N being `FamilyRuns`.
-- **The description** (`ClaimSources.Describe(learned, familyRuns int, familyLabel string)`): the `family` source reads "from N runs of its family (`<label>`)", e.g. "cores and I/O learned from 3 runs, memory from 6 runs of its family (`cargo nextest run -p prader-app-core`)". The CLI's job lines, the work view and the belief pager use it.
-- **`loom job beliefs show`** and the work view's `b` pager gain a `family` line in the label column: the family's label and how many beliefs share it ("`cargo nextest run -p prader-app-core` (25 beliefs)"). A belief with no family shows no line. `BeliefView` gains `Family string` and `FamilySize int`.
+- **The description** (`ClaimSources.Describe(learned, familyRuns int, familyLabel string)`): the `family` source reads "from N runs of its family (<label>)", e.g. "cores and I/O learned from 3 runs, memory from 6 runs of its family (cargo nextest run -p prader-app-core)". The CLI's job lines, the work view and the belief pager use it.
+- **Durations** (*amended while planning*): a family duration reads as an estimate, "about 3m" in the CLI's sizing line (as a prior's does), and "about 3m (its family's runs)" in the belief pager. `JobView` gains `Family` (the label) and `FamilyRuns`.
+- **`loom job beliefs show`** and the work view's `b` pager gain a `family` line in the label column: the family's label and how many beliefs share it ("`cargo nextest run -p prader-app-core` (25 beliefs)"). A belief with no family shows no line. `BeliefView` gains `Family string`, `FamilySize int` and `UsualFromFamily bool`.
 - `loom job beliefs` (the list) is unchanged.
 
 ## 7. Storage and older builds
@@ -144,13 +150,15 @@ A settled run is recorded only in its own belief (`recordRun`), as today. Since 
 
 ## 8. Wire
 
-`Record.FamilyRuns`, `BeliefView.Family` and `BeliefView.FamilySize` are optional fields and `"family"` a new value of an existing string, so `rpc.Protocol` stays at 2 (`core/rpc/rpc.go`). `docs/specs/protocol.md` is regenerated (`go test ./core/rpc -run TestProtocolReference -update`).
+`Record.FamilyRuns`, `JobView.Family`, `JobView.FamilyRuns`, `JobView.UsualFromFamily`, `BeliefView.Family`, `BeliefView.FamilySize` and `BeliefView.UsualFromFamily` are optional fields and `"family"` a new value of an existing string, so `rpc.Protocol` stays at 2 (`core/rpc/rpc.go`). `docs/specs/protocol.md` is regenerated (`go test ./core/rpc -run TestProtocolReference -update`).
 
 ## 9. Components
 
 - `sched/family.go` (new): `Family`, `FamilyOf`, `FamilyPool`, the step rules.
 - `sched/shellwords.go` (new): the lexer (§5.1). No shell lexer is vendored.
-- `sched/belief.go`: the cached family field, set in `Ensure`; `sched/beliefs_store.go`: set in `LoadBeliefs`.
+- `sched/family.go` also holds `Families`, the memo (§5.2).
+- `core/queue_ladder.go`: a requeue's new record keeps `FamilyRuns` (*amended while planning*).
+- `internal/cli/job_sizing.go`, `internal/cli/job_beliefs.go`, `ui/work.go`: `Tag`'s and `Describe`'s new arguments, the family duration's "about".
 - `sched/size.go`: `SourceFamily`, the `family` cases in `Size`, `Sized.FamilyRuns`, `Tag` and `Describe`.
 - `sched/surprise.go`: `NeedsPrior`'s pool, `Surprise`'s source list.
 - `sched/durations.go`: `Usual`'s pool and `DurationSource`; `OverdueAfter` passes nil.
