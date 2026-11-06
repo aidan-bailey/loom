@@ -57,6 +57,7 @@ From the owner's transcripts under `~/.claude/projects` on 2026-11-06 (Claude 2.
 15. `core.ReadTurns` passes the query through unchanged; its admit and refusals stay. The new fields (`Query.Agent`, `Step.Agent`, `Step.Finished`, `Item` kind `thinking`, `Page.Agent` with its `State`) are optional wire fields: regenerate `docs/specs/protocol.md` (`go test ./core/rpc -run TestProtocolReference -update`); no `rpc.Protocol` bump, as with the earlier PWA wire additions.
 16. **`subagent.View` gains `ID`** (the tracker's agent id), carried on `InstanceView`'s agents and the web's session JSON as `id`.
 17. **`GET /api/v1/sessions/{id}/turns?agent=<agentId>`** (`internal/web/reads.go`): the parameter joins the existing query parsing; a malformed id (failing `subagent.ValidAgentID`) is a 400 naming it. The web JSON gains `agent` and `finished` on steps, the `thinking` item kind, and the page's `agent` object.
+18. **`GET /api/v1/sessions/{id}/message` stays, undrawn** (owner, 2026-11-06). With the Last message section gone no screen fetches it; the route, its handler and its Go tests stay, and the docs say no screen draws it now. Webshot's side retires: `tools/webshot/fixture/message.json`, its canned route, `TestFixture_TheLastMessageIsTheTreesText` and the `last_message`/`message.json` clause of `tools/CLAUDE.md`'s webshot rule. Thinking text crosses the turns route as plain `text` and is drawn as text, an exception `internal/web/CLAUDE.md`'s draw-from-the-tree rule states.
 
 ## Errors and edge cases
 
