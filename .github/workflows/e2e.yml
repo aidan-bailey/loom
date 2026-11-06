@@ -1,0 +1,51 @@
+name: E2E
+
+# The end-to-end suite (e2e/): real loom builds against each other on a
+# private tmux server per test. Unit tests serve the daemon in process, so
+# only this suite catches a regression between processes.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/e2e.yml'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: go test -tags e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # git is preinstalled. Without tmux every test skips and the run
+      # passes having tested nothing, so the next step checks for it.
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Check tmux
+        run: tmux -V
+
+      - name: Run the e2e suite
+        env:
+          CGO_ENABLED: '0'
+        run: go test -tags e2e -count=1 -v ./e2e/...
