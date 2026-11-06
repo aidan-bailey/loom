@@ -1,0 +1,6 @@
+Review the whole implementation of the plan p.md, h0..h9, for its seams: contracts between stories, values one story produces that no other reads, units or limits that disagree across a boundary. The spec is s.md.
+
+[reviewer]
+Prefix: none
+Landmine notes:
+    Never drop a stash.

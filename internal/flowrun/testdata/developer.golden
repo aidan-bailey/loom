@@ -1,0 +1,14 @@
+Build Story 2 of the plan p.md: its section is plan lines 200-299. Read those lines; the tasks are there, not here.
+The spec is s.md.
+
+Corrections to the plan's premises (checked against the base commit):
+- plan:212 | MOVED | COSMETIC | a.go:4 | it is in a.go now
+
+Commit once per task. Run the story's Verify command (go test ./x) before you report DONE.
+
+[developer]
+Prefix for every build and test command: none
+Services: none
+Landmine notes (deep stories only):
+    Never drop a stash.
+    Never run loom.

@@ -1,0 +1,35 @@
+# Run: r
+
+- Plan: p.md (2 stories)
+- Spec: s.md
+- Commits: h0..h7abcdef1 (7)
+- Manager: claude-opus-5-5 m1; m
+- Start: 2026-11-06T10:00:00Z, End: 2026-11-06T12:30:00Z
+- Definitions: loom flow roster 0123456789ab → loom flow roster ba9876543210
+- Profile: /repo/.claude/flow.toml sha256:abcdefabcdef
+- Design stage: 2 sessions, 40 minutes
+- Ended: done
+- Engine: loom flow run (flow in loom part 3b)
+
+## Cost
+
+COST TABLES
+<!-- agent-costs {} -->
+
+## Stories
+
+| Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | intermediate-dev | deep | vouched | 2 | done | 0 | 0 | 1 | 1/0/1 | no |
+| 2 | intermediate-dev | deep | full | 2 | done | 0 | 1 | 0 | 0/0/0 | no |
+
+## Notes
+
+- Asked (needs-context, Story 1): Which?
+  Answered: That one.
+- Story 2: r-s2-dev1 reported BLOCKED; a fresh intermediate-dev took it
+- Gates r-s1-gates1: passed
+- Gates r-s1-gates2: passed
+- Gates r-s2-gates1: failed
+- Gates r-s2-gates2: passed
+- Gates r-final-gates1: passed

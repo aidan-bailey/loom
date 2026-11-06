@@ -1,0 +1,10 @@
+Review Story 2 of the plan p.md: its section is plan lines 200-299, and its commits are h1..h4.
+The output of loom flow conformance for it is in /state/runs/r/conformance-2-h4.txt.
+The developer's report, with its deviations, is /state/agents/r-s2-dev1/report.md.
+Its Interfaces line: exposes `Run`
+The Interfaces lines of the earlier stories it uses are in the plan.
+
+[reviewer]
+Prefix: none
+Landmine notes:
+    Never drop a stash.

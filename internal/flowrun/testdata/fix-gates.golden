@@ -1,0 +1,16 @@
+Fix the gates Story 2 fails. The story's commits are h1..h4; its section is plan lines 200-299 of p.md.
+
+Failing steps:
+- FAIL: go test ./... (log: /state/gates/r-s2-gates1/2.log)
+
+The manager's decision:
+Skip the flaky test.
+
+Commit each fix. Run the failing commands again before you report DONE.
+
+[developer]
+Prefix for every build and test command: none
+Services: none
+Landmine notes (deep stories only):
+    Never drop a stash.
+    Never run loom.
