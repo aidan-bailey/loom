@@ -8,7 +8,8 @@ description: Launch, drive, and screenshot a dev build of loom safely from insid
 A loom TUI in a loom pane is a client of the host's daemon (the user's
 global dir), so a dev build run there never gets a daemon of its own: it
 joins the user's daemon, or is refused. A loom inside loom never replaces
-an older daemon (`replaceGuard`), and a daemon that would start there
+an older daemon (`replaceGuard`): it uses one of its protocol as it is
+and refuses one of another, and a daemon that would start there
 refuses (its nesting guard): its boot runs an orphan sweep that kills
 unclaimed `loom_*` tmux sessions on the tmux server it pins, which is the
 host's (the last daemon's while it runs, whatever `LOOM_TMUX_SOCKET`

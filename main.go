@@ -420,6 +420,7 @@ func init() {
 	// The workspace and account commands are the daemon's clients (Join);
 	// migrate writes state.json itself, holding the lock.
 	cli.Join = joinCLI
+	cli.OlderDaemon = olderDaemon
 	cli.WorkspaceCmd.AddCommand(cmd2.MigrateCmd)
 	cmd2.StateWriteGuard = holdForStateWrite
 	rootCmd.AddCommand(cli.WorkspaceCmd)

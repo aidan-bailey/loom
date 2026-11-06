@@ -636,8 +636,12 @@ starts)…`.
   `loom serve stop` to switch to it. A Nix build of loom names the commit
   it was built from, so a newer one replaces the daemon as a release does.
   A loom started inside one of loom's own tmux sessions never replaces the
-  daemon: run the new loom from an ordinary terminal, or stop the daemon
-  first.
+  daemon: it uses an older daemon of the same wire protocol as it is (`loom:
+  using the loom daemon as it is (…)` on stderr), so an agent's `loom job`
+  and `loom session` commands keep working after a rebuild, and a command
+  only the newer build knows fails saying the daemon is older. An older
+  daemon of another protocol is refused. To upgrade it, run the new loom
+  from an ordinary terminal, or stop the daemon first.
 - **The daemon's environment** is the one it started with: that of the
   terminal or SSH login whose `loom` launched it. It decides what your
   agents get for `SSH_AUTH_SOCK`, `DISPLAY` and the like (the rest of

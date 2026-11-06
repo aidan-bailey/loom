@@ -60,7 +60,10 @@ func (e *newerDaemonError) Is(target error) bool { return target == app.ErrDaemo
 // used as it is. A newer daemon is refused (newerDaemonError): this loom
 // must be upgraded. An older one is stopped and replaced with this build,
 // once, unless mayReplace refuses: a loom under development, run in a loom
-// pane, must never replace the user's daemon. The stop names the daemon
+// pane, must never replace the user's daemon. Refused, an older daemon of
+// this protocol is used as it is, said through say, so a rebuild doesn't
+// stop every session's commands until the owner restarts it; one of
+// another protocol is refused. The stop names the daemon
 // compared, by its pid: another loom starting meanwhile may have replaced
 // it already, and the daemon it started must be left alone. The first dial
 // starts a daemon only when spawn; the dial after a stop always does,
@@ -77,6 +80,20 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 			tmux.UseServer(peer.Tmux)
 			return c, nil
 		}
+		var refusal error
+		if order == rpc.ClientNewer && !replaced {
+			refusal = d.mayReplace(peer.Tmux)
+		}
+		if refusal != nil && c != nil {
+			// Inside loom, an older daemon of this protocol is used as
+			// it is: every method both builds know works, and one only
+			// this build knows fails alone (CodeUnsupported).
+			peerName, ownName := describeBuilds(peer, d.own)
+			d.say(fmt.Sprintf("using the loom daemon as it is (%s, older than this loom, %s): a loom inside loom never replaces it; it upgrades when restarted from outside loom",
+				peerName, ownName))
+			tmux.UseServer(peer.Tmux)
+			return c, nil
+		}
 		if c != nil {
 			c.Close()
 		}
@@ -89,9 +106,9 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 			peerName, ownName := describeBuilds(peer, d.own)
 			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s), even after replacing it", peerName, ownName)
 		}
-		if refusal := d.mayReplace(peer.Tmux); refusal != nil {
+		if refusal != nil {
 			peerName, ownName := describeBuilds(peer, d.own)
-			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s), and %w: a loom inside loom never replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)",
+			return nil, fmt.Errorf("the loom daemon is %s, older than this loom (%s) and speaks another protocol, and %w: a loom inside loom never replaces the daemon; run the new loom outside loom, or stop the daemon deliberately first (`loom serve stop`)",
 				peerName, ownName, refusal)
 		}
 		// The stop can take a while: the old daemon finishes its
@@ -332,6 +349,21 @@ func joinCLI() (*rpc.Client, error) {
 		return nil, err
 	}
 	return joinDaemon(globalDir)
+}
+
+// olderDaemon describes the daemon c reached when its build is older than
+// this loom's ("" otherwise): cli.OlderDaemon, which explains a method the
+// older daemon does not know.
+func olderDaemon(c *rpc.Client) string { return olderThanSelf(c.Peer()) }
+
+// olderThanSelf is olderDaemon for a daemon whose hello is peer.
+func olderThanSelf(peer rpc.Hello) string {
+	own := rpc.Self()
+	if rpc.CompareBuilds(own, peer) != rpc.ClientNewer {
+		return ""
+	}
+	peerName, ownName := describeBuilds(peer, own)
+	return fmt.Sprintf("the loom daemon is %s, older than this loom (%s)", peerName, ownName)
 }
 
 // holdForStateWrite holds the global dir's lock for a command that writes
