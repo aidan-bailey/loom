@@ -200,6 +200,10 @@ func cloneSchedulerSettings(s config.SchedulerSettings) config.SchedulerSettings
 		on := *s.ReleasePastPeaks
 		s.ReleasePastPeaks = &on
 	}
+	if s.Borrow != nil {
+		on := *s.Borrow
+		s.Borrow = &on
+	}
 	if s.Agent != nil {
 		a := *s.Agent
 		if a.Enabled != nil {
