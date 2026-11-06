@@ -62,12 +62,25 @@ func Record(st *State, in RecordInputs) string {
 			s.ID, dev, s.Tier, s.Review, r.Commits, status, r.Deviations, r.UpATier, r.Escalated, r.Findings[0], r.Findings[1], r.Findings[2], cap)
 	}
 	b.WriteString("\n## Notes\n\n")
+	if len(st.Answers) > 0 {
+		spec := 0
+		for _, a := range st.Answers {
+			if a.From == FromSpec {
+				spec++
+			}
+		}
+		fmt.Fprintf(&b, "- Questions: %d; answered from the spec: %d; by the owner: %d.\n", len(st.Answers), spec, len(st.Answers)-spec)
+	}
 	for _, a := range st.Answers {
 		where := ""
 		if a.Story != "" {
 			where = ", Story " + a.Story
 		}
-		fmt.Fprintf(&b, "- Asked (%s%s): %s\n  Answered: %s\n", a.Kind, where, oneLine(a.Text), oneLine(a.Answer))
+		by := "by the owner"
+		if a.From == FromSpec {
+			by = "from the spec"
+		}
+		fmt.Fprintf(&b, "- Asked (%s%s): %s\n  Answered %s: %s\n", a.Kind, where, oneLine(a.Text), by, oneLine(a.Answer))
 	}
 	for _, n := range st.Notes {
 		fmt.Fprintf(&b, "- %s\n", n)

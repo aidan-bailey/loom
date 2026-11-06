@@ -693,8 +693,10 @@ It asks the manager every judgement as a typed question: a NEEDS_CONTEXT,
 an intermediate's BLOCKED, a design finding, a premise's DESIGN verdict,
 findings a fix round left open, a second gate failure, a failed agent, a
 tree that moved. The manager waits on `loom flow run wait` in a background
-Bash, which costs no turns, and answers with `loom flow run answer`. 3c's
-judge will answer what the spec settles.
+Bash, which costs no turns, and answers with `loom flow run answer --from
+spec|owner`: the record counts the questions the spec settled, which a
+judge (3c, not built) could have answered, against the ones that needed the
+owner.
 
 The engine replays. Each step has a fixed name (`<run>-s3-dev2`) and a
 memoized result in `<state>/runs/<run>.json`, so an engine lost mid-run

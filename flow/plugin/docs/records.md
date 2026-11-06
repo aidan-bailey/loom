@@ -45,8 +45,10 @@ A record has four parts.
      (`/flow:run`): how the run ended (`done`, `stopped` or `cancelled`), and
      `loom flow run (flow in loom part 3b)`. Its Cost is
      `loom flow costs run <run>`'s output, which prices the manager's sessions
-     as `main` and each headless agent run by its role, and its Notes list
-     every question the engine asked with its answer.
+     as `main` and each headless agent run by its role, and its Notes open
+     with the count of questions answered from the spec and by the owner
+     (`loom flow run answer --from`), then list every question with its
+     answer and where it came from.
 
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.

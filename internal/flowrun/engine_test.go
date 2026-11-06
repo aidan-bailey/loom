@@ -196,7 +196,7 @@ func drive(t *testing.T, st *State, f *fakeFX, answers map[string]string) {
 		require.True(t, ok, "an unexpected question %s (%s): %s", st.Question.Key, st.Question.Kind, st.Question.Text)
 		_, err := CheckAnswer(st.Question.Kind, a)
 		require.NoError(t, err)
-		require.NoError(t, st.Answer(a, "m"))
+		require.NoError(t, st.Answer(a, "m", FromSpec))
 	}
 	t.Fatal("the run never ended")
 }
@@ -245,7 +245,7 @@ func TestRun_NeedsContextParksAndTheAnswerResumes(t *testing.T) {
 	require.NoError(t, Run(st, f))
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, Question{Key: "ctx:r-s1-dev1:1", Kind: KindNeedsContext, Story: "1", Text: "Which colour?", Paths: []string{"/reports/r-s1-dev1"}}, *st.Question)
-	require.NoError(t, st.Answer("blue", "m2"))
+	require.NoError(t, st.Answer("blue", "m2", FromSpec))
 	drive(t, st, f, nil)
 	assert.Contains(t, f.calls, "resume r-s1-dev1 blue")
 	assert.Contains(t, st.Managers, "m2")
@@ -306,7 +306,7 @@ func TestRun_DoneWithNoCommitsIsAFailure(t *testing.T) {
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, KindAgentFailed, st.Question.Kind)
 	assert.Contains(t, st.Question.Text, "reported done with no commits")
-	require.NoError(t, st.Answer("retry", "m"))
+	require.NoError(t, st.Answer("retry", "m", FromSpec))
 	drive(t, st, f, nil)
 	assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev")
 }
@@ -478,7 +478,7 @@ func TestRun_Premises(t *testing.T) {
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, KindPremiseDesign, st.Question.Kind)
 		assert.Equal(t, []string{"agent r-premise1 premise-check"}, f.submits())
-		require.NoError(t, st.Answer("Use the new type.", "m"))
+		require.NoError(t, st.Answer("Use the new type.", "m", FromSpec))
 		drive(t, st, f, nil)
 		assert.Contains(t, f.briefs["r-s1-dev1"], "the manager: Use the new type.")
 	})
@@ -494,7 +494,7 @@ func TestRun_TreeMoved(t *testing.T) {
 			require.Equal(t, Parked, st.Status)
 			assert.Equal(t, Question{Key: "tree:r-s1-dev1", Kind: KindTreeMoved, Story: "1",
 				Text: "HEAD is h3, and the engine last recorded h0, before it starts r-s1-dev1"}, *st.Question)
-			require.NoError(t, st.Answer(c.answer, "m"))
+			require.NoError(t, st.Answer(c.answer, "m", FromSpec))
 			drive(t, st, f, nil)
 			assert.Equal(t, c.status, st.Status)
 		})
@@ -573,7 +573,7 @@ func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {
 						st, _, _ = script()
 					}
 				} else {
-					require.NoError(t, st.Answer(answers[st.Question.Key], "m"))
+					require.NoError(t, st.Answer(answers[st.Question.Key], "m", FromSpec))
 				}
 				err = Run(st, f)
 			}

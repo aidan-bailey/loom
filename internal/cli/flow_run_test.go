@@ -142,9 +142,9 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	out, _, err = runRun(t, "", "wait", id)
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "parked "+id+": needs-context (story 2)\nWhich colour?\n")
-	assert.Contains(t, out, "answer with: an answer")
+	assert.Contains(t, out, "answer with: an answer (loom flow run answer "+id+" --from spec|owner < answer)")
 
-	out, _, err = runRun(t, "Blue.", "answer", id)
+	out, _, err = runRun(t, "Blue.", "answer", id, "--from", "owner")
 	require.NoError(t, err, out)
 	assert.Regexp(t, `^answered `+id+`: engine job \d+\n$`, out)
 
@@ -168,7 +168,10 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, text, "- Manager: claude-fake m1")
 	assert.Contains(t, text, "COST of "+id)
 	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | 2 | done | 1 | 0 | 0 | 1/0/0 | no |")
-	assert.Contains(t, text, "- Asked (needs-context, Story 2): Which colour?\n  Answered: Blue.")
+	assert.Contains(t, text, "- Questions: 1; answered from the spec: 0; by the owner: 1.")
+	assert.Contains(t, text, "- Asked (needs-context, Story 2): Which colour?\n  Answered by the owner: Blue.")
+	require.Len(t, st.Answers, 1)
+	assert.Equal(t, flowrun.FromOwner, st.Answers[0].From)
 }
 
 func TestFlowRun_ARestartedEngineFollowsWhatItQueued(t *testing.T) {
@@ -205,8 +208,12 @@ func TestFlowRun_ARestartedEngineFollowsWhatItQueued(t *testing.T) {
 func TestFlowRun_Refusals(t *testing.T) {
 	_, state, _ := runFixture(t, runStory("2", "intermediate-dev"))
 
-	_, _, err := runRun(t, "x", "answer", "plan")
+	_, _, err := runRun(t, "x", "answer", "plan", "--from", "spec")
 	assert.Equal(t, exitNotRun, exitCode(t, err), "no run of that name")
+	_, _, err = runRun(t, "x", "answer", "plan")
+	assert.Equal(t, exitUsage, exitCode(t, err), "an answer without --from")
+	_, _, err = runRun(t, "x", "answer", "plan", "--from", "manager")
+	assert.Equal(t, exitUsage, exitCode(t, err), "--from takes spec or owner")
 
 	require.NoError(t, os.WriteFile("dirt.txt", []byte("x"), 0o600))
 	_, _, err = runRun(t, "", "start", "docs/plan.md")
@@ -217,12 +224,12 @@ func TestFlowRun_Refusals(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = runRun(t, "", "start", "docs/plan.md")
 	assert.Equal(t, exitUsage, exitCode(t, err), "a run not ended")
-	_, _, err = runRun(t, "Blue.", "answer", "plan")
+	_, _, err = runRun(t, "Blue.", "answer", "plan", "--from", "spec")
 	assert.Equal(t, exitUsage, exitCode(t, err), "an answer to a running run")
 
 	_, _, err = runRun(t, "", "engine", "plan")
 	require.NoError(t, err)
-	_, _, err = runRun(t, "accept", "answer", "plan")
+	_, _, err = runRun(t, "accept", "answer", "plan", "--from", "spec")
 	assert.Equal(t, exitUsage, exitCode(t, err), "a word a needs-context question doesn't take")
 	_, _, err = runRun(t, "", "resume", "plan")
 	assert.Equal(t, exitUsage, exitCode(t, err), "resume of a parked run")
@@ -233,7 +240,7 @@ func TestFlowRun_Refusals(t *testing.T) {
 	st.Question = &flowrun.Question{Key: "tree:x", Kind: flowrun.KindTreeMoved, Text: "moved"}
 	require.NoError(t, flowrun.Save(path, st))
 	require.NoError(t, os.WriteFile("dirt.txt", []byte("x"), 0o600))
-	_, _, err = runRun(t, "continue", "answer", "plan")
+	_, _, err = runRun(t, "continue", "answer", "plan", "--from", "spec")
 	assert.Equal(t, exitUsage, exitCode(t, err), "continue with a dirty tree")
 	require.NoError(t, os.Remove("dirt.txt"))
 

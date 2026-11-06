@@ -574,7 +574,7 @@ func printRunStop(out io.Writer, st *flowrun.State) error {
 		if len(q.Paths) > 0 {
 			fmt.Fprintf(out, "read: %s\n", strings.Join(q.Paths, " "))
 		}
-		fmt.Fprintf(out, "answer with: %s (loom flow run answer %s < answer)\n", flowrun.Takes(q.Kind), st.ID)
+		fmt.Fprintf(out, "answer with: %s (loom flow run answer %s --from spec|owner < answer)\n", flowrun.Takes(q.Kind), st.ID)
 		return nil
 	}
 	done := 0
@@ -597,13 +597,19 @@ func printRunStop(out io.Writer, st *flowrun.State) error {
 }
 
 func newFlowRunAnswerCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "answer RUN < ANSWER",
+	var from string
+	cmd := &cobra.Command{
+		Use:   "answer RUN --from spec|owner < ANSWER",
 		Short: "Answer a parked run's question, on stdin, and queue its engine again",
-		Args:  cobra.ExactArgs(1),
+		Long: "--from says where the answer came from: spec when you settled it without the owner (from the spec, " +
+			"the plan or the code), owner when you asked the owner. The run's record counts them.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
 				return err
+			}
+			if from != flowrun.FromSpec && from != flowrun.FromOwner {
+				return &ExitError{Code: exitUsage, Msg: "loom flow run: --from spec or --from owner: say whether the spec settled it or you asked the owner"}
 			}
 			text, err := io.ReadAll(io.LimitReader(c.InOrStdin(), maxBrief+1))
 			switch {
@@ -649,7 +655,7 @@ func newFlowRunAnswerCmd() *cobra.Command {
 					return &ExitError{Code: exitUsage, Msg: "loom flow run: continue takes a clean tree; this one isn't:\n" + status}
 				}
 			}
-			if err := st.Answer(string(text), os.Getenv("CLAUDE_CODE_SESSION_ID")); err != nil {
+			if err := st.Answer(string(text), os.Getenv("CLAUDE_CODE_SESSION_ID"), from); err != nil {
 				return &ExitError{Code: exitUsage, Msg: "loom flow run: " + err.Error()}
 			}
 			path := runStatePath(dirs.runs, id)
@@ -666,6 +672,8 @@ func newFlowRunAnswerCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&from, "from", "", "Where the answer came from: spec (settled without the owner) or owner (you asked the owner)")
+	return cmd
 }
 
 func newFlowRunResumeCmd() *cobra.Command {

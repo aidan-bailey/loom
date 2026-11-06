@@ -16,13 +16,15 @@ short.
 2. Run `loom flow run wait <run>` as a Bash call with `run_in_background`, and
    end your turn. It returns only when the run needs you or has ended.
 3. When it returns parked, read the question and the paths it names. Answer
-   from the spec when the spec settles it. When it doesn't, ask the owner;
-   then write the answer into the spec and commit it by pathspec, so a later
-   question finds it there. Then give your answer on stdin to
-   `loom flow run answer <run>`, in the form the question says it takes
-   (a decision as text, or one of its words), and start the background
-   `wait` again. Stage nothing else, and start no developer or verifier in
-   this worktree: the engine does.
+   from the spec, the plan or the code when they settle it. When they don't,
+   ask the owner; then write the answer into the spec and commit it by
+   pathspec, so a later question finds it there. Give your answer on stdin
+   to `loom flow run answer <run> --from spec` (you settled it without the
+   owner) or `--from owner` (you asked the owner), in the form the question
+   says it takes (a decision as text, or one of its words): the record counts
+   them, to show how many questions a judge could have answered. Then start
+   the background `wait` again. Stage nothing else, and start no developer
+   or verifier in this worktree: the engine does.
 4. For progress, run `loom flow run show <run>` rather than reading files.
    If `wait` says the engine was lost, run `loom flow run resume <run>` and
    wait again.

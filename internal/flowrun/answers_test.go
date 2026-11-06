@@ -58,3 +58,14 @@ func contains(xs []string, x string) bool {
 	}
 	return false
 }
+
+func TestStateAnswer_RecordsWhereTheAnswerCameFrom(t *testing.T) {
+	st := &State{Status: Parked, Question: &Question{Key: "k", Kind: KindNeedsContext, Text: "Which?"}}
+	assert.Error(t, st.Answer("Blue.", "m", "manager"), "only spec or owner")
+	assert.Equal(t, Parked, st.Status, "a refused answer changes nothing")
+	assert.NoError(t, st.Answer(" Blue.\n", "m", FromOwner))
+	assert.Equal(t, []Answer{{Question: Question{Key: "k", Kind: KindNeedsContext, Text: "Which?"}, Answer: "Blue.", Session: "m", From: FromOwner}}, st.Answers)
+	assert.Equal(t, Running, st.Status)
+	assert.Equal(t, []string{"m"}, st.Managers)
+	assert.Error(t, st.Answer("again", "m", FromSpec), "no open question")
+}

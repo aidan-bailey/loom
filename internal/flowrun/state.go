@@ -111,11 +111,23 @@ type Question struct {
 	Paths []string `json:"paths,omitempty"`
 }
 
-// Answer is an answered question, with the session that answered it.
+// Where an answer came from (loom flow run answer --from): FromSpec when
+// the manager settled it without the owner (from the spec, the plan or the
+// code), FromOwner when it asked the owner. The record counts them, so a
+// run says how many questions a judge could have answered (part 3c's
+// evidence).
+const (
+	FromSpec  = "spec"
+	FromOwner = "owner"
+)
+
+// Answer is an answered question, with the session that answered it and
+// where the answer came from.
 type Answer struct {
 	Question
 	Answer  string `json:"answer"`
 	Session string `json:"session,omitempty"`
+	From    string `json:"from,omitempty"`
 }
 
 // Finding is one FINDING line (spec §5.6).
@@ -161,10 +173,14 @@ func Save(path string, st *State) error {
 }
 
 // Answer records text as the answer to st's open question, from session,
-// and sets st running; CheckAnswer has passed it.
-func (st *State) Answer(text, session string) error {
+// with where it came from (FromSpec or FromOwner), and sets st running;
+// CheckAnswer has passed it.
+func (st *State) Answer(text, session, from string) error {
 	if st.Status != Parked || st.Question == nil {
 		return errors.New("the run has no open question")
+	}
+	if from != FromSpec && from != FromOwner {
+		return fmt.Errorf("an answer comes from %q or %q, not %q", FromSpec, FromOwner, from)
 	}
 	text = strings.TrimSpace(text)
 	raw, err := json.Marshal(text)
@@ -175,7 +191,7 @@ func (st *State) Answer(text, session string) error {
 		st.Memo = map[string]json.RawMessage{}
 	}
 	st.Memo["q:"+st.Question.Key] = raw
-	st.Answers = append(st.Answers, Answer{Question: *st.Question, Answer: text, Session: session})
+	st.Answers = append(st.Answers, Answer{Question: *st.Question, Answer: text, Session: session, From: from})
 	if session != "" && !slices.Contains(st.Managers, session) {
 		st.Managers = append(st.Managers, session)
 	}
