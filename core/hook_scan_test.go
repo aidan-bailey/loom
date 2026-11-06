@@ -92,7 +92,7 @@ func TestSubagentScanResultAppliesAndGatesByLaunch(t *testing.T) {
 	inst := activeInst(t, m, "sub-apply")
 
 	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
-	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
+	require.Equal(t, []subagent.View{{ID: "a1", Name: "Explore", Description: "map code"}}, inst.Subagents())
 
 	// A result from another launch, even one that would clear everything, is dropped.
 	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L2", true,
@@ -135,7 +135,7 @@ func TestSubagentScanJobEndToEnd(t *testing.T) {
 	require.True(t, dispatched)
 	m.Deliver(m.Drain().Jobs[0]())
 
-	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
+	require.Equal(t, []subagent.View{{ID: "a1", Name: "Explore", Description: "map code"}}, inst.Subagents())
 	require.False(t, m.gate(gateHookScan).inFlight, "the gated delivery must disarm the scan")
 }
 

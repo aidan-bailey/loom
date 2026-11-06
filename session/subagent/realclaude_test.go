@@ -98,7 +98,10 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 	})
 	requireOrder(t, seen, hooks.EventSubagentStart, hooks.EventSubagentStop, hooks.EventTeammateIdle, hooks.EventStop)
 	waitFor(t, 30*time.Second, func() bool { collect(); return len(tracker.Visible()) == 1 })
-	require.Equal(t, []View{{Name: "probe-mate", Description: "probe teammate", Idle: true}}, tracker.Visible())
+	got := tracker.Visible()
+	require.Len(t, got, 1)
+	require.NotEmpty(t, got[0].ID, "the tracker names the agent")
+	require.Equal(t, View{ID: got[0].ID, Name: "probe-mate", Description: "probe teammate", Idle: true}, got[0])
 
 	before := len(seen)
 	send("Send probe-mate a shutdown request with SendMessage, wait until it has terminated, then say ALLDONE.")

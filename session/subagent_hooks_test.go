@@ -211,7 +211,7 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 	writeHookEvent(t, inst, "3", `{"hook_event_name":"TeammateIdle","teammate_name":"mate"}`, t0.Add(2*time.Second))
 
 	require.True(t, scanAndApply(t, inst))
-	want := []subagent.View{{Name: "mate", Description: "implement", Idle: true}}
+	want := []subagent.View{{ID: "amate-1", Name: "mate", Description: "implement", Idle: true}}
 	assert.Equal(t, want, inst.Subagents())
 
 	// A new loom process restores the same instance with empty memory.
