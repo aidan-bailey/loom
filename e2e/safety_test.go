@@ -325,8 +325,11 @@ func TestE2E_Safety_AnUnansweredTmuxChangesNothing(t *testing.T) {
 }
 
 // A daemon booting while tmux answers nothing must not take its sessions
-// for dead: its reconcile and orphan sweep fail closed, and once tmux
-// answers it serves the session on the agent that ran all along.
+// for dead, nor wait on tmux for good: every tmux call gives up at its
+// deadline (a reading one too, though the frozen server holds a copy of
+// its stdout), reconcile reads the unanswered probes as alive, and the
+// daemon serves while tmux is still frozen. Once tmux answers, the session
+// runs on the agent that ran all along.
 func TestE2E_Safety_ADaemonBootingIntoAnUnansweredTmuxChangesNothing(t *testing.T) {
 	sb := newSandbox(t, "")
 	newCLISession(t, sb, "keeper")
@@ -341,33 +344,36 @@ func TestE2E_Safety_ADaemonBootingIntoAnUnansweredTmuxChangesNothing(t *testing.
 	logged := serveLogSince(t, sb)
 	thaw := freezeTmux(t, tmuxServerPID(t, sb))
 	// This command's join starts the next daemon, which boots into the
-	// frozen server; it may wait on the boot until tmux thaws.
+	// frozen server.
 	c := sb.Cmd(sb.LoomBin(), "session", "list", "-w", devsandbox.WorkspaceName)
 	require.NoError(t, c.Start())
 	done := make(chan error, 1)
 	go func() { done <- c.Wait() }()
 	fresh := servingDaemonWithin(t, sb, uiTimeout, old.PID)
-	time.Sleep(12 * time.Second) // past the probe's 5s timeout, more than once
-	// The boot reconciles keeper only through tmux: had it logged the
-	// session's recovery while tmux was frozen, it never asked tmux, and
-	// the test proved nothing.
-	require.NotContains(t, logged(), "msg=recovery", "the boot reconciled without waiting on the frozen tmux")
+	// The boot's tmux calls each take their deadline, one after another;
+	// it must serve all the same, with tmux still frozen.
+	require.Eventually(t, func() bool { return strings.Contains(logged(), "msg=serve.listening") }, 90*time.Second, 200*time.Millisecond,
+		"the daemon never served while tmux was frozen: a tmux call outlived its deadline")
+	// The boot asked tmux about keeper and got no answer: had it not, the
+	// test proved nothing about an unanswered tmux.
+	require.Contains(t, logged(), "msg=reconcile.tmux_probe_inconclusive", "the boot never probed the frozen tmux")
+	assert.Contains(t, logged(), "title=keeper action=restore", "an unanswered probe reads as alive")
 	thaw()
 	select {
 	case <-done:
 	case <-time.After(uiTimeout):
 		_ = c.Process.Kill()
-		t.Fatal("the session list never returned once tmux answered")
+		t.Fatal("the session list never returned")
 	}
 
 	assert.Equal(t, fresh.PID, servingDaemon(t, sb).PID, "the booted daemon serves")
-	assert.Contains(t, logged(), "title=keeper action=restore", "the boot, once tmux answered, found keeper healthy")
 	requireUntouched(t, sb, "keeper", agent, tree, "wip.txt")
 }
 
 // servingDaemonWithin is servingDaemon with its own timeout, for a daemon
 // whose boot may be slow; it waits only for the lock record, since a
-// daemon booting into a frozen tmux serves only once the boot is done.
+// daemon booting into a frozen tmux serves only once its tmux calls have
+// all timed out.
 func servingDaemonWithin(t *testing.T, sb *devsandbox.Sandbox, timeout time.Duration, not ...int) daemon.Record {
 	t.Helper()
 	var rec daemon.Record

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // EnvTmuxSocket names the environment variable that points every loom tmux
@@ -84,6 +85,15 @@ func CommandOnSocket(ctx context.Context, socket string, args ...string) *exec.C
 	return tmuxCommand(ctx, flags, args)
 }
 
+// commandWaitDelay bounds how long a tmux command's Wait lingers on its
+// output pipes once its context has killed it. A tmux client hands its
+// stdin and stdout to the server when it connects, so a server too starved
+// to answer holds the write end of the stdout pipe after the client is
+// gone, and Output, waiting for EOF, would return only when the server
+// woke: a booting daemon's reconcile sat in sessionStartDir for as long as
+// a frozen server stayed frozen.
+const commandWaitDelay = 2 * time.Second
+
 // tmuxCommand is `tmux -u <flags> <args>` bound to ctx, in a slice of its
 // own.
 //
@@ -99,7 +109,9 @@ func tmuxCommand(ctx context.Context, flags, args []string) *exec.Cmd {
 	full := make([]string, 0, 1+len(flags)+len(args))
 	full = append(full, "-u")
 	full = append(append(full, flags...), args...)
-	return exec.CommandContext(ctx, "tmux", full...)
+	c := exec.CommandContext(ctx, "tmux", full...)
+	c.WaitDelay = commandWaitDelay
+	return c
 }
 
 // ResolveServer is the socket path of the tmux server this process's
