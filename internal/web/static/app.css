@@ -618,19 +618,6 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-tile-fig svg { color: var(--accent); }
 a.sc-tile { color: var(--fg); }
 .sc-rule::after { order: 1; }
-.sc-rule-link {
-  order: 2;
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  margin: -14px 0;
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  text-decoration: none;
-  color: var(--accent);
-}
 /* ---- the conversation ---- */
 .sc-accent { color: var(--accent); }
 .sc-earlier { align-self: center; border: 0; font-size: 12px; color: var(--accent); }

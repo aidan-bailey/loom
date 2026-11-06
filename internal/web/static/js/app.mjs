@@ -19,22 +19,39 @@ const recentNotices = 20;
 // fleet: the daemon publishes the new list a moment after the create answers.
 const pendingFor = 5000;
 
-// parseRoute reads the location's hash: "" is the fleet, "#s/<id>" a session,
-// "#s/<id>/turns" its conversation, "#s/<id>/diff" its changes,
-// "#s/<id>/mockup" its brainstorm mockup and "#s/<id>/mockup/full" the mockup
-// alone (full: no header, no reply box), "#new", "#settings", "#pair";
-// anything else is the fleet. The session's id is a number, as in the JSON.
+// parseRoute reads the location's hash: "" is the fleet, "#s/<id>" a session's
+// conversation (route name "turns"), "#s/<id>/info" its info tab,
+// "#s/<id>/diff" its changes, "#s/<id>/mockup" its brainstorm mockup and
+// "#s/<id>/mockup/full" the mockup alone (full: no header, no reply box),
+// "#s/<id>/agent/<agentId>" one of its subagents' turns, "#new", "#settings",
+// "#pair"; anything else is the fleet. The session's id is a number, as in the
+// JSON. "#s/<id>/turns" is the conversation's old address: it parses as
+// "turns" with legacy set, and settle answers it in place.
 export function parseRoute(hash) {
   const h = (hash || "").replace(/^#\/?/, "");
   if (h === "new") return { name: "new" };
   if (h === "settings") return { name: "settings" };
   if (h === "pair") return { name: "pair" };
-  const m = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup))?(\/full)?$/);
+  const a = h.match(/^s\/(\d+)\/agent\/([A-Za-z0-9_-]+)$/);
+  if (a) return { name: "agent", id: Number(a[1]), agent: a[2] };
+  const m = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup|info))?(\/full)?$/);
   if (m && (!m[3] || m[2] === "mockup")) {
-    const name = { turns: "turns", diff: "changes", mockup: "mockup" }[m[2]] || "session";
-    return m[3] ? { name, id: Number(m[1]), full: true } : { name, id: Number(m[1]) };
+    const id = Number(m[1]);
+    if (m[2] === "turns") return { name: "turns", id, legacy: true };
+    const name = { diff: "changes", mockup: "mockup", info: "info" }[m[2]] || "turns";
+    return m[3] ? { name, id, full: true } : { name, id };
   }
   return { name: "fleet" };
+}
+
+// settle answers a legacy route (#s/<id>/turns) by replacing its history
+// entry with #s/<id>, so an old link or entry still works and back does not
+// land on the address twice. replaceState fires no hashchange, so the route
+// it returns is the one to draw.
+function settle(route) {
+  if (!route.legacy) return route;
+  history.replaceState(null, "", "#s/" + route.id);
+  return { name: "turns", id: route.id };
 }
 
 let reloading = false;
@@ -125,11 +142,11 @@ function App() {
   const [stale, setStale] = useState(true);
   const [offline, setOffline] = useState(false);
   const [restarting, setRestarting] = useState(false);
-  const [route, setRoute] = useState(() => parseRoute(location.hash));
+  const [route, setRoute] = useState(() => settle(parseRoute(location.hash)));
   const [toasts, setToasts] = useState([]);
   const [install, setInstall] = useState(() => needsInstall());
   // pending is the id of a session whose create answered 201 but which the
-  // fleet does not list yet; the session screen says "Loading…" for it. It
+  // fleet does not list yet; the session's head says "Loading…" for it. It
   // clears once the fleet lists it, or after pendingFor.
   const [pending, setPending] = useState(undefined);
   const snapRef = useRef(null);
@@ -160,7 +177,7 @@ function App() {
   const go = useCallback((hash) => {
     const h = hash.startsWith("#") ? hash : "#" + hash;
     if (location.hash === h || (h === "#" && location.hash === "")) {
-      setRoute(parseRoute(h));
+      setRoute(settle(parseRoute(h)));
       return;
     }
     location.hash = h;
@@ -320,7 +337,7 @@ function App() {
   }, [snap, pending]);
 
   useEffect(() => {
-    const onHash = () => setRoute(parseRoute(location.hash));
+    const onHash = () => setRoute(settle(parseRoute(location.hash)));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -376,7 +393,7 @@ function App() {
     body = html`<div class="splash">${restarting ? "loom is restarting…" : offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
   } else {
     body = entry
-      ? html`<${entry.Screen} key=${route.name + (route.id === undefined ? "" : route.id)} ...${props} />`
+      ? html`<${entry.Screen} key=${route.name + (route.id === undefined ? "" : route.id) + (route.agent ? "/" + route.agent : "")} ...${props} />`
       : html`<div class="splash">Nothing here yet.</div>`;
   }
 

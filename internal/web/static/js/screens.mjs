@@ -4,7 +4,7 @@
 // {snap, stale, link, route, go, act, toast, pending}. Pairing is app.mjs's
 // own screen.
 import { Fleet, FleetHead } from "./fleet.mjs";
-import { Session, SessionHead } from "./session.mjs";
+import { Info, SessionHead } from "./session.mjs";
 import { NewSession, NewHead } from "./newsession.mjs";
 import { Settings, SettingsHead } from "./settings.mjs";
 import { Turns } from "./turns.mjs";
@@ -13,7 +13,7 @@ import { Mockup } from "./mockup.mjs";
 
 export const screens = {
   fleet: { Screen: Fleet, Head: FleetHead },
-  session: { Screen: Session, Head: SessionHead },
+  info: { Screen: Info, Head: SessionHead },
   new: { Screen: NewSession, Head: NewHead },
   settings: { Screen: Settings, Head: SettingsHead },
   turns: { Screen: Turns, Head: SessionHead },
