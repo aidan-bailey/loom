@@ -69,7 +69,7 @@ Before each agent dispatch the engine checks that `HEAD` is the head it last rec
 1. **The developer.** The engine records the story base (`HEAD`) and dispatches `flow:<Developer>` with the developer brief (§5.5). An intermediate-dev on a story with landmines runs at `xhigh`.
 2. **The developer's report:**
    - NEEDS_CONTEXT parks the run as `needs-context`; the answer resumes the same agent (`loom flow agent answer`).
-   - DONE or DONE_WITH_CONCERNS with no new commits on the story's range parks as `agent-failed` ("reported done with no commits").
+   - DONE or DONE_WITH_CONCERNS with no new commits on the story's range parks as `agent-failed` ("reported done with no commits"). A fixer's is noted instead: it can find its findings fixed already, and the gates and re-review after every fix round judge that (amended after the first real run, 2026-11-06).
    - A junior-dev's BLOCKED or turn cap: a fresh intermediate-dev with the same brief and the junior's report.
    - An intermediate-dev's turn cap: resumed once with "Continue from where you stopped."; a second turn cap parks as `agent-failed`.
    - An intermediate-dev's BLOCKED parks as `blocked-decision`; the decision goes to a fresh intermediate-dev in its brief. When that one is BLOCKED too, a `flow:senior-dev` gets both reports, without a question. A senior-dev's BLOCKED parks as `blocked-decision`, and its answer goes to a fresh senior-dev.
