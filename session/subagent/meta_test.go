@@ -75,3 +75,42 @@ func TestReadMeta_StartsAndMissing(t *testing.T) {
 		"a2": {AgentType: "Explore", Description: "from retry"},
 	}, got)
 }
+
+func TestValidAgentID(t *testing.T) {
+	for _, id := range []string{"a1", "a1f00dcafe0001", "agent-x", "a.b"} {
+		assert.True(t, ValidAgentID(id), "%q", id)
+	}
+	for _, id := range []string{"", " ", "\t", ".", "..", "../x", "a/b", `a\b`, "/", `\`} {
+		assert.False(t, ValidAgentID(id), "%q", id)
+	}
+}
+
+func TestSubagentsDir(t *testing.T) {
+	assert.Equal(t, "/p/-work/sess/subagents", SubagentsDir("/p/-work/sess.jsonl"))
+	assert.Equal(t, "/p/-work/sess/subagents", SubagentsDir("/p/-work/sess"), "no suffix to trim")
+	assert.Equal(t, "", SubagentsDir(""))
+}
+
+func TestMetaPath_UsesValidAgentID(t *testing.T) {
+	assert.Equal(t, "", MetaPath("/p/sess.jsonl", " "))
+	assert.Equal(t, "", MetaPath("/p/sess.jsonl", "."))
+	assert.Equal(t, "/p/sess/subagents/agent-a.b.meta.json", MetaPath("/p/sess.jsonl", "a.b"))
+}
+
+func TestParseMeta_LinkFields(t *testing.T) {
+	m, err := ParseMeta([]byte(`{"agentType":"Explore","toolUseId":"toolu_01","finished":false}`))
+	require.NoError(t, err)
+	assert.Equal(t, "toolu_01", m.ToolUseID)
+	require.NotNil(t, m.Finished)
+	assert.False(t, *m.Finished)
+
+	m, err = ParseMeta([]byte(`{"finished":true}`))
+	require.NoError(t, err)
+	require.NotNil(t, m.Finished)
+	assert.True(t, *m.Finished)
+
+	m, err = ParseMeta([]byte(`{"agentType":"Explore"}`))
+	require.NoError(t, err)
+	assert.Empty(t, m.ToolUseID)
+	assert.Nil(t, m.Finished, "an absent key is nil, not false")
+}
