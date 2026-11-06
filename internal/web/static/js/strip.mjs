@@ -25,3 +25,24 @@ export function FactStrip({ s, snap, now }) {
     ${facts.map((f, i) => html`<span key=${f.key}>${i > 0 ? " · " : ""}${f.node}</span>`)}
   </a>`;
 }
+
+// AgentStrip is the strip under the tabs of a subagent's screen, by the
+// page's agent.state: running (with its age since agent.started), finished
+// (idle for a teammate, which stays up for more work) or unknown, then the
+// agent's type. While the session waits on you it ends in a link back to the
+// conversation, where the needs-you box is. It is not itself a link, so the
+// link to the session nests in no other.
+export function AgentStrip({ s, agent, now }) {
+  let lead;
+  if (agent.state === "running") {
+    lead = html`<span class="sc-accent">${["◐ subagent running", ago(agent.started, now)].filter(Boolean).join(" ")}</span>`;
+  } else if (agent.state === "finished") {
+    lead = html`<span class="sc-dim">${agent.teammate ? "○ idle" : "✓ finished"}</span>`;
+  } else {
+    lead = html`<span class="sc-dim">subagent</span>`;
+  }
+  return html`<div class="sc-strip sc-strip-agent">
+    <span class="sc-strip-main">${lead}${agent.type ? " · " + agent.type : ""}</span>
+    ${s.group === "needs_you" ? html`<a class="sc-strip-needs" href=${"#s/" + s.id}>● session needs you ›</a>` : null}
+  </div>`;
+}

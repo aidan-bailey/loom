@@ -471,6 +471,12 @@ details.sc-group[open] > summary::before { content: "▾"; }
   text-overflow: ellipsis;
 }
 .sc-strip .sc-hot { color: var(--attention); }
+
+/* The subagent's strip: its state on the left, ellipsised, and the way back
+   to a waiting session pinned on the right. */
+.sc-strip-agent { display: flex; align-items: baseline; gap: 12px; }
+.sc-strip-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-strip-needs { flex: none; color: var(--attention); text-decoration: none; }
 .sc-h1 { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- the fleet ---- */
