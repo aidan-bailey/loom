@@ -705,27 +705,42 @@ and answers only phones you have paired.
   5-hour limit), amber from 80%; the counts are in the status row. The
   workspace chips are the workspaces open as tabs in loom, in tab order,
   plus any with a session that isn't paused (all of them while no tab is
-  open); the phone remembers the chip. A session leads with why it waits,
-  then tiles for its changes, its pull request (which opens on GitHub) and
-  its account's usage (both windows, and when each resets), its last
-  message as Claude formatted it, its subagents by name, the actions, and
-  a reply box.
-- **The conversation and the changes.** A session's screen has tabs under
-  its title: **session**, **conversation** on a Claude session (also
-  **conversation ›** beside its last message) and **changes** while the
-  session runs (also the **Changes** tile), with its line counts, and
-  **mockup** while the brainstorming skill's visual companion runs in the
-  session's worktree (marked when its screen changed in the latest turn):
-  the page the companion shows, sandboxed, with a full-screen view. The
+  open); the phone remembers the chip. A Claude session opens on its
+  conversation (below); a session that doesn't run Claude opens on its
+  info tab.
+- **The conversation.** A session's screen has tabs under its title:
+  **conversation** on a Claude session, **changes** while the session
+  runs (with its line counts), **info**, and **mockup** while the
+  brainstorming skill's visual companion runs in the session's worktree
+  (marked when its screen changed in the latest turn): the page the
+  companion shows, sandboxed, with a full-screen view. A strip under the
+  tabs shows the session's state and age, its line counts, its pull
+  request and its account's usage; tap it for the info tab. The
   conversation is its recent turns: each prompt (yours, a background
   task's, or a subagent's report), Claude's replies as it formatted them,
-  and its tool calls as one-line steps folded under a count (tap to open;
-  the newest turn's run is open while Claude works, its running step
-  marked). **↑ earlier turns** loads more. The changes are the worktree's
-  diff against its base commit, file by file: tap a file for its hunks.
-  Both refresh while the session works; neither shows tool output. Every
-  tab ends in the reply box, and a reply you started stays as you switch
-  tabs.
+  its thinking as a folded line (tap to read it), and its tool calls as
+  one-line steps folded under a count (tap to open; the newest turn's run
+  is open while Claude works, its running step marked). A subagent's step
+  is a link to that subagent's screen. **↑ earlier turns** loads more. A
+  session that waits on you ends its conversation in a box that says why
+  and lists what it asks, each answered there, above the reply box. Every
+  tab but a subagent's ends in the reply box, and a reply you started
+  stays as you switch tabs. Going back from a subagent or another tab
+  returns you to where you were, then refreshes.
+- **The info tab.** Tiles for the session's changes, its pull request
+  (which opens on GitHub) and its account's usage (both windows, and when
+  each resets), its subagents by name (a row opens that subagent's
+  screen), the actions, and the reply box.
+- **A subagent's screen.** Its description is the title, with the session's
+  tabs under it and a strip by its state: running with its age, finished
+  (idle for a teammate) or unknown, then its type, and **session needs
+  you ›** while the session waits. It shows the subagent's own turns, its
+  brief first, and refreshes while it runs. It has no reply box. It reads
+  **Starting…** until the subagent's record is written, and **This
+  subagent's record is gone.** when it never is.
+- **The changes.** The worktree's diff against its base commit, file by
+  file: tap a file for its hunks. It refreshes while the session works and
+  shows no tool output.
 - **Replying.** The reply goes to Claude through the loom mod, as
   `loom session send` does, queued behind the running turn. It is refused,
   with the reason, for a session with no live mod or another agent than
