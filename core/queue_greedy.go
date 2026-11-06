@@ -12,7 +12,8 @@ const kbPerGB = 1 << 20
 // usualOf is a job's usual duration at its claimed cores, and whether it has
 // one (the view's forecast and greedy admission share it).
 func (m *Model) usualOf(r sched.Record) (time.Duration, bool) {
-	u, _, n, src := sched.Usual(m.queue.beliefOf(r.Signature), nil, r.Claim.CPUs)
+	q := m.queue
+	u, _, n, src := sched.Usual(q.beliefOf(r.Signature), q.poolOf(r.Signature), r.Claim.CPUs)
 	return u, n > 0 || src == sched.DurationPrior
 }
 

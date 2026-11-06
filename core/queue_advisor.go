@@ -171,10 +171,11 @@ func (m *Model) advisorUsageHigh(now time.Time) float64 {
 }
 
 // askForPrior reports whether a job asking for asked, of belief b (nil for
-// none yet), waits for a prior: the advisor is available, a part needs one,
-// and the signature's last prior didn't fail within advisorRetryAfter.
-func (m *Model) askForPrior(asked sched.Claim, b *sched.Belief, now time.Time) bool {
-	if m.advisorOff(now) != "" || !sched.NeedsPrior(asked, b, nil) {
+// none yet) and family pool family (nil for none), waits for a prior: the
+// advisor is available, a part needs one, and the signature's last prior
+// didn't fail within advisorRetryAfter.
+func (m *Model) askForPrior(asked sched.Claim, b, family *sched.Belief, now time.Time) bool {
+	if m.advisorOff(now) != "" || !sched.NeedsPrior(asked, b, family) {
 		return false
 	}
 	return b == nil || b.Advisor.FailedAt.IsZero() || now.Sub(b.Advisor.FailedAt) >= advisorRetryAfter
@@ -273,8 +274,10 @@ func (m *Model) advisorInputFor(c advisorCall, now time.Time) (advisorInput, boo
 }
 
 // knownBeliefs are the beliefs a prior for self is told of, for a job in
-// checkout at now: up to knownSameRepo of its repo and knownOtherRepos of
-// others running the same program, most recently seen first.
+// checkout at now: up to knownSameRepo of its repo, its family first, then
+// those sharing more of its family's steps, then the most recently seen
+// (family sizing spec §5.5); and up to knownOtherRepos of others running
+// the same program, most recently seen first.
 func (m *Model) knownBeliefs(self *sched.Belief, checkout string, now time.Time) []advisor.Known {
 	var same, other []sched.Belief
 	for _, b := range m.queue.beliefs.Beliefs {
@@ -287,7 +290,21 @@ func (m *Model) knownBeliefs(self *sched.Belief, checkout string, now time.Time)
 		}
 	}
 	recent := func(x, y sched.Belief) int { return y.LastSeen.Compare(x.LastSeen) }
-	slices.SortFunc(same, recent)
+	fs := &m.queue.families
+	kin := func(x, y sched.Belief) int {
+		xs, xn := fs.Kin(self, &x)
+		ys, yn := fs.Kin(self, &y)
+		switch {
+		case xs != ys && xs:
+			return -1
+		case xs != ys:
+			return 1
+		case xn != yn:
+			return cmp.Compare(yn, xn)
+		}
+		return recent(x, y)
+	}
+	slices.SortFunc(same, kin)
 	slices.SortFunc(other, recent)
 	var out []advisor.Known
 	for _, b := range same[:min(len(same), knownSameRepo)] {

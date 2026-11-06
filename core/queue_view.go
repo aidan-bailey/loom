@@ -438,9 +438,14 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		jv.Exit = &e
 	}
 	b := q.beliefOf(r.Signature)
+	var family *sched.Belief
+	if b != nil {
+		family = q.familyPool(b.Signature)
+	}
 	var src sched.DurationSource
-	jv.Usual, jv.P90, _, src = sched.Usual(b, nil, r.Claim.CPUs)
-	jv.UsualFromPrior = src == sched.DurationPrior
+	jv.Usual, jv.P90, _, src = sched.Usual(b, family, r.Claim.CPUs)
+	jv.UsualFromPrior, jv.UsualFromFamily = src == sched.DurationPrior, src == sched.DurationFamily
+	jv.Family = q.familyLabel(b)
 	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID

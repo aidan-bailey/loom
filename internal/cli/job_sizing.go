@@ -66,7 +66,7 @@ func sizingLine(v core.JobView) string {
 	}
 	line := fmt.Sprintf("sized %s (%s)", v.Claim.Spared(v.Spare), text)
 	switch {
-	case v.Usual > 0 && v.UsualFromPrior:
+	case v.Usual > 0 && (v.UsualFromPrior || v.UsualFromFamily):
 		line += "; about " + sched.RoughDuration(v.Usual)
 	case v.Usual > 0:
 		line += "; usually " + sched.RoughDuration(v.Usual)
