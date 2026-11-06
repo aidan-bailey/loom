@@ -243,10 +243,10 @@ func (m *Model) requeueJob(i int, why string, now time.Time) {
 		ID: rec.ID, Order: rec.Order, Owner: rec.Owner, Agent: rec.Agent, Description: rec.Description,
 		Argv: rec.Argv, Cwd: rec.Cwd, Claim: claim, Notify: rec.Notify, Tail: rec.Tail, State: sched.Queued,
 		Submitted: rec.Submitted, Asked: rec.Asked, Signature: rec.Signature, Checkout: rec.Checkout,
-		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, AboveCap: rec.AboveCap,
+		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, FamilyRuns: rec.FamilyRuns, AboveCap: rec.AboveCap,
 		BelowKB: rec.BelowKB, AgentWhy: rec.AgentWhy, After: rec.After, Ready: rec.Ready,
 		Attempt: rec.Attempt + 1, Requeues: requeues, LastRequeue: why, NoRequeue: rec.NoRequeue,
-		GaveBack: gaveBack, NoBorrow: giveBack,
+		GaveBack: gaveBack, NoBorrow: giveBack, Locks: rec.Locks,
 	}
 	log.For("core").Warn("queue.requeued", "job", int64(rec.ID), "attempt", rec.Attempt, "why", why, "give_back", giveBack)
 	q.moved()

@@ -4,7 +4,8 @@
 //
 // Each command joins the daemon as the TUI does (Join, which main sets:
 // the daemon is started when none runs, the newer build wins, and a loom
-// inside loom never replaces it), makes its request, prints the answer and
+// inside loom never replaces it, using an older one of its protocol as it
+// is), makes its request, prints the answer and
 // exits. The daemon owns the workspace and account registries while it
 // runs, so every change goes through it and it serves the result at once:
 // a workspace added is served, one removed is unloaded, one renamed keeps
@@ -29,10 +30,18 @@ import (
 
 // Join connects to the loom daemon, starting one when none runs, as the
 // TUI's startup join does: the newer build wins (an older daemon is
-// replaced, a newer one refuses this loom), and the client uses the
+// replaced, a newer one refuses this loom; inside loom an older one of this
+// protocol is used as it is, saying so on stderr), and the client uses the
 // daemon's tmux server from then on. main sets it; tests serve a model in
 // process.
 var Join func() (*rpc.Client, error)
+
+// OlderDaemon describes the daemon a client reached when its build is older
+// than this loom's, and is "" otherwise. Inside loom an older daemon is used
+// as it is (Join), so a method only this build knows fails with
+// CodeUnsupported, which withDaemon explains with it (unknownToDaemon). main
+// sets it; nil leaves those errors as they are.
+var OlderDaemon func(*rpc.Client) string
 
 // accountWait bounds a command's wait for a round the daemon runs for it
 // (an accounts refresh, a usage probe): its answer is printed as the
@@ -79,8 +88,38 @@ func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 	c := &client{Client: rc, errOut: cmd.ErrOrStderr(), ctx: ctx}
 	err = fn(c)
 	c.events()
-	return err
+	return unknownToDaemon(rc, err)
 }
+
+// unknownToDaemon is err, explained when it is the daemon's answer to a
+// method it does not know (CodeUnsupported) and the daemon is an older
+// build (OlderDaemon): only a restart from outside loom upgrades it. An
+// error it explained already is left as it is: a wait (await) explains
+// the failure of a request answered by a Reply, withDaemon any other.
+func unknownToDaemon(rc *rpc.Client, err error) error {
+	var w *core.WireError
+	var done *olderDaemonError
+	if OlderDaemon == nil || errors.As(err, &done) || !errors.As(err, &w) || w.Code != core.CodeUnsupported {
+		return err
+	}
+	older := OlderDaemon(rc)
+	if older == "" {
+		return err
+	}
+	return &olderDaemonError{older: older, err: err}
+}
+
+// olderDaemonError is a method an older daemon does not know, explained.
+type olderDaemonError struct {
+	older string
+	err   error
+}
+
+func (e *olderDaemonError) Error() string {
+	return fmt.Sprintf("%s, which does not know this command (%v); it is upgraded when it is restarted from outside loom", e.older, e.err)
+}
+
+func (e *olderDaemonError) Unwrap() error { return e.err }
 
 // events returns the events that arrived since the last call, the state
 // events first (the client's Sync), having written each Notice to errOut.
@@ -123,6 +162,10 @@ func (c *client) await(timeout time.Duration, done func([]core.Event) bool) (boo
 		}
 		if err := c.Err(); err != nil {
 			return false, fmt.Errorf("lost the loom daemon: %w", err)
+		}
+		if err := c.Unsupported(); err != nil {
+			// A Reply to a method the daemon does not know never comes.
+			return false, unknownToDaemon(c.Client, err)
 		}
 		if err := c.ctx.Err(); err != nil {
 			return false, err

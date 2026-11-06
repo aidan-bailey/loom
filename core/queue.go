@@ -138,6 +138,9 @@ type queueState struct {
 	// beliefsErr is why beliefs.json failed to load: learning is off and
 	// the file is never written.
 	beliefsErr error
+	// families memoizes the beliefs' families (family sizing spec §5.2);
+	// only the loop reads it.
+	families sched.Families
 	// beliefsSaveFailed is set while the last save of beliefs.json failed,
 	// so a run of failures raises one notice.
 	beliefsSaveFailed bool

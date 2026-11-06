@@ -9,14 +9,17 @@ import (
 func TestNeedsPrior(t *testing.T) {
 	learned := belief(done(1<<20, 10, 10))
 	learned.Runs[0].WriteBytes = int64p(0)
-	assert.True(t, NeedsPrior(Claim{}, nil), "an unseen command")
-	assert.False(t, NeedsPrior(Claim{Exclusive: true}, nil))
-	assert.False(t, NeedsPrior(Claim{CPUs: 2, MemoryGB: 3}, nil), "a whole explicit claim")
-	assert.False(t, NeedsPrior(Claim{}, learned), "every part learned")
-	assert.True(t, NeedsPrior(Claim{}, belief(done(1<<20, 10, 10))), "no I/O measured (not Linux)")
-	assert.False(t, NeedsPrior(Claim{IO: true}, belief(done(1<<20, 10, 10))), "the I/O part is explicit")
-	assert.False(t, NeedsPrior(Claim{}, &Belief{Prior: &Prior{CPUs: 1, MemoryGB: 1}}), "a prior already")
-	assert.True(t, NeedsPrior(Claim{}, belief(Run{Outcome: OutcomeFailed, PeakKB: 1 << 20, WallSeconds: 5})), "only floors")
+	assert.True(t, NeedsPrior(Claim{}, nil, nil), "an unseen command")
+	assert.False(t, NeedsPrior(Claim{Exclusive: true}, nil, nil))
+	assert.False(t, NeedsPrior(Claim{CPUs: 2, MemoryGB: 3}, nil, nil), "a whole explicit claim")
+	assert.False(t, NeedsPrior(Claim{}, learned, nil), "every part learned")
+	assert.True(t, NeedsPrior(Claim{}, belief(done(1<<20, 10, 10)), nil), "no I/O measured (not Linux)")
+	assert.False(t, NeedsPrior(Claim{IO: true}, belief(done(1<<20, 10, 10)), nil), "the I/O part is explicit")
+	assert.False(t, NeedsPrior(Claim{}, &Belief{Prior: &Prior{CPUs: 1, MemoryGB: 1}}, nil), "a prior already")
+	assert.True(t, NeedsPrior(Claim{}, belief(Run{Outcome: OutcomeFailed, PeakKB: 1 << 20, WallSeconds: 5}), nil), "only floors")
+	assert.False(t, NeedsPrior(Claim{}, nil, learned), "a family covering every part")
+	assert.False(t, NeedsPrior(Claim{}, &Belief{}, learned), "a belief with no runs, a family covering every part")
+	assert.True(t, NeedsPrior(Claim{}, nil, belief(Run{Outcome: OutcomeFailed, PeakKB: 1 << 20, WallSeconds: 5})), "a family with no full peak")
 }
 
 func TestSurprise(t *testing.T) {
@@ -28,6 +31,7 @@ func TestSurprise(t *testing.T) {
 	slow.Claim = Claim{CPUs: 4, MemoryGB: 6}
 	assert.Equal(t, "", Surprise(&Belief{}, big, SourceLearned), "no run before it")
 	assert.Equal(t, "it peaked at 3.0 GB, above its 2 GB claim", Surprise(prev, big, SourceLearned))
+	assert.Equal(t, "it peaked at 3.0 GB, above its 2 GB claim", Surprise(prev, big, SourceFamily), "a family-sourced claim")
 	assert.Equal(t, "", Surprise(prev, big, SourceExplicit), "the claim was the submitter's")
 	assert.Equal(t, "it was killed by SIGKILL, which nobody asked for (the out-of-memory killer?)", Surprise(prev, killed, SourceDefault))
 	assert.Equal(t, "it took 10m0s, where it usually takes 1m0s", Surprise(prev, slow, SourceLearned))

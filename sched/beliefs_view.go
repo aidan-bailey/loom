@@ -31,6 +31,14 @@ type BeliefView struct {
 	P90            time.Duration
 	DurationRuns   int
 	UsualFromPrior bool
+	// UsualFromFamily says Usual and P90 are its family pool's (family
+	// sizing spec §6).
+	UsualFromFamily bool
+	// Family is the label of its family and FamilySize how many beliefs
+	// share it, its own included (family sizing spec §6). The caller sets
+	// them, since it holds the registry; "" and 0 for a belief with none.
+	Family     string
+	FamilySize int
 	// After is the command of the belief this one's signature runs after
 	// (dependent jobs spec §5.6). The caller sets it, since it holds the
 	// registry; nil when the signature has no prerequisite part, the
@@ -38,14 +46,23 @@ type BeliefView struct {
 	After []string
 }
 
-// ViewBelief is b's view under p; with no caps (admission paused) the
-// claim is left zero.
-func ViewBelief(b Belief, p Policy) BeliefView {
+// ViewBelief is b's view under p, with family its family pool (nil for
+// none); with no caps (admission paused) the claim is left zero.
+func ViewBelief(b Belief, family *Belief, p Policy) BeliefView {
 	v := BeliefView{Belief: b, RepoName: RepoName(b.Repo), Scaling: ScalingOf(&b)}
 	if p.usable() {
-		v.Sized = Size(Claim{}, &b, p)
+		v.Sized = Size(Claim{}, &b, family, p)
 	}
-	v.Usual, v.P90, v.DurationRuns, v.UsualFromPrior = Usual(&b, v.Sized.Claim.CPUs)
+	usual, p90, n, src := Usual(&b, family, v.Sized.Claim.CPUs)
+	v.Usual, v.P90 = usual, p90
+	switch src {
+	case DurationLearned:
+		v.DurationRuns = n
+	case DurationFamily:
+		v.UsualFromFamily = true
+	case DurationPrior:
+		v.UsualFromPrior = true
+	}
 	return v
 }
 

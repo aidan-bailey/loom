@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -58,7 +59,13 @@ func (m *Model) sendNotice(rec sched.Record, head string, logOf sched.JobID) {
 		return
 	}
 	logPath := filepath.Join(m.queue.jobDir(logOf), sched.LogFile)
-	m.spawnBackground(buildNoticeJob(rec.ID, owner, rec.Agent, head, logPath, rec.Tail))
+	m.spawnBackground(buildNoticeJob(rec.ID, owner, rec.Agent, head, logPath, rec.Tail, wantsLockHint(rec)))
+}
+
+// wantsLockHint reports whether rec's notice looks in its log for a port
+// already in use (lockHint): it ran and exited non-zero, and holds no lock.
+func wantsLockHint(rec sched.Record) bool {
+	return rec.State == sched.Failed && len(rec.Locks) == 0 && rec.Exit != nil && rec.Exit.Code > 0
 }
 
 // jobHead is rec's message before its log: its first line, which names the
@@ -193,9 +200,9 @@ func (m *Model) noteNotice(id sched.JobID, fate sched.Notice, why string) {
 
 // buildNoticeJob reads the log's tail off the loop and returns the notice's
 // text. It reads no model state: head, logPath and tail are copies.
-func buildNoticeJob(id sched.JobID, owner InstanceID, agent, head, logPath string, tail int) Job {
+func buildNoticeJob(id sched.JobID, owner InstanceID, agent, head, logPath string, tail int, hint bool) Job {
 	return func() any {
-		return jobNoticeBuilt{id: id, owner: owner, agent: agent, text: composeNotice(head, logPath, tail)}
+		return jobNoticeBuilt{id: id, owner: owner, agent: agent, text: composeNotice(head, logPath, tail, hint)}
 	}
 }
 
@@ -301,11 +308,22 @@ func roundedDur(d time.Duration) string { return d.Round(time.Second).String() }
 
 // composeNotice is head, then the log's line: its path and line count, and the
 // last tail lines within the last 4,000 bytes. A job that never ran has no log
-// and gets the head alone.
-func composeNotice(head, logPath string, tail int) string {
-	total, lines, err := readLogTail(logPath, tail)
+// and gets the head alone. With hint, the last hintLines lines (at least) are
+// searched for a port already in use, and lockHint's line follows the head.
+func composeNotice(head, logPath string, tail int, hint bool) string {
+	want := tail
+	if hint {
+		want = max(tail, hintLines)
+	}
+	total, lines, err := readLogTail(logPath, want)
 	var b strings.Builder
 	b.WriteString(head)
+	if hint {
+		if line := lockHint(lines); line != "" {
+			b.WriteString("\n" + line)
+		}
+	}
+	lines = lines[max(0, len(lines)-tail):]
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
@@ -403,4 +421,42 @@ func readLogTail(path string, want int) (total int, lines []string, err error) {
 		lines[i] = strings.ToValidUTF8(lines[i], "")
 	}
 	return total, lines, nil
+}
+
+// hintLines is how many of a failed job's last lines lockHint reads, whatever
+// its --tail.
+const hintLines = 20
+
+var (
+	// inUse matches a log line saying an address or port is taken: Node's
+	// EADDRINUSE, the OS's "address already in use", Playwright's "is
+	// already used" and the dev servers' "port 4300 is already in use".
+	inUse = regexp.MustCompile(`(?i)eaddrinuse|address already in use|already (?:in )?use[d]?\b`)
+	// portIn finds the port such a line names: host:port, or "port N".
+	// aboutAnAddress tells such a line without a port from one about
+	// something else that is already used.
+	aboutAnAddress = regexp.MustCompile(`(?i)eaddrinuse|address|\bport\b`)
+	portIn         = regexp.MustCompile(`(?i)(?:[a-z0-9\]\.:]:|port\s+)(\d{2,5})\b`)
+)
+
+// lockHint is the line a failed job's notice gets when one of its log lines
+// says a port was already in use: two jobs binding one port should take turns
+// under a lock. It names port:N when the line gives the port; "" when no line
+// says so.
+func lockHint(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !inUse.MatchString(lines[i]) {
+			continue
+		}
+		m := portIn.FindStringSubmatch(lines[i])
+		if m == nil && !aboutAnAddress.MatchString(lines[i]) {
+			continue // "the name is already used": no port in sight
+		}
+		lock := "port:<N>"
+		if m != nil {
+			lock = "port:" + m[1]
+		}
+		return fmt.Sprintf("Its log says a port was already in use. If another job binds it too, submit both with --lock %s so they take turns.", lock)
+	}
+	return ""
 }

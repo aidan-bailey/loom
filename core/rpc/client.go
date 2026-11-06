@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 
 	"github.com/aidan-bailey/loom/core"
@@ -66,6 +67,10 @@ type Client struct {
 	// refused holds the request IDs of the calls refused as unavailable
 	// since the last TakeRefused (noteRefused).
 	refused []core.ReqID
+	// unsupported is the first error a call carrying a request ID was
+	// answered with because the peer does not know its method
+	// (CodeUnsupported, noteRefused): no Reply will answer it.
+	unsupported error
 
 	wake       chan struct{}
 	done       chan struct{}
@@ -419,6 +424,15 @@ func (c *Client) requestNoErr(method string, params, result any) error {
 // stopping. The model never saw the call, so no Reply will answer it, and
 // its requester fails it itself (TakeRefused).
 func (c *Client) noteRefused(err error, reqs ...core.ReqID) {
+	var w *core.WireError
+	if errors.As(err, &w) && w.Code == core.CodeUnsupported && slices.ContainsFunc(reqs, func(r core.ReqID) bool { return r != 0 }) {
+		c.mu.Lock()
+		if c.unsupported == nil {
+			c.unsupported = err
+		}
+		c.mu.Unlock()
+		return
+	}
 	if err == nil || !errors.Is(err, core.ErrUnavailable) {
 		return
 	}
@@ -429,6 +443,16 @@ func (c *Client) noteRefused(err error, reqs ...core.ReqID) {
 			c.refused = append(c.refused, req)
 		}
 	}
+}
+
+// Unsupported is the first error a call carrying a request ID was answered
+// with because the peer does not know its method, nil when none was: a
+// newer client on an older server. Its Reply will never come, so a
+// requester waiting for one fails with this instead.
+func (c *Client) Unsupported() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unsupported
 }
 
 // TakeRefused returns, and forgets, the request IDs of the calls refused as

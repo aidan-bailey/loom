@@ -582,7 +582,7 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}
-		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workRunTime(j, now), extra
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned, j.FamilyRuns), workRunTime(j, now), extra
 	case sched.Queued, sched.Held:
 		extra = j.Waiting
 		if extra == "" {
@@ -594,7 +594,7 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		if j.Sizing != "" {
 			return "—", lipgloss.NewStyle(), "sizing", workWait(now.Sub(j.QueuedSince())), extra
 		}
-		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned), workWait(now.Sub(j.QueuedSince())), extra
+		return workClaim(j), lipgloss.NewStyle(), j.Sources.Tag(j.Learned, j.FamilyRuns), workWait(now.Sub(j.QueuedSince())), extra
 	}
 	claim, claimStyle = workResult(j)
 	timeText = "-"

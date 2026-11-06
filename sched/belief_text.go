@@ -21,12 +21,21 @@ func FormatBelief(v BeliefView) []string {
 	if line := afterLine(v); line != "" {
 		lines = append(lines, line)
 	}
+	if v.Family != "" {
+		beliefs := "1 belief"
+		if v.FamilySize != 1 {
+			beliefs = fmt.Sprintf("%d beliefs", v.FamilySize)
+		}
+		lines = append(lines, fmt.Sprintf("family    %s (%s)", v.Family, beliefs))
+	}
 	if v.Sized.Claim != (Claim{}) {
-		lines = append(lines, fmt.Sprintf("claim     %s (%s)", v.Sized.Claim, v.Sized.Sources.Describe(v.Sized.Learned)))
+		lines = append(lines, fmt.Sprintf("claim     %s (%s)", v.Sized.Claim, v.Sized.Sources.Describe(v.Sized.Learned, v.Sized.FamilyRuns, v.Family)))
 	}
 	switch {
 	case v.DurationRuns > 0:
 		lines = append(lines, fmt.Sprintf("usually   %s (p90 %s, %d runs)", RoughDuration(v.Usual), RoughDuration(v.P90), v.DurationRuns))
+	case v.UsualFromFamily:
+		lines = append(lines, fmt.Sprintf("about     %s (its family's runs)", RoughDuration(v.Usual)))
 	case v.UsualFromPrior:
 		lines = append(lines, fmt.Sprintf("about     %s (the agent's estimate)", RoughDuration(v.Usual)))
 	}
@@ -121,7 +130,7 @@ func scalingLine(v BeliefView) string {
 		return line
 	}
 	at := func(c int) string {
-		u, _, _, _ := Usual(&v.Belief, c)
+		u, _, _, _ := Usual(&v.Belief, nil, c)
 		return fmt.Sprintf("~%s at %d", RoughDuration(u), c)
 	}
 	if s.Ideal > base {

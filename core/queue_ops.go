@@ -83,7 +83,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now, Ready: now, NoRequeue: s.NoRequeue,
-		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind,
+		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind, Locks: slices.Clone(s.Locks),
 	}
 	if agentJob {
 		rec.AccountKey = envValue(s.Env, "CLAUDE_CONFIG_DIR")
@@ -104,12 +104,12 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 		rec.Signature = sig.ID()
 	}
 	if !agentJob {
-		q.sizeRecord(&rec, policy)
+		q.sizeRecord(&rec, policy, sig)
 		if err := sched.CheckClaim(rec.Claim, policy); err != nil {
 			return 0, "", err
 		}
 	}
-	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), now) {
+	if sig != nil && m.askForPrior(s.Claim, q.beliefOf(rec.Signature), q.familyPool(*sig), now) {
 		rec.Sizing = sched.SizingAsking
 	}
 

@@ -1004,7 +1004,7 @@ func TestJobContext_NamesOnlyFlagsTheCommandsHave(t *testing.T) {
 		assert.Contains(t, para, "subagent", name)
 		assert.Contains(t, para, "even after it has finished", name)
 		flags := flagName.FindAllString(para, -1)
-		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive", "--after"}, flags, name)
+		assert.ElementsMatch(t, []string{"--cpus", "--mem", "--io", "--exclusive", "--lock", "--after"}, flags, name)
 		for _, flag := range flags {
 			for _, command := range []*cobra.Command{newJobSubmitCmd(), newJobRunCmd()} {
 				assert.NotNil(t, command.Flags().Lookup(strings.TrimPrefix(flag, "--")), "%s: loom job %s has no %s", name, command.Name(), flag)
@@ -1088,6 +1088,47 @@ func TestJobSubmission_TheAfterFlag(t *testing.T) {
 	f, c, args = parsedSubmit(t, "--after", "0", "--", "true")
 	_, err = f.submission(c, args, true, defaultTail)
 	assert.EqualError(t, err, "--after is 0: it must be a job ID")
+}
+
+func TestJobSubmission_TheLockFlag(t *testing.T) {
+	f, c, args := parsedSubmit(t, "--lock", "port:4300", "--lock", "port:4310", "--", "true")
+	sub, err := f.submission(c, args, true, defaultTail)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"port:4300", "port:4310"}, sub.Locks)
+
+	f, c, args = parsedSubmit(t, "--", "true")
+	sub, err = f.submission(c, args, true, defaultTail)
+	require.NoError(t, err)
+	assert.Empty(t, sub.Locks, "none")
+}
+
+// Two jobs naming one lock take turns: the second queues behind the first,
+// says why, and starts once the first has ended.
+func TestJobSubmit_QueuesBehindAJobHoldingItsLock(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+
+	out, _, err := runJob(t, "submit", "-d", "e2e a", "--cpus", "1", "--mem", "1", "--lock", "port:4300", "--", "sh", "-c", "echo up; exec sleep 60")
+	require.NoError(t, err)
+	assert.Contains(t, out, "job 1 started\n")
+	d.waitLog(t, 1, "up")
+
+	out, _, err = runJob(t, "submit", "-d", "e2e b", "--cpus", "1", "--mem", "1", "--lock", "port:4300", "--", "true")
+	require.NoError(t, err)
+	assert.Contains(t, out, "job 2 queued (1st in line, 1 running): waits for lock port:4300 (job 1)\n")
+
+	_, _, err = runJob(t, "cancel", "1")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return d.job(2).State == sched.Done }, 20*time.Second, 50*time.Millisecond,
+		"the lock's holder ended, so job 2 ran")
+}
+
+func TestJobSubmission_LocksAnOlderDaemonIgnored(t *testing.T) {
+	sub := sched.Submit{Locks: []string{"port:4300"}}
+	assert.True(t, locksIgnored(sub, core.JobView{ID: 5}), "a view without the locks: the daemon dropped them")
+	assert.False(t, locksIgnored(sub, core.JobView{ID: 5, Locks: []string{"port:4300"}}))
+	assert.False(t, locksIgnored(sched.Submit{}, core.JobView{ID: 5}), "no lock asked for")
 }
 
 func TestJobStartedLine_AReleasedJobCountsFromItsPrerequisitesEnd(t *testing.T) {

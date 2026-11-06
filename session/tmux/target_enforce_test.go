@@ -22,6 +22,9 @@ var exactTargetAllowed = map[string]string{
 	// $TMUX_PANE is a pane id ("%12"): ids are unique and never
 	// prefix-matched.
 	"session/tmux/command.go:EnclosingSessionName": "pane id from $TMUX_PANE",
+	// Not a tmux target: go's -tags flag, spelled in a job family's step
+	// (family sizing spec §5.1); nothing passes it to tmux.
+	"sched/family.go:goStep": "go's -tags flag in a family step",
 }
 
 // TestTmuxTargetsAreExact fails on any tmux target in production code (not
@@ -31,8 +34,8 @@ var exactTargetAllowed = map[string]string{
 // preview PTY there, and every keystroke and prompt went to that agent.
 // Every "-t" must be followed by SessionTarget(...) or PaneTarget(...), and
 // no string may spell a target inline ("-t=" + name, fmt.Sprintf("-t=%s",
-// …)). A "-t" for some other program would need an exactTargetAllowed
-// entry; loom has none.
+// …)). A "-t" for some other program needs an exactTargetAllowed entry:
+// go's -tags in a family step is the one.
 func TestTmuxTargetsAreExact(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
