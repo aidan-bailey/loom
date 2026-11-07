@@ -61,7 +61,15 @@
         ],
         "remote_url": "https://claude.ai/code/webshot",
         "claude": true,
-        "mockup": null
+        "mockup": null,
+        "jobs": [
+          {"id": 214, "state": "running", "description": "ui tests", "command": "go test ./ui/...", "agent": "", "submitted": "now-3m", "started": "now-2m10s", "ended": "", "exit": null, "failure": "", "cancel_reason": "", "waiting": ""},
+          {"id": 215, "state": "held", "description": "race tests", "command": "go test -race ./ui/...", "agent": "a1f00dcafe0001", "submitted": "now-2m", "started": "", "ended": "", "exit": null, "failure": "", "cancel_reason": "", "waiting": "after job 214"},
+          {"id": 212, "state": "done", "description": "", "command": "go vet ./...", "agent": "", "submitted": "now-9m", "started": "now-9m", "ended": "now-4m", "exit": {"code": 0}, "failure": "", "cancel_reason": "", "waiting": ""},
+          {"id": 209, "state": "failed", "description": "build", "command": "go build ./...", "agent": "", "submitted": "now-25m", "started": "now-25m", "ended": "now-20m", "exit": {"code": 1}, "failure": "", "cancel_reason": "", "waiting": ""}
+        ],
+        "jobs_label": "⚙ job 214",
+        "jobs_focus": 214
       },
       {
         "id": 2,
@@ -89,7 +97,10 @@
         "agents": [],
         "remote_url": "https://claude.ai/code/webshot2",
         "claude": true,
-        "mockup": null
+        "mockup": null,
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       },
       {
         "id": 3,
@@ -117,7 +128,10 @@
         "agents": [],
         "remote_url": "",
         "claude": false,
-        "mockup": null
+        "mockup": null,
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       },
       {
         "id": 7,
@@ -145,7 +159,10 @@
         "agents": [],
         "remote_url": "",
         "claude": true,
-        "mockup": {"screen": "layout.html", "changed": "now-2m", "fresh": true}
+        "mockup": {"screen": "layout.html", "changed": "now-2m", "fresh": true},
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       }
     ],
     "2": [
@@ -175,7 +192,10 @@
         "agents": [],
         "remote_url": "",
         "claude": true,
-        "mockup": null
+        "mockup": null,
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       },
       {
         "id": 5,
@@ -203,7 +223,10 @@
         "agents": [],
         "remote_url": "",
         "claude": false,
-        "mockup": null
+        "mockup": null,
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       },
       {
         "id": 6,
@@ -235,7 +258,10 @@
         "agents": [],
         "remote_url": "",
         "claude": true,
-        "mockup": null
+        "mockup": null,
+        "jobs": [],
+        "jobs_label": "",
+        "jobs_focus": 0
       }
     ]
   },

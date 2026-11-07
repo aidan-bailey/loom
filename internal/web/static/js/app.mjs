@@ -24,7 +24,8 @@ const pendingFor = 5000;
 // conversation (route name "turns"), "#s/<id>/info" its info tab,
 // "#s/<id>/diff" its changes, "#s/<id>/mockup" its brainstorm mockup and
 // "#s/<id>/mockup/full" the mockup alone (full: no header, no reply box),
-// "#s/<id>/agent/<agentId>" one of its subagents' turns, "#new", "#settings",
+// "#s/<id>/agent/<agentId>" one of its subagents' turns, "#s/<id>/job/<n>"
+// one of its work-queue jobs, "#new", "#settings",
 // "#pair"; anything else is the fleet. The session's id is a number, as in the
 // JSON. "#s/<id>/turns" is the conversation's old address: it parses as
 // "turns" with legacy set, and settle answers it in place.
@@ -35,6 +36,8 @@ export function parseRoute(hash) {
   if (h === "pair") return { name: "pair" };
   const a = h.match(/^s\/(\d+)\/agent\/([^/]+)$/);
   if (a && AGENT_ID.test(a[2])) return { name: "agent", id: Number(a[1]), agent: a[2] };
+  const j = h.match(/^s\/(\d+)\/job\/([1-9]\d*)$/);
+  if (j) return { name: "job", id: Number(j[1]), job: Number(j[2]) };
   const m = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup|info))?(\/full)?$/);
   if (m && (!m[3] || m[2] === "mockup")) {
     const id = Number(m[1]);

@@ -11,6 +11,7 @@ import { Turns } from "./turns.mjs";
 import { Changes } from "./changes.mjs";
 import { Mockup } from "./mockup.mjs";
 import { Agent, AgentHead } from "./agent.mjs";
+import { Job, JobHead } from "./job.mjs";
 
 export const screens = {
   fleet: { Screen: Fleet, Head: FleetHead },
@@ -21,4 +22,5 @@ export const screens = {
   changes: { Screen: Changes, Head: SessionHead },
   mockup: { Screen: Mockup, Head: SessionHead },
   agent: { Screen: Agent, Head: AgentHead },
+  job: { Screen: Job, Head: JobHead },
 };

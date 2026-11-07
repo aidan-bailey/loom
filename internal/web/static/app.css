@@ -477,6 +477,22 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-strip-agent { display: flex; align-items: baseline; gap: 12px; }
 .sc-strip-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-strip-needs { flex: none; color: var(--attention); text-decoration: none; }
+
+/* The conversation's strip while the session has jobs: the facts on the
+   left, ellipsised, a link to the info tab, and the jobs' badge pinned on
+   the right, a link to the job it names. */
+.sc-strip-split { display: flex; align-items: baseline; gap: 12px; }
+.sc-strip-split .sc-strip-main { color: inherit; text-decoration: none; }
+.sc-strip-job { flex: none; color: var(--accent); text-decoration: none; }
+
+/* A session's jobs: the fleet row's badge, the info tab's rows by state, and
+   the job screen's facts and output. */
+.sc-job { color: var(--accent); }
+.sc-job-running { color: var(--accent); }
+.sc-job-done { color: var(--ok); }
+.sc-job-failed, .sc-job-lost { color: var(--error); }
+.sc-job-facts { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 8px; font-size: 13px; }
+.sc-log { margin: 8px 0 0; padding: 8px; background: var(--panel); border: 1px solid var(--rule); font: 11px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .sc-h1 { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- the fleet ---- */
