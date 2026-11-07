@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
@@ -113,7 +114,8 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		"agents": [{"id": "a1f00dcafe0001", "name": "explorer", "description": "reads the tree", "idle": true}],
 		"remote_url": "https://claude.ai/code/session_01AbC",
 		"claude": true,
-		"mockup": {"screen": "layout.html", "changed": "2026-10-21T09:29:00Z", "fresh": true}
+		"mockup": {"screen": "layout.html", "changed": "2026-10-21T09:29:00Z", "fresh": true},
+		"jobs": [], "jobs_label": "", "jobs_focus": 0
 	}`, string(got))
 }
 
@@ -507,4 +509,20 @@ func TestSessionOf_TheMockupIsItsScreenOrNull(t *testing.T) {
 	raw, err := json.Marshal(sessionOf(1, core.InstanceView{}))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"mockup":null`, "the app reads null as none")
+}
+
+func TestGroupOf_Verdicts(t *testing.T) {
+	for _, tc := range []struct {
+		verdict, group, label string
+	}{
+		{attention.NeedsYou, groupNeedsYou, "Asks you"},
+		{attention.Done, groupYourTurn, "Done"},
+		{attention.Waiting, groupWorking, "Waiting"},
+		{attention.Stopped, groupYourTurn, "Your turn"},
+		{"", groupYourTurn, "Your turn"},
+	} {
+		g, l := groupOf(core.InstanceView{Status: session.Ready, Started: true, Verdict: tc.verdict})
+		assert.Equal(t, tc.group, g, tc.verdict)
+		assert.Equal(t, tc.label, l, tc.verdict)
+	}
 }

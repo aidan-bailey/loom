@@ -8,7 +8,7 @@ import { Asks } from "./asks.mjs";
 export function NeedsYou({ s, off, run }) {
   return html`<div class="sc-box sc-attn-box">
     <span class="sc-legend">${GLYPHS.needs_you} Needs you</span>
-    <div class="sc-attn">${(s.wait && s.wait.reason) || "Needs you"}</div>
+    <div class="sc-attn">${(s.wait && s.wait.reason) || (s.gist ? "asks: " + s.gist : "Needs you")}</div>
     ${s.wait && s.wait.detail && !(s.asks && s.asks.length) ? html`<pre class="sc-detail-box">${s.wait.detail}</pre>` : null}
     <${Asks} s=${s} off=${off} run=${run} />
     ${s.remote_url

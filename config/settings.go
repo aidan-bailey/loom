@@ -128,6 +128,11 @@ type Settings struct {
 	// disk; it is a field here so a settings save keeps it. nil is the block
 	// absent. Read it through GetFeedback.
 	Feedback *FeedbackSettings `json:"feedback,omitempty"`
+	// Attention holds the stop classifier's settings (stop verdicts spec
+	// §6). Read from the global config.json only, by the model, which
+	// rereads it from disk; it is a field here so a settings save keeps it.
+	// nil is the block absent. Read it through GetAttention.
+	Attention *AttentionSettings `json:"attention,omitempty"`
 }
 
 // FeedbackSettings is the global config.json's "feedback" block: the
@@ -145,6 +150,23 @@ func (s FeedbackSettings) clone() FeedbackSettings {
 		g.Enabled = clonePtr(s.Grouper.Enabled)
 		s.Grouper = &g
 	}
+	return s
+}
+
+// AttentionSettings is the global config.json's "attention" block: the stop
+// classifier, a headless Claude that judges each stopped turn's last message
+// (attention.Resolve). An absent or 0 field takes its default.
+type AttentionSettings struct {
+	Enabled     *bool  `json:"enabled,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	MaxParallel int    `json:"max_parallel,omitempty"`
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
+}
+
+// clone deep-copies s.
+func (s AttentionSettings) clone() AttentionSettings {
+	s.Enabled = clonePtr(s.Enabled)
 	return s
 }
 
@@ -233,6 +255,10 @@ func (s Settings) Clone() Settings {
 		block := s.Feedback.clone()
 		out.Feedback = &block
 	}
+	if s.Attention != nil {
+		block := s.Attention.clone()
+		out.Attention = &block
+	}
 	return out
 }
 
@@ -297,6 +323,15 @@ func (s Settings) GetFeedback() FeedbackSettings {
 		return FeedbackSettings{}
 	}
 	return s.Feedback.clone()
+}
+
+// GetAttention returns a deep copy of the attention block, or the zero value
+// when there is none.
+func (s Settings) GetAttention() AttentionSettings {
+	if s.Attention == nil {
+		return AttentionSettings{}
+	}
+	return s.Attention.clone()
 }
 
 // GetScheduler returns a deep copy of the scheduler block, or the zero value

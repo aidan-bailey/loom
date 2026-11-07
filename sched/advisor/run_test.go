@@ -52,6 +52,16 @@ func TestRun(t *testing.T) {
 		real, _ := filepath.EvalSymlinks(work)
 		assert.Equal(t, real, strings.TrimSpace(string(cwd)))
 	})
+	t.Run("no tools", func(t *testing.T) {
+		program, dir := fakeClaude(t, `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x","structured_output":{"note":"hi"}}'`)
+		own := call
+		own.Program, own.NoTools = program, true
+		_, err := Run(own)
+		require.NoError(t, err)
+		args, _ := os.ReadFile(filepath.Join(dir, "args"))
+		assert.Contains(t, string(args), "--tools\n\n--restricted", "an empty tool list")
+		assert.NotContains(t, string(args), "Read,Glob,Grep")
+	})
 	t.Run("the system prompt", func(t *testing.T) {
 		body := `printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x","structured_output":{"note":"hi"}}'`
 		program, dir := fakeClaude(t, body)

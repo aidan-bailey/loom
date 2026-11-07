@@ -137,6 +137,10 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// time has come), one at a time (see maybeGroupFeedback).
 	m.maybeGroupFeedback()
 
+	// The stop classifier: a reread of its block when due, and the calls
+	// waiting for a free slot (see tickAttention).
+	m.tickAttention()
+
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()

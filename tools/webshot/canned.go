@@ -82,11 +82,17 @@ var apiRoutes = []struct {
 	// agent is the fixture for a request whose query names a subagent
 	// (?agent=), "" for a route that has none.
 	agent string
+
+	// after is the fixture for a request whose query continues a read
+	// (?after=), "" for a route that has none: a job's log answers its poll
+	// with nothing new, so the screen does not append the tail again.
+	after string
 }{
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/turns$`), "turns.json", "agent-turns.json"},
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json", ""},
-	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html", ""},
-	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/turns$`), "turns.json", "agent-turns.json", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json", "", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html", "", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/jobs/\d+/log$`), "job-log.json", "", "job-log-after.json"},
+	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json", "", ""},
 }
 
 func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +113,9 @@ func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
 				name := rt.fixture
 				if rt.agent != "" && r.URL.Query().Get("agent") != "" {
 					name = rt.agent
+				}
+				if rt.after != "" && r.URL.Query().Get("after") != "" {
+					name = rt.after
 				}
 				body, err := c.fixture(name)
 				if err != nil {

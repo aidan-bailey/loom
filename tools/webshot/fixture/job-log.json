@@ -1,0 +1,7 @@
+{
+  "text": "=== RUN   TestPane_CursorDrawnAfterFrame\n--- PASS: TestPane_CursorDrawnAfterFrame (0.00s)\n=== RUN   TestPane_NoReflowOnResize\n--- PASS: TestPane_NoReflowOnResize (0.01s)\n=== RUN   TestPane_HeaderStaysPut\n--- PASS: TestPane_HeaderStaysPut (0.02s)\n=== RUN   TestList_PageNav\n--- PASS: TestList_PageNav (0.03s)\n=== RUN   TestList_SelectionSurvivesFilter\n--- PASS: TestList_SelectionSurvivesFilter (0.04s)\n=== RUN   TestAccountStrip_Share\n--- PASS: TestAccountStrip_Share (0.05s)\n=== RUN   TestTabs_Overflow\n--- PASS: TestTabs_Overflow (0.06s)\n=== RUN   TestWork_BadgeOnCard\n--- PASS: TestWork_BadgeOnCard (0.07s)\n=== RUN   TestWork_LogTail\n--- PASS: TestWork_LogTail (0.08s)\n=== RUN   TestPane_ScrollbackKept\n--- PASS: TestPane_ScrollbackKept (0.09s)\nPASS\nok  \tgithub.com/aidan-bailey/loom/ui\t4.112s\n=== RUN   TestOverlay_Toast\n    overlay_test.go:88: toast drawn at row 2\n--- PASS: TestOverlay_Toast (0.01s)\n=== RUN   TestOverlay_ConfirmSheet\n",
+  "start": 1024,
+  "end": 1965,
+  "cut": true,
+  "reset": false
+}

@@ -50,6 +50,10 @@ type claudeState struct {
 	// makes it stale.
 	lastMessage  string
 	lastMsgValid bool
+	// stopAt is the time of the parent Stop that gave lastMessage: it names
+	// the message, so a verdict on it can be checked against the current one
+	// (Instance.LastStop). newLaunch, folderGone and a replay clear it.
+	stopAt time.Time
 	// sessionStartedAt is when this launch's Claude first reported its
 	// SessionStart (startup or resume): core's mod grace runs from it.
 	// newLaunch clears it.
@@ -211,7 +215,7 @@ func (s *claudeState) applyEvent(ev hooks.Event) bool {
 		}
 		return s.offer(observation{status: Prompting, reason: reason, detail: detail, at: ev.At, source: obsHook, valid: true})
 	case hooks.EventStop:
-		s.lastMessage, s.lastMsgValid = ev.LastAssistantMessage, true
+		s.lastMessage, s.lastMsgValid, s.stopAt = ev.LastAssistantMessage, true, ev.At
 		// Stop ends a turn, not the work: with a background subagent still
 		// running, Claude resumes the parent when it reports back.
 		status := Ready
@@ -247,7 +251,7 @@ func runningSubagent(tasks []hooks.Task) bool {
 func (s *claudeState) newLaunch(now time.Time) {
 	s.obs = observation{at: now, source: obsHook}
 	s.held = observation{}
-	s.lastMessage, s.lastMsgValid = "", false
+	s.lastMessage, s.lastMsgValid, s.stopAt = "", false, time.Time{}
 	s.sessionStartedAt = time.Time{}
 }
 
@@ -260,7 +264,7 @@ func (s *claudeState) folderGone(now time.Time) {
 	if s.obs.source == obsHook && s.obs.valid {
 		s.obs = observation{at: now, source: obsHook}
 	}
-	s.lastMessage, s.lastMsgValid = "", false
+	s.lastMessage, s.lastMsgValid, s.stopAt = "", false, time.Time{}
 }
 
 // ClaudeStatus returns the status Claude's hooks or the roster last
@@ -302,6 +306,16 @@ func (i *Instance) LastMessage() (string, bool) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.claude.lastMessage, i.claude.lastMsgValid
+}
+
+// LastStop returns Claude's last message, the time of the Stop that gave
+// it, and whether it is still current (no prompt or permission request
+// since). The time names the message: a verdict on it applies only while
+// it is the current one.
+func (i *Instance) LastStop() (msg string, at time.Time, ok bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.claude.lastMessage, i.claude.stopAt, i.claude.lastMsgValid
 }
 
 // ClaudeSession returns the conversation a relaunch should resume: the

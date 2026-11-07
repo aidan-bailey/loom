@@ -223,7 +223,7 @@ func pushAllows(n core.NotifySettings, kind string, now time.Time) bool {
 	switch kind {
 	case pushWaiting:
 		return n.Waiting
-	case pushFinished:
+	case pushFinished, pushDone:
 		return n.Finished
 	}
 	return false

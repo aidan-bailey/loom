@@ -162,7 +162,13 @@ func (m *Model) advisorOff(now time.Time) string {
 // advisorUsageHigh is the advisor's account's use of its 5-hour window when
 // a fresh sample puts it at advisorUsageLimit or more, else 0.
 func (m *Model) advisorUsageHigh(now time.Time) float64 {
-	name := cmp.Or(m.queue.advisor.settings.Account, account.DefaultName)
+	return m.usageHigh(cmp.Or(m.queue.advisor.settings.Account, account.DefaultName), now)
+}
+
+// usageHigh is account name's use of its 5-hour window when a fresh sample
+// puts it at advisorUsageLimit or more, else 0 (the advisor's and the stop
+// classifier's guard).
+func (m *Model) usageHigh(name string, now time.Time) float64 {
 	u := m.usage[name].last
 	if u.At.IsZero() || now.Sub(u.At) > UsageStaleAfter || u.FiveHour == nil || u.FiveHour.Pct < advisorUsageLimit {
 		return 0

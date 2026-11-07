@@ -93,6 +93,9 @@ type Core interface {
 	ReadTurns(id InstanceID, query transcript.Query, req ReqID)
 	ReadDiff(id InstanceID, req ReqID)
 	ReadMockup(id InstanceID, req ReqID)
+	// A job of session id's output.log, the Reply's JobLog (sched.ReadLog):
+	// its tail when after < 0, else the bytes from after.
+	ReadJobLog(id InstanceID, job sched.JobID, after int64, req ReqID)
 	// Delete idle and paused sessions' unused Rust executables now, or
 	// with DryRun list them: the Reply's Sweep (buildsweep.Report).
 	SweepBuilds(opts buildsweep.Options, req ReqID)

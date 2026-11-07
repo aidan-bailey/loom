@@ -86,6 +86,8 @@ func (m *Model) deliverTracked(t tracked) {
 		r.Diff = res.patch
 	case mockupResult:
 		r.Mockup = res.page
+	case jobLogResult:
+		r.JobLog = res.read
 	case buildSweepResult:
 		r.Sweep = res.report
 	}
@@ -118,6 +120,8 @@ func outcome(result any) (err, notice error) {
 	case diffResult:
 		return r.err, nil
 	case mockupResult:
+		return r.err, nil
+	case jobLogResult:
 		return r.err, nil
 	case buildSweepResult:
 		return r.err, nil
@@ -160,6 +164,7 @@ const (
 	opReadTurns  requestOp = "read the conversation of"
 	opReadDiff   requestOp = "read the diff of"
 	opReadMockup requestOp = "read the mockup of"
+	opReadJobLog requestOp = "read a job log of"
 	opAnswer     requestOp = "answer"
 )
 
@@ -237,8 +242,8 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case !session.IsClaudeProgram(inst.Program()):
 			why = "the session does not run Claude"
 		}
-	case opReadMockup:
-		// A companion can outlive any status of its session.
+	case opReadMockup, opReadJobLog:
+		// A companion, and a job, can outlive any status of its session.
 		if inst.IsWorkspaceTerminal {
 			why = "not allowed on a workspace terminal"
 		}

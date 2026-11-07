@@ -85,7 +85,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0,"Agent":null},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0,"Agent":null},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"JobLog":{"Data":null,"Start":0,"End":0,"Size":0,"Cut":false,"Reset":false},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}}`
 
 ## Methods
 
@@ -195,7 +195,7 @@ Result: `{"value":null}`
 
 Params: `{"id":0}`
 
-Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","Fresh":false},"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
+Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","Fresh":false},"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Verdict":"","VerdictGist":"","VerdictPending":false,"VerdictStop":"0001-01-01T00:00:00Z","Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
 
 ### Create (request)
 
@@ -284,6 +284,12 @@ Result: `{}`
 ### ReadMockup (request)
 
 Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
+### ReadJobLog (request)
+
+Params: `{"id":0,"job":0,"after":0,"req":0}`
 
 Result: `{}`
 
@@ -649,7 +655,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0,"Agent":null},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0,"Agent":null},"Diff":{"Base":"","Files":null},"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","HTML":""},"JobLog":{"Data":null,"Start":0,"End":0,"Size":0,"Cut":false,"Reset":false},"Sweep":{"DryRun":false,"AfterHours":0,"Results":null},"Job":0,"Beliefs":{"Beliefs":null,"Track":{"Priors":0,"Scored":0,"MemoryWithin":0,"MemoryUnder":0,"DurationScored":0,"DurationMedian":0}},"Agent":{"State":{"On":false,"Model":"","Effort":"","Wait":0,"Why":"","Pending":0,"Flight":{"Kind":"","Job":0,"Command":"","Started":"0001-01-01T00:00:00Z"},"Failures":0,"PausedUntil":"0001-01-01T00:00:00Z","Today":{"Calls":0,"Failed":0,"CostUSD":0}},"Calls":null,"Kept":0,"Path":"","LogErr":""},"Note":0}`
 
 ### SessionLaunched
 

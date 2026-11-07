@@ -106,6 +106,9 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		v.RemoteSession = entry.RemoteSession
 	}
 	v.LastMessage, v.HasLastMessage = inst.LastMessage()
+	if v.HasLastMessage {
+		v.Verdict, v.VerdictGist, v.VerdictStop, v.VerdictPending = m.verdictOf(inst)
+	}
 	if screen, changed := inst.Mockup(); screen != "" {
 		start := inst.TurnStart()
 		v.Mockup = MockupView{Screen: screen, Changed: changed, Fresh: !start.IsZero() && !changed.Before(start)}

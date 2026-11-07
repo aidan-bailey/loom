@@ -351,6 +351,18 @@ type ReadMockupParams struct {
 type ReadMockupResult struct {
 }
 
+// ReadJobLogParams are ReadJobLog's parameters on the wire.
+type ReadJobLogParams struct {
+	ID    core.InstanceID `json:"id"`
+	Job   sched.JobID     `json:"job"`
+	After int64           `json:"after"`
+	Req   core.ReqID      `json:"req"`
+}
+
+// ReadJobLogResult is ReadJobLog's result on the wire; an error travels in the reply.
+type ReadJobLogResult struct {
+}
+
 // SweepBuildsParams are SweepBuilds's parameters on the wire.
 type SweepBuildsParams struct {
 	Opts buildsweep.Options `json:"opts"`
@@ -871,6 +883,7 @@ var methods = []methodInfo{
 	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
 	{Name: "ReadMockup", Kind: kindRequest, Params: ReadMockupParams{}, Result: ReadMockupResult{}},
+	{Name: "ReadJobLog", Kind: kindRequest, Params: ReadJobLogParams{}, Result: ReadJobLogResult{}},
 	{Name: "SweepBuilds", Kind: kindRequest, Params: SweepBuildsParams{}, Result: SweepBuildsResult{}},
 	{Name: "BuildSweep", Kind: kindLocal, Params: BuildSweepParams{}, Result: BuildSweepResult{}},
 	{Name: "ConfigureBuildSweep", Kind: kindRequest, Params: ConfigureBuildSweepParams{}, Result: ConfigureBuildSweepResult{}},
@@ -1205,6 +1218,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadMockup(p.ID, p.Req)
 		return ReadMockupResult{}, nil, true
+	case "ReadJobLog":
+		var p ReadJobLogParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadJobLog(p.ID, p.Job, p.After, p.Req)
+		return ReadJobLogResult{}, nil, true
 	case "SweepBuilds":
 		var p SweepBuildsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1795,6 +1818,12 @@ func (c *Client) ReadDiff(id core.InstanceID, req core.ReqID) {
 func (c *Client) ReadMockup(id core.InstanceID, req core.ReqID) {
 	var r ReadMockupResult
 	c.noteRefused(c.requestNoErr("ReadMockup", ReadMockupParams{ID: id, Req: req}, &r), req)
+}
+
+// ReadJobLog is core.Core's ReadJobLog (request).
+func (c *Client) ReadJobLog(id core.InstanceID, job sched.JobID, after int64, req core.ReqID) {
+	var r ReadJobLogResult
+	c.noteRefused(c.requestNoErr("ReadJobLog", ReadJobLogParams{ID: id, Job: job, After: after, Req: req}, &r), req)
 }
 
 // SweepBuilds is core.Core's SweepBuilds (request).

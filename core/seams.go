@@ -208,7 +208,7 @@ func CausedForTest(req ReqID, result any) any { return caused{req: req, result: 
 // ViewForTest is the view the model would publish for inst, with ID id:
 // for ui tests that build an instance and render it.
 func ViewForTest(inst *session.Instance, id InstanceID) InstanceView {
-	m := &Model{ids: map[*session.Instance]InstanceID{inst: id}}
+	m := &Model{ids: map[*session.Instance]InstanceID{inst: id}, attention: newAttentionState()}
 	return m.viewOf(inst)
 }
 

@@ -100,11 +100,11 @@ Loom has four view modes:
 
 ### Left Panel — Session Rail
 
-Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session stops, the tail shows the end of Claude's last message instead of the screen. When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
+Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session's turn ends, the stop classifier (see *Stopped Turns That Ask for You*) reads its last message: a turn that asks you something shows `❯ asks: <what it asks> · 4m` with the gold accent, one that finished the task `✓ done 4m`, and one waiting on its own background work `◷ waiting 4m`. When a Claude session stops, the tail shows the end of Claude's last message instead of the screen. When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
 
 | Accent | Meaning |
 |--------|---------|
-| Gold | Needs your input (prompting or bell) |
+| Gold | Needs your input (prompting, a stopped turn that asks you, or bell) |
 | Blue | Selected session |
 | Green | Agent running |
 | Purple | Workspace terminal |
@@ -698,7 +698,9 @@ and answers only phones you have paired.
   footer hides while the reply box has focus.
 - **The fleet.** Sessions are listed by group: **Needs you** (longest wait
   first, with the reason and, for a permission request, the command, file
-  or address), **Your turn** (marked NEW when the turn ended after this
+  or address; a stopped turn whose last message asks you something shows
+  as "Asks you" with what it asks), **Your turn** (a turn that finished its
+  task as "Done") (marked NEW when the turn ended after this
   phone last opened the session), **Working**, and **Paused** (folded
   away). Each Claude session's row shows its account's plan usage beside
   its age (the 5-hour share, or the weekly one for an account without a
@@ -995,6 +997,20 @@ loom feedback close 3
 ```
 
 `grouper` takes the scheduler agent's fields and bounds (`wait_seconds` aside). A failed call leaves the note ungrouped, shown as its own row and retried 10 minutes later; three failed calls in a row pause the grouper until the daemon restarts or the block changes. With the grouper off, notes stay ungrouped rows.
+
+### Stopped Turns That Ask for You
+
+Claude often ends a turn by asking you something in plain text ("Option A or B?", "Shall I push?") without a question dialog or a permission prompt. When a Claude session's turn ends, the daemon has a headless Haiku at low effort read the turn's last message and say whether the session **needs you** (a question, a choice, a go-ahead on a concrete next step, something for you to do, a failure it can't get past), is **done**, is **waiting** on its own background work (a loom job, a subagent), or has merely **stopped**. A turn that needs you alerts like a permission prompt: the gold accent and `❯ asks: …` in the TUI, the jump to the next waiting session, the tab bar, the phone's **Needs you** group ("Asks you") and a high-urgency push saying what it asks. A done turn shows `✓ done` and the phone gets a "Done: …" push under its "When a session finishes" setting; a waiting turn pushes nothing. While the classifier judges a turn, the phone's finished push waits for it (at most `wait_seconds`); when it is off, skipped or fails, the turn alerts as before.
+
+Each call runs as the session's own account and takes about 2 s and $0.0003 of plan usage. It is skipped while that account is at 90% or more of its 5-hour window, and three failed calls in a row pause it for 10 minutes. `~/.loom/attention/calls.jsonl` holds the last 500 calls (the session, the verdict and its one line, the cost, the error), never the message. Set the block in the global `config.json`:
+
+```json
+{
+  "attention": { "enabled": true, "model": "haiku", "effort": "low", "max_parallel": 3, "wait_seconds": 30 }
+}
+```
+
+`max_parallel` (1–8) is how many calls run at once, `wait_seconds` (5–120) how long a call may take, its wait for a free slot included. A block out of bounds turns the classifier off, with a notice.
 
 ### Supervised Plans (the Agent Flow)
 
@@ -1318,6 +1334,7 @@ Configuration is stored in `~/.loom/config.json` for the global workspace, and i
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
 | `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off, at most `8760`, a year). Set it in Settings (`S`) → Build Sweep. See [Build Sweep](#build-sweep) |
 | `scheduler` | object | host defaults | The work queue's caps and default claim (global `config.json` only). See [Scheduler Caps](#scheduler-caps) |
+| `attention` | object | on, `haiku` at `low` | The stop classifier that reads each stopped Claude turn (global `config.json` only). See [Stopped Turns That Ask for You](#stopped-turns-that-ask-for-you) |
 
 ### Example config.json
 

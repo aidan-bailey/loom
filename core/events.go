@@ -220,8 +220,8 @@ func (ViewsChanged) coreEvent() {}
 // concerns (for Create the new one, for Recover the adopted one). Err is
 // the failure. Notice is what a success must still show (a stash it could
 // not drop). Issue is FetchIssue's result, Turns ReadTurns' page, Diff
-// ReadDiff's patch, Mockup ReadMockup's page and Sweep SweepBuilds'
-// report. Job is SubmitJob's new job (0 for every other request), whose
+// ReadDiff's patch, Mockup ReadMockup's page, JobLog ReadJobLog's read and
+// Sweep SweepBuilds' report. Job is SubmitJob's new job (0 for every other request), whose
 // Notice is the owner warning. The notices the TUI shows for an operation
 // are emitted as usual; the Reply is for the requester that waits on it.
 type Reply struct {
@@ -233,6 +233,7 @@ type Reply struct {
 	Turns   transcript.Page
 	Diff    git.Patch
 	Mockup  mockup.Page
+	JobLog  sched.LogRead
 	Sweep   buildsweep.Report
 	Job     sched.JobID
 	Beliefs sched.BeliefsPage

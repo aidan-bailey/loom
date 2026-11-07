@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
@@ -389,4 +390,35 @@ func TestOverview_JobBadgeKeepsCardHeight(t *testing.T) {
 				"width %d, badge %q", width, badge)
 		}
 	}
+}
+
+func TestCardData_AStopThatAsksNeedsAttention(t *testing.T) {
+	for _, tc := range []struct {
+		status  session.Status
+		verdict string
+		want    bool
+	}{
+		{session.Ready, attention.NeedsYou, true},
+		{session.Ready, attention.Done, false},
+		{session.Ready, attention.Waiting, false},
+		{session.Ready, "", false},
+		{session.Deleting, attention.NeedsYou, false},
+		{session.Prompting, "", true},
+	} {
+		assert.Equal(t, tc.want, CardData{Status: tc.status, Verdict: tc.verdict}.NeedsAttention(), "%v %q", tc.status, tc.verdict)
+	}
+}
+
+func TestStatusLabel_Verdicts(t *testing.T) {
+	age := 4 * time.Minute
+	assert.Equal(t, "❯ asks: pick A or B · 4m", CardData{Status: session.Ready, Verdict: attention.NeedsYou, VerdictGist: "pick A or B", StatusAge: age}.statusLabel())
+	assert.Equal(t, "❯ asks", CardData{Status: session.Ready, Verdict: attention.NeedsYou}.statusLabel())
+	assert.Equal(t, "✓ done 4m", CardData{Status: session.Ready, Verdict: attention.Done, StatusAge: age}.statusLabel())
+	assert.Equal(t, "◷ waiting 4m", CardData{Status: session.Ready, Verdict: attention.Waiting, StatusAge: age}.statusLabel())
+	assert.Equal(t, "✓ idle 4m", CardData{Status: session.Ready, Verdict: attention.Stopped, StatusAge: age}.statusLabel())
+}
+
+func TestOverviewTier_AStopThatAsksIsAttention(t *testing.T) {
+	assert.Equal(t, 1, overviewTier(core.InstanceView{Status: session.Ready, Verdict: attention.NeedsYou}))
+	assert.Equal(t, 3, overviewTier(core.InstanceView{Status: session.Ready, Verdict: attention.Done}))
 }
