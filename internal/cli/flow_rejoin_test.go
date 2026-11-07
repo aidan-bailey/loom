@@ -2,14 +2,17 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/flowrun"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -285,4 +288,88 @@ func TestFlowAgentWait_FollowsTheRunAcrossADaemonRestart(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Equal(t, "done intermediate-dev-1: DONE\nreport: "+filepath.Join(state, "agents", "intermediate-dev-1", "report.md")+"\n", out)
 	assert.Contains(t, errOut, "loom: lost the loom daemon (")
+}
+
+// loseTheReplyOnce makes the first submission of a gate whose description
+// starts with prefix reach the daemon, which queues it, and then lose the
+// daemon before its reply arrives, as a restart mid-submit does; the
+// daemon is back for the command's next join. It returns that job's ID.
+func loseTheReplyOnce(t *testing.T, r *restartable, prefix string) *sched.JobID {
+	t.Helper()
+	var queued sched.JobID
+	var once sync.Once
+	old := submitFlowJob
+	submitFlowJob = func(c *client, sub sched.Submit) (sched.JobID, error) {
+		lose := false
+		if strings.HasPrefix(sub.Description, prefix) {
+			once.Do(func() { lose = true })
+		}
+		id, err := old(c, sub)
+		if !lose || err != nil {
+			return id, err
+		}
+		queued = id
+		r.stop()
+		require.Eventually(t, func() bool { return c.Err() != nil }, 5*time.Second, 5*time.Millisecond, "the command saw the daemon go")
+		r.start()
+		return 0, errors.New("the reply was lost")
+	}
+	t.Cleanup(func() { submitFlowJob = old })
+	return &queued
+}
+
+// gatesNamed counts the daemon's jobs whose description starts with prefix.
+func gatesNamed(d *testDaemon, prefix string) int {
+	n := 0
+	for _, j := range d.jobs() {
+		if strings.HasPrefix(j.Description, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestFlowGatesWait_ARestartMidRequeueQueuesNoGateTwice: a final run's wait
+// queues the gates after a failure again; a restart that loses the reply to
+// one of those submits must not leave that job behind while the wait,
+// joined again, queues the gate a second time.
+func TestFlowGatesWait_ARestartMidRequeueQueuesNoGateTwice(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	conf.gates = []string{"RUN echo one; exit 3", "RUN echo two", "RUN echo three"}
+	_, _, err := runFlow(t, "gates", "start", "--final")
+	require.NoError(t, err)
+	d.waitFinished(t, 1)
+	r := restartableDaemon(t, d)
+	queued := loseTheReplyOnce(t, r, "gate 2/3:")
+
+	out, errOut, err := runFlow(t, "gates", "wait", "60")
+
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Contains(t, errOut, "loom: lost the loom daemon (")
+	assert.Contains(t, out, "2 PASS: echo two\n")
+	assert.Contains(t, out, "3 PASS: echo three\n")
+	assert.Equal(t, 2, gatesNamed(d, "gate 2/3:"), "gate 2 ran in two generations, not three")
+	assert.Equal(t, 2, gatesNamed(d, "gate 3/3:"))
+	run := readTestRun(t, conf, "final")
+	assert.Equal(t, *queued, run.Steps[1].job(), "the job queued before the loss is the gate's")
+	assert.Equal(t, *queued, d.job(run.Steps[2].job()).After, "and the gate after it runs after it")
+}
+
+// TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice: a start that loses
+// the daemon partway through its chain joins again and queues the rest, the
+// gates queued before the loss included once.
+func TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	conf.gates = []string{"RUN echo one", "RUN echo two"}
+	r := restartableDaemon(t, d)
+	queued := loseTheReplyOnce(t, r, "gate 1/2:")
+
+	out, errOut, err := runFlow(t, "gates", "start", "--final")
+
+	require.NoError(t, err, errOut)
+	assert.Contains(t, errOut, "loom: lost the loom daemon (")
+	assert.Equal(t, fmt.Sprintf("started final: 2 steps, jobs %d, %d\n", *queued, *queued+1), out)
+	assert.Len(t, d.jobs(), 2, "no gate was queued twice")
+	run := readTestRun(t, conf, "final")
+	assert.Equal(t, *queued, d.job(run.Steps[1].job()).After)
 }

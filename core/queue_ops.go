@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/sched"
 )
 
@@ -37,6 +38,7 @@ func (m *Model) jobOwner(launch string) (owner InstanceID, unknown bool) {
 
 // submitJob queues a job (spec §6.1, §5.9): it refuses first, on Windows, with
 // sched.ErrUnsupported; then it checks the submission against the bounds,
+// answers a key the queue holds with its job (queueState.keyed), and runs
 // the argv check (sched.CheckCommand), the prerequisite a --after names
 // (prerequisiteOf; dependent jobs spec §5.1) and the caps, sizes its claim from its
 // signature's belief (smart scheduler spec §5.4), writes spec.json and
@@ -54,6 +56,15 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	}
 	if err := s.Validate(); err != nil {
 		return 0, "", err
+	}
+	if s.Key != "" {
+		// Sent again by a client that lost the daemon mid-submit: the job
+		// its first try queued is the answer, whatever came of it since.
+		owner, _ := m.jobOwner(s.Launch)
+		if rec, ok := q.keyed(s.Key, owner); ok {
+			log.For("core").Info("job.submit_keyed", "job", rec.ID, "key", s.Key)
+			return rec.ID, "", nil
+		}
 	}
 	if _, err := os.Stat(s.Cwd); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -88,7 +99,7 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	rec := sched.Record{
 		Description: strings.TrimSpace(s.Description), Argv: slices.Clone(s.Argv), Cwd: s.Cwd,
 		Notify: s.Notify, Tail: s.Tail, State: sched.Queued, Submitted: now, Ready: now, NoRequeue: s.NoRequeue,
-		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind, Locks: slices.Clone(s.Locks),
+		Asked: s.Claim, Unsized: unsized, Checkout: checkout, Kind: s.Kind, Locks: slices.Clone(s.Locks), Key: s.Key,
 	}
 	if s.Kind == sched.KindAgent {
 		rec.AccountKey = envValue(s.Env, "CLAUDE_CONFIG_DIR")

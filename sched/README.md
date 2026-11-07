@@ -47,6 +47,8 @@ A job is `held` while it waits for its prerequisite (`Record.After`, [dependent 
 
 A `Submit` is what a client sends; the model validates it (`Submit.Validate` for the bounds, `CheckClaim` for the caps), applies the default claim and stores a `Record`, which is everything about the job but its environment. A `Record`'s `Order` is its ID at submit and the lowest queued `Order` minus 1 after a move to the front, and the queue runs lowest first. `Ready` is when a job joined the queue: at its submit, or at its release for a dependent; `QueuedSince` falls back on `Submitted` for a held job and for a record from an earlier build.
 
+A `Submit` may carry a `Key` (at most 200 bytes), stored as `Record.Key`, which makes the submit idempotent: when the queue holds a job of the submitter's owner with that key that wasn't cancelled, the model answers with that job's ID and queues nothing (`queueState.keyed`, `core/queue.go`). A client that lost the daemon mid-submit sends the same submission again; `loom flow gates` keys each gate's job by its run's nonce, the gate and its generation (`gateKey`). A cancelled job is never the answer, so a chain refused partway, which cancels what it queued, queues again on a later try. A daemon from before keys ignores the field and queues the job again.
+
 ## Claims, caps and the policy
 
 A `Claim` is whole cores and whole GB, whether the job is I/O-heavy (one of the `io_jobs` slots), or `Exclusive` (every cap, as the caps stand when it is admitted). `Claim.Need` turns a claim into what it takes from the `Caps`. `Resolve` turns the `scheduler` block of the global `config.json` and the `Host` into a `Policy`:

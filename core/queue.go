@@ -215,6 +215,20 @@ func (q *queueState) index(id sched.JobID) int {
 	return -1
 }
 
+// keyed is the job owner submitted with key that wasn't cancelled: a
+// submission's idempotency key (sched.Submit.Key). A cancelled one is no
+// answer, since a chain refused partway cancels what it queued and a later
+// try must queue again; a finished one is, since it ran while its client
+// was away.
+func (q *queueState) keyed(key string, owner InstanceID) (sched.Record, bool) {
+	for _, rec := range q.store.Jobs {
+		if rec.Key == key && rec.Owner == uint64(owner) && rec.State != sched.Cancelled {
+			return rec, true
+		}
+	}
+	return sched.Record{}, false
+}
+
 // jobDir is job id's directory.
 func (q *queueState) jobDir(id sched.JobID) string { return sched.JobDir(q.dir, id) }
 
