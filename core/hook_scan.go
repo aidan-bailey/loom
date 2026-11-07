@@ -116,6 +116,7 @@ type hookFace struct {
 	conv, transcript string
 	lastMsg          string
 	hasLastMsg       bool
+	stop             time.Time
 	subagents        []subagent.View
 	mockup           string
 	mockupChanged    time.Time
@@ -127,7 +128,7 @@ func hookFaceOf(inst *session.Instance) hookFace {
 	f.claude, f.why, f.reported = inst.ClaudeStatus()
 	f.detail = inst.ClaudeWaitDetail()
 	f.conv, f.transcript = inst.ClaudeSession()
-	f.lastMsg, f.hasLastMsg = inst.LastMessage()
+	f.lastMsg, f.stop, f.hasLastMsg = inst.LastStop()
 	f.mockup, f.mockupChanged = inst.Mockup()
 	return f
 }
@@ -173,6 +174,12 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 			changed = true
 			m.applyClaudeStatus(r.instance)
 			after = hookFaceOf(r.instance)
+		}
+		// A new parent Stop that left Claude Ready, with a message, asks the
+		// stop classifier for its verdict (attention.go).
+		if r.err == nil && after.hasLastMsg && after.lastMsg != "" && !after.stop.Equal(before.stop) &&
+			after.reported && after.claude == session.Ready && !r.instance.IsWorkspaceTerminal {
+			m.queueVerdict(r.instance, after.stop)
 		}
 		if !reflect.DeepEqual(before, after) {
 			moved = true

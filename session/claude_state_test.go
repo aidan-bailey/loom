@@ -284,6 +284,46 @@ func TestApplyHookScan_DrivesClaudeState(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestClaudeState_AStopNamesItsLastMessage: the Stop's time names the last
+// message, so a verdict on it can be checked against the current one; a
+// prompt makes it stale and a relaunch forgets it.
+func TestClaudeState_AStopNamesItsLastMessage(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventStop, At: t0, LastAssistantMessage: "Shall I push?"})
+	assert.True(t, s.stopAt.Equal(t0))
+	assert.True(t, s.lastMsgValid)
+
+	s.applyEvent(hooks.Event{Name: hooks.EventUserPromptSubmit, At: t0.Add(time.Second)})
+	assert.False(t, s.lastMsgValid, "a prompt makes the message stale")
+
+	t2 := t0.Add(time.Minute)
+	s.applyEvent(hooks.Event{Name: hooks.EventStop, At: t2, LastAssistantMessage: "Done."})
+	assert.True(t, s.stopAt.Equal(t2), "a newer Stop renames it")
+
+	s.applyEvent(hooks.Event{Name: hooks.EventStop, AgentID: "a1", At: t2.Add(time.Second), LastAssistantMessage: "sub"})
+	assert.True(t, s.stopAt.Equal(t2), "a subagent's Stop is not the parent's")
+
+	s.newLaunch(t2.Add(time.Hour))
+	assert.True(t, s.stopAt.IsZero(), "a relaunch forgets it")
+}
+
+// TestApplyHookScan_AReplayRenamesTheLastStop: a replayed scan rebuilds the
+// last message from scratch, its Stop's time with it.
+func TestApplyHookScan_AReplayRenamesTheLastStop(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventStop, At: t0, LastAssistantMessage: "one"}}}))
+	msg, at, ok := inst.LastStop()
+	assert.Equal(t, "one", msg)
+	assert.True(t, at.Equal(t0))
+	assert.True(t, ok)
+
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true}))
+	_, at, ok = inst.LastStop()
+	assert.False(t, ok)
+	assert.True(t, at.IsZero(), "a replay with no Stop leaves none")
+}
+
 func TestResetHookLaunch_KeepsConversationClearsStatus(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{

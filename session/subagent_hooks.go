@@ -273,7 +273,7 @@ func (i *Instance) ApplyHookScan(res HookScanResult) bool {
 	tracker := i.subagentTrackerLocked()
 	if res.Replayed {
 		tracker.Reset()
-		i.claude.lastMessage, i.claude.lastMsgValid = "", false
+		i.claude.lastMessage, i.claude.lastMsgValid, i.claude.stopAt = "", false, time.Time{}
 	} else if !i.subagentWarm {
 		return false
 	}

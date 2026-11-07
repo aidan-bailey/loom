@@ -193,7 +193,7 @@ Result: `{"value":null}`
 
 Params: `{"id":0}`
 
-Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","Fresh":false},"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
+Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","Asks":null,"Mockup":{"Screen":"","Changed":"0001-01-01T00:00:00Z","Fresh":false},"RemoteSession":"","LastMessage":"","HasLastMessage":false,"Verdict":"","VerdictGist":"","VerdictPending":false,"VerdictStop":"0001-01-01T00:00:00Z","Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
 
 ### Create (request)
 

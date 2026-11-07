@@ -3,6 +3,7 @@ package core
 import (
 	"time"
 
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
@@ -70,6 +71,16 @@ type InstanceView struct {
 	RemoteSession  string
 	LastMessage    string
 	HasLastMessage bool
+	// Verdict is the stop classifier's verdict on the turn LastMessage
+	// ended (attention.NeedsYou, Done, Waiting or Stopped), "" for none;
+	// VerdictGist is its one line. VerdictPending is set while a call for
+	// that turn waits or runs, and VerdictStop names the turn (its Stop's
+	// time), so a client acts once per turn. All are zero unless
+	// HasLastMessage.
+	Verdict        string
+	VerdictGist    string
+	VerdictPending bool
+	VerdictStop    time.Time
 	Subagents      []subagent.View
 	// Diff is the latest diff stats, valid when HasDiff.
 	Diff                git.DiffStats
@@ -120,4 +131,12 @@ func (v InstanceView) Active() bool {
 		return false
 	}
 	return v.Started
+}
+
+// NeedsYou reports whether v waits on the person: a dialog Claude holds
+// open (Prompting), or a stopped turn whose last message asks for them (the
+// stop classifier's needs_you). The TUI's attention, the overview's jump,
+// the tab bar, the PWA's group and its pushes all read it.
+func (v InstanceView) NeedsYou() bool {
+	return v.Status == session.Prompting || (v.Status == session.Ready && v.Verdict == attention.NeedsYou)
 }

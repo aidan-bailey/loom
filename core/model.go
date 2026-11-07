@@ -256,6 +256,9 @@ type Model struct {
 	feedbackPub feedbackPublication
 	build       string
 
+	// attention is the stop classifier (attention.go).
+	attention *attentionState
+
 	// out holds the events and the jobs queued since the last take; bgJobs
 	// the background jobs (spawnBackground), kept apart so a loop stopping
 	// can wait for the others alone (takeJobsSplit).
@@ -288,6 +291,7 @@ func newModel(o Options) *Model {
 		wsIDs:     make(map[*Workspace]WorkspaceID),
 		queue:     newQueueState(),
 		feedback:  &feedbackState{inbox: feedback.Empty()},
+		attention: newAttentionState(),
 		build:     o.Build,
 	}
 }
@@ -527,6 +531,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverAdvisor(msg)
 	case groupResult:
 		m.deliverFeedbackGroup(msg)
+	case verdictResult:
+		m.deliverVerdict(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:
