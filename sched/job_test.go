@@ -81,6 +81,8 @@ func TestSubmit_Validate(t *testing.T) {
 		{"exclusive with cpus", func(s *Submit) { s.Claim = Claim{Exclusive: true, CPUs: 2} }, "--exclusive claims everything: drop --cpus, --mem and --io"},
 		{"exclusive with mem", func(s *Submit) { s.Claim = Claim{Exclusive: true, MemoryGB: 2} }, "--exclusive claims everything: drop --cpus, --mem and --io"},
 		{"exclusive with io", func(s *Submit) { s.Claim = Claim{Exclusive: true, IO: true} }, "--exclusive claims everything: drop --cpus, --mem and --io"},
+		{"a key of 200 bytes", func(s *Submit) { s.Key = strings.Repeat("k", 200) }, ""},
+		{"a key of 201 bytes", func(s *Submit) { s.Key = strings.Repeat("k", 201) }, "the key is 201 bytes: at most 200"},
 		{"a relative folder", func(s *Submit) { s.Cwd = "work/tree" }, "the folder work/tree is not an absolute path"},
 		{"no folder", func(s *Submit) { s.Cwd = "" }, "the folder  is not an absolute path"},
 		{"a bare agent job", func(s *Submit) { s.Kind = KindAgent }, ""},

@@ -30,7 +30,8 @@ Run them like this:
   and the rest are SKIPPED (not run); the final gates all run, each reported
   on its own. If `start` exits 2 because a run here hasn't ended, wait on
   that run as below when your brief says it is yours to finish, else report
-  it.
+  it. A daemon restart while it queues is no failure either: it joins again
+  (a `loom: lost the loom daemon` line on stderr) and queues no gate twice.
 - **Wait inside your turn.** Run `loom flow gates wait` as a foreground Bash
   call with a 600000 ms timeout, and run it again while it exits 75. Each call
   waits up to 170 seconds, then prints the whole table: per step PASS, FAIL,

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +58,9 @@ type gateRun struct {
 	Cwd       string     `json:"cwd"` // where its jobs run, queued-again ones too
 	Steps     []gateStep `json:"steps"`
 	Cancelled bool       `json:"cancelled,omitempty"`
+	// Nonce is this run's own, which keys each of its submits (gateKey);
+	// "" in a record from before keys, whose submits carry none.
+	Nonce string `json:"nonce,omitempty"`
 }
 
 // gateStep is one line of the expansion and what became of it.
@@ -173,7 +178,9 @@ func newFlowGatesStartCmd() *cobra.Command {
 		Long: "Expands the gates (loom flow conf gates) and queues each RUN line as a job, each after the one " +
 			"before, and each LOCKED line as one taking its locks; a story's chain stops at the expansion's first " +
 			"FAIL line. Prints the run's name and jobs. " +
-			"Refuses (exit 2) while a run in this worktree hasn't ended; exits 125 when it queued nothing.",
+			"Refuses (exit 2) while a run in this worktree hasn't ended; exits 125 when it queued nothing. A daemon " +
+			"lost mid-chain (a restart) is joined again within 170 seconds, saying so on stderr, and the chain queued " +
+			"again: a gate queued before the loss is queued once.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -192,7 +199,11 @@ func newFlowGatesStartCmd() *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: the working directory: %v", err)}
 			}
-			run.Schema, run.Cwd = gateRunSchema, cwd
+			nonce, err := newGateNonce()
+			if err != nil {
+				return &ExitError{Code: exitNotRun, Msg: "loom flow gates: " + err.Error()}
+			}
+			run.Schema, run.Cwd, run.Nonce = gateRunSchema, cwd, nonce
 			conf, cleanup, err := newFlowConf()
 			if err != nil {
 				return err
@@ -213,7 +224,15 @@ func newFlowGatesStartCmd() *cobra.Command {
 			if err := run.plan(lines); err != nil {
 				return &ExitError{Code: exitNotRun, Msg: err.Error()}
 			}
-			return flowDaemon(c, func(d *client) error { return d.startRun(c.OutOrStdout(), dir, run) })
+			// A daemon lost mid-chain (a restart) is joined again, and the
+			// chain queued again under the same keys, so a gate queued
+			// before the loss is queued once.
+			err = rejoin(c, time.Now().Add(waitCap), 0, sayOnStderr(c), func(d *client) error { return d.startRun(c.OutOrStdout(), dir, run) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v, and gates queued before it may still run: loom job list shows them", away)}
+			}
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&story, "story", false, "A story's gates; the arguments are the story's commits")
@@ -385,9 +404,11 @@ func (d *client) startRun(out io.Writer, dir string, run *gateRun) error {
 }
 
 // submitChain queues run's steps as a chain, each after the one before, in
-// run's directory, each with its step's locks, and adds each job to its
-// step. A submit refused partway, or a job whose locks the daemon dropped
-// (keptLocks), cancels the jobs already queued and adds none.
+// run's directory, each with its step's locks and key (gateKey), and adds
+// each job to its step. A submit refused partway, or a job whose locks the
+// daemon dropped (keptLocks), cancels the jobs already queued and adds
+// none. Sent again after a daemon lost mid-chain, it adds the jobs the lost
+// try queued, which the daemon answers the keys with, and queues the rest.
 func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 	var ids []sched.JobID
 	var after sched.JobID
@@ -395,6 +416,7 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 		cmd := run.Steps[i].text()
 		sub := flowJob([]string{"bash", "-c", cmd}, fmt.Sprintf("gate %d/%d: %s", i+1, len(run.Steps), cmd), run.Cwd, after)
 		sub.Locks = slices.Clone(run.Steps[i].Locks)
+		sub.Key = run.gateKey(i)
 		id, err := submitFlowJob(d, sub)
 		if err == nil {
 			err = d.keptLocks(sub, id)
@@ -410,6 +432,27 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 		run.Steps[i].Jobs = append(run.Steps[i].Jobs, ids[k])
 	}
 	return ids, nil
+}
+
+// gateKey is the key of step i's submit in its next generation: the run's
+// nonce, the gate and how many jobs it has had. A try sent again after a
+// lost daemon has the same key, so the daemon answers it with the job the
+// lost try queued; a later generation, or another run, has another. "" for
+// a run with no nonce.
+func (r *gateRun) gateKey(i int) string {
+	if r.Nonce == "" {
+		return ""
+	}
+	return fmt.Sprintf("flow-gates:%s:%d:%d", r.Nonce, i+1, len(r.Steps[i].Jobs))
+}
+
+// newGateNonce is a new run's nonce: 16 random hex digits.
+func newGateNonce() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("a run's nonce: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // keptLocks checks that the daemon kept the locks sub, queued as job id,

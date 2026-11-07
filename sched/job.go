@@ -15,6 +15,7 @@ const (
 	maxCommandBytes     = 64 << 10
 	maxEnvBytes         = 1 << 20
 	maxTail             = 200
+	maxKeyBytes         = 200
 )
 
 // JobID names a job: per host, from 1, never reused.
@@ -256,6 +257,9 @@ type Record struct {
 	// Named locks (--lock): while it runs no other job naming one of them
 	// starts, so jobs that bind one port or share one fixture take turns.
 	Locks []string `json:"locks,omitempty"`
+
+	// Key is the submission's idempotency key (Submit.Key), "" for none.
+	Key string `json:"key,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
@@ -320,6 +324,11 @@ type Submit struct {
 	NoRequeue   bool     `json:"no_requeue,omitempty"` // never requeued when memory runs short: paused instead (cgroup spec §8.2)
 	Kind        string   `json:"kind,omitempty"`       // "" for a build, KindAgent
 	Locks       []string `json:"locks,omitempty"`      // named locks it holds while it runs (--lock): a job naming one waits while another holds it
+	// Key makes a submit idempotent: when the queue holds a job of the
+	// submitter's owner with this key that wasn't cancelled, that job is the
+	// answer and nothing is queued. A client that lost the daemon mid-submit
+	// sends the same submission again; "" for none.
+	Key string `json:"key,omitempty"`
 }
 
 // totalBytes is the summed length of items.
@@ -336,10 +345,10 @@ func totalBytes(items []string) int {
 // not empty and its arguments total at most 64 KiB; the environment totals at
 // most 1 MiB; the tail is 0–200; the claim's cores and GB are not negative
 // (0 takes the default claim's) and an exclusive claim names no other; the
-// folder is absolute; the prerequisite is not negative (0 is none); an agent
-// or run job claims nothing and runs after nothing, and no other kind is
-// known; at most maxLocks locks, each a lock name (ValidLockName) given once,
-// and none on an agent or run job. It does
+// key is at most 200 bytes; the folder is absolute; the prerequisite is not
+// negative (0 is none); an agent or run job claims nothing and runs after
+// nothing, and no other kind is known; at most maxLocks locks, each a lock
+// name (ValidLockName) given once, and none on an agent or run job. It does
 // not check that the folder exists, or that the prerequisite does, which the
 // model does. It changes nothing: the caller stores the trimmed description.
 func (s Submit) Validate() error {
@@ -370,6 +379,9 @@ func (s Submit) Validate() error {
 	}
 	if s.Claim.Exclusive && (s.Claim.CPUs != 0 || s.Claim.MemoryGB != 0 || s.Claim.IO) {
 		return errors.New("--exclusive claims everything: drop --cpus, --mem and --io")
+	}
+	if len(s.Key) > maxKeyBytes {
+		return fmt.Errorf("the key is %d bytes: at most %d", len(s.Key), maxKeyBytes)
 	}
 	if !filepath.IsAbs(s.Cwd) {
 		return fmt.Errorf("the folder %s is not an absolute path", s.Cwd)
