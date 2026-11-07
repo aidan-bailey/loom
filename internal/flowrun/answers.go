@@ -39,7 +39,7 @@ var takes = map[string]struct {
 	KindPremiseDesign: {[]string{WordStop}, true},
 	KindUnresolved:    {[]string{WordAccept, WordStop}, true},
 	KindGateFailure:   {[]string{WordRetry, WordAccept, WordStop}, true},
-	KindAgentFailed:   {[]string{WordRetry, WordStop}, false},
+	KindAgentFailed:   {[]string{WordRetry, WordStop}, true},
 	KindTreeMoved:     {[]string{WordContinue, WordStop}, false},
 }
 

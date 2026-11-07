@@ -696,7 +696,11 @@ tree that moved. The manager waits on `loom flow run wait` in a background
 Bash, which costs no turns, and answers with `loom flow run answer --from
 spec|owner`: the record counts the questions the spec settled, which a
 judge (3c, not built) could have answered, against the ones that needed the
-owner.
+owner. A failed agent's question takes a decision, which its retry's brief
+carries. A plan the manager edits and commits with an answer moves the
+stories' line ranges for the later briefs; a run can't add, remove or
+reorder its stories. `start` refuses a `claude_permission_mode` other than
+`auto` or `bypassPermissions`, in which headless agents can't write.
 
 The engine replays. Each step has a fixed name (`<run>-s3-dev2`) and a
 memoized result in `<state>/runs/<run>.json`, so an engine lost mid-run

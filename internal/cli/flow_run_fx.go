@@ -103,9 +103,12 @@ func (fx *runFX) Agent(name, role, effort, brief string) (flowrun.Report, error)
 }
 
 // follow waits for agent run name's current job to end, records it, and
-// is the run's report.
+// is the run's report. Its path is report.md when the job left a report,
+// else the job's output.log, which is all there is to read (feedback
+// thread 12), or "" when the queue no longer knows the job.
 func (fx *runFX) follow(name string) (flowrun.Report, error) {
 	var run *agentRun
+	var read string
 	err := fx.daemon(func(d *client) error {
 		for {
 			var err error
@@ -113,6 +116,14 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 				return err
 			}
 			if run.ended() {
+				read = filepath.Join(fx.agents, name, "report.md")
+				if run.Report == "" {
+					v, known := jobOf(d.Queue(), run.current().ID)
+					read = ""
+					if known {
+						read = v.LogPath
+					}
+				}
 				return nil
 			}
 			id := run.current().ID
@@ -142,8 +153,7 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 		return flowrun.Report{}, err
 	}
 	fx.logf("end %s: %s %s", name, run.Status, run.Why)
-	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question,
-		Path: filepath.Join(fx.agents, name, "report.md"), Why: run.Why}, nil
+	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question, Path: read, Why: run.Why}, nil
 }
 
 func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {
