@@ -20,7 +20,7 @@ The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep` a
 
 ## How a command runs
 
-`withDaemon` calls `Join`, which starts the daemon when none runs (the newer build wins, `replaceGuard` applies), runs the command's function over the client and closes it. The client keeps a replica of the daemon's published state, so a read (`Registry`, `Workspaces`, `Views`, `AccountUsage`, `Web`) is answered locally and only a request crosses the wire. The notices the daemon gives the connection are written to stderr, except one naming the command's own request, which the command gets instead (`events`) and reports with the request's outcome.
+`withDaemon` calls `Join`, which starts the daemon when none runs (the newer build wins, `replaceGuard` applies), runs the command's function over the client and closes it. The client keeps a replica of the daemon's published state, so a read (`Registry`, `Workspaces`, `Views`, `AccountUsage`, `Web`) is answered locally and only a request crosses the wire. The notices the daemon gives the connection are written to stderr, except one naming the command's own request, which the command gets instead (`events`) and reports with the request's outcome. `main.go`'s `Join` dials as `rpc.RoleCLI`, so the daemon gives a command none of another client's request's notices (a phone's slash command) nor the backlog it keeps for the next TUI (the boot's notices).
 
 | Command | Request or read |
 |---|---|

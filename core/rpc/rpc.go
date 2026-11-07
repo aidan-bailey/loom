@@ -141,20 +141,29 @@ type Hello struct {
 	// Tmux is the tmux server the server's sessions run on (its socket's
 	// path), which its clients use too (Server.SetTmux). Servers only.
 	Tmux string `json:"tmux,omitempty"`
-	// Role is what a client is for: RoleWeb names the daemon's web layer. A
-	// client that names none, or a role this build does not know, is an
-	// ordinary client. Clients only.
+	// Role is what a client is for: RoleWeb names the daemon's web layer,
+	// RoleCLI a loom subcommand. A client that names none (a TUI), or a role
+	// this build does not know, is an ordinary client. Clients only.
 	Role string `json:"role,omitempty"`
 }
 
 // RoleWeb is the Hello.Role of the daemon's own web layer (internal/web), a
 // client that stays connected for as long as the daemon runs. The server
 // counts a RoleWeb connection as no client for the notice backlog: a Notice
-// raised while only web connections exist is sent to them and also kept for
-// the next other connection, a web connection is sent none of the kept ones,
-// and the Notice of a web connection's own request is sent to it and also
-// handled as if no web connection existed (Server.clientsLocked).
+// raised while only web and CLI connections exist is sent to them and also
+// kept for the next ordinary client, a web connection is sent none of the
+// kept ones, and the Notice of a web connection's own request is sent to it
+// and also handled as if no web connection existed (Server.clientsLocked).
 const RoleWeb = "web"
+
+// RoleCLI is the Hello.Role of a loom subcommand (internal/cli), which
+// prints the notices it is sent. The server counts it as no client for the
+// notice backlog, as it does a RoleWeb connection, and also sends it none of
+// another connection's request's Notice (a phone's slash command, a request
+// whose client has gone): it is sent its own requests' events and the
+// notices no request is behind. A CLI connection's own request's Notice
+// reaches a client, so it is neither sent to the others nor kept.
+const RoleCLI = "cli"
 
 // eventTypes maps each event's wire name (its Go type name) to its type.
 var eventTypes = func() map[string]reflect.Type {
