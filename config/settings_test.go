@@ -185,6 +185,31 @@ func TestSettings_FeedbackBlockRoundTripsAndClones(t *testing.T) {
 	assert.Nil(t, Settings{}.Clone().Feedback, "an absent block stays absent")
 }
 
+// TestSettings_AttentionBlockRoundTripsAndClones: the "attention" block loads
+// from a config.json and saves back to the same JSON, a config without one
+// saves none, and a clone's enabled flag is its own.
+func TestSettings_AttentionBlockRoundTripsAndClones(t *testing.T) {
+	const block = `{"enabled": false, "model": "haiku", "effort": "low", "max_parallel": 2, "wait_seconds": 20}`
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(`{"attention": `+block+`}`), 0o644))
+	cfg := LoadConfigFrom(dir)
+	off := false
+	assert.Equal(t, AttentionSettings{Enabled: &off, Model: "haiku", Effort: "low", MaxParallel: 2, WaitSeconds: 20}, cfg.Snapshot().GetAttention())
+	assert.JSONEq(t, block, string(savedConfigKeys(t, cfg)["attention"]))
+
+	absent := LoadConfigFrom(t.TempDir())
+	assert.Equal(t, AttentionSettings{}, absent.Snapshot().GetAttention())
+	assert.NotContains(t, savedConfigKeys(t, absent), "attention")
+
+	s := Settings{Attention: &AttentionSettings{Enabled: &off, Model: "m"}}
+	c := s.Clone()
+	c.Attention.Model = "x"
+	*c.Attention.Enabled = true
+	assert.Equal(t, "m", s.Attention.Model)
+	assert.False(t, *s.Attention.Enabled)
+	assert.Nil(t, Settings{}.Clone().Attention, "an absent block stays absent")
+}
+
 // TestSettings_GetSchedulerReturnsACopy: the getter hands out a block the
 // caller may change, and the zero value when there is none.
 func TestSettings_GetSchedulerReturnsACopy(t *testing.T) {

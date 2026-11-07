@@ -29,18 +29,26 @@ type Call struct {
 	// SystemPrompt is the system prompt; "" is the advisor's (SystemPrompt).
 	// The feedback grouper passes its own.
 	SystemPrompt string
-	Message      []byte // the request, as JSON, on stdin
-	Timeout      time.Duration
+	// NoTools runs the call with no tools at all (--tools ""), for a caller
+	// whose answer needs nothing but its stdin (the stop classifier).
+	NoTools bool
+	Message []byte // the request, as JSON, on stdin
+	Timeout time.Duration
 }
 
 // args are the CLI's arguments for c: headless, the model and effort, the
 // advisor's system prompt, read-only tools confined to the working
-// directory, no settings, hooks, plugins, MCP servers or CLAUDE.md files,
-// no transcript, no permission prompts, and a JSON result under c.Schema.
+// directory (none with NoTools), no settings, hooks, plugins, MCP servers
+// or CLAUDE.md files, no transcript, no permission prompts, and a JSON
+// result under c.Schema.
 func (c Call) args() []string {
+	tools := "Read,Glob,Grep"
+	if c.NoTools {
+		tools = ""
+	}
 	return []string{
 		"-p", "--model", c.Model, "--effort", c.Effort, "--system-prompt", cmp.Or(c.SystemPrompt, SystemPrompt),
-		"--tools", "Read,Glob,Grep", "--restricted", "--safe-mode", "--strict-mcp-config",
+		"--tools", tools, "--restricted", "--safe-mode", "--strict-mcp-config",
 		"--no-session-persistence", "--permission-mode", "dontAsk",
 		"--output-format", "json", "--json-schema", c.Schema,
 	}
