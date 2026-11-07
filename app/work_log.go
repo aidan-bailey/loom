@@ -1,9 +1,6 @@
 package app
 
 import (
-	"errors"
-	"io"
-	"io/fs"
 	"os"
 
 	"github.com/aidan-bailey/loom/core"
@@ -90,7 +87,7 @@ func workLogCmd(id sched.JobID, path string, full bool, seq uint64, prev logStat
 			msg.unchanged = true
 			return msg
 		}
-		data, partial, err := readLogEnd(path, limit)
+		data, partial, err := sched.ReadLogEnd(path, limit)
 		if err != nil {
 			msg.err = err.Error()
 			return msg
@@ -102,34 +99,6 @@ func workLogCmd(id sched.JobID, path string, full bool, seq uint64, prev logStat
 		msg.lines, msg.omitted = lines, partial
 		return msg
 	}
-}
-
-// readLogEnd reads the last limit bytes of the file at path; partial says
-// the file's start was left out. A file that does not exist is an empty log
-// (a queued job has none yet), not an error.
-func readLogEnd(path string, limit int64) (data []byte, partial bool, err error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, false, err
-	}
-	start := int64(0)
-	if st.Size() > limit {
-		start, partial = st.Size()-limit, true
-	}
-	data = make([]byte, st.Size()-start)
-	n, err := f.ReadAt(data, start)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, false, err
-	}
-	return data[:n], partial, nil
 }
 
 // applyWorkLog takes a log read's result. One older than the last read

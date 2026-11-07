@@ -1,6 +1,6 @@
 // The info tab (#s/<id>/info, and #s/<id> for a session that does not run
-// Claude): its tiles, its agents, the actions, and the reply box with the
-// quick replies. The changes tile opens the changes screen. The conversation
+// Claude): its tiles, its agents, its jobs, the actions, and the reply box
+// with the quick replies. The changes tile opens the changes screen. The conversation
 // is turns.mjs's and the needs-you box needs.mjs's.
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
@@ -146,6 +146,68 @@ function Agents({ agents, sessionId }) {
   `;
 }
 
+// jobGlyph is a job's mark by its state and exit: ◐ running, ○ waiting
+// (queued or held), ⊘ cancelled, ✓ done with exit 0, ✗ anything else that
+// ended (a failure, a lost job, a non-zero exit).
+export function jobGlyph(j) {
+  if (j.state === "running") return "◐";
+  if (j.state === "queued" || j.state === "held") return "○";
+  if (j.state === "cancelled") return "⊘";
+  if (j.state === "done" && j.exit && j.exit.code === 0) return "✓";
+  return "✗";
+}
+
+// elapsed is the time from the RFC 3339 from to to (now by default) as
+// "45s", "2m 10s" or "1h 4m"; "" when from is unset.
+export function elapsed(from, to = Date.now()) {
+  const t = Date.parse(from);
+  if (Number.isNaN(t)) return "";
+  const end = typeof to === "number" ? to : Date.parse(to);
+  const secs = Math.max(0, Math.round((end - t) / 1000));
+  if (secs < 60) return secs + "s";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + "m " + (secs % 60) + "s";
+  return Math.floor(mins / 60) + "h " + (mins % 60) + "m";
+}
+
+// jobEnd is how a finished job ended: its failure or cancel reason, else
+// its signal or exit code, else its state.
+export function jobEnd(j) {
+  if (j.failure) return j.failure;
+  if (j.cancel_reason) return "cancelled: " + j.cancel_reason;
+  if (j.exit) return j.exit.signal || "exit " + j.exit.code;
+  return j.state;
+}
+
+// jobLine is a job row's sub-line: its number, then how long it has run,
+// why it waits, or how it ended and when.
+export function jobLine(j, now) {
+  const head = "job " + j.id;
+  if (j.state === "running") return [head, elapsed(j.started, now)].filter(Boolean).join(" · ");
+  if (j.state === "queued" || j.state === "held") return [head, j.state, j.waiting].filter(Boolean).join(" · ");
+  const when = j.ended ? ago(j.ended, now) : "";
+  return [head, jobEnd(j), when && when !== "now" ? when + " ago" : when].filter(Boolean).join(" · ");
+}
+
+// Jobs are the session's work-queue jobs, each a link to its screen.
+function Jobs({ jobs, sessionId, now }) {
+  return html`
+    <section class="sc-section">
+      <h2 class="sc-rule">Jobs ${jobs.length}</h2>
+      ${jobs.map(
+        (j) => html`<a key=${j.id} class="sc-agent sc-agent-link" href=${"#s/" + sessionId + "/job/" + j.id}>
+          <div class="sc-row-top">
+            <span class=${"sc-glyph sc-job-" + j.state} aria-hidden="true">${jobGlyph(j)}</span>
+            <span class="sc-row-title">${j.description || j.command}</span>
+            <${ChevronIcon} />
+          </div>
+          <div class="sc-agent-desc">${jobLine(j, now)}</div>
+        </a>`,
+      )}
+    </section>
+  `;
+}
+
 export function Info({ snap, stale, route, go, act, toast, pending }) {
   const id = route.id;
   const [sheet, setSheet] = useState("");
@@ -163,6 +225,15 @@ export function Info({ snap, stale, route, go, act, toast, pending }) {
   }, [id]);
 
   const s = sessionOf(snap, id);
+
+  // A running job's time moves with the clock, not only with the stream.
+  const [, setTick] = useState(0);
+  const timing = Boolean(s && s.jobs && s.jobs.some((j) => j.state === "running"));
+  useEffect(() => {
+    if (!timing) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 5000);
+    return () => clearInterval(t);
+  }, [timing]);
 
   if (!s) {
     return html`
@@ -207,6 +278,7 @@ export function Info({ snap, stale, route, go, act, toast, pending }) {
       <${SubLine} s=${s} snap=${snap} now=${now} />
       <${Tiles} s=${s} snap=${snap} now=${now} diff=${can.diff} />
       ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} sessionId=${s.id} />` : null}
+      ${s.jobs && s.jobs.length > 0 ? html`<${Jobs} jobs=${s.jobs} sessionId=${s.id} now=${now} />` : null}
 
       <section class="sc-actions">
         ${can.pause ? html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => run("pause")}>pause</button>` : null}

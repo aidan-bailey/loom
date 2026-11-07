@@ -1,7 +1,9 @@
 // The fact strip pinned under a session's tabs on the conversation: its
 // status and age, its changes, its PR and its account's share, on one
-// ellipsised line that opens the info tab. A fact the session lacks is left
-// out.
+// ellipsised line that opens the info tab, and while the session has jobs
+// that have yet to end, their badge on the right, which opens the job it
+// names (jobs_focus) or, for "⚙ queued", the info tab. A fact the session
+// lacks is left out.
 import { html } from "../lib/preact-htm.mjs";
 import { ago, PrMark } from "./fleet.mjs";
 import { glyphOf } from "./skin.mjs";
@@ -21,9 +23,14 @@ export function FactStrip({ s, snap, now }) {
   }
   if (s.pr) facts.push({ key: "pr", node: html`PR #${s.pr.number} <${PrMark} pr=${s.pr} />` });
   if (share) facts.push({ key: "share", node: html`<span class=${share.hot ? "sc-hot" : ""}>${share.text}</span>` });
-  return html`<a class="sc-strip" href=${"#s/" + s.id + "/info"}>
-    ${facts.map((f, i) => html`<span key=${f.key}>${i > 0 ? " · " : ""}${f.node}</span>`)}
-  </a>`;
+  const info = "#s/" + s.id + "/info";
+  const line = facts.map((f, i) => html`<span key=${f.key}>${i > 0 ? " · " : ""}${f.node}</span>`);
+  if (!s.jobs_label) return html`<a class="sc-strip" href=${info}>${line}</a>`;
+  const job = s.jobs_focus ? "#s/" + s.id + "/job/" + s.jobs_focus : info;
+  return html`<div class="sc-strip sc-strip-split">
+    <a class="sc-strip-main" href=${info}>${line}</a>
+    <a class="sc-strip-job" href=${job}>${s.jobs_label}</a>
+  </div>`;
 }
 
 // AgentStrip is the strip under the tabs of a subagent's screen, by the

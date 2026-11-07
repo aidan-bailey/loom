@@ -22,6 +22,8 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 		"agent-turns.json":     &turnsJSON{},
 		"diff.json":            &patchJSON{},
 		"launch-defaults.json": &launchDefaultsJSON{},
+		"job-log.json":         &jobLogJSON{},
+		"job-log-after.json":   &jobLogJSON{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(dir, name))
@@ -39,5 +41,5 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 	require.Contains(t, string(canned), `"`+mockupCSP+`"`, "webshot frames its mockup under the policy the layer serves it under")
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 6, "a new fixture is checked here too")
+	require.Len(t, entries, 8, "a new fixture is checked here too")
 }

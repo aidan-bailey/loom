@@ -42,13 +42,14 @@ type screen struct{ name, hash string }
 // box) and session 7 (your turn, with a fresh brainstorm mockup). A session
 // opens on its conversation; "info" is the tab that holds its tiles, agents
 // and actions; "agent" is the screen of session 1's running subagent (recon,
-// the one its conversation links to).
+// the one its conversation links to); "job" is session 1's running job.
 var screens = []screen{
 	{"fleet", ""},
 	{"conversation", "#s/1"},
 	{"waiting", "#s/2"},
 	{"info", "#s/1/info"},
 	{"agent", "#s/1/agent/a1f00dcafe0001"},
+	{"job", "#s/1/job/214"},
 	{"diff", "#s/1/diff"},
 	{"mockup", "#s/7/mockup"},
 	{"mockup-full", "#s/7/mockup/full"},

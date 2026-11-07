@@ -142,7 +142,8 @@ export function PrMark({ pr }) {
 
 // Row is one session: its glyph, title, its account's share and age; why it
 // waits, or what it said last; and what it holds (its label where the group's
-// title doesn't say it, running agents, changes, PR, workspace).
+// title doesn't say it, running agents, changes, PR, its jobs' badge,
+// workspace).
 function Row({ s, chip, fresh, share }) {
   const waiting = s.group === "needs_you";
   const reason = waiting && s.wait ? s.wait.reason : "";
@@ -155,6 +156,7 @@ function Row({ s, chip, fresh, share }) {
   if (agents > 0) meta.push(html`<span>${plural(agents, "agent")}</span>`);
   if (d.added || d.removed) meta.push(html`<span><span class="sc-add">+${d.added}</span> <span class="sc-del">−${d.removed}</span></span>`);
   if (s.pr) meta.push(html`<span>PR #${s.pr.number} <${PrMark} pr=${s.pr} /></span>`);
+  if (s.jobs_label) meta.push(html`<span class="sc-job">${s.jobs_label}</span>`);
   if (chip && !waiting) meta.push(html`<span class="sc-ws">${chip}</span>`);
   return html`
     <a class="sc-row-s" href=${"#s/" + s.id + (opensMockup(s) ? "/mockup" : "")}>

@@ -479,29 +479,6 @@ func TestWorkView_AFreshPagerReadsAnUnchangedLog(t *testing.T) {
 	assert.Len(t, m.work.pager.lines, 3)
 }
 
-func TestReadLogEnd(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "output.log")
-
-	data, partial, err := readLogEnd(path, 100)
-	require.NoError(t, err, "a job with no log yet")
-	assert.Empty(t, data)
-	assert.False(t, partial)
-
-	require.NoError(t, os.WriteFile(path, []byte("0123456789"), 0o600))
-	data, partial, err = readLogEnd(path, 100)
-	require.NoError(t, err)
-	assert.Equal(t, "0123456789", string(data))
-	assert.False(t, partial)
-
-	data, partial, err = readLogEnd(path, 4)
-	require.NoError(t, err)
-	assert.Equal(t, "6789", string(data), "the end of the log")
-	assert.True(t, partial, "the head was cut")
-
-	_, _, err = readLogEnd(filepath.Join(path, "below"), 4)
-	assert.Error(t, err, "a path that cannot be a log is an error, not an empty log")
-}
-
 func TestWorkPager_OpensAtTheEndAndScrolls(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "output.log")
 	writeLog(t, path, 100)

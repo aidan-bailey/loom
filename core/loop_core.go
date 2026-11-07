@@ -107,6 +107,9 @@ func (l *Loop) ReadDiff(id InstanceID, req ReqID) { l.do(func(m *Model) { m.Read
 func (l *Loop) ReadMockup(id InstanceID, req ReqID) {
 	l.do(func(m *Model) { m.ReadMockup(id, req) })
 }
+func (l *Loop) ReadJobLog(id InstanceID, job sched.JobID, after int64, req ReqID) {
+	l.do(func(m *Model) { m.ReadJobLog(id, job, after, req) })
+}
 func (l *Loop) SweepBuilds(opts buildsweep.Options, req ReqID) {
 	l.do(func(m *Model) { m.SweepBuilds(opts, req) })
 }

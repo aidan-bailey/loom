@@ -539,7 +539,7 @@ func (m *Model) Deliver(msg any) {
 		m.deliverReset(msg)
 	case mockupResult:
 		m.deliverMockup(msg)
-	case issueResult, turnsResult, diffResult:
+	case issueResult, turnsResult, diffResult, jobLogResult:
 		// Only its Reply carries it (deliverTracked).
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))

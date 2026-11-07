@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -120,6 +121,13 @@ type sessionJSON struct {
 	// Mockup is the screen the session's brainstorm companion serves (GET
 	// …/mockup reads its page), null for none.
 	Mockup *mockupJSON `json:"mockup"`
+	// Jobs are the session's work-queue jobs (jobs.go): running, waiting,
+	// then at most maxFinishedJobs finished, newest first; an empty list for
+	// none. JobsLabel and JobsFocus are its badge and the job it names
+	// (core.JobBadges): "" and 0 for none.
+	Jobs      []jobJSON   `json:"jobs"`
+	JobsLabel string      `json:"jobs_label"`
+	JobsFocus sched.JobID `json:"jobs_focus"`
 	// Verdict is the stop classifier's verdict on the session's last turn
 	// ("needs_you", "done", "waiting", "stopped"), Gist its one line; empty
 	// for none.
@@ -264,6 +272,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		Account:     v.Account,
 		Agents:      make([]agentJSON, 0, len(v.Subagents)),
 		Asks:        make([]askJSON, 0, len(v.Asks)),
+		Jobs:        []jobJSON{},
 		ParityKnown: v.ParityKnown,
 		Claude:      session.IsClaudeProgram(v.Program),
 	}
@@ -431,6 +440,9 @@ type projection struct {
 	sessions     map[core.WorkspaceID][]sessionJSON
 	usage        []usageJSON
 	quickReplies []string
+	// jobs is each owning session's jobs, from the last QueueChanged
+	// (setQueue); every session in sessions carries its entry (withJobs).
+	jobs map[core.InstanceID]sessionJobs
 	// serveOrder is the workspaces as the model serves them, and open the
 	// open list's names in tab order: layout builds workspaces from them.
 	serveOrder []workspaceJSON
@@ -477,7 +489,7 @@ func (p *projection) setViews(ws core.WorkspaceID, views []core.InstanceView) bo
 		if v.IsWorkspaceTerminal {
 			continue
 		}
-		out = append(out, sessionOf(ws, v))
+		out = append(out, p.withJobs(sessionOf(ws, v)))
 	}
 	p.sessions[ws] = out
 	p.layout()
