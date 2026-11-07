@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/session/hooks"
+	"github.com/aidan-bailey/loom/session/subagent"
 )
 
 // entry is what one line adds to the conversation.
@@ -36,6 +37,9 @@ type part struct {
 	cut   bool
 	error bool
 	step  Step
+	// status is a partResult's toolUseResult.status; its step's Agent is the
+	// agent that result names.
+	status string
 }
 
 const (
@@ -63,6 +67,7 @@ type record struct {
 	IsAPIErrorMessage         bool            `json:"isApiErrorMessage"`
 	Origin                    json.RawMessage `json:"origin"`
 	Message                   json.RawMessage `json:"message"`
+	ToolUseResult             json.RawMessage `json:"toolUseResult"`
 }
 
 // origin is a user record's origin, where Claude writes one.
@@ -77,6 +82,7 @@ type origin struct {
 type block struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
@@ -85,8 +91,10 @@ type block struct {
 	Content   json.RawMessage `json:"content"`
 }
 
-// decode reads the line at off.
-func decode(off int64, data []byte) entry {
+// decode reads the line at off. In a subagent's file (agent) every record is
+// a sidechain record and is read, and the prompt at offset 0, the first
+// record, is the agent's brief.
+func decode(off int64, data []byte, agent bool) entry {
 	e := entry{off: off}
 	if data == nil {
 		e.bad = true
@@ -102,7 +110,7 @@ func decode(off int64, data []byte) entry {
 		return e
 	}
 	e.at, _ = time.Parse(time.RFC3339Nano, r.Timestamp)
-	if r.IsSidechain {
+	if r.IsSidechain && !agent {
 		return e
 	}
 	switch r.Type {
@@ -115,11 +123,14 @@ func decode(off int64, data []byte) entry {
 	case "user":
 		e.user(r)
 	}
+	if agent && off == 0 && e.opens {
+		e.turn.From, e.turn.Name, e.turn.Command = FromBrief, "", false
+	}
 	return e
 }
 
-// assistant reads Claude's blocks: text items and steps, or an API error's
-// note.
+// assistant reads Claude's blocks: text and thinking items and steps, or an
+// API error's note.
 func (e *entry) assistant(r record) {
 	text, blocks := content(r.Message)
 	if text != "" {
@@ -149,6 +160,15 @@ func (e *entry) assistant(r record) {
 			t, cut := capBytes(b.Text, maxItem)
 			e.parts = append(e.parts, part{kind: KindText, text: t, cut: cut})
 			e.size += len(t)
+		case "thinking":
+			// Most are a signature alone; a redacted_thinking block has no
+			// text to show and falls through to nothing.
+			if strings.TrimSpace(b.Thinking) == "" {
+				continue
+			}
+			t, cut := capBytes(b.Thinking, maxItem)
+			e.parts = append(e.parts, part{kind: KindThinking, text: t, cut: cut})
+			e.size += len(t)
 		case "tool_use":
 			e.parts = append(e.parts, part{kind: partStep, step: Step{
 				ID: b.ID, Tool: b.Name, Summary: summarize(b.Name, b.Input, r.Cwd), At: e.at, State: StatePending,
@@ -177,6 +197,11 @@ func (e *entry) user(r record) {
 		}
 	}
 	if len(results) > 0 {
+		// toolUseResult describes one result: with several in a record it
+		// names none of them.
+		if len(results) == 1 {
+			results[0].step.Agent, results[0].status = agentResult(r.ToolUseResult)
+		}
 		e.parts = results
 		return
 	}
@@ -391,4 +416,29 @@ func under(dir, p string) string {
 		return p
 	}
 	return rel
+}
+
+// statusAsyncLaunched is the toolUseResult status of an agent launched in
+// the background: its tool_result settles at launch, not at the agent's end.
+const statusAsyncLaunched = "async_launched"
+
+// agentResult reads a tool result's toolUseResult for the agent it names and
+// its status. Only a result that mentions an agent is decoded: other tools'
+// results can be large. An agent id that could escape the subagents folder
+// is dropped.
+func agentResult(raw json.RawMessage) (agent, status string) {
+	if !bytes.Contains(raw, []byte(`"agentId"`)) && !bytes.Contains(raw, []byte(statusAsyncLaunched)) {
+		return "", ""
+	}
+	var r struct {
+		AgentID string `json:"agentId"`
+		Status  string `json:"status"`
+	}
+	if json.Unmarshal(raw, &r) != nil {
+		return "", ""
+	}
+	if !subagent.ValidAgentID(r.AgentID) {
+		r.AgentID = ""
+	}
+	return r.AgentID, r.Status
 }

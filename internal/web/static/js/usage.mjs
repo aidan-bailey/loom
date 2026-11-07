@@ -1,6 +1,6 @@
 // Subscription usage as the daemon sends it (the snapshot's `usage` and the
 // `usage` event): helpers that pick a session's entry and format a window.
-// The fleet's rows and the session screen's Account tile read them.
+// The fleet's rows and the info tab's Account tile read them.
 
 const HOUR = 3600000;
 

@@ -40,8 +40,12 @@ const (
 // statusRunning is the background_tasks status of a live task.
 const statusRunning = "running"
 
-// View is one agent as the UI renders it.
+// View is one agent as the UI renders it. ID is the tracker's agent id,
+// the one Claude names the agent's transcript with
+// (subagents/agent-<ID>.jsonl); it stays the same while the agent is
+// re-tasked.
 type View struct {
+	ID          string
 	Name        string
 	Description string
 	Idle        bool
@@ -251,7 +255,7 @@ func (t *Tracker) Visible() []View {
 	})
 	out := make([]View, len(shown))
 	for i, a := range shown {
-		out[i] = View{Name: a.name, Description: a.description, Idle: a.state != stateWorking}
+		out[i] = View{ID: a.id, Name: a.name, Description: a.description, Idle: a.state != stateWorking}
 	}
 	return out
 }

@@ -45,29 +45,32 @@ export function StatusRow({ link, host, updated, counts, onJump }) {
   </div>`;
 }
 
-// ContextRow is the header's first row: an optional way back, the screen's
-// title as its h1 on one line, and the screen's actions (children).
+// ContextRow is the header's first row: an optional way back (an href and a
+// label, and an onClick that may take the click over), the screen's title as
+// its h1 on one line, and the screen's actions (children).
 export function ContextRow({ back, title, children }) {
   return html`<div class="sc-context">
-    ${back ? html`<a class="sc-back" href=${back.href}>‹ ${back.label}</a>` : null}
+    ${back ? html`<a class="sc-back" href=${back.href} onClick=${back.onClick}>‹ ${back.label}</a>` : null}
     <h1 class="sc-h1">${title}</h1>
     ${children}
   </div>`;
 }
 
-// SessionTabs are a session's views under its context row: the session, its
-// conversation (conversation: a Claude session) and its changes (changes:
-// while its diff can be read, with its line counts). A tab shows when it
-// applies or is the current one, so a session that pauses on its changes
-// keeps the tab under the user; a lone session tab draws no row.
+// SessionTabs are a session's views under its context row: its conversation
+// (conversation: a Claude session; the tab key is "turns" and #s/<id> its
+// address), its changes (changes: while its diff can be read, with its line
+// counts), its info and its mockup. A tab shows when it applies or is the
+// current one, so a session that pauses on its changes keeps the tab under
+// the user; a lone info tab draws no row.
 export function SessionTabs({ s, current, conversation, changes }) {
   const base = "#s/" + s.id;
   const d = s.diff || {};
-  const tabs = [{ key: "session", label: "session", href: base }];
-  if (conversation || current === "turns") tabs.push({ key: "turns", label: "conversation", href: base + "/turns" });
+  const tabs = [];
+  if (conversation) tabs.push({ key: "turns", label: "conversation", href: base });
   if (changes || current === "changes") {
     tabs.push({ key: "changes", label: "changes", href: base + "/diff", diff: d.added || d.removed ? d : null });
   }
+  tabs.push({ key: "info", label: "info", href: base + "/info" });
   // The mockup tab shows while the session's brainstorm companion runs; its
   // dot while the screen is new this turn.
   if (s.mockup || current === "mockup") {

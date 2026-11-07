@@ -32,7 +32,7 @@ func mateMeta(name, desc string) Meta {
 func TestTracker_PlainLifecycle(t *testing.T) {
 	tr := NewTracker()
 	tr.Apply([]hooks.Event{startEv("a1", "Explore")}, map[string]Meta{"a1": plainMeta("Explore", "map code")})
-	assert.Equal(t, []View{{Name: "Explore", Description: "map code"}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "a1", Name: "Explore", Description: "map code"}}, tr.Visible())
 
 	tr.Apply([]hooks.Event{stopEv("a1")}, nil)
 	assert.Empty(t, tr.Visible(), "a plain subagent ends when it stops")
@@ -44,10 +44,10 @@ func TestTracker_TeammateCycle(t *testing.T) {
 	meta := map[string]Meta{"amate-1": mateMeta("mate", "implement task")}
 
 	tr.Apply([]hooks.Event{startEv("amate-1", "mate")}, meta)
-	assert.Equal(t, []View{{Name: "mate", Description: "implement task"}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "amate-1", Name: "mate", Description: "implement task"}}, tr.Visible())
 
 	tr.Apply([]hooks.Event{stopEv("amate-1")}, nil)
-	assert.Equal(t, []View{{Name: "mate", Description: "implement task", Idle: true}}, tr.Visible(),
+	assert.Equal(t, []View{{ID: "amate-1", Name: "mate", Description: "implement task", Idle: true}}, tr.Visible(),
 		"a stopped teammate is shown as idle while its TeammateIdle is pending")
 
 	tr.Apply([]hooks.Event{idleEv("mate")}, nil)
@@ -82,7 +82,7 @@ func TestTracker_PartialShutdownRemovesStoppingFirst(t *testing.T) {
 
 	// a is shut down (stop, no idle); one teammate is still running.
 	tr.Apply([]hooks.Event{startEv("aa-1", "a"), stopEv("aa-1"), parentStop(runningMate())}, nil)
-	assert.Equal(t, []View{{Name: "b", Description: "y", Idle: true}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "ab-1", Name: "b", Description: "y", Idle: true}}, tr.Visible())
 }
 
 func TestTracker_PartialShutdownFallsBackToMostRecentlyStopped(t *testing.T) {
@@ -95,7 +95,7 @@ func TestTracker_PartialShutdownFallsBackToMostRecentlyStopped(t *testing.T) {
 	}, meta)
 
 	tr.Apply([]hooks.Event{parentStop(runningMate())}, nil)
-	assert.Equal(t, []View{{Name: "a", Description: "x", Idle: true}}, tr.Visible(),
+	assert.Equal(t, []View{{ID: "aa-1", Name: "a", Description: "x", Idle: true}}, tr.Visible(),
 		"with no Stopping teammate, the most recently stopped one goes")
 }
 
@@ -140,7 +140,7 @@ func TestTracker_TeammateStopBeforeMetaStaysIdle(t *testing.T) {
 	tr := NewTracker()
 	tr.Apply([]hooks.Event{startEv("amate-1", "mate"), stopEv("amate-1")}, nil)
 	tr.Apply(nil, map[string]Meta{"amate-1": mateMeta("mate", "d")})
-	assert.Equal(t, []View{{Name: "mate", Description: "d", Idle: true}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "amate-1", Name: "mate", Description: "d", Idle: true}}, tr.Visible())
 }
 
 func TestTracker_TeammateIdleBeforeMetaMarksTeammate(t *testing.T) {
@@ -149,7 +149,7 @@ func TestTracker_TeammateIdleBeforeMetaMarksTeammate(t *testing.T) {
 	// One teammate running: the tracked teammate matches the count.
 	tr.Apply([]hooks.Event{parentStop(runningMate())}, nil)
 	tr.Apply(nil, map[string]Meta{"amate-1": mateMeta("mate", "d")})
-	assert.Equal(t, []View{{Name: "mate", Description: "d", Idle: true}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "amate-1", Name: "mate", Description: "d", Idle: true}}, tr.Visible())
 }
 
 func TestTracker_ParentStopRepairsOutOfOrderEvents(t *testing.T) {
@@ -167,7 +167,7 @@ func TestTracker_ParentStopKeepsListedSubagents(t *testing.T) {
 	tr.Apply([]hooks.Event{startEv("a1", "Explore"), startEv("a2", "Plan")}, meta)
 
 	tr.Apply([]hooks.Event{parentStop(runningSub("a1"), hooks.Task{ID: "a2", Type: "subagent", Status: "completed"})}, nil)
-	assert.Equal(t, []View{{Name: "Explore", Description: "d"}}, tr.Visible(),
+	assert.Equal(t, []View{{ID: "a1", Name: "Explore", Description: "d"}}, tr.Visible(),
 		"only running entries count as live")
 }
 
@@ -187,7 +187,7 @@ func TestTracker_SubagentStopListIsNotUsedForReconciliation(t *testing.T) {
 	stop := stopEv("a1")
 	stop.Tasks, stop.HasTasks = []hooks.Task{}, true
 	tr.Apply([]hooks.Event{stop}, nil)
-	assert.Equal(t, []View{{Name: "Plan", Description: "e"}}, tr.Visible())
+	assert.Equal(t, []View{{ID: "a2", Name: "Plan", Description: "e"}}, tr.Visible())
 }
 
 func TestTracker_SessionEndClears(t *testing.T) {
@@ -209,10 +209,10 @@ func TestTracker_VisibleOrder(t *testing.T) {
 		startEv("a3", "Plan"),
 	}, meta)
 	assert.Equal(t, []View{
-		{Name: "Explore", Description: "first"},
-		{Name: "Plan", Description: "third"},
-		{Name: "mate", Description: "second", Idle: true},
-	}, tr.Visible(), "working first, then idle, each in spawn order")
+		{ID: "a1", Name: "Explore", Description: "first"},
+		{ID: "a3", Name: "Plan", Description: "third"},
+		{ID: "amate-1", Name: "mate", Description: "second", Idle: true},
+	}, tr.Visible(), "working first, then idle, each in spawn order; each keeps its own id")
 }
 
 func TestTracker_Reset(t *testing.T) {

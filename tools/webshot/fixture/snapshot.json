@@ -47,11 +47,13 @@
         "account": "",
         "agents": [
           {
+            "id": "a1f00dcafe0001",
             "name": "recon",
             "description": "Map every caller of the cursor path",
             "idle": false
           },
           {
+            "id": "a1f00dcafe0002",
             "name": "verifier",
             "description": "Run the ui gates",
             "idle": true

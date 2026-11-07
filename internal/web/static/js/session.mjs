@@ -1,16 +1,15 @@
-// The session screen: why it waits and the asks to answer, its tiles, the last message, its agents,
-// the actions, and the reply box with the quick replies. The changes tile
-// opens the changes screen, and the last message's rule the conversation.
+// The info tab (#s/<id>/info, and #s/<id> for a session that does not run
+// Claude): its tiles, its agents, the actions, and the reply box with the
+// quick replies. The changes tile opens the changes screen. The conversation
+// is turns.mjs's and the needs-you box needs.mjs's.
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
-import { call } from "./api.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
 import { allSessions, ago, markSeen, sessionOf } from "./fleet.mjs";
 import { ContextRow, FLEET_BACK, SessionTabs } from "./chrome.mjs";
-import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
+import { FactStrip } from "./strip.mjs";
+import { glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
 import { usageFor, shareText, isStale, resetPassed, resetText, shownWindow } from "./usage.mjs";
-import { Markdown } from "./markdown.mjs";
 import { ReplyBox, useRun } from "./reply.mjs";
-import { Asks } from "./asks.mjs";
 
 // actionsFor says which buttons to show. It follows status only; the
 // daemon's admit stays the authority and a refusal comes back as a toast.
@@ -117,81 +116,53 @@ function Tiles({ s, snap, now, diff }) {
   return tiles.length > 0 ? html`<div class="sc-tiles">${tiles}</div>` : null;
 }
 
-// Message is the last message: its tree once fetched for this very text, the
-// plain text before that and whenever the fetch fails. For a Claude session
-// its rule ends in the way into the conversation, shown even before the
-// first message, which is when a first turn is worth watching.
-function Message({ s, tree }) {
-  const ok = s.last_message && tree && tree.text === s.last_message;
-  return html`
-    <section class="sc-section">
-      <h2 class="sc-rule">Last message${s.claude ? html`<a class="sc-rule-link" href=${"#s/" + s.id + "/turns"}>conversation ›</a>` : null}</h2>
-      ${!s.last_message
-        ? html`<p class="sc-pre sc-dim">No message yet.</p>`
-        : ok
-          ? html`<${Markdown} blocks=${tree.blocks} />`
-          : html`<p class="sc-pre">${s.last_message}</p>`}
-      ${ok && tree.truncated
-        ? html`<p class="sc-dim sc-small">… continues in ${s.remote_url ? html`<a href=${s.remote_url} target="_blank" rel="noopener">Claude</a>` : "Claude"}</p>`
-        : null}
-    </section>
-  `;
-}
+// AGENT_ID is what an agent id may hold for the app to link to its screen
+// (parseRoute's agent route).
+export const AGENT_ID = /^[A-Za-z0-9_-]+$/;
 
 // Agents are the session's subagents by name, each running or idle, with its
-// description under it.
-function Agents({ agents }) {
+// description under it. A row that carries an id is a link to the agent's
+// screen.
+function Agents({ agents, sessionId }) {
   return html`
     <section class="sc-section">
       <h2 class="sc-rule">Agents ${agents.length}</h2>
-      ${agents.map(
-        (a, i) => html`<div key=${i} class="sc-agent">
+      ${agents.map((a, i) => {
+        const linked = Boolean(a.id) && AGENT_ID.test(a.id);
+        const inner = html`
           <div class="sc-row-top">
             <span class="sc-glyph" aria-hidden="true">${a.idle ? "○" : "◐"}</span>
             <span class="sc-row-title">${a.name}</span>
             <span class="sc-age">${a.idle ? "idle" : "running"}</span>
+            ${linked ? html`<${ChevronIcon} />` : null}
           </div>
           ${a.description ? html`<div class="sc-agent-desc">${a.description}</div>` : null}
-        </div>`,
-      )}
+        `;
+        return linked
+          ? html`<a key=${i} class="sc-agent sc-agent-link" href=${"#s/" + sessionId + "/agent/" + a.id}>${inner}</a>`
+          : html`<div key=${i} class="sc-agent">${inner}</div>`;
+      })}
     </section>
   `;
 }
 
-export function Session({ snap, stale, route, go, act, toast, pending }) {
+export function Info({ snap, stale, route, go, act, toast, pending }) {
   const id = route.id;
   const [sheet, setSheet] = useState("");
   const [source, setSource] = useState("");
   const { busy, run } = useRun(act, toast, id);
-  const [tree, setTree] = useState(null);
 
   // The time this phone last opened the session feeds the fleet's NEW mark;
   // it is written on arrival and again on leaving, so a turn that ended while
   // the session was open does not light it.
   useEffect(() => {
     setSheet("");
-    setTree(null);
     if (id === undefined) return undefined;
     markSeen(id);
     return () => markSeen(id);
   }, [id]);
 
   const s = sessionOf(snap, id);
-  const msg = s ? s.last_message : "";
-
-  // The tree is fetched for the message the stream holds, and again when the
-  // stream brings another. The plain text shows until it arrives, and stays
-  // when the fetch fails or the app is offline.
-  useEffect(() => {
-    if (id === undefined || !msg || stale || (tree && tree.text === msg)) return undefined;
-    let live = true;
-    call("GET", "/api/v1/sessions/" + id + "/message").then(({ status, data }) => {
-      if (live && status === 200 && data && data.text === msg) setTree(data);
-    });
-    return () => {
-      live = false;
-    };
-  }, [id, msg, stale]);
 
   if (!s) {
     return html`
@@ -204,7 +175,6 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   const can = actionsFor(s);
   const off = stale || busy;
   const candidates = mergeCandidates(snap, s);
-  const waiting = s.group === "needs_you";
   const now = Date.now();
 
   async function kill() {
@@ -235,20 +205,8 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   return html`
     <section class="sc-screen sc-session">
       <${SubLine} s=${s} snap=${snap} now=${now} />
-      ${waiting
-        ? html`<div class="sc-box sc-attn-box">
-            <span class="sc-legend">${GLYPHS.needs_you} Needs you</span>
-            <div class="sc-attn">${(s.wait && s.wait.reason) || "Needs you"}</div>
-            ${s.wait && s.wait.detail && !(s.asks && s.asks.length) ? html`<pre class="sc-detail-box">${s.wait.detail}</pre>` : null}
-            <${Asks} s=${s} off=${off} run=${run} />
-            ${s.remote_url
-              ? html`<a class=${"sc-btn sc-block" + (s.asks && s.asks.length ? "" : " sc-primary")} href=${s.remote_url} target="_blank" rel="noopener">Open in Claude</a>`
-              : html`<p class="sc-dim sc-small">Remote Control is off for this session.</p>`}
-          </div>`
-        : null}
       <${Tiles} s=${s} snap=${snap} now=${now} diff=${can.diff} />
-      ${s.last_message || s.claude ? html`<${Message} s=${s} tree=${tree} />` : null}
-      ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} />` : null}
+      ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} sessionId=${s.id} />` : null}
 
       <section class="sc-actions">
         ${can.pause ? html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => run("pause")}>pause</button>` : null}
@@ -306,19 +264,25 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   `;
 }
 
-// SessionHead is the context row and the tabs of a session's views (session,
-// conversation, changes, mockup): back to the fleet, its title, and the way to
-// Claude while the session doesn't wait on you (the needs-you box has its
-// own button).
+// SessionHead is the context row, the tabs and, on the conversation, the fact
+// strip of a session's views (conversation, changes, info, mockup): back to
+// the fleet, its title, and the way to Claude unless the needs-you box (which
+// has its own button) is on screen, as it is at a waiting Claude session's
+// conversation. A session that does not run Claude has no conversation:
+// its #s/<id> is the info tab, and the tab row says so.
 export function SessionHead({ snap, route, pending }) {
   const s = sessionOf(snap, route.id);
   if (!s) return html`<${ContextRow} back=${FLEET_BACK} title=${pending === route.id ? "Loading…" : ""} />`;
+  const talks = route.name === "turns" && s.claude;
+  const current = route.name === "turns" && !s.claude ? "info" : route.name;
+  const boxed = talks && s.group === "needs_you";
   return html`
     <${ContextRow} back=${FLEET_BACK} title=${s.title}>
-      ${s.remote_url && s.group !== "needs_you"
+      ${s.remote_url && !boxed
         ? html`<a class="sc-claude" href=${s.remote_url} target="_blank" rel="noopener">claude <${OutIcon} /></a>`
         : null}
     <//>
-    <${SessionTabs} s=${s} current=${route.name} conversation=${Boolean(s.claude)} changes=${actionsFor(s).diff} />
+    <${SessionTabs} s=${s} current=${current} conversation=${Boolean(s.claude)} changes=${actionsFor(s).diff} />
+    ${talks ? html`<${FactStrip} s=${s} snap=${snap} now=${Date.now()} />` : null}
   `;
 }

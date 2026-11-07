@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":true,"agentId":"a2f00dcafe0002","type":"user","cwd":"/w","timestamp":"2026-11-06T09:00:07.800Z","message":{"role":"user","content":"Run the slow checks and report any failure."}}
+{"isSidechain":true,"agentId":"a2f00dcafe0002","type":"assistant","cwd":"/w","timestamp":"2026-11-06T09:00:08.200Z","message":{"id":"msg_s4","role":"assistant","content":[{"type":"tool_use","id":"toolu_b1","name":"Bash","input":{"command":"make slow"}}]}}

@@ -17,6 +17,13 @@ type Meta struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	TaskKind    string `json:"taskKind"`
+	// ToolUseID is the id of the tool_use block that launched the agent, in
+	// its parent's transcript (the conversation's, or the parent agent's
+	// own file when nested); "" where the CLI version writes none.
+	ToolUseID string `json:"toolUseId"`
+	// Finished is the sidecar's finished key: nil when the key is absent,
+	// which says nothing about whether the agent ended.
+	Finished *bool `json:"finished"`
 }
 
 // IsTeammate reports whether the sidecar describes an agent-team teammate,
@@ -47,14 +54,33 @@ type MetaRef struct {
 	Path    string
 }
 
+// ValidAgentID reports whether id can name an agent's files: it is not
+// blank, is not "." or "..", and holds no path separator, so
+// "agent-"+id+".jsonl" stays inside the subagents folder. Agent IDs come
+// from hook payloads, transcripts and HTTP queries; check one with this
+// before it joins a path.
+func ValidAgentID(id string) bool {
+	return strings.TrimSpace(id) != "" && id != "." && id != ".." &&
+		!strings.ContainsAny(id, `/\`)
+}
+
+// SubagentsDir returns the folder Claude keeps a session's subagent files
+// in (agent-<id>.jsonl and agent-<id>.meta.json): the transcript's path
+// without ".jsonl", then "subagents". It returns "" for an empty path.
+func SubagentsDir(transcriptPath string) string {
+	if transcriptPath == "" {
+		return ""
+	}
+	return filepath.Join(strings.TrimSuffix(transcriptPath, ".jsonl"), "subagents")
+}
+
 // MetaPath returns where Claude writes agentID's sidecar for the session
 // whose transcript is at transcriptPath. It returns "" when either is
 // empty, or when agentID could escape the subagents folder.
 func MetaPath(transcriptPath, agentID string) string {
-	if transcriptPath == "" || agentID == "" || agentID == ".." ||
-		strings.ContainsAny(agentID, `/\`) {
+	dir := SubagentsDir(transcriptPath)
+	if dir == "" || !ValidAgentID(agentID) {
 		return ""
 	}
-	sessionDir := strings.TrimSuffix(transcriptPath, ".jsonl")
-	return filepath.Join(sessionDir, "subagents", "agent-"+agentID+".meta.json")
+	return filepath.Join(dir, "agent-"+agentID+".meta.json")
 }

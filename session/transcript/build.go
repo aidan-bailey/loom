@@ -61,7 +61,13 @@ func (b *builder) repeatsCompact() bool {
 func (b *builder) addPart(e entry, p part) {
 	if p.kind == partResult {
 		if at, ok := b.steps[p.step.ID]; ok {
-			b.turns[at.turn].Items[at.item].Steps[at.step].State = p.step.State
+			s := &b.turns[at.turn].Items[at.item].Steps[at.step]
+			s.State = p.step.State
+			if isAgentTool(s.Tool) {
+				// linkAgents lets a sidecar override both.
+				s.Agent = p.step.Agent
+				s.Finished = p.status != statusAsyncLaunched
+			}
 		}
 		return
 	}

@@ -1,4 +1,4 @@
-// The fleet screen, and the helpers the session screen shares with it.
+// The fleet screen, and the helpers the conversation and the info tab share with it.
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { pref } from "./store.mjs";
 import { glyphOf, GearIcon } from "./skin.mjs";
@@ -132,7 +132,7 @@ function plural(n, word) {
 
 // PrMark is a PR's state on a row: ✓, ✗ or … for an open PR's checks, else
 // draft, merged or closed.
-function PrMark({ pr }) {
+export function PrMark({ pr }) {
   if (pr.state !== "open") return html`<span>${pr.state}</span>`;
   if (pr.checks === "passing") return html`<span class="sc-add">✓</span>`;
   if (pr.checks === "failing") return html`<span class="sc-del">✗</span>`;

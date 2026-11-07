@@ -455,6 +455,28 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-tab-on { color: var(--title); box-shadow: inset 0 -2px var(--accent); }
 .sc-tab-diff { font-size: 11px; }
 .sc-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* The conversation's fact strip, pinned under the tabs: one ellipsised line,
+   the whole of it a link to the info tab. Inline children only, so the
+   ellipsis works and a text's leading space survives. */
+.sc-strip {
+  display: block;
+  padding: 7px 16px 8px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--dim);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-strip .sc-hot { color: var(--attention); }
+
+/* The subagent's strip: its state on the left, ellipsised, and the way back
+   to a waiting session pinned on the right. */
+.sc-strip-agent { display: flex; align-items: baseline; gap: 12px; }
+.sc-strip-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-strip-needs { flex: none; color: var(--attention); text-decoration: none; }
 .sc-h1 { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- the fleet ---- */
@@ -498,6 +520,8 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sc-agent { padding-top: 6px; }
 .sc-agent-desc { padding-left: 16px; font-size: 12px; color: var(--dim); }
+.sc-agent-link { display: block; min-height: 44px; color: inherit; text-decoration: none; }
+.sc-agent-link svg { align-self: center; color: var(--accent); }
 .sc-actions { display: flex; gap: 8px; margin: 16px 0 20px; }
 .sc-actions .sc-btn { flex: 1; padding: 0 6px; }
 /* A session's views fill main's column under the header (flex: 1, never a
@@ -602,19 +626,6 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-tile-fig svg { color: var(--accent); }
 a.sc-tile { color: var(--fg); }
 .sc-rule::after { order: 1; }
-.sc-rule-link {
-  order: 2;
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  margin: -14px 0;
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  text-decoration: none;
-  color: var(--accent);
-}
 /* ---- the conversation ---- */
 .sc-accent { color: var(--accent); }
 .sc-earlier { align-self: center; border: 0; font-size: 12px; color: var(--accent); }
@@ -641,6 +652,35 @@ a.sc-tile { color: var(--fg); }
 .sc-compacted::before,
 .sc-compacted::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .sc-note { margin: 0; font-size: 12px; }
+
+/* A thinking item: folded to its first line, dim and italic; the body is
+   the text as written. */
+.sc-think { font-size: 12px; }
+.sc-think > summary {
+  display: block;
+  min-height: 44px;
+  margin: -8px 0;
+  overflow: hidden;
+  line-height: 44px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font-style: italic;
+  cursor: pointer;
+  list-style: none;
+}
+.sc-think > summary::-webkit-details-marker { display: none; }
+.sc-think-body { margin: 0 0 4px; padding-left: 12px; border-left: 1px solid var(--rule); color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A step that launched a subagent is a link row across the fold's grid
+   (subgrid keeps its cells in the grid's columns; without it the anchor
+   dissolves into them). */
+.sc-step-link { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; padding: 6px 0; color: inherit; text-decoration: none; }
+@supports not (grid-template-columns: subgrid) {
+  .sc-step-link { display: contents; }
+}
+.sc-step-link .sc-step-tool,
+.sc-step-link .sc-step-sum,
+.sc-step-link .sc-step-end { color: var(--accent); }
 /* ---- the changes ---- */
 .sc-files { margin-top: 10px; border-bottom: 1px solid var(--rule); }
 .sc-file { border-top: 1px solid var(--rule); }

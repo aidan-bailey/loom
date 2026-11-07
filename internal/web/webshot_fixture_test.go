@@ -18,8 +18,8 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 	dir := filepath.Join("..", "..", "tools", "webshot", "fixture")
 	for name, into := range map[string]any{
 		"snapshot.json":        &snapshotJSON{},
-		"message.json":         &messageJSON{},
 		"turns.json":           &turnsJSON{},
+		"agent-turns.json":     &turnsJSON{},
 		"diff.json":            &patchJSON{},
 		"launch-defaults.json": &launchDefaultsJSON{},
 	} {

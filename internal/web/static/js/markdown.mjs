@@ -1,7 +1,9 @@
-// The last message as the daemon parsed it (GET /api/v1/sessions/{id}/message):
-// a tree of plain nodes, each drawn here as its element. The daemon kept no
-// markup and no unsafe link, and this file never inserts an HTML string, so
-// nothing a message says runs in or restyles the page.
+// Claude's text as the daemon parsed it (the blocks of a text item of
+// GET /api/v1/sessions/{id}/turns; GET …/message sends the same tree for the
+// last message, which no screen draws now): a tree of plain nodes, each drawn
+// here as its element. The daemon kept no markup and no unsafe link, and this
+// file never inserts an HTML string, so nothing Claude says runs in or
+// restyles the page.
 import { html } from "../lib/preact-htm.mjs";
 
 function kids(n) {

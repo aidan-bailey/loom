@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aidan-bailey/loom/session/subagent"
 )
 
 // A page's bounds. A turn joins a page while the page holds fewer than
@@ -45,6 +47,10 @@ type Query struct {
 	// After > 0 reads every turn from the one at this offset (a turn's ID)
 	// to the end of the file.
 	After int64
+	// Agent, when set, reads that subagent's transcript, <session>/subagents/
+	// agent-<Agent>.jsonl beside the conversation's, with the same paging,
+	// instead of the conversation. It must pass subagent.ValidAgentID.
+	Agent string
 }
 
 // Page is the turns a query read, oldest first.
@@ -63,7 +69,36 @@ type Page struct {
 	// Skipped counts the page's lines that could not be read: not JSON,
 	// or longer than lineLimit.
 	Skipped int
+	// Agent says whose page it is when Query.Agent was set, nil otherwise.
+	Agent *AgentInfo
 }
+
+// AgentInfo describes the subagent a page belongs to, from its sidecar
+// (agent-<id>.meta.json) and its file.
+type AgentInfo struct {
+	ID string
+	// Type is the sidecar's agentType, Description its description or, with
+	// none, the brief's first line.
+	Type        string
+	Description string
+	Teammate    bool
+	// State is AgentFinished or AgentRunning from the sidecar's finished
+	// key, AgentUnknown when the sidecar or the key is missing. The file's
+	// last record can't say: it is usually the handback, not an end.
+	State string
+	// Started is the file's first record's timestamp.
+	Started time.Time
+	// Missing says the agent's .jsonl does not exist: not written yet, or
+	// deleted by Claude's cleanup.
+	Missing bool
+}
+
+// The states of an AgentInfo.
+const (
+	AgentRunning  = "running"
+	AgentFinished = "finished"
+	AgentUnknown  = "unknown"
+)
 
 // Turn is one prompt and what Claude did with it.
 type Turn struct {
@@ -71,8 +106,9 @@ type Turn struct {
 	// appends, so it names the turn for good.
 	ID int64
 	At time.Time
-	// From says whose the prompt is: FromYou, FromPlugin, FromPeer or
-	// FromTask; Name is the plugin's or the peer's name.
+	// From says whose the prompt is: FromYou, FromPlugin, FromPeer,
+	// FromTask or, for a subagent file's first prompt, FromBrief; Name is
+	// the plugin's or the peer's name.
 	From string
 	Name string
 	// Text is the prompt, trimmed, its first maxPrompt bytes; Cut says it
@@ -92,15 +128,17 @@ const (
 	FromPlugin = "plugin"
 	FromPeer   = "peer"
 	FromTask   = "task"
+	// FromBrief is a subagent file's first prompt: what the parent told it.
+	FromBrief = "brief"
 )
 
 // Item is one thing Claude's side of a turn holds.
 type Item struct {
-	Kind string // KindText, KindSteps, KindCompacted or KindNote
+	Kind string // KindText, KindThinking, KindSteps, KindCompacted or KindNote
 	// At is its record's timestamp; a steps item's is its first step's.
 	At time.Time
-	// Text is a text item's markdown (its first maxItem bytes; Cut says it
-	// was cut), or a note's line.
+	// Text is a text or thinking item's markdown (its first maxItem bytes;
+	// Cut says it was cut), or a note's line.
 	Text  string
 	Cut   bool
 	Error bool // a note that is an API error
@@ -113,7 +151,10 @@ type Item struct {
 
 // The kinds of Item.
 const (
-	KindText      = "text"
+	KindText = "text"
+	// KindThinking is a thinking block that holds text: Claude stores most
+	// as a signature alone, and those add nothing.
+	KindThinking  = "thinking"
 	KindSteps     = "steps"
 	KindCompacted = "compacted"
 	KindNote      = "note"
@@ -126,6 +167,16 @@ type Step struct {
 	Summary string
 	At      time.Time
 	State   string // StatePending, StateDone, StateFailed or StateInterrupted
+	// Agent is the subagent an Agent or Task step launched: the id of the
+	// sidecar naming the step's tool_use id (toolUseId), else the one the
+	// step's result names (toolUseResult.agentId). "" for another tool, and
+	// for a step no agent is found for: no link is guessed.
+	Agent string
+	// Finished says an Agent or Task step's agent has ended: the sidecar's
+	// finished key when it has one, else whether the step has a result that
+	// is not a background launch's (status async_launched). False for
+	// another tool.
+	Finished bool
 }
 
 // The states of a Step.
@@ -141,12 +192,22 @@ const (
 // absolute, not <conversation>.jsonl or not a regular file, so a bad hook
 // payload can't point it at another file. It opens the file read-only and
 // reads nothing past the last newline it finds: a line after that is one
-// Claude is still writing.
+// Claude is still writing. With q.Agent set it reads that subagent's file
+// instead (agents.go); a bad agent id is an error.
 func Read(path, conversation string, q Query) (Page, error) {
 	if q.Before > 0 && q.After > 0 {
 		return Page{}, errors.New("transcript: a query takes before or after, not both")
 	}
-	f, size, err := open(path, conversation)
+	if q.Agent != "" && !subagent.ValidAgentID(q.Agent) {
+		return Page{}, fmt.Errorf("transcript: agent %q: not an agent id", q.Agent)
+	}
+	if err := checkPath(path, conversation); err != nil {
+		return Page{}, err
+	}
+	if q.Agent != "" {
+		return readAgent(path, conversation, q)
+	}
+	f, size, err := openFile(path)
 	if err != nil {
 		return Page{}, err
 	}
@@ -156,18 +217,24 @@ func Read(path, conversation string, q Query) (Page, error) {
 		return Page{}, fmt.Errorf("transcript %s: %w", path, err)
 	}
 	page.Conversation = conversation
+	linkAgents(path, page.Turns)
 	return page, nil
 }
 
-// open opens the transcript once its path passes the checks, and returns
-// its size.
-func open(path, conversation string) (*os.File, int64, error) {
+// checkPath refuses a path that is not the absolute path of conversation's
+// transcript.
+func checkPath(path, conversation string) error {
 	switch {
 	case !filepath.IsAbs(path):
-		return nil, 0, fmt.Errorf("transcript %s: not an absolute path", path)
+		return fmt.Errorf("transcript %s: not an absolute path", path)
 	case conversation == "" || filepath.Base(path) != conversation+".jsonl":
-		return nil, 0, fmt.Errorf("transcript %s: not the transcript of conversation %q", path, conversation)
+		return fmt.Errorf("transcript %s: not the transcript of conversation %q", path, conversation)
 	}
+	return nil
+}
+
+// openFile opens the regular file at path read-only, and returns its size.
+func openFile(path string) (*os.File, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("transcript: %w", err)
@@ -184,39 +251,41 @@ func open(path, conversation string) (*os.File, int64, error) {
 	return f, info.Size(), nil
 }
 
-// read reads q's page from r, whose first size bytes are the transcript.
+// read reads q's page from r, whose first size bytes are the transcript (a
+// subagent's when q.Agent is set).
 func read(r io.ReaderAt, size int64, conversation string, q Query) (Page, error) {
 	end, err := lastLineEnd(r, size)
 	if err != nil {
 		return Page{}, err
 	}
+	agent := q.Agent != ""
 	other := q.Conversation != "" && q.Conversation != conversation
 	if other || q.Before > end || (q.After > 0 && q.After >= end) {
-		return pageBefore(r, end, true)
+		return pageBefore(r, end, true, agent)
 	}
 	if q.After > 0 {
-		page, ok, err := since(r, end, q.After)
+		page, ok, err := since(r, end, q.After, agent)
 		if err != nil || ok {
 			return page, err
 		}
-		return pageBefore(r, end, true)
+		return pageBefore(r, end, true, agent)
 	}
 	to := end
 	if q.Before > 0 {
 		to = q.Before
 	}
-	return pageBefore(r, to, false)
+	return pageBefore(r, to, false, agent)
 }
 
 // pageBefore reads the newest page of the turns that end by to, marked
 // reset when it stands in for another query.
-func pageBefore(r io.ReaderAt, to int64, reset bool) (Page, error) {
+func pageBefore(r io.ReaderAt, to int64, reset, agent bool) (Page, error) {
 	var newestFirst []entry
 	joined, text, pending := 0, 0, 0
 	first := -1   // newestFirst's index of the oldest joined turn's first record
 	more := false // a turn older than the page exists
 	reached, err := scanBack(r, 0, to, scanBudget, func(off int64, data []byte) bool {
-		e := decode(off, data)
+		e := decode(off, data, agent)
 		newestFirst = append(newestFirst, e)
 		pending += e.size
 		// A /compact command record may repeat the turn before it (build
@@ -256,10 +325,10 @@ func pageBefore(r io.ReaderAt, to int64, reset bool) (Page, error) {
 
 // since reads every turn from the one at after to end. It reports false
 // when after lies out of a read's reach.
-func since(r io.ReaderAt, end, after int64) (Page, bool, error) {
+func since(r io.ReaderAt, end, after int64, agent bool) (Page, bool, error) {
 	var newestFirst []entry
 	reached, err := scanBack(r, after, end, scanBudget, func(off int64, data []byte) bool {
-		newestFirst = append(newestFirst, decode(off, data))
+		newestFirst = append(newestFirst, decode(off, data, agent))
 		return true
 	})
 	if err != nil || !reached {

@@ -1,0 +1,97 @@
+{
+  "conversation": "c0ffee",
+  "earlier": null,
+  "reset": true,
+  "skipped": 0,
+  "agent": {
+    "id": "a1f00dcafe0001",
+    "type": "recon",
+    "description": "Map every caller of the cursor path",
+    "teammate": false,
+    "state": "running",
+    "started": "now-3m",
+    "missing": false
+  },
+  "turns": [
+    {
+      "id": 1,
+      "at": "now-3m",
+      "from": "brief",
+      "name": "",
+      "text": "You are mapping callers.\n\nTask: find every caller of the cursor path in ui/ and session/.\n\nStart from ui/pane.go: cursorVisible, drawCursor and the header redraw.\nFor each call site report:\n- the file and line\n- whether it runs before or after the frame is drawn\n- whether it holds the pane's lock\n\nDo not edit anything.\nKeep the report under 200 words.\nName any caller you could not trace.\nReturn a list, most important first.\nIf the search is wider than ui/ and session/, say so.",
+      "cut": false,
+      "command": false,
+      "partial": false,
+      "items": [
+        {
+          "kind": "thinking",
+          "at": "now-3m",
+          "text": "Start with a grep for drawCursor,\nthen read each hit's surrounding frame code.",
+          "truncated": false
+        },
+        {
+          "kind": "steps",
+          "at": "now-2m",
+          "total": 4,
+          "steps": [
+            {
+              "tool": "Grep",
+              "summary": "drawCursor",
+              "at": "now-2m",
+              "state": "done"
+            },
+            {
+              "tool": "Read",
+              "summary": "ui/pane.go",
+              "at": "now-2m",
+              "state": "done"
+            },
+            {
+              "tool": "Read",
+              "summary": "ui/header.go",
+              "at": "now-1m",
+              "state": "done"
+            },
+            {
+              "tool": "Grep",
+              "summary": "cursorVisible",
+              "at": "now-30s",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "kind": "text",
+          "at": "now-1m",
+          "blocks": [
+            {
+              "t": "p",
+              "c": [
+                {
+                  "t": "text",
+                  "v": "Two callers so far: "
+                },
+                {
+                  "t": "code_inline",
+                  "v": "ui/pane.go"
+                },
+                {
+                  "t": "text",
+                  "v": " draws the cursor after the frame, under the pane's lock, and "
+                },
+                {
+                  "t": "code_inline",
+                  "v": "ui/header.go"
+                },
+                {
+                  "t": "text",
+                  "v": " redraws the header without it."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

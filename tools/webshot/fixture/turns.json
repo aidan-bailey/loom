@@ -17,7 +17,7 @@
         {
           "kind": "steps",
           "at": "now-29m",
-          "total": 6,
+          "total": 7,
           "failed": 1,
           "steps": [
             {
@@ -43,6 +43,14 @@
               "summary": "ui/pane.go",
               "at": "now-24m",
               "state": "done"
+            },
+            {
+              "tool": "Agent",
+              "summary": "Review the draw order",
+              "at": "now-23m",
+              "state": "done",
+              "agent": "a1f00dcafe0002",
+              "finished": true
             }
           ]
         },
@@ -90,15 +98,29 @@
       "partial": true,
       "items": [
         {
+          "kind": "thinking",
+          "at": "now-4m",
+          "text": "The ui tests may be slow, so start with TestPane\nand run the whole package after.\nIf the header test fails, check the redraw order first.",
+          "truncated": false
+        },
+        {
           "kind": "steps",
           "at": "now-4m",
-          "total": 2,
+          "total": 3,
           "steps": [
             {
               "tool": "Bash",
               "summary": "go test ./ui/... -run TestPane",
               "at": "now-4m",
               "state": "done"
+            },
+            {
+              "tool": "Agent",
+              "summary": "Map every caller of the cursor path",
+              "at": "now-3m",
+              "state": "done",
+              "agent": "a1f00dcafe0001",
+              "finished": false
             },
             {
               "tool": "Bash",

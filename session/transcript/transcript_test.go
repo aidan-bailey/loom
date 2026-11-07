@@ -523,3 +523,57 @@ func TestRead_RefusesAPathThatIsNotTheTranscript(t *testing.T) {
 		assert.ErrorContains(t, err, tc.want, name)
 	}
 }
+
+// thinks is one thinking block, as Claude writes it: a signature, and the
+// text it keeps, which is mostly blank.
+func thinks(text string) map[string]any {
+	return assistant(map[string]any{"type": "thinking", "thinking": text, "signature": "EqQB"})
+}
+
+func TestRead_ThinkingKeepsItsTextAndDropsBlankAndRedacted(t *testing.T) {
+	f := newTFile(t)
+	f.add(typed("design it"))
+	f.add(thinks(""))
+	f.add(thinks("  \n "))
+	f.add(assistant(map[string]any{"type": "redacted_thinking", "data": "EmQK"}))
+	f.add(thinks("Still in design: items 1 and 2 are worked out."))
+	f.add(said("Here is the plan."))
+	f.add(bash("t1", "make"))
+	f.add(result("t1", false, "ok"))
+	f.add(thinks("Checking the result."))
+
+	p := f.read(Query{})
+	require.Len(t, p.Turns, 1)
+	turn := p.Turns[0]
+	require.Equal(t, []string{KindThinking, KindText, KindSteps, KindThinking}, kinds(turn.Items),
+		"a blank and a redacted block add nothing")
+	assert.Equal(t, "Still in design: items 1 and 2 are worked out.", turn.Items[0].Text)
+	assert.False(t, turn.Items[0].Cut)
+	assert.False(t, turn.Items[0].At.IsZero())
+	assert.Equal(t, "Checking the result.", turn.Items[3].Text)
+}
+
+func TestRead_ThinkingIsCutLikeATextItem(t *testing.T) {
+	f := newTFile(t)
+	f.add(typed("p"))
+	f.add(thinks(strings.Repeat("t", maxItem+10)))
+
+	item := f.read(Query{}).Turns[0].Items[0]
+	assert.Equal(t, KindThinking, item.Kind)
+	assert.True(t, item.Cut)
+	assert.Len(t, item.Text, maxItem)
+}
+
+func TestRead_ThinkingCountsTowardsAPagesText(t *testing.T) {
+	big := strings.Repeat("w", 60<<10)
+	f := newTFile(t)
+	var ids []int64
+	for i := 1; i <= 5; i++ {
+		ids = append(ids, f.add(typed(fmt.Sprintf("p%d", i))))
+		f.add(thinks(big))
+		f.add(thinks(big))
+	}
+	p := f.read(Query{})
+	assert.Equal(t, []string{"p4", "p5"}, texts(p.Turns), "a third turn would take the page past 256 KiB")
+	assert.Equal(t, ids[3], p.Earlier)
+}
