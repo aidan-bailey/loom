@@ -717,6 +717,15 @@ func sessionToTabStatus(s session.Status) ui.TabStatus {
 	}
 }
 
+// tabStatusOf is inst's tab status: Prompting for a session that needs the
+// person (core.InstanceView.NeedsYou), else its status's.
+func tabStatusOf(inst core.InstanceView) ui.TabStatus {
+	if inst.NeedsYou() {
+		return ui.TabStatusPrompting
+	}
+	return sessionToTabStatus(inst.Status)
+}
+
 // updateTabBarStatuses checks each slot for instances and updates the tab bar's
 // status indicators. The highest-priority status across all instances in a slot wins.
 // Precedence (high→low): Prompting > Running > Ready > Loading > Paused > None.
@@ -730,7 +739,7 @@ func (m *home) updateTabBarStatuses() {
 			if !inst.Started {
 				continue
 			}
-			ts := sessionToTabStatus(inst.Status)
+			ts := tabStatusOf(inst)
 			if ts > statuses[i] {
 				statuses[i] = ts
 			}

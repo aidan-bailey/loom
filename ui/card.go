@@ -11,6 +11,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
@@ -174,6 +175,11 @@ type CardData struct {
 	// or the agent roster, via sanitizeCardText. Empty when unknown —
 	// non-Claude agents, and any status the pane scraper decided.
 	WaitReason string
+	// Verdict and VerdictGist are the stop classifier's verdict on the turn
+	// a Ready session ended (core.InstanceView.Verdict), the gist through
+	// sanitizeCardText; "" for none.
+	Verdict     string
+	VerdictGist string
 	// Subagents lists the session's live subagents and teammates, working
 	// first, with names and descriptions passed through sanitizeCardText.
 	// Empty for most cards; see core.InstanceView.Subagents.
@@ -198,7 +204,13 @@ type CardData struct {
 // needs attention: a stale bell on a mid-kill card must not paint it
 // gold or float it into the attention tier.
 func (d CardData) NeedsAttention() bool {
-	return d.Status != session.Deleting && (d.Status == session.Prompting || d.BellPending)
+	return d.Status != session.Deleting && (d.Status == session.Prompting || d.asksYou() || d.BellPending)
+}
+
+// asksYou reports whether the stop classifier read a Ready session's last
+// message as asking for the person (core.InstanceView.NeedsYou).
+func (d CardData) asksYou() bool {
+	return d.Status == session.Ready && d.Verdict == attention.NeedsYou
 }
 
 // BuildCardData snapshots v into a CardData. pane is v's pane
@@ -221,6 +233,8 @@ func BuildCardData(v core.InstanceView, pane Pane, selected bool, spinnerFrame s
 		StatusAge:           v.StatusAge(),
 		Spinner:             spinnerFrame,
 		WaitReason:          sanitizeCardText(v.WaitReason),
+		Verdict:             v.Verdict,
+		VerdictGist:         sanitizeCardText(v.VerdictGist),
 		Account:             accountLabel(&v),
 		JobBadge:            JobBadge(v.ID),
 	}
@@ -543,10 +557,28 @@ func (d CardData) statusLabel() string {
 	case session.Running, session.Loading:
 		return d.Spinner + " working"
 	case session.Ready:
-		if age != "" {
-			return "✓ idle " + age
+		phrase := "✓ idle"
+		switch {
+		case d.asksYou():
+			// Like Prompting's reason: what it asks is the part that tells
+			// the person what to do.
+			phrase = "❯ asks"
+			if gist := strings.TrimSpace(d.VerdictGist); gist != "" {
+				phrase += ": " + gist
+			}
+			if age != "" {
+				return phrase + " · " + age
+			}
+			return phrase
+		case d.Verdict == attention.Done:
+			phrase = "✓ done"
+		case d.Verdict == attention.Waiting:
+			phrase = "◷ waiting"
 		}
-		return "✓ idle"
+		if age != "" {
+			return phrase + " " + age
+		}
+		return phrase
 	case session.Paused:
 		if age != "" {
 			return "paused · " + age
@@ -790,7 +822,7 @@ func overviewTier(v core.InstanceView) int {
 		// Checked before the bell: a stale bell on a mid-kill instance
 		// must not float it into the attention tier.
 		return 5
-	case st == session.Prompting || v.Bell:
+	case v.NeedsYou() || v.Bell:
 		return 1
 	case st == session.Running || st == session.Loading:
 		return 2

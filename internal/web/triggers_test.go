@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 )
@@ -342,4 +344,99 @@ func TestPush_AFreshMockupLinksItsTab(t *testing.T) {
 			assert.True(t, jobs[0].Mockup)
 		})
 	}
+}
+
+// verdictView is a started Ready session whose turn at stop has verdict
+// (pending when verdict is "pending").
+func verdictView(id core.InstanceID, stop time.Time, verdict, gist string) core.InstanceView {
+	v := pushTestView(id, session.Ready)
+	v.HasLastMessage, v.VerdictStop = true, stop
+	if verdict == "pending" {
+		v.VerdictPending = true
+	} else {
+		v.Verdict, v.VerdictGist = verdict, gist
+	}
+	return v
+}
+
+func TestPushWatch_AVerdictPushesOncePerTurn(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})
+	stop := time.Now().Add(time.Minute) // after the baseline
+	assert.Empty(t, w.observe(10, []core.InstanceView{verdictView(1, stop, "pending", "")}), "the finished push waits for the verdict")
+
+	asks := verdictView(1, stop, attention.NeedsYou, "choose A or B")
+	jobs := w.observe(10, []core.InstanceView{asks})
+	require.Len(t, jobs, 1)
+	assert.Equal(t, pushJob{Kind: pushWaiting, Session: 1, Title: "fix the build", Body: "asks: choose A or B", Badge: 1}, jobs[0])
+	assert.Equal(t, "high", jobs[0].urgency())
+	assert.Empty(t, w.observe(10, []core.InstanceView{asks}), "the same turn pushes once")
+}
+
+func TestPushWatch_ACoalescedVerdictStillPushesOnce(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})
+	stop := time.Now().Add(time.Minute)
+	done := verdictView(1, stop, attention.Done, "fixed the test")
+	jobs := w.observe(10, []core.InstanceView{done})
+	require.Len(t, jobs, 1, "Running to a verdict in one projection")
+	assert.Equal(t, pushDone, jobs[0].Kind)
+	assert.Equal(t, "Done: fixed the test", jobs[0].Body)
+	assert.Equal(t, "normal", jobs[0].urgency())
+	assert.Empty(t, w.observe(10, []core.InstanceView{done}))
+}
+
+func TestPushWatch_WaitingAndStopped(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running), pushTestView(2, session.Running)})
+	stop := time.Now().Add(time.Minute)
+	w.observe(10, []core.InstanceView{verdictView(1, stop, "pending", ""), verdictView(2, stop, "pending", "")})
+	jobs := w.observe(10, []core.InstanceView{verdictView(1, stop, attention.Waiting, "job 12"), verdictView(2, stop, attention.Stopped, "")})
+	require.Len(t, jobs, 1, "waiting pushes nothing")
+	assert.Equal(t, pushJob{Kind: pushFinished, Session: 2, Title: "fix the build", Body: pushFinishedBody}, jobs[0])
+
+	// A later turn with no Running edge between: stopped owes nothing.
+	later := stop.Add(time.Minute)
+	assert.Empty(t, w.observe(10, []core.InstanceView{verdictView(1, stop, attention.Waiting, "job 12"), verdictView(2, later, attention.Stopped, "")}))
+}
+
+func TestPushWatch_APendingCallWithNoVerdictPushesFinished(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})
+	stop := time.Now().Add(time.Minute)
+	w.observe(10, []core.InstanceView{verdictView(1, stop, "pending", "")})
+	none := pushTestView(1, session.Ready)
+	none.HasLastMessage, none.VerdictStop = true, stop
+	jobs := w.observe(10, []core.InstanceView{none})
+	require.Len(t, jobs, 1)
+	assert.Equal(t, pushFinished, jobs[0].Kind)
+	assert.Empty(t, w.observe(10, []core.InstanceView{none}))
+}
+
+func TestPushWatch_AReplyBeforeTheVerdictDropsThePush(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})
+	stop := time.Now().Add(time.Minute)
+	w.observe(10, []core.InstanceView{verdictView(1, stop, "pending", "")})
+	assert.Empty(t, w.observe(10, []core.InstanceView{pushTestView(1, session.Running)}), "the person replied")
+	assert.Empty(t, w.observe(10, []core.InstanceView{pushTestView(1, session.Running)}))
+}
+
+func TestPushWatch_ATurnEndedBeforeTheBaselineNeverPushes(t *testing.T) {
+	w := newPushWatch()
+	start := time.Now()
+	w.now = func() time.Time { return start }
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Ready)})
+	old := verdictView(1, start.Add(-time.Hour), attention.NeedsYou, "pick") // a replayed turn's verdict, after boot
+	assert.Empty(t, w.observe(10, []core.InstanceView{old}))
+	assert.Equal(t, 1, w.needs[10], "it still counts toward the badge")
+
+	fresh := verdictView(1, start.Add(time.Minute), attention.NeedsYou, "pick again")
+	assert.Len(t, w.observe(10, []core.InstanceView{fresh}), 1, "a turn after the baseline pushes")
+}
+
+func TestPushAllows_DoneFollowsTheFinishedToggle(t *testing.T) {
+	now := time.Now()
+	assert.True(t, pushAllows(core.NotifySettings{Finished: true}, pushDone, now))
+	assert.False(t, pushAllows(core.NotifySettings{Waiting: true}, pushDone, now))
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/attention"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
@@ -119,6 +120,11 @@ type sessionJSON struct {
 	// Mockup is the screen the session's brainstorm companion serves (GET
 	// …/mockup reads its page), null for none.
 	Mockup *mockupJSON `json:"mockup"`
+	// Verdict is the stop classifier's verdict on the session's last turn
+	// ("needs_you", "done", "waiting", "stopped"), Gist its one line; empty
+	// for none.
+	Verdict string `json:"verdict,omitempty"`
+	Gist    string `json:"gist,omitempty"`
 }
 
 // mockupJSON is a session's brainstorm companion's screen: its file name,
@@ -211,10 +217,18 @@ func groupOf(v core.InstanceView) (group, label string) {
 	case session.Prompting:
 		return groupNeedsYou, "Needs you"
 	case session.Ready:
-		if v.Started {
-			return groupYourTurn, "Your turn"
+		if !v.Started {
+			return groupPaused, "Not started"
 		}
-		return groupPaused, "Not started"
+		switch {
+		case v.NeedsYou():
+			return groupNeedsYou, "Asks you"
+		case v.Verdict == attention.Done:
+			return groupYourTurn, "Done"
+		case v.Verdict == attention.Waiting:
+			return groupWorking, "Waiting"
+		}
+		return groupYourTurn, "Your turn"
 	case session.Running:
 		return groupWorking, "Working"
 	case session.Loading:
@@ -258,6 +272,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 	}
 	if v.HasLastMessage {
 		s.LastMessage = v.LastMessage
+		s.Verdict, s.Gist = v.Verdict, v.VerdictGist
 	}
 	if v.HasDiff {
 		s.Diff = diffJSON{Added: v.Diff.Added, Removed: v.Diff.Removed}

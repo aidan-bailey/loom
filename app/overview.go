@@ -9,8 +9,8 @@ import (
 )
 
 // jumpWaiting moves selection to the next/prev agent needing attention
-// (Prompting or bell), across all open workspaces, wrapping. When the
-// target is in another slot it focuses that slot (loadSlot) and selects
+// (core.InstanceView.NeedsYou, or a bell), across all open workspaces,
+// wrapping. When the target is in another slot it focuses that slot (loadSlot) and selects
 // there. No-op when none wait. Main-goroutine only.
 func (m *home) jumpWaiting(dir int) {
 	// Overview mode with slots: `]`/`[` move the overview cursor to the
@@ -35,7 +35,7 @@ func (m *home) jumpWaiting(dir int) {
 		for step := 1; step <= n; step++ {
 			p := order[((start+dir*step)%n+n)%n]
 			inst := m.slots[p.slot].list.GetInstances()[p.inst]
-			if inst.Status == session.Prompting || inst.Bell {
+			if inst.NeedsYou() || inst.Bell {
 				m.overviewCursor = overviewCursor{slot: p.slot, inst: p.inst}
 				return
 			}
@@ -91,7 +91,7 @@ func (m *home) jumpWaiting(dir int) {
 			list = m.slots[p.slot].list
 		}
 		inst := list.GetInstances()[p.inst]
-		if inst.Status == session.Prompting || inst.Bell {
+		if inst.NeedsYou() || inst.Bell {
 			if len(m.slots) != 0 && p.slot != m.focusedSlot {
 				m.loadSlot(p.slot)
 			}
@@ -233,7 +233,7 @@ func (m *home) peerSectionFor(slot *workspaceSlot) ui.PeerSection {
 	for _, inst := range slot.list.GetInstances() {
 		st := inst.Status
 		switch {
-		case st == session.Prompting || inst.Bell:
+		case inst.NeedsYou() || inst.Bell:
 			p.Attention++
 		case st == session.Running || st == session.Loading:
 			p.Running++
