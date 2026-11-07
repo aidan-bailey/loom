@@ -64,6 +64,16 @@ func TestSize(t *testing.T) {
 			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 1, false, 0},
 		{"an overrunner's cores are held to the cap", Claim{}, belief(at(4, 15)), szPolicy, Claim{CPUs: 14, MemoryGB: 2},
 			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 1, false, 0},
+		{"a command that waits keeps the width it gained at", Claim{}, belief(at(1, 0.31), at(2, 0.63)), szPolicy, Claim{CPUs: 2, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 2, false, 0},
+		{"the floor is held to the default claim's cores", Claim{}, belief(at(1, 0.5), at(2, 0.95), at(8, 3.0)), szPolicy, Claim{CPUs: 2, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 3, false, 0},
+		{"the floor is held to the fit's ideal width", Claim{}, belief(at(1, 0.5), at(4, 0.909)), szPolicy, Claim{CPUs: 1, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 2, false, 0},
+		{"a width under the gain is no floor", Claim{}, belief(at(1, 0.5), at(2, 0.6)), szPolicy, Claim{CPUs: 1, MemoryGB: 2},
+			ClaimSources{SourceLearned, SourceLearned, SourceDefault}, 2, false, 0},
+		{"explicit cores take no floor", Claim{CPUs: 1}, belief(at(1, 0.31), at(2, 0.63)), szPolicy, Claim{CPUs: 1, MemoryGB: 2},
+			ClaimSources{SourceExplicit, SourceLearned, SourceDefault}, 2, false, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -182,6 +192,7 @@ func TestSize_FromTheFamily(t *testing.T) {
 		{"a family member's failed peak neither sizes", Claim{}, nil, belief(failedBig), szPolicy, Claim{CPUs: 4, MemoryGB: 6}, all(D), 0, 0, false},
 		{"nor raises", Claim{}, nil, belief(done(1<<20, 10, 10), failedBig), szPolicy, Claim{CPUs: 2, MemoryGB: 2}, ClaimSources{F, F, D}, 0, 2, false},
 		{"a family never makes an overrunner", Claim{}, nil, belief(at(4, 7.81)), szPolicy, Claim{CPUs: 4, MemoryGB: 2}, ClaimSources{F, F, D}, 0, 1, false},
+		{"a family lends no floor", Claim{}, nil, belief(at(1, 0.31), at(2, 0.63)), szPolicy, Claim{CPUs: 1, MemoryGB: 2}, ClaimSources{F, F, D}, 0, 2, false},
 		{"explicit wins over the family", Claim{MemoryGB: 3}, nil, fam, szPolicy, Claim{CPUs: 3, MemoryGB: 3}, ClaimSources{F, E, D}, 0, 1, false},
 		{"the family wins over the prior", Claim{}, &Belief{Prior: &Prior{CPUs: 6, MemoryGB: 12, IO: true}}, fam, szPolicy,
 			Claim{CPUs: 3, MemoryGB: 6, IO: true}, ClaimSources{F, F, A}, 0, 1, false},

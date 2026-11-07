@@ -143,8 +143,9 @@ type Sized struct {
 // peak with a margin, and a floor only raises it (a run with spare cores
 // counts as largestPeak says); only the family's full peaks size memory,
 // and its floors neither size nor raise it. Cores learn from busy cores,
-// never past the default claim's unless the command overruns (job scaling
-// spec §5.2), then up to the cap; a family never makes an overrunner. An
+// floored at the widest width the fit shows faster (fit spec §4.2), never
+// past the default claim's unless the command overruns (job scaling spec
+// §5.2), then up to the cap; a family never makes an overrunner. An
 // I/O slot comes from bytes written. --cpus with --mem makes the whole
 // claim explicit. A part that isn't explicit is held within the policy:
 // cores at most the default claim's (an overrunner's at most the cap),
@@ -173,7 +174,10 @@ func Size(asked Claim, b, family *Belief, p Policy) Sized {
 		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*sc.Busy)), 1, p.Caps.CPUs), SourceLearned
 		learned = true
 	case haveBusy:
-		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*busy)), 1, p.DefaultClaim.CPUs), SourceLearned
+		// The busy rule, floored at the widest width the fit shows a job
+		// that waits more than it computes runs faster at (fit spec §4.2).
+		cores := clampInt(int(math.Ceil(coreHeadroom*busy)), 1, p.DefaultClaim.CPUs)
+		s.Claim.CPUs, s.Sources.CPUs = max(cores, sc.floor(cores, p.DefaultClaim.CPUs)), SourceLearned
 		learned = true
 	case haveFamBusy:
 		s.Claim.CPUs, s.Sources.CPUs = clampInt(int(math.Ceil(coreHeadroom*famBusy)), 1, p.DefaultClaim.CPUs), SourceFamily

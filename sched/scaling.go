@@ -1,10 +1,16 @@
 package sched
 
-// The constants of scaling (job scaling spec §5.1).
+import (
+	"maps"
+	"slices"
+)
+
+// The constants of scaling (job scaling spec §5.1, fit spec §3).
 const (
 	overrunRatio  = 1.25 // busy ÷ cores past which a command overruns
 	minEfficiency = 0.5  // the efficiency the ideal width stays above
 	growthBound   = 2    // the ideal width is at most this × the most cores a run had
+	floorGain     = 1.25 // the speed over the busy rule's cores a width needs to floor a claim
 )
 
 // Scaling is how a belief's command scales with cores (job scaling spec
@@ -18,19 +24,27 @@ type Scaling struct {
 	Parallel float64 `json:"parallel,omitempty"` // p: the share of its work that runs in parallel, 0–1
 	Runs     int     `json:"runs,omitempty"`     // the runs Parallel came from
 	Ideal    int     `json:"ideal,omitempty"`    // the most cores at which its efficiency stays above minEfficiency
+	// Widths are the cores its runs had, ascending, when they had 2 widths
+	// or more (fit spec §3); Fit is the parallel fraction fitted from their
+	// median busy cores, which Parallel never falls below.
+	Widths []int   `json:"widths,omitempty"`
+	Fit    float64 `json:"fit,omitempty"`
 }
 
-// ScalingOf is how b's command scales (job scaling spec §5.1), a pure
-// function of b (nil for none). It reads the done runs with CPU time among
-// b's last window runs, leaving out a run whose claim had no cores (an
-// exclusive one). The command overruns when the median of their busy
-// cores ÷ cores is above overrunRatio. Otherwise each of them with 2 cores
-// or more gives Amdahl's parallel fraction, (1 − 1/busy) ÷ (1 − 1/cores)
-// held to 0–1, and Parallel is their median; Ideal is the most cores at
+// ScalingOf is how b's command scales (job scaling spec §5.1, fit spec
+// §4.1), a pure function of b (nil for none). It reads the done runs with
+// CPU time among b's last window runs, leaving out a run whose claim had no
+// cores (an exclusive one). The command overruns when the median of their
+// busy cores ÷ cores is above overrunRatio. Otherwise each of them with 2
+// cores or more gives Amdahl's parallel fraction, (1 − 1/busy) ÷ (1 −
+// 1/cores) held to 0–1, and Parallel is their median; with 2 widths or more
+// the fit (fitParallel) raises it when it is higher, since a run's own
+// figure assumes 1 core would be kept busy. Ideal is the most cores at
 // which the efficiency 1 ÷ (c(1 − p) + p) stays above minEfficiency, at
 // least 1 and at most growthBound × the most cores any of these runs had.
 func ScalingOf(b *Belief) Scaling {
 	var ratios, busies, ps []float64
+	byWidth := map[int][]float64{}
 	most := 0
 	for _, r := range b.recent() {
 		c := r.Claim.CPUs
@@ -40,6 +54,7 @@ func ScalingOf(b *Belief) Scaling {
 		busy := r.CPUSeconds / r.WallSeconds
 		ratios = append(ratios, busy/float64(c))
 		busies = append(busies, busy)
+		byWidth[c] = append(byWidth[c], busy)
 		most = max(most, c)
 		if c >= 2 {
 			ps = append(ps, runParallel(busy, c))
@@ -53,9 +68,50 @@ func ScalingOf(b *Belief) Scaling {
 	}
 	if p, ok := median(ps); ok {
 		s.Known, s.Parallel, s.Runs = true, p, len(ps)
-		s.Ideal = idealWidth(p, growthBound*most)
+	}
+	// Two widths include one of 2 cores or more, so Known is already true.
+	if len(byWidth) >= 2 {
+		s.Widths = slices.Sorted(maps.Keys(byWidth))
+		s.Fit = fitParallel(s.Widths, byWidth)
+		if s.Fit > s.Parallel {
+			s.Parallel, s.Runs = s.Fit, len(busies)
+		}
+	}
+	if s.Known {
+		s.Ideal = idealWidth(s.Parallel, growthBound*most)
 	}
 	return s
+}
+
+// fitParallel is the parallel fraction fitted from the busy cores at each
+// of widths (2 or more, ascending, each a key of busy): the median of
+// pairParallel over every pair of widths, each at its median busy cores
+// (fit spec §3).
+func fitParallel(widths []int, busy map[int][]float64) float64 {
+	at := make([]float64, len(widths))
+	for i, w := range widths {
+		at[i], _ = median(busy[w])
+	}
+	var ps []float64
+	for i := range widths {
+		for j := i + 1; j < len(widths); j++ {
+			ps = append(ps, pairParallel(widths[i], at[i], widths[j], at[j]))
+		}
+	}
+	p, _ := median(ps)
+	return p
+}
+
+// pairParallel is the parallel fraction that takes a command keeping busyA
+// cores busy at a cores to busyB at b (a < b, busyA above 0): with R =
+// busyB ÷ busyA, 0 when R ≤ 1, else (R − 1) ÷ (R(1 − 1/b) − (1 − 1/a))
+// held to 1. The work is the same at both widths, so R is their speedup.
+func pairParallel(a int, busyA float64, b int, busyB float64) float64 {
+	r := busyB / busyA
+	if r <= 1 {
+		return 0
+	}
+	return min((r-1)/(r*(1-1/float64(b))-(1-1/float64(a))), 1)
 }
 
 // runParallel is the parallel fraction of a run at cores (2 or more) that
@@ -91,4 +147,23 @@ func (s Scaling) scale(wall float64, from, to int) float64 {
 		return wall
 	}
 	return wall * s.factor(to) / s.factor(from)
+}
+
+// floor is the fewest cores the fit lets a job of this scaling claim when
+// the busy rule gave cores (fit spec §3): the widest of Widths at most
+// limit and at most the ideal width under Fit alone, at which Fit predicts
+// a speed at least floorGain × the speed at cores. 0 when none is, and
+// with no fit.
+func (s Scaling) floor(cores, limit int) int {
+	if len(s.Widths) < 2 || cores < 1 {
+		return 0
+	}
+	fit := Scaling{Known: true, Parallel: s.Fit}
+	ideal := idealWidth(s.Fit, growthBound*s.Widths[len(s.Widths)-1])
+	for _, w := range slices.Backward(s.Widths) {
+		if w <= limit && w <= ideal && fit.factor(cores)/fit.factor(w) >= floorGain {
+			return w
+		}
+	}
+	return 0
 }
