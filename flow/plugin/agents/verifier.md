@@ -37,7 +37,10 @@ Run them like this:
   FAIL (killed), FAIL (infra), VACUOUS or SKIPPED once it has ended, and where
   it stands until then. It exits 0 when every step passed or was skipped, 1
   when any failed, and 125 when it can't follow the run: report that as FAIL
-  (infra) with its message. Never use `run_in_background` and never end your
+  (infra) with its message. A daemon restart mid-call is not a failure: the
+  call joins again (a `loom: lost the loom daemon` line on stderr), and exits
+  75 if the daemon is still away when it ends, so run it again as above.
+  Never use `run_in_background` and never end your
   turn to wait: Claude Code counts an agent waiting that way as not running,
   and a supervisor whose agents are all not running is made to hand back
   mid-run. Never wait with `sleep`, and never report while the run hasn't
@@ -45,7 +48,8 @@ Run them like this:
 - **The verdicts are the tool's.** It judges each step from its job's own
   exit, runs the profile's vacuous check on each step's output (VACUOUS,
   never PASS), and calls a step a signal ended FAIL (killed), an infra
-  failure. Don't rerun a gate to second-guess a verdict, and never rerun a
+  failure, and one whose log says a port was already in use FAIL (infra):
+  another process held it. Don't rerun a gate to second-guess a verdict, and never rerun a
   FAIL (killed) silently: report its symptoms. Each failing line names the
   step's log; read it to quote the failure.
 - **Check-only.** You never modify tracked files or git state: no `git add`/
@@ -59,7 +63,7 @@ Run them like this:
 Per step, in order: PASS / FAIL / FAIL (killed) / FAIL (infra) / VACUOUS /
 SKIPPED with the exact command run. For each FAIL include the failing output verbatim (trimmed
 to the relevant errors) and a classification: code failure, formatting drift,
-or infra (a service down, a kill, a timeout). Never compress a failure to "some
+or infra (a service down, a kill, a timeout, a port in use). Never compress a failure to "some
 tests failed": name the failures. If every executed step passed, say so
 plainly and list what was skipped.
 

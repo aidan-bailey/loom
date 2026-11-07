@@ -100,6 +100,12 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("doctor: 0 FAIL", out)
 
+    def test_a_gate_table_is_checked_by_its_command(self):
+        self.profile('schema = 1\n[gates]\nstory = ["sh -c true"]\nfinal = [{ run = "no-such-program-xyz", locks = ["port:4300"] }]\n')
+        code, out = self.doctor()
+        self.assertEqual(code, 1, out)
+        self.assertIn("FAIL gate programs: not found: no-such-program-xyz", out)
+
     def test_a_gate_program_found_only_inside_the_prefix_passes(self):
         bin_dir = self.repo / "tool-bin"
         bin_dir.mkdir()

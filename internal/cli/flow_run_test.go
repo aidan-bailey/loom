@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,9 @@ import (
 // fakeRunClaude is a claude for the run engine's tests (flow in loom part
 // 3b): it logs its argv and environment under $FAKE_CLAUDE_LOG and answers
 // by its prompt. A developer (Build Story, Fix) commits in its cwd before
-// it reports DONE, Story 2's developer first asks a question, Story 1's
+// it reports DONE, Story 2's developer first asks a question, Story 3's
+// developer ends with no result (no report), any other story's developer
+// commits and reports DONE, Story 1's
 // first review finds a Critical, any other review approves; with
 // $FAKE_SLOW set, Story 1's developer takes a few seconds.
 const fakeRunClaude = `#!/bin/sh
@@ -41,17 +44,26 @@ if [ -n "$resume" ]; then commit resumed; result 'resumed\nSTATUS: DONE'; exit 0
 case "$prompt" in
   *"Build Story 1"*) [ -n "$FAKE_SLOW" ] && sleep 4; commit s1; result 'built\nDEVIATION: renamed x\nSTATUS: DONE';;
   *"Build Story 2"*) result 'need one\nSTATUS: NEEDS_CONTEXT\nQUESTION: Which colour?';;
+  *"Build Story 3"*) ;;
+  *"Build Story"*) commit dev; result 'built\nSTATUS: DONE';;
   *"Fix "*) commit fix; result 'fixed\nSTATUS: DONE';;
   *"Review Story 1"*) result 'FINDING: Critical a.go:3 guard it\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE';;
   *) result 'VERDICT: APPROVED\nSTATUS: DONE';;
 esac
 `
 
-// fakeRunTools is runTools with a fixed plan of stories.
-type fakeRunTools struct{ stories []flowrun.Story }
+// fakeRunTools is runTools with a fixed plan of stories, whose check-plan
+// fails with fails when it is set.
+type fakeRunTools struct {
+	stories []flowrun.Story
+	fails   string
+}
 
 func (f fakeRunTools) Doctor() (string, bool, error) { return "OK: everything", true, nil }
 func (f fakeRunTools) CheckPlan(string) ([]byte, string, error) {
+	if f.fails != "" {
+		return nil, f.fails, nil
+	}
 	b, err := json.Marshal(map[string]any{"spec": "docs/spec.md", "stories": f.stories})
 	return b, "", err
 }
@@ -100,7 +112,19 @@ func runFixture(t *testing.T, stories ...flowrun.Story) (*testDaemon, string, st
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "m1")
 	t.Setenv(sched.EnvJob, "")
 	t.Setenv(envFlowRun, "")
+	setPermissionMode(t, "auto")
 	return d, conf.state, logDir
+}
+
+// setPermissionMode writes mode as the global config's Claude permission
+// mode, which a run's headless agents run in.
+func setPermissionMode(t *testing.T, mode string) {
+	t.Helper()
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	cfg := config.DefaultConfig()
+	cfg.ClaudePermissionMode = &mode
+	require.NoError(t, config.SaveConfigTo(cfg, dir))
 }
 
 func firstOnPath(t *testing.T, name string) string {
@@ -209,6 +233,146 @@ func TestFlowRun_AnAnswerTakesTheManagersPlanCommit(t *testing.T) {
 	assert.Contains(t, out, "ended "+id+": done", "no tree-moved question")
 }
 
+// An agent that wrote no report parks with its job's output.log to read,
+// and the manager's decision reaches the retried agent's brief (feedback
+// thread 12).
+func TestFlowRun_AFailedAgentPointsAtItsLogAndRetriesWithTheDecision(t *testing.T) {
+	_, state, logDir := runFixture(t, runStory("3", "intermediate-dev"))
+	_, _, err := runRun(t, "", "start", "docs/plan.md")
+	require.NoError(t, err)
+	_, _, err = runRun(t, "", "engine", "plan")
+	require.NoError(t, err)
+	st, err := flowrun.Load(filepath.Join(state, "runs", "plan.json"))
+	require.NoError(t, err)
+	require.Equal(t, flowrun.Parked, st.Status)
+	require.Equal(t, flowrun.KindAgentFailed, st.Question.Kind)
+	require.Len(t, st.Question.Paths, 1)
+	assert.Equal(t, "output.log", filepath.Base(st.Question.Paths[0]), "no report.md was written")
+	assert.FileExists(t, st.Question.Paths[0])
+
+	out, _, err := runRun(t, "Merge main first.", "answer", "plan", "--from", "owner")
+	require.NoError(t, err, out)
+	_, _, err = runRun(t, "", "engine", "plan")
+	require.NoError(t, err)
+	args, err := os.ReadFile(filepath.Join(logDir, "1.args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(args), "Merge main first.", "the retried developer's brief")
+}
+
+// planEditFixture is a run of Stories 1, 2 and 4 parked on Story 2's
+// question, whose check-plan the test changes through the tools it returns.
+func planEditFixture(t *testing.T) (*fakeRunTools, string) {
+	t.Helper()
+	stories := []flowrun.Story{runStory("1", "intermediate-dev"), runStory("2", "intermediate-dev"), runStory("4", "intermediate-dev")}
+	stories[1].Line, stories[1].End, stories[2].Line, stories[2].End = 30, 40, 50, 60
+	_, state, _ := runFixture(t, stories...)
+	tools := &fakeRunTools{stories: stories}
+	newRunTools = func(string) runTools { return *tools } // runFixture's cleanup restores it
+	_, _, err := runRun(t, "", "start", "docs/plan.md")
+	require.NoError(t, err)
+	_, _, err = runRun(t, "", "engine", "plan")
+	require.NoError(t, err)
+	st, err := flowrun.Load(filepath.Join(state, "runs", "plan.json"))
+	require.NoError(t, err)
+	require.Equal(t, "needs-context", st.Question.Kind)
+	return tools, filepath.Join(state, "runs", "plan.json")
+}
+
+// editPlan commits an edit to the plan, and to code.go too when code is set.
+func editPlan(t *testing.T, code bool) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join("docs", "plan.md"), []byte("# A plan, amended\n"), 0o600))
+	gitIn(t, ".", "add", "docs/plan.md")
+	if code {
+		require.NoError(t, os.WriteFile("code.go", []byte("package x\n"), 0o600))
+		gitIn(t, ".", "add", "code.go")
+	}
+	gitIn(t, ".", "commit", "-q", "-m", "docs: the manager's answer")
+}
+
+func storyRanges(st *flowrun.State) [][2]int {
+	var out [][2]int
+	for _, s := range st.Stories {
+		out = append(out, [2]int{s.Line, s.End})
+	}
+	return out
+}
+
+// A plan edit inside Story 2, taken with the answer, moves Story 2's range
+// and Story 4's, and the next briefs carry them (feedback thread 14).
+func TestFlowRun_AnAnswerRereadsTheStoriesOfAnEditedPlan(t *testing.T) {
+	tools, path := planEditFixture(t)
+	logDir := os.Getenv("FAKE_CLAUDE_LOG")
+	editPlan(t, false)
+	tools.stories[1].End, tools.stories[2].Line, tools.stories[2].End = 45, 55, 65
+	out, _, err := runRun(t, "Blue.", "answer", "plan", "--from", "spec")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "the plan changed since the question: its stories' plan lines are now Story 1 10-20, Story 2 30-45, Story 4 55-65\n")
+	st, err := flowrun.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, [][2]int{{10, 20}, {30, 45}, {55, 65}}, storyRanges(st))
+
+	_, _, err = runRun(t, "", "engine", "plan")
+	require.NoError(t, err)
+	st, err = flowrun.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, flowrun.Done, st.Status)
+	prompts := map[string]string{}
+	argFiles, err := filepath.Glob(filepath.Join(logDir, "*.args"))
+	require.NoError(t, err)
+	for _, f := range argFiles {
+		b, err := os.ReadFile(f)
+		require.NoError(t, err)
+		for _, who := range []string{"Review Story 2", "Build Story 4"} {
+			if strings.Contains(string(b), who) {
+				prompts[who] = string(b)
+			}
+		}
+	}
+	assert.Contains(t, prompts["Review Story 2"], "plan lines 30-45")
+	assert.Contains(t, prompts["Build Story 4"], "plan lines 55-65")
+}
+
+// A plan edit check-plan fails on, or one that changes the stories, is
+// refused, and the run stays parked as it was; a tree-moved continue
+// re-reads the stories too.
+func TestFlowRun_AnAnswerRefusesAPlanItCantReread(t *testing.T) {
+	tools, path := planEditFixture(t)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	editPlan(t, false)
+
+	tools.stories = tools.stories[:2]
+	out, _, err := runRun(t, "Blue.", "answer", "plan", "--from", "spec")
+	assert.Equal(t, exitUsage, exitCode(t, err), out)
+	assert.ErrorContains(t, err, "the plan's stories are now stories 1, 2, and the run's are stories 1, 2, 4")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "nothing saved")
+
+	tools.stories = []flowrun.Story{runStory("1", "intermediate-dev"), runStory("2", "intermediate-dev"), runStory("4", "intermediate-dev")}
+	tools.fails = "FAIL: Story 4 has no Verify line"
+	_, _, err = runRun(t, "Blue.", "answer", "plan", "--from", "spec")
+	assert.Equal(t, exitUsage, exitCode(t, err))
+	assert.ErrorContains(t, err, "FAIL: Story 4 has no Verify line")
+	after, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "nothing saved")
+
+	tools.fails = ""
+	st, err := flowrun.Load(path)
+	require.NoError(t, err)
+	st.Question = &flowrun.Question{Key: "tree:plan-s4-dev1", Kind: flowrun.KindTreeMoved, Text: "moved", At: st.Question.At}
+	require.NoError(t, flowrun.Save(path, st))
+	editPlan(t, true) // a code commit too, which the answer doesn't take
+	tools.stories[1].Line, tools.stories[1].End, tools.stories[2].Line, tools.stories[2].End = 30, 41, 51, 61
+	out, _, err = runRun(t, "continue", "answer", "plan", "--from", "spec")
+	require.NoError(t, err, out)
+	st, err = flowrun.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, [][2]int{{10, 20}, {30, 41}, {51, 61}}, storyRanges(st))
+}
+
 func TestTakenHead(t *testing.T) {
 	repo := t.TempDir()
 	gitIn(t, repo, "init", "-q")
@@ -291,6 +455,19 @@ func TestFlowRun_Refusals(t *testing.T) {
 	_, _, err = runRun(t, "", "start", "docs/plan.md")
 	assert.Equal(t, exitUsage, exitCode(t, err), "a dirty tree")
 	require.NoError(t, os.Remove("dirt.txt"))
+
+	// Headless agents can write only in auto or bypassPermissions (thread 7).
+	for _, mode := range []string{"default", "acceptEdits", "plan", "dontAsk", "manual"} {
+		setPermissionMode(t, mode)
+		_, _, err = runRun(t, "", "start", "docs/plan.md")
+		assert.Equal(t, exitUsage, exitCode(t, err), "permission mode %s", mode)
+		assert.ErrorContains(t, err, "claude_permission_mode")
+		assert.NoFileExists(t, filepath.Join(state, "runs", "plan.json"), "nothing written or queued")
+	}
+	setPermissionMode(t, "bypassPermissions")
+	_, _, err = runRun(t, "", "cancel", "plan")
+	assert.Equal(t, exitNotRun, exitCode(t, err), "still no run")
+	setPermissionMode(t, "auto")
 
 	_, _, err = runRun(t, "", "start", "docs/plan.md")
 	require.NoError(t, err)

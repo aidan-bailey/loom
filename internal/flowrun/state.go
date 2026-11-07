@@ -84,7 +84,19 @@ type Story struct {
 	Landmines  []string `json:"landmines,omitempty"`
 	Interfaces string   `json:"interfaces,omitempty"`
 	Verify     string   `json:"verify,omitempty"`
-	Row        Row      `json:"row"`
+	// BaseLine and BaseEnd are its range in the plan at the base, kept once
+	// Restory has moved Line and End: premise flags are numbered by it.
+	BaseLine int `json:"base_line,omitempty"`
+	BaseEnd  int `json:"base_end,omitempty"`
+	Row      Row `json:"row"`
+}
+
+// baseRange is s's range in the plan at the base.
+func (s *Story) baseRange() (int, int) {
+	if s.BaseLine > 0 {
+		return s.BaseLine, s.BaseEnd
+	}
+	return s.Line, s.End
 }
 
 // Row is what the run made of a story, for show and the record.
@@ -211,6 +223,39 @@ func (st *State) Answer(text, session, from, head string) error {
 	}
 	st.Question, st.Status = nil, Running
 	return nil
+}
+
+// Restory takes a parked run's stories from check-plan's fresh reading of
+// an edited plan (feedback thread 14): by story ID, each story's range and
+// the fields only its briefs read (Verify, Interfaces, Landmines). Its
+// developer, tier and review stay as the run started, since they choose
+// the roles a replay follows; kept says where the plan now differs. It
+// refuses, changing nothing, when the plan's stories aren't the run's in
+// the same order. Rows and the memo are left as they are.
+func (st *State) Restory(fresh []Story) (kept []string, err error) {
+	ids := func(ss []Story) string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.ID)
+		}
+		return strings.Join(out, ", ")
+	}
+	if !slices.EqualFunc(st.Stories, fresh, func(a, b Story) bool { return a.ID == b.ID }) {
+		return nil, fmt.Errorf("the plan's stories are now %s, and the run's are stories %s: a run can't add, remove or reorder its stories",
+			strings.TrimSpace("stories "+ids(fresh)), ids(st.Stories))
+	}
+	for i := range st.Stories {
+		s, f := &st.Stories[i], fresh[i]
+		if s.BaseLine == 0 {
+			s.BaseLine, s.BaseEnd = s.Line, s.End
+		}
+		s.Line, s.End, s.Verify, s.Interfaces, s.Landmines = f.Line, f.End, f.Verify, f.Interfaces, f.Landmines
+		if f.Developer != s.Developer || f.Tier != s.Tier || f.Review != s.Review {
+			kept = append(kept, fmt.Sprintf("Story %s's developer, tier and review stay %s, %s and %s (the plan now says %s, %s and %s)",
+				s.ID, s.Developer, s.Tier, s.Review, f.Developer, f.Tier, f.Review))
+		}
+	}
+	return kept, nil
 }
 
 // unmarshal reports whether raw decodes into v.

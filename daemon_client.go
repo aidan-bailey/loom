@@ -132,14 +132,14 @@ func (d daemonLink) join(spawn bool) (*rpc.Client, error) {
 }
 
 // newDaemonLink is the link to globalDir's daemon: dial is dialDaemon
-// (quiet: no "waiting" line on stderr), stop daemon.StopPID, mayReplace
-// replaceGuard over this process's environment, and say hears a
-// replacement announced.
-func newDaemonLink(globalDir string, quiet bool, say func(string)) daemonLink {
+// (quiet: no "waiting" line on stderr; role: the hello's, rpc.Hello.Role),
+// stop daemon.StopPID, mayReplace replaceGuard over this process's
+// environment, and say hears a replacement announced.
+func newDaemonLink(globalDir string, quiet bool, role string, say func(string)) daemonLink {
 	return daemonLink{
 		own: rpc.Self(),
 		dial: func(spawn bool) (*rpc.Client, rpc.Hello, int, error) {
-			return dialDaemon(globalDir, spawn, quiet)
+			return dialDaemon(globalDir, spawn, quiet, role)
 		},
 		stop: func(pid int) error { return daemon.StopPID(globalDir, pid, serveStopTimeout) },
 		mayReplace: func(daemonTmux string) error {
@@ -155,10 +155,28 @@ func sayTo(w io.Writer) func(string) {
 	return func(s string) { fmt.Fprintf(w, "loom: %s\n", s) }
 }
 
+// tuiLink is a TUI's link to globalDir's daemon (newDaemonLink): an
+// ordinary client, which names no role and is sent the notices kept for
+// the next client.
+func tuiLink(globalDir string, quiet bool, say func(string)) daemonLink {
+	return newDaemonLink(globalDir, quiet, "", say)
+}
+
+// cliLink is a CLI command's link to globalDir's daemon: it says on stderr
+// what it does, dials as rpc.RoleCLI, so the daemon sends it neither
+// another client's request's notices nor the backlog, which it would print
+// as its own, and inside loom uses an older daemon of this protocol as it
+// is (useOlder).
+func cliLink(globalDir string) daemonLink {
+	link := newDaemonLink(globalDir, false, rpc.RoleCLI, sayTo(os.Stderr))
+	link.useOlder = true
+	return link
+}
+
 // joinDaemon connects this TUI to globalDir's daemon (daemonLink.join),
 // starting one when none runs, and says on stderr what it does meanwhile.
 func joinDaemon(globalDir string) (*rpc.Client, error) {
-	return newDaemonLink(globalDir, false, sayTo(os.Stderr)).join(true)
+	return tuiLink(globalDir, false, sayTo(os.Stderr)).join(true)
 }
 
 // rejoinDaemon connects a running TUI to globalDir's daemon again, after
@@ -167,7 +185,7 @@ func joinDaemon(globalDir string) (*rpc.Client, error) {
 // starts a daemon only when spawn (a crash: a graceful stop waits for one
 // to appear).
 func rejoinDaemon(globalDir string, spawn bool, say func(string)) (*rpc.Client, error) {
-	return rejoinWith(newDaemonLink(globalDir, true, say), spawn)
+	return rejoinWith(tuiLink(globalDir, true, say), spawn)
 }
 
 // rejoinWith is rejoinDaemon over link: a daemon that did not start is
@@ -239,9 +257,10 @@ const waitDialTimeout = 2 * time.Second
 // connect's bound (handshake). With spawn it starts one when none runs
 // (daemon.Connect); without, it only dials one that runs
 // (daemon.ConnectNoSpawn: daemon.ErrNoDaemon when none does). quiet drops
-// the "waiting" line, which would draw over a running TUI. It returns the
-// daemon's pid too, from the lock record the connect dialed by.
-func dialDaemon(globalDir string, spawn, quiet bool) (*rpc.Client, rpc.Hello, int, error) {
+// the "waiting" line, which would draw over a running TUI; role is the
+// hello's (handshake). It returns the daemon's pid too, from the lock
+// record the connect dialed by.
+func dialDaemon(globalDir string, spawn, quiet bool, role string) (*rpc.Client, rpc.Hello, int, error) {
 	connect, timeout := daemon.Connect, connectTimeout
 	if !spawn {
 		connect, timeout = daemon.ConnectNoSpawn, waitDialTimeout
@@ -262,7 +281,7 @@ func dialDaemon(globalDir string, spawn, quiet bool) (*rpc.Client, rpc.Hello, in
 	if err != nil {
 		return nil, rpc.Hello{}, 0, err
 	}
-	c, err := handshake(nc, connectTimeout)
+	c, err := handshake(nc, connectTimeout, role)
 	var mismatch *rpc.MismatchError
 	switch {
 	case errors.As(err, &mismatch) && mismatch.Peer != nil:
@@ -276,12 +295,12 @@ func dialDaemon(globalDir string, spawn, quiet bool) (*rpc.Client, rpc.Hello, in
 	return c, c.Peer(), rec.PID, nil
 }
 
-// handshake says hello over nc (rpc.Dial) within timeout: a daemon that
-// accepts but never answers must not hang loom. The deadline is lifted
-// once the client is up, since it would end the connection.
-func handshake(nc net.Conn, timeout time.Duration) (*rpc.Client, error) {
+// handshake says hello over nc naming role (rpc.DialAs) within timeout: a
+// daemon that accepts but never answers must not hang loom. The deadline
+// is lifted once the client is up, since it would end the connection.
+func handshake(nc net.Conn, timeout time.Duration, role string) (*rpc.Client, error) {
 	_ = nc.SetDeadline(time.Now().Add(timeout))
-	c, err := rpc.Dial(nc)
+	c, err := rpc.DialAs(nc, role)
 	if err != nil {
 		return nil, err
 	}
@@ -352,17 +371,14 @@ func buildDifferences(h, other rpc.Hello) string {
 }
 
 // joinCLI connects a subcommand (internal/cli) to the daemon as the TUI's
-// startup join does (joinDaemon), starting one when none runs, and says on
-// stderr what it does meanwhile; inside loom it uses an older daemon of
-// this protocol as it is (useOlder).
+// startup join does (joinDaemon), starting one when none runs, over its
+// own link (cliLink).
 func joinCLI() (*rpc.Client, error) {
 	globalDir, err := config.GetGlobalConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	link := newDaemonLink(globalDir, false, sayTo(os.Stderr))
-	link.useOlder = true
-	return link.join(true)
+	return cliLink(globalDir).join(true)
 }
 
 // olderDaemon describes the daemon c reached when its build is older than

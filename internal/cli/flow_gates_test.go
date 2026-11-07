@@ -116,6 +116,91 @@ func TestFlowGates_EachVerdictComesFromTheJobsEnd(t *testing.T) {
 	assert.Contains(t, out, "4 PASS: echo fine\n", "the gate after a killed one runs again")
 }
 
+// A port another process holds fails a gate no fix to the code frees, so
+// the step is FAIL (infra), which offers a retry; an ordinary failure stays
+// FAIL, and a log that mentions a port in use but passed stays PASS.
+func TestFlowGates_APortAlreadyInUseIsAnInfraFail(t *testing.T) {
+	_, conf := flowJobsDaemon(t)
+	conf.gates = []string{
+		"RUN echo 'Error: http://localhost:4300 is already used, make sure that nothing is running on the port/url'; exit 1",
+		"LOCKED port:4310 echo 'Error: listen EADDRINUSE: address already in use :::4310'; exit 1",
+		"RUN echo 'test result: FAILED. 3 passed; 1 failed'; exit 1",
+		"RUN echo 'bind: address already in use'",
+		"RUN echo 'Error: listen EADDRINUSE :::4320'; kill -KILL $$",
+	}
+	_, _, err := runFlow(t, "gates", "start", "--final")
+	require.NoError(t, err)
+
+	out, _, err := runFlow(t, "gates", "wait", "60")
+	assert.Equal(t, 1, flowExit(err))
+	assert.Regexp(t, `\n1 FAIL \(infra\): echo 'Error: http://localhost:4300 is already used[^\n]*\(job 1 failed in \S+ \(exit 1\); `+
+		`its log says a port was already in use \(if a queued job binds it too, give the gate locks = \["port:4300"\] in the profile\): `+
+		`retry once it is free; log \S+\)\n`, out)
+	assert.Regexp(t, `\n2 FAIL \(infra\): echo 'Error: listen EADDRINUSE[^\n]*\(exit 1\); its log says a port was already in use, `+
+		`though the gate held port:4310, so a process outside loom's queue has it: retry once it is free; log \S+\)\n`, out)
+	assert.Regexp(t, `\n3 FAIL: echo 'test result: FAILED[^\n]*\(job \d+ failed in \S+ \(exit 1\); log \S+\)\n`, out)
+	assert.Contains(t, out, "\n4 PASS: echo 'bind: address already in use'\n")
+	assert.Regexp(t, `\n5 FAIL \(killed\): `, out, "a kill is still a kill")
+}
+
+// A gate written with locks takes them, in its first generation and in one
+// queued again after a final gate fails; the others take none.
+func TestFlowGates_AGateWithLocksIsQueuedWithThem(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	conf.gates = []string{"RUN exit 3", "LOCKED port:4300,e2e/db echo two", "RUN echo three"}
+	out, _, err := runFlow(t, "gates", "start", "--final")
+	require.NoError(t, err)
+	assert.Equal(t, "started final: 3 steps, jobs 1, 2, 3\n", out)
+	assert.Empty(t, d.job(1).Locks)
+	assert.Equal(t, []string{"port:4300", "e2e/db"}, d.job(2).Locks)
+	assert.Equal(t, []string{"bash", "-c", "echo two"}, d.job(2).Argv, "the locks are no part of the command")
+	assert.Equal(t, "gate 2/3: echo two", d.job(2).Description)
+	assert.Empty(t, d.job(3).Locks)
+
+	out, _, err = runFlow(t, "gates", "wait", "60")
+	assert.Equal(t, 1, flowExit(err))
+	assert.Contains(t, out, "2 PASS: echo two\n")
+	run := readTestRun(t, conf, "final")
+	require.Len(t, run.Steps[1].Jobs, 2, "gate 2 ran in a second generation")
+	assert.Equal(t, []string{"port:4300", "e2e/db"}, d.job(run.Steps[1].job()).Locks, "a gate queued again keeps its locks")
+	assert.Empty(t, d.job(run.Steps[2].job()).Locks)
+}
+
+// A daemon from before locks drops a submission's Locks: the gate would run
+// beside the job holding its port, so the chain is not queued at all.
+func TestFlowGates_ADaemonThatIgnoresLocksQueuesNoChain(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	conf.gates = []string{"RUN echo up; sleep 30", "LOCKED port:4300 echo two", "RUN echo three"}
+	old := submitFlowJob
+	submitFlowJob = func(c *client, sub sched.Submit) (sched.JobID, error) {
+		sub.Locks = nil // what an older daemon reads of it
+		return old(c, sub)
+	}
+	t.Cleanup(func() { submitFlowJob = old })
+
+	_, _, err := runFlow(t, "gates", "start", "--final")
+	assert.Equal(t, exitNotRun, flowExit(err))
+	assert.ErrorContains(t, err, "gate 2 was not queued (the loom daemon is older than this loom and ignores --lock, so job 2 was cancelled;")
+	assert.ErrorContains(t, err, "so the 1 queued before it were cancelled")
+	assert.Equal(t, sched.Cancelled, d.waitFinished(t, 1).State)
+	assert.Equal(t, sched.Cancelled, d.waitFinished(t, 2).State)
+	assert.Len(t, d.jobs(), 2, "no gate after the refused one was queued")
+	records, err := filepath.Glob(filepath.Join(conf.state, "gates", "*.json"))
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}
+
+func TestGateRun_PlanReadsALockedLine(t *testing.T) {
+	r := &gateRun{Kind: "story"}
+	require.NoError(t, r.plan([]string{"LOCKED port:4300,e2e/db pnpm e2e --project x", "FAIL x (why)", "LOCKED port:1 echo"}))
+	assert.Equal(t, gateStep{Line: "RUN pnpm e2e --project x", Run: true, Locks: []string{"port:4300", "e2e/db"}}, r.Steps[0])
+	assert.Equal(t, gateStep{Line: "RUN echo", Run: true, Locks: []string{"port:1"}, Verdict: verdictSkipped, Why: "not run: gate 2 failed"}, r.Steps[2],
+		"a locked gate after a story's FAIL is skipped like any other")
+	for _, bad := range []string{"LOCKED port:4300", "LOCKED  echo", "LOCKED port:4300, echo", "LOCKED port;1 echo", "LOCKED a,a echo"} {
+		assert.Error(t, (&gateRun{Kind: "final"}).plan([]string{bad}), bad)
+	}
+}
+
 func TestFlowGates_CancelEndsARunAndFreesTheWorktree(t *testing.T) {
 	d, conf := flowJobsDaemon(t)
 	conf.gates = []string{"RUN echo up; sleep 30", "RUN echo two"}

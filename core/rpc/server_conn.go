@@ -25,11 +25,13 @@ type serverConn struct {
 	// n is the connection's number, which the request IDs it sends the
 	// model carry (tagReq).
 	n uint32
-	// web is set from the hello (RoleWeb) before the connection joins
-	// Server.conns, so every read of it under Server.mu follows the write:
-	// the daemon's web layer is no client for the notice backlog
-	// (Server.clientsLocked).
-	web bool
+	// web and cli are set from the hello (RoleWeb, RoleCLI) before the
+	// connection joins Server.conns, so every read of them under Server.mu
+	// follows the write: neither the daemon's web layer nor a CLI command is
+	// a client for the notice backlog (Server.clientsLocked), a web
+	// connection's own request's Notice reaches no client, and a CLI
+	// command is sent no other connection's request's Notice.
+	web, cli bool
 
 	mu     sync.Mutex
 	queue  []queued

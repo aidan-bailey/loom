@@ -311,6 +311,53 @@ func TestRun_DoneWithNoCommitsIsAFailure(t *testing.T) {
 	assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev")
 }
 
+// An agent-failed question takes a decision: a retry with it in the next
+// brief (feedback thread 12).
+func TestRun_AFailedAgentRetriesWithTheDecision(t *testing.T) {
+	const decision = "Merge main first."
+	failed := Report{Status: "failed", Why: "a question was asked but not given"}
+	t.Run("a developer", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = failed
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-dev1": decision})
+		assert.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "a decision is a retry of the same role")
+		assert.Contains(t, f.briefs["r-s1-dev2"], decision)
+		assert.NotContains(t, f.briefs["r-s1-dev1"], decision)
+	})
+	t.Run("a developer done with no commits", func(t *testing.T) {
+		f := newFake()
+		f.noCommit["r-s1-dev1"] = true
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-dev1": decision})
+		assert.Contains(t, f.briefs["r-s1-dev2"], decision)
+	})
+	t.Run("a plain retry carries no decision", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = failed
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-dev1": "retry"})
+		assert.Equal(t, f.briefs["r-s1-dev1"], f.briefs["r-s1-dev2"])
+	})
+	t.Run("a reviewer", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = failed
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-review1": decision})
+		assert.Contains(t, f.briefs["r-s1-review2"], decision)
+	})
+	t.Run("a premise-check", func(t *testing.T) {
+		f := newFake()
+		f.premises = "plan_premises: p.md against the tree at h0\nStory 1 (plan:100): 1 premises, 1 flagged\n  plan:120  missing  a.go: no such file\n"
+		f.reports["r-premise1"] = failed
+		f.reports["r-premise2"] = Report{Status: "DONE", Text: "plan:120 | HOLDS | - | a.go:1 |\n"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-premise1": decision})
+		assert.Contains(t, f.briefs["r-premise2"], decision)
+	})
+}
+
 func TestRun_AFixerDoneWithNoCommitsIsNoted(t *testing.T) {
 	t.Run("in a story's fix round", func(t *testing.T) {
 		f := newFake()
@@ -478,6 +525,34 @@ func TestRun_FindingsRoutes(t *testing.T) {
 	})
 }
 
+// A plan edit the manager makes while the run is parked moves the stories'
+// ranges (State.Restory), the next briefs carry the new ones, and the
+// premises, flagged against the base's plan, keep their stories (feedback
+// thread 14).
+func TestRun_RestoriedRangesReachTheNextBriefs(t *testing.T) {
+	f := newFake()
+	f.premises = "plan_premises: p.md against the tree at h0\nStory 3 (plan:300): 1 premises, 1 flagged\n  plan:310  missing  a.go: no such file\n"
+	f.reports["r-premise1"] = Report{Status: "DONE", Text: "plan:310 | MOVED | COSMETIC | a2.go:1 | use a2.go\n"}
+	f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
+	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"), story("3", "intermediate-dev", "vouched"))
+	require.NoError(t, Run(st, f))
+	require.Equal(t, "ctx:r-s2-dev1:1", st.Question.Key)
+	assert.Contains(t, f.briefs["r-s1-review1"], "plan lines 100-199")
+
+	fresh := []Story{story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"), story("3", "intermediate-dev", "vouched")}
+	fresh[1].End += 34
+	fresh[2].Line, fresh[2].End = fresh[2].Line+34, fresh[2].End+34
+	_, err := st.Restory(fresh)
+	require.NoError(t, err)
+	require.NoError(t, st.Answer("That one.", "m", FromSpec, ""))
+	drive(t, st, f, nil)
+	assert.Equal(t, Done, st.Status)
+	assert.Contains(t, f.briefs["r-s2-review1"], "plan lines 200-333")
+	assert.Contains(t, f.briefs["r-s3-dev1"], "plan lines 334-433")
+	assert.Contains(t, f.briefs["r-s3-dev1"], "use a2.go", "plan:310 was Story 3's at the base")
+	assert.Empty(t, st.Stories[1].Row.Corrections)
+}
+
 func TestRun_PlanLinesAreAskedOnce(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "PLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
@@ -616,8 +691,9 @@ func script() (*State, *fakeFX, map[string]string) {
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nFINDING: Minor a.go:5 tidy\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 	f.reports["r-s2-dev1"] = Report{Status: "BLOCKED"}
 	f.gates["r-s2-gates1"] = GateResult{Ended: "failed", Failing: []GateStep{{Line: "go vet", Verdict: "FAIL"}}}
+	f.reports["r-s2-review1"] = Report{Status: "failed", Why: "it ended with no result"}
 	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"))
-	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one."}
+	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one.", "failed:r-s2-review1": "Read the conformance first."}
 }
 
 func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {
@@ -645,6 +721,7 @@ func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {
 				err = Run(st, f)
 			}
 			require.Equal(t, Done, st.Status)
+			assert.Contains(t, f.briefs["r-s2-review2"], "Read the conformance first.", "a retry's decision survives the restart")
 			got := f.submits()
 			slices.Sort(got)
 			assert.Equal(t, want, got)
