@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +452,37 @@ func TestLockHint(t *testing.T) {
 			assert.Equal(t, "Its log says a port was already in use. If another job binds it too, submit both with --lock "+tc.want+" so they take turns.", got)
 		})
 	}
+}
+
+func TestPortInUse_ReadsTheLogsLastLines(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+	clash := "Error: http://localhost:4300 is already used, make sure that nothing is running on the port/url\n"
+
+	lock, found, err := PortInUse(write("near", "start\n"+clash+strings.Repeat("noise\n", hintLines-2)))
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "port:4300", lock)
+
+	lock, found, err = PortInUse(write("bare", "bind: address already in use\n"))
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "port:<N>", lock, "a line naming no port names no lock")
+
+	_, found, err = PortInUse(write("far", clash+strings.Repeat("noise\n", hintLines)))
+	require.NoError(t, err)
+	assert.False(t, found, "only the last hintLines lines count, as for the notice's hint")
+
+	_, found, err = PortInUse(write("plain", "test result: FAILED. 3 passed; 1 failed\n"))
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	_, _, err = PortInUse(filepath.Join(dir, "missing"))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 func TestJobQueue_AFailedJobsNoticeHintsAtALock(t *testing.T) {

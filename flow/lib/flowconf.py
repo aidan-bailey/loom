@@ -64,11 +64,14 @@ ROLES = ("supervisor", "developer", "verifier", "reviewer")
 # /flow:draft's role, not the supervisor's: `show --for supervisor` prints every role in ROLES and leaves it out.
 DRAFTER = "drafter"
 # Every key a schema-1 profile may hold, by table ("" is the top level), with its type.
-# A list holds strings only. TEXT is a string, or a list of strings read as one line each.
+# A list holds strings only. TEXT is a string, or a list of strings read as one line each. GATES is a list
+# whose entries are each a command, or a table naming a command and the work queue's locks its job takes:
+# `{ run = "pnpm e2e", locks = ["port:4300"] }`.
 TEXT = "text"
+GATES = "gates"
 KEYS: dict[str, dict[str, object]] = {
     "": {"schema": int, "prefix": str, "services": list, "generated": list},
-    "gates": {"story": list, "final": list, "vacuous": list},
+    "gates": {"story": GATES, "final": GATES, "vacuous": list},
     "build": {"exclusive": list},
     "landmines": {"markers": list, "notes": TEXT},
     "review": {"idioms": TEXT},
@@ -78,6 +81,9 @@ KEYS: dict[str, dict[str, object]] = {
 # Where /flow:draft keeps each plan's drafts when paths.drafts says nothing, under the worktree's top level
 # (part 2 spec §6.1): inside the worktree, where a drafter's Write and Edit need no permission prompt.
 DEFAULT_DRAFTS = ".flow/drafts"
+# A lock's name, as loom's work queue takes it (sched.ValidLockName), and how many one job may name.
+LOCK_NAME = re.compile(r"[A-Za-z0-9._:/-]{1,64}")
+MAX_LOCKS = 8
 
 
 class FlowError(Exception):
@@ -95,6 +101,9 @@ class Profile:
     generated: tuple[str, ...] = ()
     story_gates: tuple[str, ...] = ()
     final_gates: tuple[str, ...] = ()
+    # Each gate's locks, beside its command in story_gates or final_gates: () for a gate written as a string.
+    story_locks: tuple[tuple[str, ...], ...] = ()
+    final_locks: tuple[tuple[str, ...], ...] = ()
     vacuous: tuple[str, ...] = ()
     exclusive: tuple[str, ...] = ()
     markers: tuple[str, ...] = ()
@@ -150,6 +159,31 @@ def find_profile(top: Path) -> Path:
     raise FlowError(f"no flow profile: {repo_file} does not exist. Run /flow:init to draft one.")
 
 
+def gate_entry(entry: object, where: str) -> tuple[str, tuple[str, ...]]:
+    """A gate list's entry as its command and its locks; FlowError, prefixed with `where`, naming what is wrong."""
+    if isinstance(entry, str):
+        return entry, ()
+    if not isinstance(entry, dict):
+        raise FlowError(f"{where}: must be a list of strings or of {{ run, locks }} tables")
+    run = entry.get("run")
+    if not isinstance(run, str) or not run:
+        raise FlowError(f"{where}: a gate table needs run, a string: the command")
+    for key in entry:
+        if key not in ("run", "locks"):
+            raise FlowError(f"{where}: {run}: unknown key {key}")
+    locks = entry.get("locks", [])
+    if not isinstance(locks, list) or not all(isinstance(lock, str) for lock in locks):
+        raise FlowError(f"{where}: {run}: locks must be a list of strings")
+    if len(locks) > MAX_LOCKS:
+        raise FlowError(f"{where}: {run}: {len(locks)} locks; at most {MAX_LOCKS}")
+    for i, lock in enumerate(locks):
+        if not LOCK_NAME.fullmatch(lock):
+            raise FlowError(f"{where}: {run}: lock {lock!r} is not 1-64 of A-Z, a-z, 0-9 and . _ : / -")
+        if lock in locks[:i]:
+            raise FlowError(f"{where}: {run}: lock {lock} is given twice")
+    return run, tuple(locks)
+
+
 def validate(data: dict, path: Path, digest: str) -> Profile:
     """A Profile from parsed TOML, refusing another schema, unknown keys and wrong types by name."""
     schema = data.get("schema")
@@ -174,6 +208,12 @@ def validate(data: dict, path: Path, digest: str) -> Profile:
                 if not isinstance(item, list) or not all(isinstance(entry, str) for entry in item):
                     raise FlowError(f"{path}: {dotted}: must be a list of strings")
                 values[dotted] = tuple(item)
+            elif kind == GATES:
+                if not isinstance(item, list):
+                    raise FlowError(f"{path}: {dotted}: must be a list of strings or of {{ run, locks }} tables")
+                gates = [gate_entry(entry, f"{path}: {dotted}") for entry in item]
+                values[dotted] = tuple(command for command, _ in gates)
+                values[dotted + ".locks"] = tuple(locks for _, locks in gates)
             elif kind == TEXT:
                 if isinstance(item, list) and all(isinstance(entry, str) for entry in item):
                     item = "\n".join(item)
@@ -202,6 +242,8 @@ def validate(data: dict, path: Path, digest: str) -> Profile:
         generated=values.get("generated", ()),
         story_gates=values.get("gates.story", ()),
         final_gates=values.get("gates.final", ()),
+        story_locks=values.get("gates.story.locks", ()),
+        final_locks=values.get("gates.final.locks", ()),
         vacuous=values.get("gates.vacuous", ()),
         exclusive=values.get("build.exclusive", ()),
         markers=values.get("landmines.markers", ()),

@@ -45,7 +45,8 @@ Run them like this:
 - **The verdicts are the tool's.** It judges each step from its job's own
   exit, runs the profile's vacuous check on each step's output (VACUOUS,
   never PASS), and calls a step a signal ended FAIL (killed), an infra
-  failure. Don't rerun a gate to second-guess a verdict, and never rerun a
+  failure, and one whose log says a port was already in use FAIL (infra):
+  another process held it. Don't rerun a gate to second-guess a verdict, and never rerun a
   FAIL (killed) silently: report its symptoms. Each failing line names the
   step's log; read it to quote the failure.
 - **Check-only.** You never modify tracked files or git state: no `git add`/
@@ -59,7 +60,7 @@ Run them like this:
 Per step, in order: PASS / FAIL / FAIL (killed) / FAIL (infra) / VACUOUS /
 SKIPPED with the exact command run. For each FAIL include the failing output verbatim (trimmed
 to the relevant errors) and a classification: code failure, formatting drift,
-or infra (a service down, a kill, a timeout). Never compress a failure to "some
+or infra (a service down, a kill, a timeout, a port in use). Never compress a failure to "some
 tests failed": name the failures. If every executed step passed, say so
 plainly and list what was skipped.
 
