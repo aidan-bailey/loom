@@ -128,6 +128,33 @@ class FlowconfTest(unittest.TestCase):
         self.assertIn("prefix: must be a string", self.refused("schema = 1\nprefix = 3\n"))
         self.assertIn("gates: must be a table", self.refused('schema = 1\ngates = ["x"]\n'))
 
+    def test_a_gate_may_be_a_table_naming_its_locks(self):
+        self.repo_profile(
+            'schema = 1\n[gates]\nstory = ["cargo test"]\n'
+            'final = ["cargo test", { run = "pnpm e2e", locks = ["port:4300", "e2e/db"] }, { run = "true" }]\n'
+        )
+        profile = flowconf.load_profile(self.repo)
+        self.assertEqual(profile.final_gates, ("cargo test", "pnpm e2e", "true"))
+        self.assertEqual(profile.final_locks, ((), ("port:4300", "e2e/db"), ()))
+        self.assertEqual(profile.story_gates, ("cargo test",))
+        self.assertEqual(profile.story_locks, ((),))
+
+    def test_a_malformed_gate_table_is_refused_by_name(self):
+        def gate(table: str) -> str:
+            return self.refused(f"schema = 1\n[gates]\nfinal = [{table}]\n")
+
+        self.assertIn("gates.final: a gate table needs run, a string", gate('{ locks = ["port:1"] }'))
+        self.assertIn("gates.final: a gate table needs run, a string", gate('{ run = "" }'))
+        self.assertIn("gates.final: a gate table needs run, a string", gate("{ run = 3 }"))
+        self.assertIn("gates.final: x: unknown key lock", gate('{ run = "x", lock = ["port:1"] }'))
+        self.assertIn("gates.final: x: locks must be a list of strings", gate('{ run = "x", locks = "port:1" }'))
+        self.assertIn("gates.final: x: lock 'port 1' is not", gate('{ run = "x", locks = ["port 1"] }'))
+        self.assertIn("gates.final: x: lock port:1 is given twice", gate('{ run = "x", locks = ["port:1", "port:1"] }'))
+        many = ", ".join(f'"l{i}"' for i in range(9))
+        self.assertIn("gates.final: x: 9 locks; at most 8", gate(f'{{ run = "x", locks = [{many}] }}'))
+        self.assertIn("gates.final: must be a list of strings", gate("3"))
+        self.assertIn("gates.vacuous: must be a list of strings", self.refused("schema = 1\n[gates]\nvacuous = [{ run = 'x' }]\n"))
+
     def test_notes_and_idioms_take_a_list_of_strings_one_per_line(self):
         self.repo_profile('schema = 1\n[landmines]\nnotes = ["one", "two"]\n[review]\nidioms = ["a"]\n')
         profile = flowconf.load_profile(self.repo)

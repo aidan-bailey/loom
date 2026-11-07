@@ -106,6 +106,17 @@ class PackagesTest(unittest.TestCase):
         self.assertEqual(lines, ["RUN nix develop --command cargo fmt --all -- --check",
                                  "RUN nix develop --command cargo clippy -p c -- -D warnings"])
 
+    def test_a_gate_with_locks_prints_them_before_its_command(self):
+        lines = packages.expand(["cargo test {packages}", "pnpm e2e", "cargo doc {packages}"], "nix develop --command",
+                                lambda: ["-p", "c"], [("port:4300",), ("port:4300", "e2e/db"), ()])
+        self.assertEqual(lines, ["LOCKED port:4300 nix develop --command cargo test -p c",
+                                 "LOCKED port:4300,e2e/db nix develop --command pnpm e2e",
+                                 "RUN nix develop --command cargo doc -p c"])
+
+    def test_a_gate_it_skips_or_fails_prints_no_locks(self):
+        lines = packages.expand(["cargo test {packages}"], "", lambda: None, [("port:4300",)])
+        self.assertEqual(lines, ["SKIPPED cargo test {packages} (the story changed no Cargo package)"])
+
     def test_a_story_that_changed_no_package_skips_the_gates_that_need_one(self):
         lines = packages.expand(["cargo fmt --all -- --check", "cargo test {packages}"], "", lambda: None)
         self.assertEqual(lines, ["RUN cargo fmt --all -- --check",
@@ -246,6 +257,15 @@ class GatesCommandTest(unittest.TestCase):
         code, out = self.gates("--final")
         self.assertEqual(code, 0, out)
         self.assertEqual(out.splitlines(), ["RUN cargo test --workspace", "RUN cargo doc --no-deps"])
+
+    def test_final_gates_carry_their_locks(self):
+        (self.root / ".claude" / "flow.toml").write_text(
+            'schema = 1\n[gates]\nstory = ["cargo test {packages}"]\n'
+            'final = ["cargo test {packages}", { run = "pnpm e2e", locks = ["port:4300"] }]\n'
+        )
+        code, out = self.gates("--final")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.splitlines(), ["RUN cargo test --workspace", "LOCKED port:4300 pnpm e2e"])
 
     def test_one_of_story_or_final_is_required(self):
         self.assertEqual(self.gates()[0], 2)
