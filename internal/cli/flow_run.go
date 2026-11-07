@@ -655,8 +655,12 @@ func newFlowRunAnswerCmd() *cobra.Command {
 					return &ExitError{Code: exitUsage, Msg: "loom flow run: continue takes a clean tree; this one isn't:\n" + status}
 				}
 			}
-			if err := st.Answer(string(text), os.Getenv("CLAUDE_CODE_SESSION_ID"), from); err != nil {
+			head := takenHead(&runFX{cwd: cwd}, st)
+			if err := st.Answer(string(text), os.Getenv("CLAUDE_CODE_SESSION_ID"), from, head); err != nil {
 				return &ExitError{Code: exitUsage, Msg: "loom flow run: " + err.Error()}
+			}
+			if head != "" {
+				fmt.Fprintf(c.OutOrStdout(), "the run takes HEAD %s with the answer: your commits to its spec and plan\n", shortSHA(head))
 			}
 			path := runStatePath(dirs.runs, id)
 			if err := flowrun.Save(path, st); err != nil {
@@ -674,6 +678,39 @@ func newFlowRunAnswerCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&from, "from", "", "Where the answer came from: spec (settled without the owner) or owner (you asked the owner)")
 	return cmd
+}
+
+// takenHead is the HEAD a parked run takes with its answer: the manager's
+// own commits to the run's spec and plan since the head the engine recorded
+// (Question.At), which would otherwise park its next dispatch as tree-moved
+// (the first real runs, 2026-11-06). It is "" when HEAD is still that head,
+// the tree isn't clean, HEAD doesn't descend from it, a commit touches
+// another file, or git can't say: the engine's tree check then asks.
+func takenHead(fx *runFX, st *flowrun.State) string {
+	if st.Question == nil || st.Question.At == "" {
+		return ""
+	}
+	at := st.Question.At
+	head, err := fx.git("rev-parse", "HEAD")
+	if err != nil || head == at {
+		return ""
+	}
+	if status, err := fx.git("status", "--porcelain"); err != nil || status != "" {
+		return ""
+	}
+	if _, err := fx.git("merge-base", "--is-ancestor", at, head); err != nil {
+		return ""
+	}
+	names, err := fx.git("diff", "--name-only", "--no-renames", at, head)
+	if err != nil {
+		return ""
+	}
+	for _, name := range strings.Split(names, "\n") {
+		if name != st.Plan && (st.Spec == "" || name != st.Spec) {
+			return ""
+		}
+	}
+	return head
 }
 
 func newFlowRunResumeCmd() *cobra.Command {

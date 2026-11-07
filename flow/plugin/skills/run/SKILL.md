@@ -18,9 +18,11 @@ short.
 3. When it returns parked, read the question and the paths it names. Answer
    from the spec, the plan or the code when they settle it. When they don't,
    ask the owner; then write the answer into the spec and commit it by
-   pathspec, so a later question finds it there. Give your answer on stdin
-   to `loom flow run answer <run> --from spec` (you settled it without the
-   owner) or `--from owner` (you asked the owner), in the form the question
+   pathspec, so a later question finds it there. Commit before you answer:
+   `answer` takes commits that touch only the spec and the plan with it, and
+   any other commit parks the run's next step as `tree-moved`. Give your
+   answer on stdin to `loom flow run answer <run> --from spec` (you settled
+   it without the owner) or `--from owner` (you asked the owner), in the form the question
    says it takes (a decision as text, or one of its words): the record counts
    them, to show how many questions a judge could have answered. Then start
    the background `wait` again. Stage nothing else, and start no developer

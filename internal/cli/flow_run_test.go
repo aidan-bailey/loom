@@ -174,6 +174,78 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Equal(t, flowrun.FromOwner, st.Answers[0].From)
 }
 
+// gitIn runs git args in dir, failing the test on an error.
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+	require.NoError(t, err, string(out))
+	return strings.TrimSpace(string(out))
+}
+
+// The manager's commit to the plan while it answers rides with the answer,
+// so the next dispatch doesn't park on it as tree-moved (2026-11-06).
+func TestFlowRun_AnAnswerTakesTheManagersPlanCommit(t *testing.T) {
+	_, _, _ = runFixture(t, runStory("1", "intermediate-dev"), runStory("2", "intermediate-dev"))
+	_, _, err := runRun(t, "", "start", "docs/2026-11-06-the-plan.md")
+	require.NoError(t, err)
+	id := "2026-11-06-the-plan"
+	_, _, err = runRun(t, "", "engine", id)
+	require.NoError(t, err)
+	out, _, err := runRun(t, "", "wait", id)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "parked "+id+": needs-context (story 2)")
+
+	require.NoError(t, os.WriteFile(filepath.Join("docs", "2026-11-06-the-plan.md"), []byte("# A plan, amended\n"), 0o600))
+	gitIn(t, ".", "commit", "-q", "-am", "docs: the manager's answer")
+	head := gitIn(t, ".", "rev-parse", "HEAD")
+	out, _, err = runRun(t, "Blue.", "answer", id, "--from", "spec")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "the run takes HEAD "+head[:9]+" with the answer")
+
+	_, _, err = runRun(t, "", "engine", id)
+	require.NoError(t, err)
+	out, _, err = runRun(t, "", "wait", id)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "ended "+id+": done", "no tree-moved question")
+}
+
+func TestTakenHead(t *testing.T) {
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q")
+	for _, f := range []string{"plan.md", "spec.md", "code.go"} {
+		require.NoError(t, os.WriteFile(filepath.Join(repo, f), []byte("v1\n"), 0o600))
+	}
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "base")
+	at := gitIn(t, repo, "rev-parse", "HEAD")
+	st := &flowrun.State{Plan: "plan.md", Spec: "spec.md", Question: &flowrun.Question{At: at}}
+	fx := &runFX{cwd: repo}
+	edit := func(f string) {
+		require.NoError(t, os.WriteFile(filepath.Join(repo, f), []byte("v2\n"), 0o600))
+		gitIn(t, repo, "commit", "-q", "-am", "edit "+f)
+	}
+
+	assert.Empty(t, takenHead(fx, st), "HEAD where the engine left it")
+	edit("spec.md")
+	edit("plan.md")
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+	assert.Equal(t, head, takenHead(fx, st), "the manager's spec and plan commits")
+
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "code.go"), []byte("dirty\n"), 0o600))
+	assert.Empty(t, takenHead(fx, st), "a dirty tree")
+	gitIn(t, repo, "checkout", "-q", "code.go")
+
+	edit("code.go")
+	assert.Empty(t, takenHead(fx, st), "a commit beyond the spec and plan")
+
+	gitIn(t, repo, "reset", "-q", "--hard", at)
+	gitIn(t, repo, "commit", "-q", "--amend", "-m", "base, rewritten")
+	edit("plan.md")
+	assert.Empty(t, takenHead(fx, st), "a HEAD that doesn't descend from the recorded one")
+
+	assert.Empty(t, takenHead(fx, &flowrun.State{Plan: "plan.md", Question: &flowrun.Question{}}), "a question parked before At was recorded")
+}
+
 func TestFlowRun_ARestartedEngineFollowsWhatItQueued(t *testing.T) {
 	d, state, _ := runFixture(t, runStory("1", "intermediate-dev"))
 	t.Setenv("FAKE_SLOW", "1")

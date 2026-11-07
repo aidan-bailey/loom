@@ -196,7 +196,7 @@ func drive(t *testing.T, st *State, f *fakeFX, answers map[string]string) {
 		require.True(t, ok, "an unexpected question %s (%s): %s", st.Question.Key, st.Question.Kind, st.Question.Text)
 		_, err := CheckAnswer(st.Question.Kind, a)
 		require.NoError(t, err)
-		require.NoError(t, st.Answer(a, "m", FromSpec))
+		require.NoError(t, st.Answer(a, "m", FromSpec, ""))
 	}
 	t.Fatal("the run never ended")
 }
@@ -244,8 +244,8 @@ func TestRun_NeedsContextParksAndTheAnswerResumes(t *testing.T) {
 	st := newState(story("1", "intermediate-dev", "vouched"))
 	require.NoError(t, Run(st, f))
 	require.Equal(t, Parked, st.Status)
-	assert.Equal(t, Question{Key: "ctx:r-s1-dev1:1", Kind: KindNeedsContext, Story: "1", Text: "Which colour?", Paths: []string{"/reports/r-s1-dev1"}}, *st.Question)
-	require.NoError(t, st.Answer("blue", "m2", FromSpec))
+	assert.Equal(t, Question{Key: "ctx:r-s1-dev1:1", Kind: KindNeedsContext, Story: "1", Text: "Which colour?", Paths: []string{"/reports/r-s1-dev1"}, At: "h0"}, *st.Question)
+	require.NoError(t, st.Answer("blue", "m2", FromSpec, ""))
 	drive(t, st, f, nil)
 	assert.Contains(t, f.calls, "resume r-s1-dev1 blue")
 	assert.Contains(t, st.Managers, "m2")
@@ -306,7 +306,7 @@ func TestRun_DoneWithNoCommitsIsAFailure(t *testing.T) {
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, KindAgentFailed, st.Question.Kind)
 	assert.Contains(t, st.Question.Text, "reported done with no commits")
-	require.NoError(t, st.Answer("retry", "m", FromSpec))
+	require.NoError(t, st.Answer("retry", "m", FromSpec, ""))
 	drive(t, st, f, nil)
 	assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev")
 }
@@ -513,7 +513,7 @@ func TestRun_Premises(t *testing.T) {
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, KindPremiseDesign, st.Question.Kind)
 		assert.Equal(t, []string{"agent r-premise1 premise-check"}, f.submits())
-		require.NoError(t, st.Answer("Use the new type.", "m", FromSpec))
+		require.NoError(t, st.Answer("Use the new type.", "m", FromSpec, ""))
 		drive(t, st, f, nil)
 		assert.Contains(t, f.briefs["r-s1-dev1"], "the manager: Use the new type.")
 	})
@@ -527,9 +527,9 @@ func TestRun_TreeMoved(t *testing.T) {
 			st := newState(story("1", "intermediate-dev", "vouched"))
 			require.NoError(t, Run(st, f))
 			require.Equal(t, Parked, st.Status)
-			assert.Equal(t, Question{Key: "tree:r-s1-dev1", Kind: KindTreeMoved, Story: "1",
+			assert.Equal(t, Question{Key: "tree:r-s1-dev1", Kind: KindTreeMoved, Story: "1", At: "h0",
 				Text: "HEAD is h3, and the engine last recorded h0, before it starts r-s1-dev1"}, *st.Question)
-			require.NoError(t, st.Answer(c.answer, "m", FromSpec))
+			require.NoError(t, st.Answer(c.answer, "m", FromSpec, ""))
 			drive(t, st, f, nil)
 			assert.Equal(t, c.status, st.Status)
 		})
@@ -541,6 +541,38 @@ func TestRun_TreeMoved(t *testing.T) {
 		require.NoError(t, Run(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Contains(t, st.Question.Text, "uncommitted changes")
+	})
+}
+
+// An answer can carry the manager's own commits to the spec and plan, so
+// the next dispatch doesn't park on them as tree-moved (the first real
+// runs, 2026-11-06, parked four times so).
+func TestRun_AnAnswerTakesTheManagersCommits(t *testing.T) {
+	parked := func(t *testing.T) (*State, *fakeFX) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important design a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		require.Equal(t, KindDesignFinding, st.Question.Kind)
+		assert.Equal(t, "h1", st.Question.At, "the head the engine recorded when it parked")
+		f.head++ // the manager commits its decision to the spec
+		return st, f
+	}
+	t.Run("an answer with the manager's head", func(t *testing.T) {
+		st, f := parked(t)
+		require.NoError(t, st.Answer("Fix it so.", "m", FromSpec, "h2"))
+		drive(t, st, f, nil) // a tree-moved question fails the test
+		require.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "agent r-s1-fix1 intermediate-dev")
+		assert.Contains(t, Record(st, RecordInputs{}), "Answered from the spec: Fix it so. (the run took HEAD h2 with it)")
+	})
+	t.Run("an answer without it", func(t *testing.T) {
+		st, f := parked(t)
+		require.NoError(t, st.Answer("Fix it so.", "m", FromSpec, ""))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, KindTreeMoved, st.Question.Kind)
 	})
 }
 
@@ -608,7 +640,7 @@ func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {
 						st, _, _ = script()
 					}
 				} else {
-					require.NoError(t, st.Answer(answers[st.Question.Key], "m", FromSpec))
+					require.NoError(t, st.Answer(answers[st.Question.Key], "m", FromSpec, ""))
 				}
 				err = Run(st, f)
 			}

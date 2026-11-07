@@ -9,7 +9,7 @@ The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-
   - Each step has a deterministic name (`<run>-s3-dev2`, `<run>-s3-gates1`), and its result is memoized under a key (`agent:<name>`, `gates:<name>`, `head:<key>`, `q:<key>`).
   - A memoized step returns at once. A step whose agent run or gate run exists by name is followed, not submitted.
   - So a restart at any point submits nothing twice.
-- **Parking.** A judgement is a `Question` with a kind (`needs-context`, `blocked-decision`, `design-finding`, `premise-design`, `unresolved-findings`, `gate-failure`, `agent-failed`, `tree-moved`). `Run` saves it and returns. `State.Answer` memoizes the answer as `q:<key>`, and the next pass reads it.
+- **Parking.** A judgement is a `Question` with a kind (`needs-context`, `blocked-decision`, `design-finding`, `premise-design`, `unresolved-findings`, `gate-failure`, `agent-failed`, `tree-moved`). `Run` saves it and returns. `State.Answer` memoizes the answer as `q:<key>`, and the next pass reads it. The question records the head the engine had (`At`); an answer that carries the manager's own commits to the spec and plan memoizes that HEAD as `took:<key>`, and the engine takes it as its head, so its tree check doesn't park on them.
 - **Effects.** `Effects` covers agent runs (3a's `loom flow agent`), gate runs (part 2's `loom flow gates`), the profile's services, git and flow's scripts. `Agent`, `Resume` and `Gates` return once the run they start or follow has ended.
 
 ## The procedure

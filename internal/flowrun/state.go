@@ -109,6 +109,9 @@ type Question struct {
 	Story string   `json:"story,omitempty"`
 	Text  string   `json:"text"`
 	Paths []string `json:"paths,omitempty"`
+	// At is the head the engine last recorded when it parked on the
+	// question, which loom flow run answer compares HEAD with.
+	At string `json:"at,omitempty"`
 }
 
 // Where an answer came from (loom flow run answer --from): FromSpec when
@@ -128,6 +131,9 @@ type Answer struct {
 	Answer  string `json:"answer"`
 	Session string `json:"session,omitempty"`
 	From    string `json:"from,omitempty"`
+	// Head is the HEAD the run took with the answer: the manager's own
+	// commits to the run's spec and plan since At, or "".
+	Head string `json:"head,omitempty"`
 }
 
 // Finding is one FINDING line (spec §5.6).
@@ -173,9 +179,10 @@ func Save(path string, st *State) error {
 }
 
 // Answer records text as the answer to st's open question, from session,
-// with where it came from (FromSpec or FromOwner), and sets st running;
-// CheckAnswer has passed it.
-func (st *State) Answer(text, session, from string) error {
+// with where it came from (FromSpec or FromOwner) and the HEAD the run
+// takes with it (Answer.Head, or ""), and sets st running; CheckAnswer has
+// passed it.
+func (st *State) Answer(text, session, from, head string) error {
 	if st.Status != Parked || st.Question == nil {
 		return errors.New("the run has no open question")
 	}
@@ -191,7 +198,14 @@ func (st *State) Answer(text, session, from string) error {
 		st.Memo = map[string]json.RawMessage{}
 	}
 	st.Memo["q:"+st.Question.Key] = raw
-	st.Answers = append(st.Answers, Answer{Question: *st.Question, Answer: text, Session: session, From: from})
+	if head != "" {
+		took, err := json.Marshal(head)
+		if err != nil {
+			return err
+		}
+		st.Memo["took:"+st.Question.Key] = took
+	}
+	st.Answers = append(st.Answers, Answer{Question: *st.Question, Answer: text, Session: session, From: from, Head: head})
 	if session != "" && !slices.Contains(st.Managers, session) {
 		st.Managers = append(st.Managers, session)
 	}

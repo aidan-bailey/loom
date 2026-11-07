@@ -196,8 +196,13 @@ func (e *engine) ask(q Question) (string, error) {
 	}
 	var a string
 	if e.recall("q:"+q.Key, &a) {
+		var head string
+		if e.recall("took:"+q.Key, &head) {
+			e.head = head // the manager's own commits, taken with its answer
+		}
 		return a, nil
 	}
+	q.At = e.head
 	e.st.Question, e.st.Status = &q, Parked
 	if err := e.fx.Save(e.st); err != nil {
 		return "", err
