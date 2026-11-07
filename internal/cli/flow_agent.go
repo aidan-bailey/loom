@@ -187,7 +187,8 @@ func newFlowAgentWaitCmd() *cobra.Command {
 		Use:   "wait [ID] [SECONDS]",
 		Short: "Wait up to SECONDS (170, at most) for an agent run's job to end, then say how the run stands",
 		Long: "Exits 0 when the run ended with a report (DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED), 75 while " +
-			"it runs, 1 when it ended without a usable report (failed or cancelled), and 125 when it can't follow it.",
+			"it runs, 1 when it ended without a usable report (failed or cancelled), and 125 when it can't follow it. A " +
+			"daemon lost mid-wait (a restart) is joined again within SECONDS, saying so on stderr; still away then, it exits 75.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -206,20 +207,29 @@ func newFlowAgentWaitCmd() *cobra.Command {
 			if name, err = latestAgent(dir, name); err != nil {
 				return err
 			}
-			return flowDaemon(c, func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, bound) })
+			deadline := time.Now().Add(bound)
+			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				fmt.Fprintf(c.OutOrStdout(), "running %s: its job goes on, but %v (loom flow agent wait %s follows it again)\n", name, away, name)
+				return &ExitError{Code: exitStillRunning}
+			}
+			return err
 		},
 	}
 }
 
-// waitAgent waits up to bound for run id's current job to end, records its
-// result when it has, and prints how the run stands (spec §5.3).
-func (d *client) waitAgent(out io.Writer, dir, id string, bound time.Duration) error {
+// waitAgent waits until deadline for run id's current job to end, records
+// its result when it has, and prints how the run stands (spec §5.3). It is
+// safe to run again on a daemon joined again (rejoin): settleAgent records
+// an end once, under the lock.
+func (d *client) waitAgent(out io.Writer, dir, id string, deadline time.Time) error {
 	run, err := readAgentRun(agentPath(dir, id))
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
 	if !run.ended() {
-		v, known, err := d.jobWithin(run.current().ID, bound)
+		v, known, err := d.jobWithin(run.current().ID, time.Until(deadline))
 		if err != nil {
 			return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: job %d goes on, but %v (loom flow agent wait %s follows it again)", run.current().ID, err, id)}
 		}

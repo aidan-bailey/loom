@@ -28,8 +28,13 @@ short.
    the background `wait` again. Stage nothing else, and start no developer
    or verifier in this worktree: the engine does.
 4. For progress, run `loom flow run show <run>` rather than reading files.
-   If `wait` says the engine was lost, run `loom flow run resume <run>` and
-   wait again.
+   If `wait` or `show` says the engine was lost, read the cause its line
+   ends with (the engine's last log line): when it is outside the run (a
+   full disk, a missing tool), clear it or tell the owner first, since a
+   resume would hit it again. Then run `loom flow run resume <run>` and wait
+   again. `wait` joins a restarted daemon again by itself; if it exits 125,
+   it couldn't follow the run, which goes on: start the background `wait`
+   again.
 5. When it returns ended, read the record it names. When the profile's
    `Record copy in the repo:` names a directory, commit the copy there by
    pathspec. Then tell the owner what was built, what failed, and what needs

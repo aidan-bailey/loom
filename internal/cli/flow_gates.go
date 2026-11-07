@@ -216,7 +216,8 @@ func newFlowGatesWaitCmd() *cobra.Command {
 		Long: "RUN is the worktree's latest run unless named, and a lone number is SECONDS. Judges each step as its " +
 			"job ends, and after a final gate fails queues the gates after it again. Exits 0 when the run has " +
 			"ended with every step PASS or SKIPPED, 1 when it has ended with any FAIL or VACUOUS, 75 when it " +
-			"hasn't ended (call it again), 125 when it can't follow the run.",
+			"hasn't ended (call it again), 125 when it can't follow the run. A daemon lost mid-wait (a restart) is " +
+			"joined again within SECONDS, saying so on stderr; still away then, it exits 75.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -239,7 +240,14 @@ func newFlowGatesWaitCmd() *cobra.Command {
 			if name, err = runName(dir, name); err != nil {
 				return err
 			}
-			return flowDaemon(c, func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, bound) })
+			deadline := time.Now().Add(bound)
+			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, deadline) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				fmt.Fprintf(c.OutOrStdout(), "%s: the run's jobs go on, but %v (loom flow gates wait %s follows them again)\n", name, away, name)
+				return &ExitError{Code: exitStillRunning}
+			}
+			return err
 		},
 	}
 }
@@ -394,10 +402,11 @@ func (d *client) abandon(ids []sched.JobID, why error) error {
 	return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v, so the run's jobs were cancelled", why)}
 }
 
-// waitRun advances run name until it has ended or bound has passed, then
-// prints its table and exits as the run stands (spec §5.2).
-func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, bound time.Duration) error {
-	deadline := time.Now().Add(bound)
+// waitRun advances run name until it has ended or deadline has passed,
+// then prints its table and exits as the run stands (spec §5.2). It is safe
+// to run again on a daemon joined again (rejoin): advance judges and queues
+// under the run lock from the record, and the table is printed last.
+func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, deadline time.Time) error {
 	for {
 		run, err := d.advance(conf, dir, name)
 		if err != nil {

@@ -99,7 +99,8 @@ func newFlowWaitWaitCmd() *cobra.Command {
 		Long: "Prints `done NAME exit S` and exits with the job's exit code (128 + N for a job killed by signal N); " +
 			"`running NAME: job N …` and exits 75 while it hasn't ended; `lost NAME: …` and exits 70 for a job " +
 			"lost, cancelled, never started or no longer known to the queue; exits 125 when it can't follow the " +
-			"job. Each call copies what the job's output gained to the step's log.",
+			"job. Each call copies what the job's output gained to the step's log. A daemon lost mid-wait (a " +
+			"restart) is joined again within SECONDS, saying so on stderr; still away then, it exits 75.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -148,7 +149,14 @@ func newFlowWaitWaitCmd() *cobra.Command {
 				}
 			}
 			logPath := filepath.Join(dir, name+".log")
-			return flowDaemon(c, func(d *client) error { return d.waitStep(c.OutOrStdout(), name, id, logPath, bound) })
+			deadline := time.Now().Add(bound)
+			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitStep(c.OutOrStdout(), name, id, logPath, deadline) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				fmt.Fprintf(c.OutOrStdout(), "running %s: job %d goes on, but %v (loom flow wait wait %s follows it again)\n", name, id, away, name)
+				return &ExitError{Code: exitStillRunning}
+			}
+			return err
 		},
 	}
 	cmd.Flags().Int64Var(&job, "job", 0, "Wait for job N, queued any way, in place of a named step")
@@ -196,10 +204,12 @@ func readStepJob(path string) (sched.JobID, error) {
 	return id, nil
 }
 
-// waitStep waits up to bound for job id to end, copies what its output
-// gained to logPath, and says how it stands as label (spec §5.6).
-func (d *client) waitStep(out io.Writer, label string, id sched.JobID, logPath string, bound time.Duration) error {
-	v, known, err := d.jobWithin(id, bound)
+// waitStep waits until deadline for job id to end, copies what its output
+// gained to logPath, and says how it stands as label (spec §5.6). It is
+// safe to run again on a daemon joined again (rejoin): the copy adds only
+// what the step's log lacks.
+func (d *client) waitStep(out io.Writer, label string, id sched.JobID, logPath string, deadline time.Time) error {
+	v, known, err := d.jobWithin(id, time.Until(deadline))
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow wait: job %d goes on, but %v (loom flow wait wait %s follows it again)", id, err, label)}
 	}
