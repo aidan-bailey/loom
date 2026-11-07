@@ -40,15 +40,17 @@ which its clients use too.
 Every field after `build` is optional:
 `{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","exe_time":"2026-10-08T18:02:11.52Z","tmux":"/run/user/1000/tmux-1000/default"}}`
 
-A client's hello may name its role (`role`): `web` is the daemon's own web layer. A client that names
-none, or a role this build does not know, is an ordinary client:
+A client's hello may name its role (`role`): `web` is the daemon's own web layer, `cli` a loom
+subcommand. A client that names none (a TUI), or a role this build does not know, is an ordinary client:
 `{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","role":"web"}}`
 
-A `web` connection counts as no client for the notice backlog: a `Notice` raised while only web
-connections are connected is sent to them and also kept for the next other connection, and a web
-connection is sent none of the notices kept already. A `Notice` that names a web connection's own
+A `web` or `cli` connection counts as no client for the notice backlog: a `Notice` raised while only
+such connections are connected is sent to them and also kept for the next ordinary client, and
+they are sent none of the notices kept already. A `Notice` that names a web connection's own
 request goes to that connection and is also handled as if no web connection existed: the other
-connections are sent it, and, with no client among them, it is kept for the next.
+connections are sent it, and, with no client among them, it is kept for the next. A `cli`
+connection is sent no other connection's request's `Notice` (a web request's, or one whose client
+has gone); its own request's `Notice` goes to it alone.
 
 ## Refused hello
 

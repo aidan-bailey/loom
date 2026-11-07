@@ -54,9 +54,9 @@ type Server struct {
 	fatalCh chan struct{}
 	// backlog holds the notices that reached no client: raised while none
 	// was connected, or the Notice of a request whose client has gone. A web
-	// layer's connection (RoleWeb) is no client (clientsLocked), so its own
-	// request's Notice is kept too. The next other connection is sent them
-	// after its snapshot (keep).
+	// layer's connection (RoleWeb) or a CLI command's (RoleCLI) is no client
+	// (clientsLocked), and a web layer's own request's Notice is kept too.
+	// The next ordinary client is sent them after its snapshot (keep).
 	backlog []core.Notice
 	// tmux is the tmux server the model's sessions run on, for the hello
 	// (SetTmux).
@@ -246,9 +246,10 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 		c.sendFrame(Frame{Error: mismatchError()})
 		return
 	}
-	// Exactly RoleWeb: a role this build does not know is an ordinary
-	// client, which a newer peer's TUI may be.
+	// Exactly RoleWeb or RoleCLI: a role this build does not know is an
+	// ordinary client, which a newer peer's TUI may be.
 	c.web = hello.Hello.Role == RoleWeb
+	c.cli = hello.Hello.Role == RoleCLI
 
 	s.mu.Lock()
 	select {
@@ -400,9 +401,10 @@ func (s *Server) publishLocked() {
 // sendLocked sends events to every connection, an event naming a request
 // as forConn says; one that will not encode is fatal. A Notice that reaches
 // no client is kept for the next (keepLocked) and is still sent to the
-// connections it did not reach. A web layer's connection is no client
+// connections it did not reach but a CLI command's, which prints whatever
+// notice it is sent as its own. A web layer's connection is no client
 // (clientsLocked), so its own request's Notice is handled as a gone client's
-// is. s.mu is held.
+// is; a CLI command's own request's Notice reaches a client. s.mu is held.
 func (s *Server) sendLocked(events []core.Event) {
 	for _, ev := range events {
 		notice, isNotice := ev.(core.Notice)
@@ -425,7 +427,8 @@ func (s *Server) sendLocked(events []core.Event) {
 				// Its client has gone, or is the web layer's, which is no
 				// client: it is handled as if no web connection existed. The
 				// connections it did not reach are told it (another's
-				// request, so none named), and, with no client among all the
+				// request, so none named) but a CLI command, which would
+				// print it as its own, and, with no client among all the
 				// connections, whoever comes next.
 				notice.Req = 0
 				if s.clientsLocked() == 0 {
@@ -440,7 +443,7 @@ func (s *Server) sendLocked(events []core.Event) {
 					return
 				}
 				for c := range s.conns {
-					if _, reached := forConn(ev, c.n); !reached {
+					if _, reached := forConn(ev, c.n); !reached && !c.cli {
 						c.enqueue(f, "")
 					}
 				}
@@ -466,12 +469,13 @@ func (s *Server) sendLocked(events []core.Event) {
 
 // clientsLocked counts the connections that are clients as far as the
 // notice backlog goes: every one but a web layer's (RoleWeb), which is
-// always connected and would otherwise take the notices meant for the next
+// always connected, and a CLI command's (RoleCLI), which prints only what
+// it waits for: either would otherwise take the notices meant for the next
 // TUI. s.mu is held.
 func (s *Server) clientsLocked() int {
 	n := 0
 	for c := range s.conns {
-		if !c.web {
+		if !c.web && !c.cli {
 			n++
 		}
 	}
@@ -502,10 +506,10 @@ func (s *Server) keepLocked(n core.Notice) {
 }
 
 // flushBacklogLocked sends c the notices no client was there for, and
-// forgets them. A web layer's connection is sent none, and they stay for the
-// next other connection. s.mu is held.
+// forgets them. A web layer's connection or a CLI command's is sent none,
+// and they stay for the next ordinary client. s.mu is held.
 func (s *Server) flushBacklogLocked(c *serverConn) {
-	if c.web {
+	if c.web || c.cli {
 		return
 	}
 	for _, n := range s.backlog {
