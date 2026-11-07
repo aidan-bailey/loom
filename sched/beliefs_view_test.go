@@ -96,6 +96,11 @@ func TestFormatBelief_Scaling(t *testing.T) {
 	assert.Equal(t, "scaling   95% parallel over 1 run · efficient up to 6 cores · ~34s at 4, ~24s at 6", line(belief(wasm)))
 	assert.Equal(t, "scaling   ignores the hint variables · keeps 7.8 cores busy, claims 10", line(belief(at(4, 7.81))))
 	assert.Equal(t, "scaling   unknown until a run with 2 cores or more", line(belief(at(1, 1.0))))
+	waits1, waits2 := at(1, 0.31), at(2, 0.63)
+	waits1.WallSeconds, waits1.CPUSeconds = 80, 80*0.31
+	waits2.WallSeconds, waits2.CPUSeconds = 40, 40*0.63
+	assert.Equal(t, "scaling   100% parallel from runs at 1 and 2 cores · efficient up to 4 cores · ~40s at 2, ~20s at 4", line(belief(waits1, waits2)),
+		"the fit gave p: the widths it came from; the floor makes the claim 2 cores")
 }
 
 func TestFormatBelief_NamesTheCommandItRunsAfter(t *testing.T) {

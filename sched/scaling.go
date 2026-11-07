@@ -149,6 +149,9 @@ func (s Scaling) scale(wall float64, from, to int) float64 {
 	return wall * s.factor(to) / s.factor(from)
 }
 
+// fitted reports whether Parallel came from the fit (fit spec §5).
+func (s Scaling) fitted() bool { return len(s.Widths) >= 2 && s.Parallel == s.Fit }
+
 // floor is the fewest cores the fit lets a job of this scaling claim when
 // the busy rule gave cores (fit spec §3): the widest of Widths at most
 // limit and at most the ideal width under Fit alone, at which Fit predicts

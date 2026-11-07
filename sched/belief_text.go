@@ -2,6 +2,7 @@ package sched
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -106,9 +107,10 @@ func afterLine(v BeliefView) string {
 }
 
 // scalingLine is the belief text's line on how its command scales (job
-// scaling spec §6): an overrunner's busy cores and claim; or p, the runs it
-// came from, the ideal width and the usual duration at the claim's cores
-// and at the ideal width; or that it is unknown.
+// scaling spec §6, fit spec §5): an overrunner's busy cores and claim; or
+// p, the runs or widths it came from, the ideal width and the usual
+// duration at the claim's cores and at the ideal width; or that it is
+// unknown.
 func scalingLine(v BeliefView) string {
 	s, base := v.Scaling, v.Sized.Claim.CPUs
 	switch {
@@ -121,11 +123,18 @@ func scalingLine(v BeliefView) string {
 	case !s.Known:
 		return "scaling   unknown until a run with 2 cores or more"
 	}
-	runs := "1 run"
+	from := "over 1 run"
 	if s.Runs != 1 {
-		runs = fmt.Sprintf("%d runs", s.Runs)
+		from = fmt.Sprintf("over %d runs", s.Runs)
 	}
-	line := fmt.Sprintf("scaling   %.0f%% parallel over %s · efficient up to %d cores", 100*s.Parallel, runs, s.Ideal)
+	if s.fitted() {
+		widths := make([]string, len(s.Widths))
+		for i, w := range s.Widths {
+			widths[i] = strconv.Itoa(w)
+		}
+		from = "from runs at " + JoinAnd(widths) + " cores"
+	}
+	line := fmt.Sprintf("scaling   %.0f%% parallel %s · efficient up to %d cores", 100*s.Parallel, from, s.Ideal)
 	if v.DurationRuns == 0 || base < 1 {
 		return line
 	}
