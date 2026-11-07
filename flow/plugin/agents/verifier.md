@@ -37,7 +37,10 @@ Run them like this:
   FAIL (killed), FAIL (infra), VACUOUS or SKIPPED once it has ended, and where
   it stands until then. It exits 0 when every step passed or was skipped, 1
   when any failed, and 125 when it can't follow the run: report that as FAIL
-  (infra) with its message. Never use `run_in_background` and never end your
+  (infra) with its message. A daemon restart mid-call is not a failure: the
+  call joins again (a `loom: lost the loom daemon` line on stderr), and exits
+  75 if the daemon is still away when it ends, so run it again as above.
+  Never use `run_in_background` and never end your
   turn to wait: Claude Code counts an agent waiting that way as not running,
   and a supervisor whose agents are all not running is made to hand back
   mid-run. Never wait with `sleep`, and never report while the run hasn't

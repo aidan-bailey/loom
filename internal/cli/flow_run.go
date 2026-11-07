@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/flow"
 	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
@@ -501,7 +502,8 @@ func newFlowRunWaitCmd() *cobra.Command {
 		Use:   "wait [RUN]",
 		Short: "Wait, with no time cap, until a run parks on a question or ends, and say which",
 		Long: "Meant for a background Bash. Exits 0 when the run has parked or ended done or stopped, 1 when it ended " +
-			"cancelled or its engine was lost (loom flow run resume carries on), 125 when it can't follow the run.",
+			"cancelled or its engine was lost (loom flow run resume carries on), 125 when it can't follow the run. A " +
+			"daemon lost mid-wait (a restart) is joined again, saying so on stderr, for up to 10 minutes.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -516,7 +518,12 @@ func newFlowRunWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return flowDaemon(c, func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
+			err = rejoin(c, time.Time{}, rejoinFor, sayOnStderr(c), func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow run: the run goes on, but %v (loom flow run wait %s follows it again)", away, id)}
+			}
+			return err
 		},
 	}
 }
@@ -553,14 +560,69 @@ func (d *client) waitFlowRun(out io.Writer, dir, id string) error {
 		if st.Status != flowrun.Running {
 			return printRunStop(out, st)
 		}
-		ended := "is no longer in the queue"
-		if known {
-			ended = "ended " + string(v.State)
-		}
-		fmt.Fprintf(out, "lost %s: the engine (job %d) %s without parking; loom flow run resume %s carries on\n", id, engine, ended, id)
+		fmt.Fprintln(out, lostEngine(id, engine, v, known))
 		return &ExitError{Code: 1}
 	}
 }
+
+// lostEngine is the line for run id whose engine, job engine with view v
+// (known: the queue holds it), ended without parking: how it ended and why,
+// with the last line its log holds, so a manager doesn't resume into the
+// same wall.
+func lostEngine(id string, engine sched.JobID, v core.JobView, known bool) string {
+	if !known {
+		return fmt.Sprintf("lost %s: the engine (job %d) is no longer in the queue; loom flow run resume %s carries on", id, engine, id)
+	}
+	ended := "ended " + stateText(v)
+	for _, why := range []string{v.CancelReason, v.Failure} {
+		if why = oneLine(why); why != "" {
+			ended += " (" + why + ")"
+		}
+	}
+	if last := lastLogLine(v.LogPath); last != "" {
+		ended += " without parking; its log ends: " + last
+	} else {
+		ended += " without parking"
+	}
+	return fmt.Sprintf("lost %s: the engine (job %d) %s; loom flow run resume %s carries on", id, engine, ended, id)
+}
+
+// lastLogLine is the last non-empty line of the log at path, read from its
+// last logTail bytes and cut to lineLimit characters; "" when there is
+// none or it can't be read.
+func lastLogLine(path string) string {
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && info.Size() > logTail {
+		if _, err := f.Seek(-logTail, io.SeekEnd); err != nil {
+			return ""
+		}
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(b), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if r := []rune(strings.TrimSpace(lines[i])); len(r) > 0 {
+			return string(r[:min(len(r), lineLimit)])
+		}
+	}
+	return ""
+}
+
+// logTail is how much of a log's end lastLogLine reads, lineLimit how much
+// of its line it keeps.
+const (
+	logTail   = 16 << 10
+	lineLimit = 300
+)
 
 // printRunStop prints a parked or ended run, and exits as it stands.
 func printRunStop(out io.Writer, st *flowrun.State) error {
@@ -871,8 +933,17 @@ func newFlowRunShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			status, lost := st.Status, ""
+			if st.Status == flowrun.Running {
+				if lost, err = engineLost(c, dirs.runs, id); err != nil {
+					return err
+				}
+				if lost != "" {
+					status = "lost"
+				}
+			}
 			w := c.OutOrStdout()
-			fmt.Fprintf(w, "%s: %s, %s\nplan: %s\n", st.ID, st.Status, st.Phase, st.Plan)
+			fmt.Fprintf(w, "%s: %s, %s\nplan: %s\n", st.ID, status, st.Phase, st.Plan)
 			for _, s := range st.Stories {
 				r := s.Row
 				status := r.Status
@@ -892,7 +963,11 @@ func newFlowRunShowCmd() *cobra.Command {
 				}
 				fmt.Fprintf(w, "answer with: %s\n", flowrun.Takes(q.Kind))
 			}
-			fmt.Fprintf(w, "engine: job %d\n", st.Engine)
+			if lost != "" {
+				fmt.Fprintln(w, lost)
+			} else {
+				fmt.Fprintf(w, "engine: job %d\n", st.Engine)
+			}
 			if n := len(st.Agents); n > 0 {
 				fmt.Fprintf(w, "last agent run: %s\n", st.Agents[n-1])
 			}
@@ -905,6 +980,28 @@ func newFlowRunShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// engineLost is lostEngine's line for run id when its state says running
+// but its engine's job has ended or left the queue, asked of the daemon
+// best-effort: "" when the engine runs, or when the daemon can't be
+// reached, so show still prints the state without one.
+func engineLost(c *cobra.Command, dir, id string) (string, error) {
+	var line string
+	var err error
+	_ = withDaemon(c, func(d *client) error {
+		d.events()
+		var st *flowrun.State
+		if st, err = loadRun(dir, id); err != nil || st.Status != flowrun.Running || st.Engine == 0 {
+			return nil // read again under the daemon's view: an engine that has just parked isn't lost
+		}
+		engine := sched.JobID(st.Engine)
+		if v, known := jobOf(d.Queue(), engine); !known || v.State.Finished() {
+			line = lostEngine(id, engine, v, known)
+		}
+		return nil
+	})
+	return line, err
 }
 
 func newFlowRunListCmd() *cobra.Command {
