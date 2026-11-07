@@ -239,7 +239,16 @@ func TestStatusLines(t *testing.T) {
 		{"all done\nSTATUS: DONE", "DONE", ""},
 		{"x\n**STATUS: NEEDS_CONTEXT**\nQUESTION: `Which colour?`", "NEEDS_CONTEXT", "Which colour?"},
 		{"STATUS: BLOCKED\nlater\nSTATUS: DONE", "DONE", ""},
-		{"QUESTION: before any status\nSTATUS: NEEDS_CONTEXT", "NEEDS_CONTEXT", ""},
+		// The order the preamble asks for, and the one real runs wrote
+		// (2026-11-06): the question before the status line.
+		{"x\nQUESTION: Merge main?\n\nSTATUS: NEEDS_CONTEXT", "NEEDS_CONTEXT", "Merge main?"},
+		{"QUESTION: first\nQUESTION: second\nSTATUS: NEEDS_CONTEXT", "NEEDS_CONTEXT", "second"},
+		{"STATUS: NEEDS_CONTEXT\nQUESTION: a\nlater\nSTATUS: DONE", "DONE", ""},
+		// A bare status word counts only when no STATUS line does.
+		{"x\nNEEDS_CONTEXT\nQUESTION: Rewrite them?\nDEVIATION: d", "NEEDS_CONTEXT", "Rewrite them?"},
+		{"**DONE**", "DONE", ""},
+		{"BLOCKED\nlater\nSTATUS: DONE", "DONE", ""},
+		{"we're not DONE yet", "", ""},
 		{"no lines at all", "", ""},
 	} {
 		status, question := statusLines(c.report)

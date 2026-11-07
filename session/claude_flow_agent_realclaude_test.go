@@ -30,17 +30,17 @@ var agentProbePlugin = map[string]string{
 // agentProbePreamble mirrors cli.headlessPreamble: --agent turns
 // --json-schema off (premise 4, 2026-11-06), so a report ends in status lines.
 const agentProbePreamble = "You run headless as a loom agent job: nobody can message you, and SendMessage reaches no one. " +
-	"Your final answer is your report. End it with a line `STATUS: DONE`, `STATUS: DONE_WITH_CONCERNS` or `STATUS: BLOCKED`, " +
-	"or with `STATUS: NEEDS_CONTEXT` and then a line `QUESTION: <your question>`, whose answer resumes you."
+	"Your final answer is your report. Its last line is its status: `STATUS: DONE`, `STATUS: DONE_WITH_CONCERNS`, `STATUS: BLOCKED` " +
+	"or `STATUS: NEEDS_CONTEXT`. With NEEDS_CONTEXT, put a line `QUESTION: <your question>` just before it; the answer resumes you."
 
-// statusLines is a report's last STATUS line's value, and the QUESTION
-// line after it.
+// statusLines is a report's last STATUS line's value and its last QUESTION
+// line, wherever it stands, as cli.statusLines reads them.
 func statusLines(report string) (status, question string) {
 	for _, line := range strings.Split(report, "\n") {
 		line = strings.Trim(strings.TrimSpace(line), "*`")
 		if v, ok := strings.CutPrefix(line, "STATUS:"); ok {
-			status, question = strings.TrimSpace(v), ""
-		} else if v, ok := strings.CutPrefix(line, "QUESTION:"); ok && status != "" {
+			status = strings.TrimSpace(v)
+		} else if v, ok := strings.CutPrefix(line, "QUESTION:"); ok {
 			question = strings.TrimSpace(v)
 		}
 	}

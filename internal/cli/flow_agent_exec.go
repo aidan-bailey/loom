@@ -22,8 +22,8 @@ import (
 // are. `--agent` turns `--json-schema` off, so the report ends in status
 // lines instead.
 const headlessPreamble = "You run headless as a loom agent job: nobody can message you, and SendMessage reaches no one. " +
-	"Your final answer is your report. End it with a line `STATUS: DONE`, `STATUS: DONE_WITH_CONCERNS` or `STATUS: BLOCKED`, " +
-	"or with `STATUS: NEEDS_CONTEXT` and then a line `QUESTION: <your question>`, whose answer resumes you. " +
+	"Your final answer is your report. Its last line is its status: `STATUS: DONE`, `STATUS: DONE_WITH_CONCERNS`, `STATUS: BLOCKED` " +
+	"or `STATUS: NEEDS_CONTEXT`. With NEEDS_CONTEXT, put a line `QUESTION: <your question>` just before it; the answer resumes you. " +
 	"Run long steps through `loom flow wait`, as your rules say."
 
 // reviewPreamble follows headlessPreamble for a reviewer's run (flow in loom
@@ -335,16 +335,28 @@ func withoutFrontmatter(b []byte) string {
 	return text
 }
 
-// statusLines is a report's last STATUS line's value and the QUESTION line
-// after it, markdown's `*` and backticks trimmed (spec §2a, 9).
+// statusLines is a report's last STATUS line's value, markdown's `*` and
+// backticks trimmed (spec §2a, 9), or, when it has none, its last line that
+// is a status word alone; and for NEEDS_CONTEXT its last QUESTION line,
+// wherever it stands. Real runs wrote the question before the status line,
+// and once a bare NEEDS_CONTEXT (2026-11-06), and lost the question.
 func statusLines(report string) (status, question string) {
+	bare := ""
 	for _, line := range strings.Split(report, "\n") {
 		line = strings.Trim(strings.TrimSpace(line), "*`")
 		if v, ok := strings.CutPrefix(line, "STATUS:"); ok {
-			status, question = strings.Trim(strings.TrimSpace(v), "*`"), ""
-		} else if v, ok := strings.CutPrefix(line, "QUESTION:"); ok && status != "" {
+			status = strings.Trim(strings.TrimSpace(v), "*`")
+		} else if v, ok := strings.CutPrefix(line, "QUESTION:"); ok {
 			question = strings.Trim(strings.TrimSpace(v), "*`")
+		} else if slices.Contains(agentStatuses, line) {
+			bare = line
 		}
+	}
+	if status == "" {
+		status = bare
+	}
+	if status != "NEEDS_CONTEXT" {
+		question = ""
 	}
 	return status, question
 }
