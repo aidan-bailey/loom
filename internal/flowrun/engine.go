@@ -315,27 +315,32 @@ func paths(p ...string) []string {
 	return out
 }
 
-// failed asks the manager about name's failure: nil is retry.
-func (e *engine) failed(name string, r Report) error {
+// failed asks the manager about name's failure, and is the decision the
+// retry takes: "" for a plain retry, else the manager's text, for the next
+// attempt's brief (feedback thread 12).
+func (e *engine) failed(name string, r Report) (string, error) {
 	why := r.Why
 	if why == "" {
 		why = "it reported " + r.Status
 	}
 	a, err := e.ask(Question{Key: "failed:" + name, Kind: KindAgentFailed, Text: name + " ended without a usable report: " + why, Paths: paths(r.Path)})
-	if err != nil {
-		return err
+	switch {
+	case err != nil:
+		return "", err
+	case a == WordStop:
+		return "", errStopped
+	case a == WordRetry:
+		return "", nil
 	}
-	if a == WordStop {
-		return errStopped
-	}
-	return nil
+	return a, nil
 }
 
 // review runs a reviewer at prefix until its report reads (spec §5.6).
 func (e *engine) review(prefix, role, brief string) (Review, Report, error) {
+	next := brief
 	for {
 		name := e.next(prefix)
-		r, err := e.agent(name, role, "", brief)
+		r, err := e.agent(name, role, "", next)
 		if err == nil {
 			r, err = e.settle(name, r)
 		}
@@ -349,9 +354,11 @@ func (e *engine) review(prefix, role, brief string) (Review, Report, error) {
 			}
 			r.Why = perr.Error()
 		}
-		if err := e.failed(name, r); err != nil {
+		decision, err := e.failed(name, r)
+		if err != nil {
 			return Review{}, r, err
 		}
+		next = withEarlier(brief, nil, decision)
 	}
 }
 
@@ -406,8 +413,12 @@ func (e *engine) build(s *Story, prefix, role, brief string, fix bool) (Report, 
 				s.Row.Deviations += Deviations(r.Text)
 				return r, nil
 			}
-			if err := e.failed(name, Report{Status: r.Status, Why: "it reported done with no commits", Path: r.Path}); err != nil {
+			d, err := e.failed(name, Report{Status: r.Status, Why: "it reported done with no commits", Path: r.Path})
+			if err != nil {
 				return r, err
+			}
+			if d != "" {
+				decision = d
 			}
 		case r.Status == "TURN_CAP" && role == "intermediate-dev" && !resumed:
 			s.Row.TurnCap, resumed = true, true
@@ -433,8 +444,12 @@ func (e *engine) build(s *Story, prefix, role, brief string, fix bool) (Report, 
 			earlier, decision = append(earlier, r.Path), a
 		default:
 			s.Row.TurnCap = s.Row.TurnCap || r.Status == "TURN_CAP"
-			if err := e.failed(name, r); err != nil {
+			d, err := e.failed(name, r)
+			if err != nil {
 				return r, err
+			}
+			if d != "" {
+				decision = d
 			}
 		}
 		name = e.next(prefix)
@@ -582,24 +597,30 @@ func (e *engine) premises() error {
 // dispatchReport runs a non-developer agent at prefix until it reports
 // done; a BLOCKED is a failure (spec §5.3).
 func (e *engine) dispatchReport(prefix, role, brief string) (Report, error) {
+	next := brief
 	for {
 		name := e.next(prefix)
-		r, err := e.agent(name, role, "", brief)
+		r, err := e.agent(name, role, "", next)
 		if err == nil {
 			r, err = e.settle(name, r)
 		}
 		if err != nil || r.done() {
 			return r, err
 		}
-		if err := e.failed(name, r); err != nil {
+		decision, err := e.failed(name, r)
+		if err != nil {
 			return r, err
 		}
+		next = withEarlier(brief, nil, decision)
 	}
 }
 
+// storyAtLine is the story whose range at the base holds line: premise
+// flags are numbered by the plan at the base, whatever Restory moved since.
 func (e *engine) storyAtLine(line int) *Story {
 	for i := range e.st.Stories {
-		if s := &e.st.Stories[i]; s.Line <= line && line <= s.End {
+		s := &e.st.Stories[i]
+		if l, end := s.baseRange(); l <= line && line <= end {
 			return s
 		}
 	}

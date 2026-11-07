@@ -21,13 +21,15 @@ COST TABLES
 | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | intermediate-dev | deep | vouched | 2 | done | 0 | 0 | 1 | 1/0/1 | no |
-| 2 | intermediate-dev | deep | full | 2 | done | 0 | 1 | 0 | 0/0/0 | no |
+| 2 | intermediate-dev | deep | full | 2 | done | 0 | 1 | 1 | 0/0/0 | no |
 
 ## Notes
 
-- Questions: 2; answered from the spec: 1; by the owner: 1.
+- Questions: 3; answered from the spec: 2; by the owner: 1.
 - Asked (needs-context, Story 1): Which?
   Answered from the spec: That one.
+- Asked (agent-failed, Story 2): r-s2-review1 ended without a usable report: it ended with no result
+  Answered from the spec: Read the conformance first.
 - Asked (blocked-decision, Story 2): Which store?
   Answered by the owner: The cache.
 - Story 2: r-s2-dev1 reported BLOCKED; a fresh intermediate-dev took it

@@ -193,6 +193,9 @@ func newFlowRunStartCmd() *cobra.Command {
 			} else if status != "" {
 				return &ExitError{Code: exitUsage, Msg: "loom flow run: the tree isn't clean:\n" + status}
 			}
+			if err := checkAgentMode(); err != nil {
+				return err
+			}
 			out, ok, err := tools.Doctor()
 			switch {
 			case err != nil:
@@ -282,6 +285,24 @@ func newFlowRunStartCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// checkAgentMode refuses (exit 2) a run whose headless agents couldn't
+// write: `claude -p` has nobody to approve a prompt, so every mode but auto
+// and bypassPermissions denies the developers' edits, or acceptEdits their
+// Bash, and a whole dispatch is spent before the run parks (feedback thread
+// 7).
+func checkAgentMode() error {
+	mode := agentPermissionMode()
+	if mode == "auto" || mode == "bypassPermissions" {
+		return nil
+	}
+	where := "the global config dir's config.json"
+	if dir, err := config.GetGlobalConfigDir(); err == nil {
+		where = filepath.Join(dir, "config.json")
+	}
+	return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow run: the run's agents would run headless in claude_permission_mode %q (%s), "+
+		"which denies their writes; set it to auto or bypassPermissions there", mode, where)}
 }
 
 // failLines is out's FAIL lines.
@@ -655,12 +676,26 @@ func newFlowRunAnswerCmd() *cobra.Command {
 					return &ExitError{Code: exitUsage, Msg: "loom flow run: continue takes a clean tree; this one isn't:\n" + status}
 				}
 			}
-			head := takenHead(&runFX{cwd: cwd}, st)
+			fx := &runFX{cwd: cwd}
+			head := takenHead(fx, st)
+			carry := head
+			if word == flowrun.WordContinue {
+				if carry, err = fx.git("rev-parse", "HEAD"); err != nil {
+					return &ExitError{Code: exitNotRun, Msg: "loom flow run: " + err.Error()}
+				}
+			}
+			reread, err := rereadStories(fx, st, carry)
+			if err != nil {
+				return err
+			}
 			if err := st.Answer(string(text), os.Getenv("CLAUDE_CODE_SESSION_ID"), from, head); err != nil {
 				return &ExitError{Code: exitUsage, Msg: "loom flow run: " + err.Error()}
 			}
 			if head != "" {
 				fmt.Fprintf(c.OutOrStdout(), "the run takes HEAD %s with the answer: your commits to its spec and plan\n", shortSHA(head))
+			}
+			for _, l := range reread {
+				fmt.Fprintln(c.OutOrStdout(), l)
 			}
 			path := runStatePath(dirs.runs, id)
 			if err := flowrun.Save(path, st); err != nil {
@@ -711,6 +746,57 @@ func takenHead(fx *runFX, st *flowrun.State) string {
 		}
 	}
 	return head
+}
+
+// rereadStories re-reads a parked run's stories with check-plan when its
+// plan differs between the head the engine parked at (Question.At) and
+// carry, the head the run carries on from (the taken head, or HEAD for a
+// continue), and moves them (State.Restory): the ranges recorded at start
+// would aim every later brief at the wrong lines (feedback thread 14). The
+// tree is clean and at carry whenever carry is set, so check-plan reads
+// carry's plan. It is the lines to print, or an exit 2 that changes
+// nothing when check-plan fails or the stories changed.
+func rereadStories(fx *runFX, st *flowrun.State, carry string) ([]string, error) {
+	at := st.Question.At
+	if carry == "" || at == "" || carry == at {
+		return nil, nil
+	}
+	changed, err := fx.git("diff", "--name-only", at, carry, "--", st.Plan)
+	if err != nil {
+		return nil, &ExitError{Code: exitNotRun, Msg: "loom flow run: " + err.Error()}
+	}
+	if changed == "" {
+		return nil, nil
+	}
+	root, err := flowRootOfSession()
+	if err != nil {
+		return nil, err
+	}
+	refuse := func(why string) error {
+		return &ExitError{Code: exitUsage, Msg: "loom flow run: the plan changed since the question, and " + why + "; the run stays parked, and nothing was answered"}
+	}
+	raw, fails, err := newRunTools(root).CheckPlan(st.Plan)
+	switch {
+	case err != nil:
+		return nil, &ExitError{Code: exitNotRun, Msg: "loom flow run: " + err.Error()}
+	case fails != "":
+		return nil, refuse("loom flow check-plan fails on it:\n" + strings.TrimSpace(fails) + "\n")
+	}
+	var checked struct {
+		Stories []flowrun.Story `json:"stories"`
+	}
+	if err := json.Unmarshal(raw, &checked); err != nil {
+		return nil, &ExitError{Code: exitNotRun, Msg: "loom flow run: check_plan.py --json: " + err.Error()}
+	}
+	kept, err := st.Restory(checked.Stories)
+	if err != nil {
+		return nil, refuse(err.Error())
+	}
+	var now []string
+	for _, s := range st.Stories {
+		now = append(now, fmt.Sprintf("Story %s %d-%d", s.ID, s.Line, s.End))
+	}
+	return append([]string{"the plan changed since the question: its stories' plan lines are now " + strings.Join(now, ", ")}, kept...), nil
 }
 
 func newFlowRunResumeCmd() *cobra.Command {
