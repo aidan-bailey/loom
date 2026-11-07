@@ -79,6 +79,7 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("GET /api/v1/sessions/{id}/turns", l.authed(l.readTurns))
 	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
 	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
+	m.Handle("GET /api/v1/sessions/{id}/jobs/{job}/log", l.authed(l.readJobLog))
 	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
 	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))

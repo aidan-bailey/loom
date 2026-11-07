@@ -164,8 +164,9 @@ func newHub(l *Layer) *hub {
 	return h
 }
 
-// apply takes the events one Sync returned. A workspace, its sessions, the
-// open tabs, the usage or the quick replies changing wakes the flusher, which
+// apply takes the events one Sync returned. A workspace, its sessions, their
+// jobs, the open tabs, the usage or the quick replies changing wakes the
+// flusher, which
 // publishes at most every publishEvery; a notice not tied to a request, and a
 // device record changing, go out at once.
 func (h *hub) apply(evs []core.Event) {
@@ -194,6 +195,10 @@ func (h *hub) apply(evs []core.Event) {
 			}
 		case core.AccountsChanged:
 			if h.fleet.setUsage(ev.View) {
+				moved = true
+			}
+		case core.QueueChanged:
+			if h.fleet.setQueue(ev.View) {
 				moved = true
 			}
 		case core.Notice:
