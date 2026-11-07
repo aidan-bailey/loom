@@ -11,8 +11,11 @@ call that fails fails them. Final gates expand it to `--workspace`. Every
 command is printed with the profile's prefix applied, one line per gate:
 
     RUN <command>
+    LOCKED <lock>[,<lock>...] <command>    a gate written as a table with locks
     SKIPPED <gate> (<why>)
     FAIL <gate> (<why>)
+
+A LOCKED gate's job takes those work-queue locks (`loom job submit --lock`).
 
 Version 1 knows Cargo only; other ecosystems' gates run over the whole repo.
 """
@@ -100,14 +103,19 @@ def with_prefix(prefix: str, command: str) -> str:
     return f"{prefix} {command}" if prefix else command
 
 
-def expand(gates: Sequence[str], prefix: str, resolve: Callable[[], list[str] | None]) -> list[str]:
+def expand(
+    gates: Sequence[str],
+    prefix: str,
+    resolve: Callable[[], list[str] | None],
+    locks: Sequence[Sequence[str]] = (),
+) -> list[str]:
     """One line per gate. `resolve` gives the `{packages}` arguments; it runs once, and only when a
-    gate holds the placeholder."""
+    gate holds the placeholder. `locks` holds each gate's locks, in the gates' order."""
     lines: list[str] = []
     args: list[str] | None = None
     error: str | None = None
     resolved = False
-    for gate in gates:
+    for i, gate in enumerate(gates):
         command = gate
         if PLACEHOLDER in gate:
             if not resolved:
@@ -123,7 +131,9 @@ def expand(gates: Sequence[str], prefix: str, resolve: Callable[[], list[str] | 
                 lines.append(f"SKIPPED {gate} (the story changed no Cargo package)")
                 continue
             command = gate.replace(PLACEHOLDER, " ".join(args))
-        lines.append(f"RUN {with_prefix(prefix, command)}")
+        held = locks[i] if i < len(locks) else ()
+        verb = f"LOCKED {','.join(held)}" if held else "RUN"
+        lines.append(f"{verb} {with_prefix(prefix, command)}")
     return lines
 
 
@@ -142,13 +152,14 @@ def gates_command(story: Sequence[str] | None, final: bool, cwd: Path) -> int:
     top = toplevel(cwd)
     profile = load_profile(top)
     if final:
-        lines = expand(profile.final_gates, profile.prefix, lambda: ["--workspace"])
+        lines = expand(profile.final_gates, profile.prefix, lambda: ["--workspace"], profile.final_locks)
     else:
         changed = changed_files(top, story or [])
         lines = expand(
             profile.story_gates,
             profile.prefix,
             lambda: package_args(changed, top, parse_metadata(load_metadata(top, profile.prefix))),
+            profile.story_locks,
         )
     print("\n".join(lines) if lines else "none: the profile lists no gates of this kind")
     return 1 if any(line.startswith("FAIL ") for line in lines) else 0

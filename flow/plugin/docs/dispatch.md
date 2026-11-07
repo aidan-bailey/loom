@@ -662,7 +662,10 @@ at a time. A story's chain stops at its first FAIL; after a final gate fails,
 `wait` queues the gates after it again, so every final gate runs and one pass
 shows every failing CI job. The verdicts are the tool's: it reads each job's
 own exit, runs the profile's vacuous check on each output, and calls a step a
-signal ended FAIL (killed), an infra failure. Never run the verifier while a
+signal ended FAIL (killed), an infra failure, and one whose log says a port
+was already in use FAIL (infra), since no fix frees a port another process
+holds. A gate the profile writes as a table with `locks` takes those locks in
+the work queue, so it never runs beside another job naming one. Never run the verifier while a
 developer builds in the same worktree: both drive heavy builds.
 
 `loom flow gates wait` waits at most 170 seconds a call, so the verifier waits
@@ -696,7 +699,11 @@ tree that moved. The manager waits on `loom flow run wait` in a background
 Bash, which costs no turns, and answers with `loom flow run answer --from
 spec|owner`: the record counts the questions the spec settled, which a
 judge (3c, not built) could have answered, against the ones that needed the
-owner.
+owner. A failed agent's question takes a decision, which its retry's brief
+carries. A plan the manager edits and commits with an answer moves the
+stories' line ranges for the later briefs; a run can't add, remove or
+reorder its stories. `start` refuses a `claude_permission_mode` other than
+`auto` or `bypassPermissions`, in which headless agents can't write.
 
 The engine replays. Each step has a fixed name (`<run>-s3-dev2`) and a
 memoized result in `<state>/runs/<run>.json`, so an engine lost mid-run

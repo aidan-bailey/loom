@@ -439,11 +439,10 @@ var (
 	portIn         = regexp.MustCompile(`(?i)(?:[a-z0-9\]\.:]:|port\s+)(\d{2,5})\b`)
 )
 
-// lockHint is the line a failed job's notice gets when one of its log lines
-// says a port was already in use: two jobs binding one port should take turns
-// under a lock. It names port:N when the line gives the port; "" when no line
-// says so.
-func lockHint(lines []string) string {
+// portInUse reports whether one of lines, the last first, says a port was
+// already in use, and the lock that names it: port:N when the line gives the
+// port, else port:<N>.
+func portInUse(lines []string) (lock string, found bool) {
 	for i := len(lines) - 1; i >= 0; i-- {
 		if !inUse.MatchString(lines[i]) {
 			continue
@@ -452,11 +451,33 @@ func lockHint(lines []string) string {
 		if m == nil && !aboutAnAddress.MatchString(lines[i]) {
 			continue // "the name is already used": no port in sight
 		}
-		lock := "port:<N>"
 		if m != nil {
-			lock = "port:" + m[1]
+			return "port:" + m[1], true
 		}
-		return fmt.Sprintf("Its log says a port was already in use. If another job binds it too, submit both with --lock %s so they take turns.", lock)
+		return "port:<N>", true
 	}
-	return ""
+	return "", false
+}
+
+// PortInUse is portInUse over the last hintLines lines of the log at path,
+// the lines a failed job's notice searches: how loom flow gates tells a gate
+// that failed because another process held its port.
+func PortInUse(path string) (lock string, found bool, err error) {
+	_, lines, err := readLogTail(path, hintLines)
+	if err != nil {
+		return "", false, err
+	}
+	lock, found = portInUse(lines)
+	return lock, found, nil
+}
+
+// lockHint is the line a failed job's notice gets when one of its log lines
+// says a port was already in use (portInUse): two jobs binding one port should
+// take turns under a lock. "" when no line says so.
+func lockHint(lines []string) string {
+	lock, found := portInUse(lines)
+	if !found {
+		return ""
+	}
+	return fmt.Sprintf("Its log says a port was already in use. If another job binds it too, submit both with --lock %s so they take turns.", lock)
 }

@@ -21,15 +21,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// rejoinFor bounds how long the engine tries to join a daemon it lost
-// (flow in loom part 3b, planning amendment 8); rejoinFirst is its first
-// pause, doubled to rejoinMax.
-var (
-	rejoinFor   = 10 * time.Minute
-	rejoinFirst = 2 * time.Second
-	rejoinMax   = 30 * time.Second
-)
-
 // runFX is flowrun.Effects over the daemon: agent runs through 3a's agent
 // code, gate runs through part 2's gate code, the services, git and flow's
 // scripts, in the worktree cwd.
@@ -52,29 +43,12 @@ func (fx *runFX) logf(format string, args ...any) {
 	fmt.Fprintf(fx.out, "%s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
-// daemon runs fn on a client, joining again with backoff, for up to
-// rejoinFor, while the daemon can't be reached or is lost mid-call. fn must
-// be safe to run again: each effect reads its record before acting.
+// daemon runs fn on a client, joining again with backoff while the daemon
+// can't be reached or is lost mid-call, for up to rejoinFor an outage
+// (rejoin). fn must be safe to run again: each effect reads its record
+// before acting.
 func (fx *runFX) daemon(fn func(d *client) error) error {
-	wait, deadline := rejoinFirst, time.Now().Add(rejoinFor)
-	for {
-		lost := false
-		err := withDaemon(fx.c, func(d *client) error {
-			err := fn(d)
-			lost = err != nil && d.Err() != nil
-			return err
-		})
-		var join *joinError
-		if err == nil || (!lost && !errors.As(err, &join)) {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("the loom daemon has been out of reach for %v: %w", rejoinFor, err)
-		}
-		fx.logf("lost the loom daemon (%v); joining again in %v", err, wait)
-		time.Sleep(wait)
-		wait = min(wait*2, rejoinMax)
-	}
+	return rejoin(fx.c, time.Time{}, rejoinFor, func(line string) { fx.logf("%s", line) }, fn)
 }
 
 func (fx *runFX) AgentStarted(name string) (bool, error) {
@@ -129,9 +103,12 @@ func (fx *runFX) Agent(name, role, effort, brief string) (flowrun.Report, error)
 }
 
 // follow waits for agent run name's current job to end, records it, and
-// is the run's report.
+// is the run's report. Its path is report.md when the job left a report,
+// else the job's output.log, which is all there is to read (feedback
+// thread 12), or "" when the queue no longer knows the job.
 func (fx *runFX) follow(name string) (flowrun.Report, error) {
 	var run *agentRun
+	var read string
 	err := fx.daemon(func(d *client) error {
 		for {
 			var err error
@@ -139,6 +116,14 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 				return err
 			}
 			if run.ended() {
+				read = filepath.Join(fx.agents, name, "report.md")
+				if run.Report == "" {
+					v, known := jobOf(d.Queue(), run.current().ID)
+					read = ""
+					if known {
+						read = v.LogPath
+					}
+				}
 				return nil
 			}
 			id := run.current().ID
@@ -168,8 +153,7 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 		return flowrun.Report{}, err
 	}
 	fx.logf("end %s: %s %s", name, run.Status, run.Why)
-	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question,
-		Path: filepath.Join(fx.agents, name, "report.md"), Why: run.Why}, nil
+	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question, Path: read, Why: run.Why}, nil
 }
 
 func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {

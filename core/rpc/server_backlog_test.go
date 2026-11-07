@@ -405,3 +405,132 @@ func TestServe_ANoticeOfATUIsRequestIsTheTUIsAlone(t *testing.T) {
 	assert.Empty(t, noticesOf(web.Sync()), "a TUI's request's notice is its requester's alone")
 	assert.Empty(t, noticesOf(dialTo(t, srv).Sync()), "and it is not kept")
 }
+
+// A CLI command (RoleCLI) is told none of another connection's request's
+// Notice: the phone's slash command, a web request, reaches the TUI beside
+// it and not `loom flow run wait`, which would print it as its own.
+func TestServe_ANoticeOfAWebRequestReachesTheTUIAndNotACLICommand(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+	web := dialAsTo(t, srv, RoleWeb)
+	cli := dialAsTo(t, srv, RoleCLI)
+	tui := dialTo(t, srv)
+
+	raiseRequestNotice(t, loop, web, id)
+	require.NoError(t, cli.FlushForTest())
+	require.NoError(t, tui.FlushForTest())
+	seen := noticesOf(tui.Sync())
+	require.Len(t, seen, 1, "the TUI is told")
+	assert.Zero(t, seen[0].Req)
+	assert.Empty(t, noticesOf(cli.Sync()), "a CLI command is told none of another's request")
+	assert.Empty(t, noticesOf(dialTo(t, srv).Sync()), "told to the TUI, so not kept as well")
+}
+
+// A CLI command is no client for the backlog either: with only it and the
+// web layer connected, a web request's Notice is kept for the next TUI, and
+// the CLI command is never told it.
+func TestServe_ANoticeOfAWebRequestWaitsForTheNextTUIWhenOnlyACLICommandIsConnected(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+	web := dialAsTo(t, srv, RoleWeb)
+	cli := dialAsTo(t, srv, RoleCLI)
+
+	raiseRequestNotice(t, loop, web, id)
+	require.NoError(t, cli.FlushForTest())
+	assert.Empty(t, noticesOf(cli.Sync()), "a CLI command is told none of another's request")
+
+	tui := dialTo(t, srv)
+	kept := noticesOf(tui.Sync())
+	require.Len(t, kept, 1, "the next TUI is sent it from the backlog")
+	assert.Error(t, kept[0].Err)
+	assert.Zero(t, kept[0].Req)
+	assert.Empty(t, noticesOf(dialTo(t, srv).Sync()), "a kept notice is sent once")
+	require.NoError(t, cli.FlushForTest())
+	assert.Empty(t, noticesOf(cli.Sync()), "nor is the CLI command told it later")
+}
+
+// A request's Notice whose client has gone is not told to a CLI command
+// still connected; it waits for the next TUI.
+func TestServe_AGoneClientsNoticeIsNotToldToACLICommand(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+
+	cli := dialAsTo(t, srv, RoleCLI)
+	gone := dialTo(t, srv)
+	gone.Kill(id, 3)
+	require.NoError(t, gone.FlushForTest())
+	jobs := loop.JobsForTest()
+	gone.Close()
+	require.Eventually(t, func() bool {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		return len(srv.conns) == 1
+	}, 5*time.Second, time.Millisecond)
+	for _, j := range jobs {
+		loop.DeliverForTest(j())
+	}
+
+	require.NoError(t, cli.FlushForTest())
+	assert.Empty(t, noticesOf(cli.Sync()), "a CLI command is told none of another's request")
+	kept := noticesOf(dialTo(t, srv).Sync())
+	require.Len(t, kept, 1, "the next TUI is sent it")
+	assert.Error(t, kept[0].Err)
+}
+
+// The other side: a CLI command's own request's Notice still reaches it,
+// naming its request, and goes to no other connection.
+func TestServe_ANoticeOfACLICommandsRequestIsItsAlone(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+	cli := dialAsTo(t, srv, RoleCLI)
+	tui := dialTo(t, srv)
+
+	raiseRequestNotice(t, loop, cli, id)
+	require.NoError(t, cli.FlushForTest())
+	require.NoError(t, tui.FlushForTest())
+	got := noticesOf(cli.Sync())
+	require.Len(t, got, 1)
+	assert.Equal(t, core.ReqID(3), got[0].Req, "it names the CLI command's own request")
+	assert.Empty(t, noticesOf(tui.Sync()), "a CLI command's request's notice is its own")
+	assert.Empty(t, noticesOf(dialTo(t, srv).Sync()), "and it is not kept")
+}
+
+// A Notice no request is behind still reaches a CLI command; with only CLI
+// commands connected it is also kept for the next TUI.
+func TestServe_ANoticeRaisedWhileOnlyACLICommandIsConnectedAlsoWaitsForTheNextTUI(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+	cli := dialAsTo(t, srv, RoleCLI)
+
+	raiseNotice(t, loop, id)
+	require.NoError(t, cli.FlushForTest())
+	told := noticesOf(cli.Sync())
+	require.Len(t, told, 1, "the CLI command is told, as any connection is")
+	assert.Error(t, told[0].Err)
+
+	kept := noticesOf(dialTo(t, srv).Sync())
+	require.Len(t, kept, 1, "and the next TUI is sent it too")
+	assert.Error(t, kept[0].Err)
+}
+
+// A CLI command that joins takes none of the backlog: the boot's notices
+// wait for the TUI.
+func TestServe_ACLIConnectionIsNotSentTheBacklog(t *testing.T) {
+	loop := core.StartForTest(core.NewForTest(core.Options{}))
+	t.Cleanup(loop.Stop)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+	srv.Keep(core.Notice{Info: "from the boot"})
+
+	cli := dialAsTo(t, srv, RoleCLI)
+	assert.Empty(t, noticesOf(cli.Sync()), "a CLI command takes none of the backlog")
+
+	got := noticesOf(dialTo(t, srv).Sync())
+	require.Len(t, got, 1, "it waits for the TUI")
+	assert.Equal(t, "from the boot", got[0].Info)
+}

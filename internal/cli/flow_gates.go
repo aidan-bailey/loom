@@ -60,8 +60,9 @@ type gateRun struct {
 
 // gateStep is one line of the expansion and what became of it.
 type gateStep struct {
-	Line    string        `json:"line"`              // as the expansion printed it
-	Run     bool          `json:"run,omitempty"`     // a RUN line, which a job runs
+	Line    string        `json:"line"`              // as the expansion printed it, a LOCKED line as RUN <command>
+	Run     bool          `json:"run,omitempty"`     // a RUN or LOCKED line, which a job runs
+	Locks   []string      `json:"locks,omitempty"`   // a LOCKED line's locks, which each of its jobs takes
 	Jobs    []sched.JobID `json:"jobs,omitempty"`    // its job in each generation, the latest last
 	Verdict string        `json:"verdict,omitempty"` // "" until judged
 	Why     string        `json:"why,omitempty"`
@@ -115,16 +116,26 @@ func (r *gateRun) openJobs() []sched.JobID {
 }
 
 // plan fills r's steps from the expansion's lines (spec §5.1): a RUN line a
-// job will run, SKIPPED and FAIL lines judged as printed, and in a story
-// run every RUN line after the first FAIL SKIPPED.
+// job will run, a LOCKED line one whose job takes the locks it names first
+// (LOCKED <lock>[,<lock>…] <command>), SKIPPED and FAIL lines judged as
+// printed, and in a story run every RUN line after the first FAIL SKIPPED.
 func (r *gateRun) plan(lines []string) error {
 	failedAt := 0
 	for _, line := range lines {
 		st := gateStep{Line: line}
-		word, _, _ := strings.Cut(line, " ")
+		word, rest, _ := strings.Cut(line, " ")
 		switch word {
 		case "none:":
 			continue
+		case "LOCKED":
+			locks, command, _ := strings.Cut(rest, " ")
+			st.Locks = strings.Split(locks, ",")
+			if command == "" || slices.ContainsFunc(st.Locks, func(l string) bool { return !sched.ValidLockName(l) }) ||
+				len(slices.Compact(slices.Sorted(slices.Values(st.Locks)))) != len(st.Locks) {
+				return fmt.Errorf("loom flow gates: the expansion printed %q, which is no LOCKED <lock>[,<lock>…] <command> line", line)
+			}
+			st.Line = "RUN " + command
+			fallthrough
 		case "RUN":
 			st.Run = true
 			if r.Kind == "story" && failedAt > 0 {
@@ -138,7 +149,7 @@ func (r *gateRun) plan(lines []string) error {
 				failedAt = len(r.Steps) + 1
 			}
 		default:
-			return fmt.Errorf("loom flow gates: the expansion printed %q, which is no RUN, SKIPPED or FAIL line", line)
+			return fmt.Errorf("loom flow gates: the expansion printed %q, which is no RUN, LOCKED, SKIPPED or FAIL line", line)
 		}
 		r.Steps = append(r.Steps, st)
 	}
@@ -160,7 +171,8 @@ func newFlowGatesStartCmd() *cobra.Command {
 		Use:   "start (--story COMMIT… | --final)",
 		Short: "Queue a story's gates or the final gates as a chain of jobs",
 		Long: "Expands the gates (loom flow conf gates) and queues each RUN line as a job, each after the one " +
-			"before; a story's chain stops at the expansion's first FAIL line. Prints the run's name and jobs. " +
+			"before, and each LOCKED line as one taking its locks; a story's chain stops at the expansion's first " +
+			"FAIL line. Prints the run's name and jobs. " +
 			"Refuses (exit 2) while a run in this worktree hasn't ended; exits 125 when it queued nothing.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -216,7 +228,8 @@ func newFlowGatesWaitCmd() *cobra.Command {
 		Long: "RUN is the worktree's latest run unless named, and a lone number is SECONDS. Judges each step as its " +
 			"job ends, and after a final gate fails queues the gates after it again. Exits 0 when the run has " +
 			"ended with every step PASS or SKIPPED, 1 when it has ended with any FAIL or VACUOUS, 75 when it " +
-			"hasn't ended (call it again), 125 when it can't follow the run.",
+			"hasn't ended (call it again), 125 when it can't follow the run. A daemon lost mid-wait (a restart) is " +
+			"joined again within SECONDS, saying so on stderr; still away then, it exits 75.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -239,7 +252,14 @@ func newFlowGatesWaitCmd() *cobra.Command {
 			if name, err = runName(dir, name); err != nil {
 				return err
 			}
-			return flowDaemon(c, func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, bound) })
+			deadline := time.Now().Add(bound)
+			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, deadline) })
+			var away *outOfReachError
+			if errors.As(err, &away) {
+				fmt.Fprintf(c.OutOrStdout(), "%s: the run's jobs go on, but %v (loom flow gates wait %s follows them again)\n", name, away, name)
+				return &ExitError{Code: exitStillRunning}
+			}
+			return err
 		},
 	}
 }
@@ -365,15 +385,20 @@ func (d *client) startRun(out io.Writer, dir string, run *gateRun) error {
 }
 
 // submitChain queues run's steps as a chain, each after the one before, in
-// run's directory, and adds each job to its step. A submit refused partway
-// cancels the jobs already queued and adds none.
+// run's directory, each with its step's locks, and adds each job to its
+// step. A submit refused partway, or a job whose locks the daemon dropped
+// (keptLocks), cancels the jobs already queued and adds none.
 func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 	var ids []sched.JobID
 	var after sched.JobID
 	for _, i := range steps {
 		cmd := run.Steps[i].text()
 		sub := flowJob([]string{"bash", "-c", cmd}, fmt.Sprintf("gate %d/%d: %s", i+1, len(run.Steps), cmd), run.Cwd, after)
+		sub.Locks = slices.Clone(run.Steps[i].Locks)
 		id, err := submitFlowJob(d, sub)
+		if err == nil {
+			err = d.keptLocks(sub, id)
+		}
 		if err != nil {
 			_ = d.cancelJobs(ids)
 			return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: gate %d was not queued (%v), so the %d queued before it were cancelled", i+1, err, len(ids))}
@@ -387,6 +412,21 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 	return ids, nil
 }
 
+// keptLocks checks that the daemon kept the locks sub, queued as job id,
+// asked for (refuseIgnoredLocks, which cancels a job whose locks a daemon
+// from before them dropped), and cancels id when it can't tell.
+func (d *client) keptLocks(sub sched.Submit, id sched.JobID) error {
+	if len(sub.Locks) == 0 {
+		return nil
+	}
+	v, err := d.awaitJob(id)
+	if err != nil {
+		_ = d.cancelJobs([]sched.JobID{id})
+		return fmt.Errorf("job %d's locks can't be checked, so it was cancelled: %w", id, err)
+	}
+	return d.refuseIgnoredLocks(sub, v)
+}
+
 // abandon cancels ids, a chain whose record could not be saved, and ends
 // the command with why.
 func (d *client) abandon(ids []sched.JobID, why error) error {
@@ -394,10 +434,11 @@ func (d *client) abandon(ids []sched.JobID, why error) error {
 	return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v, so the run's jobs were cancelled", why)}
 }
 
-// waitRun advances run name until it has ended or bound has passed, then
-// prints its table and exits as the run stands (spec §5.2).
-func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, bound time.Duration) error {
-	deadline := time.Now().Add(bound)
+// waitRun advances run name until it has ended or deadline has passed,
+// then prints its table and exits as the run stands (spec §5.2). It is safe
+// to run again on a daemon joined again (rejoin): advance judges and queues
+// under the run lock from the record, and the table is printed last.
+func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, deadline time.Time) error {
 	for {
 		run, err := d.advance(conf, dir, name)
 		if err != nil {
@@ -502,7 +543,9 @@ func cascadedFrom(q core.QueueView, run *gateRun, v core.JobView) (int, bool) {
 
 // judgeStep gives st its verdict from its ended job v (spec §5.2's table):
 // the log copied to logPath first, then the job's end, then the vacuous
-// check for a job that exited 0.
+// check for a job that exited 0. A job that failed because another process
+// held a port it binds (portClash) is FAIL (infra), which offers a retry: no
+// fix to the code frees the port.
 func judgeStep(conf flowConf, logPath string, st *gateStep, v core.JobView) {
 	if err := copyFile(v.LogPath, logPath); err != nil {
 		st.Verdict, st.Why = verdictInfra, fmt.Sprintf("job %d's output can't be copied: %v", v.ID, err)
@@ -526,9 +569,29 @@ func judgeStep(conf flowConf, logPath string, st *gateStep, v core.JobView) {
 		st.Verdict, st.Why = verdictKilled, line
 	case v.State == sched.Failed && ran:
 		st.Verdict, st.Why = verdictFail, line
+		if why, clash := portClash(st, line); clash {
+			st.Verdict, st.Why = verdictInfra, why
+		}
 	default:
 		st.Verdict, st.Why = verdictInfra, line
 	}
+}
+
+// portClash is the why of a failed step whose copied log says a port was
+// already in use (core.PortInUse, the match a job's notice makes for its lock
+// hint), and whether it says so. A log it can't read leaves the step FAIL.
+func portClash(st *gateStep, line string) (string, bool) {
+	lock, found, err := core.PortInUse(st.Log)
+	if err != nil || !found {
+		return "", false
+	}
+	why := line + "; its log says a port was already in use"
+	if slices.Contains(st.Locks, lock) {
+		why += fmt.Sprintf(", though the gate held %s, so a process outside loom's queue has it", lock)
+	} else {
+		why += fmt.Sprintf(" (if a queued job binds it too, give the gate locks = [%q] in the profile)", lock)
+	}
+	return why + ": retry once it is free", true
 }
 
 // copyFile copies src to dst whole; a src that doesn't exist (a job that

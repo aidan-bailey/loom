@@ -14,7 +14,7 @@ func TestCheckAnswer(t *testing.T) {
 		KindPremiseDesign: {"text", WordStop},
 		KindUnresolved:    {"text", WordAccept, WordStop},
 		KindGateFailure:   {"text", WordRetry, WordAccept, WordStop},
-		KindAgentFailed:   {WordRetry, WordStop},
+		KindAgentFailed:   {"text", WordRetry, WordStop},
 		KindTreeMoved:     {WordContinue, WordStop},
 	}
 	for kind, ok := range takes {
@@ -48,6 +48,7 @@ func TestTakes(t *testing.T) {
 	assert.Equal(t, "a decision or stop", Takes(KindBlocked))
 	assert.Equal(t, "a decision, retry, accept or stop", Takes(KindGateFailure))
 	assert.Equal(t, "continue or stop", Takes(KindTreeMoved))
+	assert.Equal(t, "a decision, retry or stop", Takes(KindAgentFailed))
 }
 
 func contains(xs []string, x string) bool {

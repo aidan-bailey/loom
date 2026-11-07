@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -363,7 +364,7 @@ func TestHandshake_IsBounded(t *testing.T) {
 		go func() { _, _ = io.Copy(io.Discard, theirs) }() // reads the hello, answers nothing
 		done := make(chan error, 1)
 		go func() {
-			_, err := handshake(ours, 50*time.Millisecond)
+			_, err := handshake(ours, 50*time.Millisecond, "")
 			done <- err
 		}()
 		select {
@@ -380,7 +381,7 @@ func TestHandshake_IsBounded(t *testing.T) {
 		t.Cleanup(func() { srv.Close(); loop.Stop() })
 		ours, theirs := net.Pipe()
 		srv.Serve(theirs)
-		c, err := handshake(ours, 50*time.Millisecond)
+		c, err := handshake(ours, 50*time.Millisecond, "")
 		require.NoError(t, err)
 		t.Cleanup(func() { c.Close() })
 		time.Sleep(200 * time.Millisecond)
@@ -491,7 +492,7 @@ func TestRejoin_IsQuiet(t *testing.T) {
 		holdLock(t, daemon.Record{PID: os.Getpid(), Build: "booting"})
 		var err error
 		out := captureStderr(t, func() {
-			_, _, _, err = newDaemonLink(globalDir, true, func(string) {}).dial(false)
+			_, _, _, err = tuiLink(globalDir, true, func(string) {}).dial(false)
 		})
 		require.Error(t, err)
 		assert.Empty(t, out)
@@ -502,7 +503,7 @@ func TestRejoin_IsQuiet(t *testing.T) {
 		older := rpc.Hello{Exe: "older", Version: "0.12.0", Build: "v0.12.0 def"}
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
 		var heard []string
-		link := newDaemonLink(globalDir, true, func(s string) { heard = append(heard, s) })
+		link := tuiLink(globalDir, true, func(s string) { heard = append(heard, s) })
 		fake := f.link(ours, nil)
 		link.own, link.dial, link.stop, link.mayReplace = fake.own, fake.dial, fake.stop, fake.mayReplace
 		var err error
@@ -528,4 +529,58 @@ func captureStderr(t *testing.T, f func()) string {
 	out, err := io.ReadAll(r)
 	require.NoError(t, err)
 	return string(out)
+}
+
+// TestDaemonLinks_NameTheirRole: a CLI command dials the daemon as one
+// (rpc.RoleCLI), so the daemon sends it none of another client's request's
+// notices; the TUI's join and rejoin name no role, an ordinary client. A
+// fake daemon reads the hello and hangs up, so each dial fails after its
+// hello went out, and none spawns a daemon.
+func TestDaemonLinks_NameTheirRole(t *testing.T) {
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	globalDir := os.Getenv(config.EnvGlobalDir)
+	// A short path: a socket's is capped at 108 bytes.
+	sockDir, err := os.MkdirTemp("", "lr")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sock := filepath.Join(sockDir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+	roles := make(chan string, 1)
+	go func() {
+		for {
+			nc, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			var f rpc.Frame
+			if json.NewDecoder(nc).Decode(&f) == nil && f.Hello != nil {
+				roles <- f.Hello.Role
+			}
+			nc.Close()
+		}
+	}()
+	holdLock(t, daemon.Record{PID: os.Getpid(), Socket: sock, Build: "fake"})
+
+	for _, tc := range []struct {
+		name string
+		link daemonLink
+		role string
+	}{
+		{"a CLI command", cliLink(globalDir), rpc.RoleCLI},
+		{"the TUI's join", tuiLink(globalDir, false, func(string) {}), ""},
+		{"the TUI's rejoin", tuiLink(globalDir, true, func(string) {}), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := tc.link.dial(false)
+			require.Error(t, err, "the fake daemon answers no hello")
+			select {
+			case got := <-roles:
+				assert.Equal(t, tc.role, got)
+			case <-time.After(5 * time.Second):
+				t.Fatal("no hello reached the daemon")
+			}
+		})
+	}
 }

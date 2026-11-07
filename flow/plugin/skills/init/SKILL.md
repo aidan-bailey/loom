@@ -43,7 +43,11 @@ Draft a flow profile for the repository the session is in, so that
    >   `gofmt -l` does, needs a wrapper that fails on output:
    >   `bash -c 'out=$(gofmt -l .) || exit 1; test -z "$out" || { echo "$out"; exit 1; }'`;
    > - `[gates] final`: one command per CI job, without the steps that only
-   >   set up CI (checkout, toolchain installs, caches);
+   >   set up CI (checkout, toolchain installs, caches). A gate that binds a
+   >   fixed port (an e2e suite's dev server) is written as a table naming
+   >   the port's lock, `{ run = "pnpm e2e", locks = ["port:4300"] }`, in
+   >   either list: its job then takes that lock in loom's work queue and
+   >   never runs beside another job naming it;
    > - `[gates] vacuous`: regular expressions for output that exits 0 but
    >   tested nothing, for the repo's test runners. Each is matched against
    >   every line of a gate's output, and one matching line makes the gate
