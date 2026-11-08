@@ -110,7 +110,7 @@ func afterLine(v BeliefView) string {
 // scaling spec §6, fit spec §5): an overrunner's busy cores and claim; or
 // p, the runs or widths it came from, the ideal width and the usual
 // duration at the claim's cores and at the ideal width; or that it is
-// unknown.
+// unknown; then exploring's clause (exploreClause).
 func scalingLine(v BeliefView) string {
 	s, base := v.Scaling, v.Sized.Claim.CPUs
 	switch {
@@ -121,7 +121,7 @@ func scalingLine(v BeliefView) string {
 		}
 		return line
 	case !s.Known:
-		return "scaling   unknown until a run with 2 cores or more"
+		return "scaling   unknown until a run with 2 cores or more" + exploreClause(v)
 	}
 	from := "over 1 run"
 	if s.Runs != 1 {
@@ -136,16 +136,30 @@ func scalingLine(v BeliefView) string {
 	}
 	line := fmt.Sprintf("scaling   %.0f%% parallel %s · efficient up to %d cores", 100*s.Parallel, from, s.Ideal)
 	if v.DurationRuns == 0 || base < 1 {
-		return line
+		return line + exploreClause(v)
 	}
 	at := func(c int) string {
 		u, _, _, _ := Usual(&v.Belief, nil, c)
 		return fmt.Sprintf("~%s at %d", RoughDuration(u), c)
 	}
 	if s.Ideal > base {
-		return line + " · " + at(base) + ", " + at(s.Ideal)
+		return line + " · " + at(base) + ", " + at(s.Ideal) + exploreClause(v)
 	}
-	return line + " · " + at(base)
+	return line + " · " + at(base) + exploreClause(v)
+}
+
+// exploreClause is the scaling line's note on exploring (exploration spec
+// §6): the width the next quiet run explores, or that the two widest
+// widths show no gain past the widest; "" for neither.
+func exploreClause(v BeliefView) string {
+	switch {
+	case v.Explore > 0:
+		return fmt.Sprintf(" · next quiet run explores %d cores", v.Explore)
+	case v.ExploreFlat:
+		w := v.Scaling.Widest
+		return fmt.Sprintf(" · no gain expected past %d cores, checked again once its %d-core runs leave the window", w, w)
+	}
+	return ""
 }
 
 // RoughDuration is a duration as an ETA says it: 40s, 3m, 1h05m.

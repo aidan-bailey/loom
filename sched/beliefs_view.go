@@ -44,6 +44,12 @@ type BeliefView struct {
 	// registry; nil when the signature has no prerequisite part, the
 	// prerequisite had no signature, or that belief is gone.
 	After []string
+	// Explore is the width a quiet host would explore its command at
+	// (ExploreTarget), and ExploreFlat says its two widest widths show no
+	// gain to look for below the cap (exploration spec §6); both zero with
+	// exploring off.
+	Explore     int
+	ExploreFlat bool
 }
 
 // ViewBelief is b's view under p, with family its family pool (nil for
@@ -52,6 +58,11 @@ func ViewBelief(b Belief, family *Belief, p Policy) BeliefView {
 	v := BeliefView{Belief: b, RepoName: RepoName(b.Repo), Scaling: ScalingOf(&b)}
 	if p.usable() {
 		v.Sized = Size(Claim{}, &b, family, p)
+		if p.Explore {
+			v.Explore = ExploreTarget(&b, p.Caps.CPUs)
+			s := v.Scaling
+			v.ExploreFlat = v.Explore == 0 && !s.Overruns && len(s.Widths) >= 2 && s.Widest < p.Caps.CPUs
+		}
 	}
 	usual, p90, n, src := Usual(&b, family, v.Sized.Claim.CPUs)
 	v.Usual, v.P90 = usual, p90

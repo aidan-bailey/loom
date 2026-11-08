@@ -1237,3 +1237,12 @@ func TestJobFollower_NoteRung(t *testing.T) {
 	assert.Equal(t, "job 7 resumed", f.noteRung(running))
 	assert.Empty(t, f.noteRung(core.JobView{ID: 7, State: sched.Done, Rung: sched.RungPaused}), "only a running job")
 }
+
+func TestJobList_SaysWhichJobsExplore(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{Jobs: []core.JobView{{ID: 7, State: sched.Running, Description: "nextest", Started: now.Add(-time.Minute),
+		Claim: sched.Claim{CPUs: 4, MemoryGB: 4}, Spare: sched.Claim{CPUs: 2, MemoryGB: 2}, Explored: true}}}
+	var out strings.Builder
+	require.NoError(t, writeJobList(&out, q, false, now))
+	assert.Contains(t, out.String(), "exploring 4 cores (was 2)")
+}

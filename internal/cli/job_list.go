@@ -71,6 +71,9 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 		if j.State.Waiting() {
 			waits = j.Waiting
 		}
+		if j.State == sched.Running && j.Explored {
+			waits = exploringText(j)
+		}
 		if j.Unsized != "" {
 			waits = strings.TrimPrefix(waits+"; not sized: "+j.Unsized, "; ")
 		}
@@ -81,6 +84,12 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 			j.ID, stateText(j), oneLine(j.Description), oneLine(ownerText(j)), claimText(j), rounded(elapsed(j, now)), usualText(j, now), oneLine(waits))
 	}
 	return tw.Flush()
+}
+
+// exploringText is a running explorer's note (exploration spec §6):
+// "exploring 4 cores (was 2)".
+func exploringText(j core.JobView) string {
+	return fmt.Sprintf("exploring %d cores (was %d)", j.Claim.CPUs, j.Claim.CPUs-j.Spare.CPUs)
 }
 
 // usualText is a job's usual duration as `list` shows it: "~2m", "~2m

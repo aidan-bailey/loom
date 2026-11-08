@@ -37,6 +37,10 @@ func TestSizingLine(t *testing.T) {
 		{core.JobView{Claim: sched.Claim{CPUs: 3, MemoryGB: 6}, Sources: srcs(sched.SourceFamily, sched.SourceFamily, sched.SourceDefault),
 			FamilyRuns: 2, Family: "sleep 0", Usual: 2 * time.Minute, UsualFromFamily: true},
 			"sized 3c/6G (cores and memory from 2 runs of its family (sleep 0), I/O default); about 2m"},
+		{core.JobView{Claim: sched.Claim{CPUs: 2, MemoryGB: 2}, Sources: srcs(L, L, D), Learned: 1, Explore: 4},
+			"sized 2c/2G (cores and memory learned from 1 run, I/O default); explores 4 cores when idle"},
+		{core.JobView{Claim: sched.Claim{CPUs: 4, MemoryGB: 2}, Sources: srcs(L, L, D), Learned: 1, Ideal: 8, Explore: 6},
+			"sized 4c/2G (cores and memory learned from 1 run, I/O default); up to 8 cores when idle"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, sizingLine(c.v))

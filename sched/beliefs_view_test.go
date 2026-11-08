@@ -101,6 +101,23 @@ func TestFormatBelief_Scaling(t *testing.T) {
 	waits2.WallSeconds, waits2.CPUSeconds = 40, 40*0.63
 	assert.Equal(t, "scaling   100% parallel from runs at 1 and 2 cores · efficient up to 4 cores · ~40s at 2, ~20s at 4", line(belief(waits1, waits2)),
 		"the fit gave p: the widths it came from; the floor makes the claim 2 cores")
+
+	explore := szPolicy
+	explore.Explore = true
+	exploring := func(b *Belief) string {
+		for _, l := range FormatBelief(ViewBelief(*b, nil, explore)) {
+			if strings.HasPrefix(l, "scaling") {
+				return l
+			}
+		}
+		return ""
+	}
+	assert.Equal(t, "scaling   unknown until a run with 2 cores or more · next quiet run explores 2 cores", exploring(belief(at(1, 1.0))))
+	assert.Equal(t, "scaling   0% parallel over 1 run · efficient up to 1 cores · ~2m at 2 · next quiet run explores 4 cores",
+		exploring(belief(at(2, 0.97))))
+	assert.Equal(t, "scaling   0% parallel from runs at 2 and 4 cores · efficient up to 1 cores · ~2m at 2 · no gain expected past 4 cores, checked again once its 4-core runs leave the window",
+		exploring(belief(at(2, 1.0), at(4, 1.0))))
+	assert.Equal(t, "scaling   ignores the hint variables · keeps 7.8 cores busy, claims 10", exploring(belief(at(4, 7.81))), "an overrunner explores nothing")
 }
 
 func TestFormatBelief_NamesTheCommandItRunsAfter(t *testing.T) {

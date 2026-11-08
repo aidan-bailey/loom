@@ -71,7 +71,10 @@ func sizingLine(v core.JobView) string {
 	case v.Usual > 0:
 		line += "; usually " + sched.RoughDuration(v.Usual)
 	}
-	if v.Ideal > 0 {
+	switch {
+	case v.Explore > v.Ideal:
+		line += fmt.Sprintf("; explores %d cores when idle", v.Explore)
+	case v.Ideal > 0:
 		line += fmt.Sprintf("; up to %d cores when idle", v.Ideal)
 	}
 	return line

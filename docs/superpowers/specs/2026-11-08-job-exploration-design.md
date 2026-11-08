@@ -82,7 +82,7 @@ The window is the last 10 runs: after about 10 runs at the base width the explor
 - **Work view and `loom job list`:** the claim shows `2+2c/4G` as grants do. A running explorer's wait column reads `exploring 4 cores (was 2)`.
 - **`loom job submit` / `run`'s sized line:** for a job whose `ExploreWidth` is wider than its `SpareWidth`, `; explores 4 cores when idle` takes the place of `; up to N cores when idle`.
 - **The scaling line** (`loom job beliefs show`, the `b` pager) gains a clause: `· next quiet run explores 4 cores` for a candidate; `· no gain expected past 4 cores, checked again once its 4-core runs leave the window` for a flat one (the widest width named).
-- **Log:** `queue.explored` with `job`, `signature`, `from` (base cores), `to` (the width), `idle_cores` and `room`.
+- **Log:** `queue.explored` with `job`, `signature`, `from` (base cores), `to` (the width) and `idle_cores`.
 - **Messages:** unchanged; the end message already shows the claim with its spare cores.
 - **Stores:** `Explored` is `omitempty` on `Record` (`jobs.json`) and `Run` (`beliefs.json`). Neither store rejects unknown fields, so no version changes; an older loom drops the flag when it rewrites a store.
 
@@ -133,3 +133,9 @@ Read from `beliefs.json` and `serve.log` a week after the daemon runs this. Base
 - **Work outside the job is invisible:** Postgres serving a test run, like sccache's server before `SCCACHE_CLIENT_SIDE`, does work the job's busy cores don't count. Exploring measures the job's own speedup only.
 - **Contention mid-run still lowers busy cores;** the host gate only keeps an explore from starting into it.
 - **Tools that ignore the hints** (vitest, esbuild, `ng build`) are overrunners and never explore; their width is not the scheduler's to set.
+
+## 12. Execution notes
+
+- Built inline from `docs/superpowers/plans/2026-11-08-job-exploration.md` on 2026-11-08.
+- The `queue.explored` log has no `room` field (§6): `Grant` returns what it lent, not the room it worked from.
+- `BeliefView`'s `Explore` and `ExploreFlat` sit at the end of the struct, so gofmt realigns none of its fields.

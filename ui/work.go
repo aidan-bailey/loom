@@ -579,6 +579,9 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		case j.Borrower:
 			extra += "  borrowing"
 		}
+		if j.Explored {
+			extra += fmt.Sprintf("  exploring %d cores (was %d)", j.Claim.CPUs, j.Claim.CPUs-j.Spare.CPUs)
+		}
 		if j.CancelReason != "" {
 			extra = "cancelling"
 		}

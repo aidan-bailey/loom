@@ -591,3 +591,15 @@ func TestRenderWork_ShowsHoldsBelowTheirClaims(t *testing.T) {
 	assert.Contains(t, out, "10/14 claimed · 11.2 in use", "holds at their claims read as claims")
 	assert.NotContains(t, out, "held ·")
 }
+
+func TestRenderWork_ShowsExplorers(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{
+		Host:   sched.Host{Name: "fresco"},
+		Policy: sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}, CPUOvercommit: 2},
+		Jobs: []core.JobView{{ID: 4, State: sched.Running, Description: "nextest", Started: now.Add(-time.Minute),
+			Claim: sched.Claim{CPUs: 4, MemoryGB: 4}, Spare: sched.Claim{CPUs: 2, MemoryGB: 2}, Explored: true}},
+	}
+	out := ansi.Strip(RenderWork(160, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "exploring 4 cores (was 2)")
+}
