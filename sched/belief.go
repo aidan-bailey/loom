@@ -37,6 +37,7 @@ type Run struct {
 	ReadBytes   *int64    `json:"read_bytes,omitempty"`
 	WriteBytes  *int64    `json:"write_bytes,omitempty"`
 	Spare       int       `json:"spare,omitempty"`      // the cores it had past its base claim (job scaling spec §5.3)
+	Explored    bool      `json:"explored,omitempty"`   // its spare cores were an explore's (exploration spec §4.4)
 	Checkout    string    `json:"checkout,omitempty"`   // the working tree's top it ran in (Record.Checkout); "" for a run recorded before 2026-11-05
 	Profile     *Profile  `json:"profile,omitempty"`    // its usage over its progress (past-peak holds spec §5.2); only the newest ProfiledRuns keep one
 	HoldBroke   bool      `json:"hold_broke,omitempty"` // its usage passed its lowered hold (past-peak holds spec §5.4)
@@ -90,7 +91,7 @@ func RunOf(rec Record) (Run, bool) {
 	}
 	run := Run{
 		Job: rec.ID, Ended: rec.Ended, Outcome: out, Adopted: rec.Adopted, Claim: rec.Claim,
-		PeakKB: rec.PeakRSSKB, WallSeconds: rec.Ended.Sub(rec.Started).Seconds(), Spare: rec.Spare.CPUs,
+		PeakKB: rec.PeakRSSKB, WallSeconds: rec.Ended.Sub(rec.Started).Seconds(), Spare: rec.Spare.CPUs, Explored: rec.Explored,
 		Checkout: rec.Checkout, HoldBroke: rec.HoldBroke, Laddered: rec.Laddered,
 	}
 	if e := rec.Exit; e != nil {

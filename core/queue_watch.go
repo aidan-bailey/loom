@@ -377,6 +377,10 @@ func readStarted(jobDir string) (*sched.Started, int) {
 // readMemAvailable reads the host's MemAvailable; tests replace it.
 var readMemAvailable = sched.ReadMemAvailableKB
 
+// readHostCPU reads the host's CPU times for the idle cores exploring
+// needs (exploration spec §4.3); tests replace it.
+var readHostCPU = sched.ReadHostCPU
+
 // readSwapFree is the host's SwapFree, in KB (memory borrowing spec §7.2);
 // a variable so tests can fix it.
 var readSwapFree = sched.ReadSwapFreeKB

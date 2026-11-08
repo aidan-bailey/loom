@@ -70,7 +70,8 @@ func (m *Model) admitJobs() {
 	policy, paused := m.refreshPolicy()
 	waiting := map[sched.JobID]string{}
 	var start, borrow []sched.JobID
-	var spare map[sched.JobID]sched.Claim
+	var grants sched.Grants
+	var idle sched.HostIdle
 	var starved sched.JobID
 	var pred func(sched.Record, time.Time) sched.Prediction
 	if paused == "" {
@@ -123,7 +124,9 @@ func (m *Model) admitJobs() {
 		// Spare cores for the jobs it starts, when nothing else waits (job
 		// scaling spec §5.3); a borrower gets none (memory borrowing spec
 		// §5.2).
-		spare = sched.Grant(granted, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) }, sched.HostIdle{}).Spare
+		// An explore first, on a quiet host (exploration spec §4.2).
+		idle = sched.IdleCores(q.hostCPU)
+		grants = sched.Grant(granted, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) }, idle)
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()
@@ -132,13 +135,18 @@ func (m *Model) admitJobs() {
 	started := false
 	for _, id := range start {
 		if i := q.index(id); i >= 0 && q.store.Jobs[i].State == sched.Queued {
-			m.startJob(i, policy, now, spare[id], id == starved)
+			if grants.Explored[id] {
+				rec := q.store.Jobs[i]
+				log.For("core").Info("queue.explored", "job", int64(id), "signature", string(rec.Signature),
+					"from", rec.Claim.CPUs, "to", rec.Claim.CPUs+grants.Spare[id].CPUs, "idle_cores", idle.Cores)
+			}
+			m.startJob(i, policy, now, grants.Spare[id], grants.Explored[id], id == starved)
 			started = true
 		}
 	}
 	for _, id := range borrow {
 		if i := q.index(id); i >= 0 && q.store.Jobs[i].State == sched.Queued {
-			m.startJob(i, policy, now, sched.Claim{}, id == starved)
+			m.startJob(i, policy, now, sched.Claim{}, false, id == starved)
 			m.markBorrower(i, pred, now)
 			started = true
 		}
@@ -161,6 +169,7 @@ func (m *Model) tickQueue() {
 	if !q.ready() {
 		return
 	}
+	m.sampleHostCPU(time.Now())
 	if q.hasQueued() {
 		if time.Since(q.lastPass) >= queueInterval {
 			m.admitJobs()
@@ -170,6 +179,27 @@ func (m *Model) tickQueue() {
 	if time.Since(q.lastPolicy) >= queueInterval {
 		m.refreshPolicy()
 	}
+}
+
+// sampleHostCPU adds a reading of the host's CPU times to q.hostCPU, at
+// most once a queueInterval (exploration spec §4.3). A failed read drops
+// every reading, so the idle cores read unknown until the window fills
+// again; a failure other than an unsupported host is logged once.
+func (m *Model) sampleHostCPU(now time.Time) {
+	q := m.queue
+	if n := len(q.hostCPU); n > 0 && now.Sub(q.hostCPU[n-1].At) < queueInterval {
+		return
+	}
+	t, err := readHostCPU()
+	if err != nil {
+		if !q.hostCPUFailing && !errors.Is(err, sched.ErrUnsupported) {
+			log.For("core").Warn("queue.host_cpu_failed", "err", err)
+		}
+		q.hostCPU, q.hostCPUFailing = nil, true
+		return
+	}
+	q.hostCPUFailing = false
+	q.hostCPU = sched.KeepReadings(q.hostCPU, sched.CPUReading{At: now, Times: t})
 }
 
 // jobStart is a start job's input: copies only.
@@ -206,9 +236,10 @@ type jobStarted struct {
 }
 
 // startJob admits job i of the store with spare added to its claim (job
-// scaling spec §5.3; zero for none): it is running from now (its claim is
-// taken by the next pass), and a model job starts its shim (spec §5.3).
-func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.Claim, starved bool) {
+// scaling spec §5.3; zero for none), marked an explore when explored
+// (exploration spec §4.4): it is running from now (its claim is taken by
+// the next pass), and a model job starts its shim (spec §5.3).
+func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.Claim, explored, starved bool) {
 	q := m.queue
 	rec := &q.store.Jobs[i]
 	log.For("core").Info("queue.job_started", "job", int64(rec.ID), "signature", string(rec.Signature),
@@ -219,6 +250,7 @@ func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.
 		rec.Claim.MemoryGB += spare.MemoryGB
 		rec.Spare = spare
 	}
+	rec.Explored = explored
 	q.starting[rec.ID] = true
 	delete(q.waiting, rec.ID)
 	hint := rec.Claim.Need(policy.Caps).CPUs

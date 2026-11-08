@@ -177,6 +177,12 @@ type queueState struct {
 	// and the borrowers whose freeze failed, which are given back by requeue.
 	giveBack sched.GiveBackState
 	noLend   map[sched.JobID]bool
+
+	// Exploring (spec 2026-11-08 §4.3): the host's CPU readings of the last
+	// 2 × IdleWindow, oldest first, taken on the tick, and whether the last
+	// read failed, so a run of failures is logged once. In memory only.
+	hostCPU        []sched.CPUReading
+	hostCPUFailing bool
 }
 
 func newQueueState() *queueState {

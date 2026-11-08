@@ -146,6 +146,11 @@ type JobView struct {
 	// queued job to (0 when none could).
 	Spare sched.Claim
 	Ideal int
+	// Exploration (spec 2026-11-08 §6): whether a started job's spare
+	// cores are an explore, and the width a quiet host could explore a
+	// queued job at (0 when none could, or exploring is off).
+	Explored bool
+	Explore  int
 	// Past-peak holds (spec 2026-11-05-past-peak-holds §7): what a running
 	// job counts at when that is below its claim; zero while it holds its
 	// claim.
@@ -444,6 +449,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Unsized:      r.Unsized,
 		AgentWhy:     r.AgentWhy,
 		Spare:        r.Spare,
+		Explored:     r.Explored,
 		After:        r.After,
 		Ready:        r.Ready,
 		Unit:         r.Unit,
@@ -485,6 +491,9 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		jv.Waiting = q.heldWaiting(r)
 	case sched.Queued:
 		jv.Ideal = sched.SpareWidth(r, b)
+		if q.policy.Explore {
+			jv.Explore = sched.ExploreWidth(r, b, q.policy.Caps.CPUs)
+		}
 		jv.Waiting = q.waiting[r.ID]
 		if jv.Waiting == "" && q.paused != "" {
 			jv.Waiting = "admission paused: " + q.paused

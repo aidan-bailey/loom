@@ -222,3 +222,16 @@ func TestRunOf_ALadderedRunTeachesFloorsOnly(t *testing.T) {
 	assert.False(t, run.TeachesDuration())
 	assert.False(t, run.teachesCores())
 }
+
+func TestRunOf_CarriesTheExploredMark(t *testing.T) {
+	t0 := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	rec := Record{ID: 3, State: Done, Started: t0, Ended: t0.Add(time.Minute), Claim: Claim{CPUs: 4, MemoryGB: 4},
+		Spare: Claim{CPUs: 2, MemoryGB: 2}, Explored: true, Exit: &Exit{Code: 0, Ended: t0.Add(time.Minute)}}
+	run, ok := RunOf(rec)
+	require.True(t, ok)
+	assert.True(t, run.Explored)
+	assert.Equal(t, 2, run.Spare)
+	rec.Explored = false
+	run, _ = RunOf(rec)
+	assert.False(t, run.Explored, "an ordinary grant")
+}

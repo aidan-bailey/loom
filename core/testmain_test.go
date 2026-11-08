@@ -25,6 +25,9 @@ func TestMain(m *testing.M) {
 	// Greedy admission reads the host's MemAvailable: tests see a fixed 64
 	// GB, so the caps decide, unless a test sets its own.
 	readMemAvailable = func() (int64, error) { return 64 << 20, nil }
+	// Exploring reads the host's CPU times: tests see none, so nothing
+	// explores, unless a test sets its own (wqIdle).
+	readHostCPU = func() (sched.CPUTimes, error) { return sched.CPUTimes{}, sched.ErrUnsupported }
 	os.Exit(runTests(m))
 }
 

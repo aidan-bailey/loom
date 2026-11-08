@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -197,6 +198,7 @@ func TestJobQueue_AnIdleHostLendsSpareCoresToAJobThatScales(t *testing.T) {
 	// 4c/2G leave 6 spare cores: it takes 4, to its width of 8.
 	assert.Equal(t, sched.Claim{CPUs: 4, MemoryGB: 2}, rec.Spare)
 	assert.Equal(t, sched.Claim{CPUs: 8, MemoryGB: 4}, rec.Claim)
+	assert.False(t, rec.Explored, "no idle reading: an ordinary grant")
 	spec, err := sched.ReadSpec(m.queue.jobDir(id))
 	require.NoError(t, err)
 	assert.Equal(t, 8, spec.HintCPUs, "the hint variables carry the total")
@@ -237,4 +239,107 @@ func TestJobQueue_NoSpareCoresWhileAnotherJobWaits(t *testing.T) {
 	assert.Zero(t, rec.Spare, "job %d waits for 11 cores, so nothing is lent", wid)
 	assert.Equal(t, 4, rec.Claim.CPUs)
 	assert.Equal(t, sched.Queued, wqRecord(t, m, wid).State)
+}
+
+// wqNarrowBelief gives sub's signature a done run at 2 cores that kept
+// 0.97 busy (p reads 0): a job of it is sized 2c/2G, no ordinary grant
+// widens it, and a quiet host explores it at 4.
+func wqNarrowBelief(t *testing.T, m *Model, sub sched.Submit) sched.SignatureID {
+	t.Helper()
+	sig := wqSigOf(t, sub.Argv, sub.Cwd)
+	m.queue.beliefs.Ensure(sig, time.Now()).AddRun(sched.Run{Outcome: sched.OutcomeDone, Claim: sched.Claim{CPUs: 2, MemoryGB: 2},
+		PeakKB: 1 << 20, CPUSeconds: 97, WallSeconds: 100})
+	return sig.ID()
+}
+
+// wqIdle gives the queue readings 31 s apart that show idle cores of 16
+// idle, and has every later read repeat the newest.
+func wqIdle(t *testing.T, m *Model, idle float64) {
+	t.Helper()
+	const total = 30 * 100 * 16 // 30 s of 16 CPUs at 100 ticks a second
+	newest := sched.CPUTimes{Idle: uint64(idle * 30 * 100), Total: total, CPUs: 16}
+	prev := readHostCPU
+	readHostCPU = func() (sched.CPUTimes, error) { return newest, nil }
+	t.Cleanup(func() { readHostCPU = prev })
+	now := time.Now()
+	m.queue.hostCPU = []sched.CPUReading{{At: now.Add(-31 * time.Second), Times: sched.CPUTimes{CPUs: 16}}, {At: now, Times: newest}}
+}
+
+func TestJobQueue_AQuietHostExploresAJobAtOneWidth(t *testing.T) {
+	m := wqLiveModel(t)
+	wqIdle(t, m, 12)
+	sub := wqJob(t, "sleep", "1")
+	sig := wqNarrowBelief(t, m, sub)
+	id, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	wqPump(t, m)
+
+	rec := wqRecord(t, m, id)
+	require.Equal(t, sched.Running, rec.State)
+	assert.True(t, rec.Explored)
+	// Caps of 14 cores and 24 GB, the reserve's 4c/6G and 12 idle cores:
+	// 2 → 4, memory in proportion.
+	assert.Equal(t, sched.Claim{CPUs: 2, MemoryGB: 2}, rec.Spare)
+	assert.Equal(t, sched.Claim{CPUs: 4, MemoryGB: 4}, rec.Claim)
+	spec, err := sched.ReadSpec(m.queue.jobDir(id))
+	require.NoError(t, err)
+	assert.Equal(t, 4, spec.HintCPUs, "the hint variables carry the explored width")
+
+	wqSettle(t, m, id)
+	b := m.queue.beliefs.Find(sig)
+	require.NotNil(t, b)
+	last := b.Runs[0] // newest first
+	assert.True(t, last.Explored, "the run records the explore")
+	assert.Equal(t, 4, last.Claim.CPUs, "at its explored width")
+}
+
+func TestJobQueue_NoExploreWhileAnotherJobWaits(t *testing.T) {
+	m := wqLiveModel(t)
+	wqIdle(t, m, 12)
+	blocker := wqJob(t, "sleep", "1")
+	blocker.Claim = sched.Claim{CPUs: 14, MemoryGB: 1}
+	bid, _, err := m.submitJob(blocker)
+	require.NoError(t, err)
+	require.Equal(t, sched.Running, wqRecord(t, m, bid).State)
+
+	sub := wqJob(t, "sleep", "30")
+	wqNarrowBelief(t, m, sub)
+	id, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	wide := wqJob(t, "sleep", "1")
+	wide.Claim = sched.Claim{CPUs: 13, MemoryGB: 1}
+	wid, _, err := m.submitJob(wide)
+	require.NoError(t, err)
+
+	wqWait(t, "the blocker to end and the next job to start", func() bool {
+		if wqRecord(t, m, id).State == sched.Queued {
+			wqPass(t, m)
+		}
+		return wqRecord(t, m, id).State != sched.Queued
+	})
+	rec := wqRecord(t, m, id)
+	assert.False(t, rec.Explored, "job %d waits for 13 cores, so nothing explores", wid)
+	assert.Zero(t, rec.Spare)
+	assert.Equal(t, sched.Queued, wqRecord(t, m, wid).State)
+}
+
+func TestJobQueue_TheTickReadsTheHostsCPU(t *testing.T) {
+	m := wqModel(t)
+	calls := 0
+	prev := readHostCPU
+	readHostCPU = func() (sched.CPUTimes, error) {
+		calls++
+		return sched.CPUTimes{Idle: uint64(calls), Total: uint64(10 * calls), CPUs: 16}, nil
+	}
+	t.Cleanup(func() { readHostCPU = prev })
+	m.tickQueue()
+	require.Len(t, m.queue.hostCPU, 1, "the tick takes a reading, with or without jobs")
+	first := m.queue.hostCPU[0].At
+	m.sampleHostCPU(first.Add(time.Second))
+	assert.Len(t, m.queue.hostCPU, 1, "at most once a queue interval")
+	m.sampleHostCPU(first.Add(queueInterval))
+	assert.Len(t, m.queue.hostCPU, 2)
+	readHostCPU = func() (sched.CPUTimes, error) { return sched.CPUTimes{}, errors.New("no /proc") }
+	m.sampleHostCPU(first.Add(2 * queueInterval))
+	assert.Empty(t, m.queue.hostCPU, "a failed read drops the readings: the idle cores are unknown")
 }

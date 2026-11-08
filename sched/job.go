@@ -201,8 +201,10 @@ type Record struct {
 	Adopted    bool   `json:"adopted,omitempty"`   // a restarted daemon adopted it: its sampled peak restarted
 
 	// Spare is what a grant added to its base claim when it started (job
-	// scaling spec §5.3); Claim is then the total.
-	Spare Claim `json:"spare,omitzero"`
+	// scaling spec §5.3); Claim is then the total. Explored says the grant
+	// was an explore's (exploration spec §4.4).
+	Spare    Claim `json:"spare,omitzero"`
+	Explored bool  `json:"explored,omitempty"`
 
 	// Dependent jobs (spec 2026-11-05-dependent-jobs §4): the job this one
 	// runs after (0 for none), and when it joined the queue: at its submit,
