@@ -35,6 +35,7 @@ func policyWant(cpus, memoryGB, claimCPUs, claimMemoryGB int) Policy {
 		ReserveGB:        4,
 		CPUPressurePct:   25,
 		CPUOvercommit:    2,
+		Explore:          true,
 	}
 }
 
@@ -81,6 +82,7 @@ func TestResolve_Explicit(t *testing.T) {
 				StarveAfterMinutes: 30, KeepFinished: 5, ReleasePastPeaks: &policyOff,
 				Contain: &policyOff, JobsCPUWeight: 30,
 				InteractiveReserveGB: 2, CPUPressurePct: 40, CPUOvercommit: 3,
+				Explore: &policyOff,
 			},
 			want: Policy{
 				Caps:           Caps{CPUs: 4, MemoryGB: 8, IOJobs: 1},
@@ -109,6 +111,7 @@ func TestResolve_Explicit(t *testing.T) {
 				ReserveGB:        1024,
 				CPUPressurePct:   100,
 				CPUOvercommit:    8,
+				Explore:          true,
 			},
 		},
 		{
@@ -126,6 +129,7 @@ func TestResolve_Explicit(t *testing.T) {
 				ReserveGB:        1,
 				CPUPressurePct:   1,
 				CPUOvercommit:    1,
+				Explore:          true,
 			},
 		},
 		{
@@ -291,6 +295,21 @@ func TestResolve_Borrow(t *testing.T) {
 			got, err := Resolve(config.SchedulerSettings{Borrow: tc.in}, policyFresco)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got.Borrow)
+		})
+	}
+}
+
+func TestResolve_Explore(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		in   *bool
+		want bool
+	}{{"absent is on", nil, true}, {"false", &off, false}, {"true", &on, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Resolve(config.SchedulerSettings{Explore: tc.in}, policyFresco)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Explore)
 		})
 	}
 }

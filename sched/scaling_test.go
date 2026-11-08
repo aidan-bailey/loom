@@ -83,6 +83,37 @@ func TestScalingOf(t *testing.T) {
 	assert.Nil(t, ScalingOf(belief(at(1, 0.31), laddered)).Widths, "a laddered run leaves its width out")
 	assert.Nil(t, ScalingOf(belief(at(1, 0.31), done(1<<20, 50, 100))).Widths, "an exclusive run (no cores) leaves its width out")
 	assert.Nil(t, ScalingOf(belief(at(4, 7.81), at(8, 12))).Widths, "an overrunner has no fit")
+
+	assert.Equal(t, 4, race.Widest, "one width")
+	assert.Zero(t, race.Top, "no pair")
+	assert.Equal(t, 2, gotest.Widest)
+	assert.Equal(t, 1.0, gotest.Top, "the two widest, 1 and 2: R = 2.03, held to 1")
+	assert.Equal(t, 8, clippy.Widest)
+	assert.Zero(t, clippy.Top, "4 cores 3.37 busy, 8 cores 1.02: R ≤ 1")
+	assert.Equal(t, 8, ScalingOf(belief(at(4, 7.81), at(8, 12))).Widest, "an overrunner's widest is still known")
+}
+
+func TestExploreTarget(t *testing.T) {
+	assert.Zero(t, ExploreTarget(nil, 14), "no belief")
+	assert.Zero(t, ExploreTarget(belief(done(1<<20, 10, 10)), 14), "no width (an exclusive run)")
+	assert.Equal(t, 4, ExploreTarget(belief(at(2, 0.97)), 14), "one width: twice it, whatever its p")
+	assert.Equal(t, 2, ExploreTarget(belief(at(1, 1.0)), 14), "one core: 2")
+	assert.Equal(t, 14, ExploreTarget(belief(at(8, 1.0)), 14), "held to the cap")
+	assert.Zero(t, ExploreTarget(belief(at(14, 2.0)), 14), "the cap is no wider than its widest")
+	assert.Zero(t, ExploreTarget(belief(at(4, 7.81)), 14), "an overrunner: the hints don't set its width")
+
+	assert.Equal(t, 8, ExploreTarget(belief(at(2, 0.97), at(4, 2.0)), 14), "the two widest gain: p ≈ 1, 2× faster at 8")
+	assert.Equal(t, 8, ExploreTarget(belief(at(2, 1.0), at(4, 1.6)), 14), "p ≈ 0.86: 1.43× faster at 8")
+	assert.Zero(t, ExploreTarget(belief(at(2, 1.0), at(4, 1.3)), 14), "p ≈ 0.63: 1.18× at 8, under 1.25")
+	assert.Zero(t, ExploreTarget(belief(at(2, 1.0), at(4, 1.0)), 14), "flat")
+	assert.Equal(t, 8, ExploreTarget(belief(at(1, 1.0), at(2, 1.0), at(4, 2.0)), 14),
+		"the two widest decide, not the fit over every pair")
+}
+
+func TestMinExploreWidth(t *testing.T) {
+	for widest, want := range map[int]int{1: 2, 2: 3, 3: 5, 4: 6, 8: 12} {
+		assert.Equal(t, want, MinExploreWidth(widest), "from %d", widest)
+	}
 }
 
 func TestScaling_Scale(t *testing.T) {

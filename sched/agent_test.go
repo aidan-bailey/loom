@@ -107,7 +107,7 @@ func TestGrant_PassesAgentJobsOver(t *testing.T) {
 			return nil
 		}
 		return wide
-	})
+	}, HostIdle{}).Spare
 	assert.Equal(t, map[JobID]Claim{1: {CPUs: 4, MemoryGB: 2}}, got, "an agent waiting for a slot stops no grant, and a starting one gets none")
 }
 

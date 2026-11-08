@@ -123,7 +123,7 @@ func (m *Model) admitJobs() {
 		// Spare cores for the jobs it starts, when nothing else waits (job
 		// scaling spec §5.3); a borrower gets none (memory borrowing spec
 		// §5.2).
-		spare = sched.Grant(granted, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) })
+		spare = sched.Grant(granted, jobs, policy, q.holding, func(r sched.Record) *sched.Belief { return q.beliefOf(r.Signature) }, sched.HostIdle{}).Spare
 	}
 	if !maps.Equal(waiting, q.waiting) {
 		q.moved()

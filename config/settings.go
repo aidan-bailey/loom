@@ -199,6 +199,9 @@ type SchedulerSettings struct {
 	// running jobs claim but don't use, giving it back when memory gets
 	// tight (memory borrowing spec §9); absent means false.
 	Borrow *bool `json:"borrow,omitempty"`
+	// Explore lets a quiet host run a job wider than its claim to learn how
+	// its command scales (exploration spec §5); absent means true.
+	Explore *bool `json:"explore,omitempty"`
 }
 
 // AgentSettings is the scheduler block's "agent": the advisor, a headless
@@ -225,6 +228,7 @@ func (s SchedulerSettings) clone() SchedulerSettings {
 	out.DefaultClaim = clonePtr(s.DefaultClaim)
 	out.Contain = clonePtr(s.Contain)
 	out.Borrow = clonePtr(s.Borrow)
+	out.Explore = clonePtr(s.Explore)
 	if s.Agent != nil {
 		a := *s.Agent
 		a.Enabled = clonePtr(s.Agent.Enabled)

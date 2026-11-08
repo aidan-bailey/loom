@@ -134,6 +134,9 @@ type Policy struct {
 	// Borrow lets a job the firm fit holds back start as a borrower, which
 	// gives its memory back when memory is tight (memory borrowing spec §9).
 	Borrow bool `json:"borrow"`
+	// Explore lets Grant run a job wider than its claim on a quiet host to
+	// learn how its command scales (exploration spec §5).
+	Explore bool `json:"explore"`
 	// AgentJobs is how many agent jobs of one account run at once (flow in
 	// loom part 3a, spec §5.2).
 	AgentJobs int `json:"agent_jobs"`

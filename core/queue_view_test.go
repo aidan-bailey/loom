@@ -32,6 +32,7 @@ var qvPolicy = sched.Policy{
 	ReserveGB:        4,
 	CPUPressurePct:   25,
 	CPUOvercommit:    2,
+	Explore:          true,
 	AgentJobs:        4,
 }
 

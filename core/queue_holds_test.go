@@ -169,7 +169,7 @@ func TestJobQueue_AnAdoptedRunGetsNoProfile(t *testing.T) {
 // file's, as it keeps the agent block.
 func TestJobQueue_ACapsEditKeepsTheReleaseSwitch(t *testing.T) {
 	m := wqModel(t)
-	wqConfig(t, m, `{"cpus": 4, "release_past_peaks": false, "contain": false, "jobs_cpu_weight": 30, "interactive_reserve_gb": 3, "cpu_pressure_pct": 40, "cpu_overcommit": 3, "agent_jobs": 8, "borrow": true}`)
+	wqConfig(t, m, `{"cpus": 4, "release_past_peaks": false, "contain": false, "jobs_cpu_weight": 30, "interactive_reserve_gb": 3, "cpu_pressure_pct": 40, "cpu_overcommit": 3, "agent_jobs": 8, "borrow": true, "explore": false}`)
 	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 6}))
 	got := config.LoadConfigFrom(m.queue.cfgDir).GetScheduler()
 	require.NotNil(t, got.ReleasePastPeaks, "the switch is still in the file")
@@ -186,4 +186,6 @@ func TestJobQueue_ACapsEditKeepsTheReleaseSwitch(t *testing.T) {
 	assert.Equal(t, 8, m.queue.policy.AgentJobs)
 	require.NotNil(t, got.Borrow, "and borrow (memory borrowing spec §9)")
 	assert.True(t, *got.Borrow)
+	require.NotNil(t, got.Explore, "and explore (exploration spec §5)")
+	assert.False(t, *got.Explore)
 }

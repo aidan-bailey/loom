@@ -77,7 +77,7 @@ func TestGrant_PassesRunJobsOver(t *testing.T) {
 			return nil
 		}
 		return wide
-	})
+	}, HostIdle{}).Spare
 	assert.Equal(t, map[JobID]Claim{1: {CPUs: 4, MemoryGB: 2}}, got, "a starting run job gets no grant and stops none")
 }
 

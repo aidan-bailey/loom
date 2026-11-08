@@ -2,6 +2,7 @@ package sched
 
 import (
 	"maps"
+	"math"
 	"slices"
 )
 
@@ -12,6 +13,45 @@ const (
 	growthBound   = 2    // the ideal width is at most this × the most cores a run had
 	floorGain     = 1.25 // the speed over the busy rule's cores a width needs to floor a claim
 )
+
+// The constants of exploring (exploration spec §3).
+const (
+	exploreFactor  = 2   // an explore's target, as a multiple of the widest width run
+	minExploreStep = 1.5 // the narrowest explore, as a multiple of the widest width run
+)
+
+// ExploreTarget is the width a quiet host would run a job of belief b (nil
+// for none) at to learn how its command scales (exploration spec §3): its
+// widest width × exploreFactor, held to capCPUs. 0 when b explores
+// nothing: it has no width, its command overruns, the held target is no
+// wider than its widest width, or, with 2 widths or more, its two widest
+// predict a speed at exploreFactor × the widest under floorGain × the
+// speed at the widest. A pure function of its arguments.
+func ExploreTarget(b *Belief, capCPUs int) int {
+	s := ScalingOf(b)
+	if s.Overruns || s.Widest < 1 {
+		return 0
+	}
+	target := min(exploreFactor*s.Widest, capCPUs)
+	if target <= s.Widest {
+		return 0
+	}
+	if len(s.Widths) >= 2 {
+		top := Scaling{Known: true, Parallel: s.Top}
+		if top.factor(s.Widest)/top.factor(exploreFactor*s.Widest) < floorGain {
+			return 0
+		}
+	}
+	return target
+}
+
+// MinExploreWidth is the narrowest width an explore from widest takes
+// (exploration spec §3): ⌈minExploreStep × widest⌉, and at least widest + 1.
+// Two runs at one width differ in busy cores by a median 1.10×, so a
+// narrower step mostly measures noise.
+func MinExploreWidth(widest int) int {
+	return max(int(math.Ceil(minExploreStep*float64(widest))), widest+1)
+}
 
 // Scaling is how a belief's command scales with cores (job scaling spec
 // §5.1). While Known is false (no run with 2 cores or more measured it, or
@@ -29,6 +69,11 @@ type Scaling struct {
 	// median busy cores, which Parallel never falls below.
 	Widths []int   `json:"widths,omitempty"`
 	Fit    float64 `json:"fit,omitempty"`
+	// Widest is the most cores any of the runs read had (exploration spec
+	// §3), the overrunner's too; 0 with none. Top is the pair's p of the
+	// two widest of Widths, set only with 2 widths or more.
+	Widest int     `json:"widest,omitempty"`
+	Top    float64 `json:"top,omitempty"`
 }
 
 // ScalingOf is how b's command scales (job scaling spec §5.1, fit spec
@@ -62,6 +107,7 @@ func ScalingOf(b *Belief) Scaling {
 	}
 	var s Scaling
 	s.Busy, _ = median(busies)
+	s.Widest = most
 	if ratio, ok := median(ratios); ok && ratio > overrunRatio {
 		s.Overruns = true
 		return s
@@ -73,6 +119,11 @@ func ScalingOf(b *Belief) Scaling {
 	if len(byWidth) >= 2 {
 		s.Widths = slices.Sorted(maps.Keys(byWidth))
 		s.Fit = fitParallel(s.Widths, byWidth)
+		n := len(s.Widths)
+		a, b := s.Widths[n-2], s.Widths[n-1]
+		busyA, _ := median(byWidth[a])
+		busyB, _ := median(byWidth[b])
+		s.Top = pairParallel(a, busyA, b, busyB)
 		if s.Fit > s.Parallel {
 			s.Parallel, s.Runs = s.Fit, len(busies)
 		}

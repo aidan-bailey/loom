@@ -41,11 +41,12 @@ func resolveBounded(key string, v, def, lo, hi int) (int, error) {
 // memory_gb is max(1, ⌊0.75 × RAM in GB⌋); io_jobs is 2; the default claim is
 // {min(4, cpus), min(6, memory_gb)}, each half taking its own default;
 // starve_after_minutes is 10; keep_finished is 50; agent_jobs is 4;
-// release_past_peaks is true; contain is true; jobs_cpu_weight is 50;
-// interactive_reserve_gb is 4; cpu_pressure_pct is 25; cpu_overcommit is
-// 2. It fails closed: a value outside its bounds (a negative one
-// included), a default claim above a cap, or an unreadable RAM with
-// memory_gb unset is an error and no Policy, since no cap is guessed. The
+// release_past_peaks is true; contain is true; explore is true;
+// jobs_cpu_weight is 50; interactive_reserve_gb is 4; cpu_pressure_pct is
+// 25; cpu_overcommit is 2. It fails closed: a value outside its bounds
+// (a negative one included), a default claim above a cap, or an unreadable
+// RAM with memory_gb unset is an error and no Policy, since no cap is
+// guessed. The
 // first fault, in the order cpus, memory_gb, io_jobs, starve_after_minutes,
 // keep_finished, agent_jobs, default_claim.cpus, default_claim.memory_gb,
 // jobs_cpu_weight, interactive_reserve_gb, cpu_pressure_pct,
@@ -123,5 +124,6 @@ func Resolve(s config.SchedulerSettings, h Host) (Policy, error) {
 		CPUPressurePct:   pressure,
 		CPUOvercommit:    overcommit,
 		Borrow:           s.Borrow != nil && *s.Borrow,
+		Explore:          s.Explore == nil || *s.Explore,
 	}, nil
 }
