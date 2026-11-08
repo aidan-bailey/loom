@@ -64,6 +64,46 @@ func TestSubmit_TakesItsAgentFromTheOneCallThatMadeIt(t *testing.T) {
 	}
 }
 
+// job2371 is the Bash command a subagent ran on 2026-11-08 to submit job 2371
+// (feedback thread 15): its argv's third element holds a single quote that
+// the command spells '"'"'.
+const job2371 = `cd /tb/Source/DilettanteTrading/prader-rs/.loom/worktrees/aidanb/agents-for-prader-app_18e515dc992a24b8; git status --short | head; free -g | sed -n 2p; loom job submit -d "playwright e2e web project" --lock port:4310 -- sh -c 'cd prader-app && env CARGO_INCREMENTAL=0 direnv exec . sh -c '"'"'PRADER_E2E_CHROMIUM="$(command -v chromium)" pnpm exec playwright test --project=web --reporter=line 2>&1 | tail -80'"'"''`
+
+// The shell removes quotes before loom sees a submit's argv, so an argument
+// quoted inside a quoted one reads differently in the call's command: an
+// element matches the command as written or as the shell unquotes it. Here
+// documents and comments, where the shell removes no quotes, don't throw the
+// unquoting off, and what it can't read ($'…') still matches as written.
+func TestSubmit_MatchesAnArgumentTheShellUnquoted(t *testing.T) {
+	hi := []string{"sh", "-c", "echo 'hi'"}
+	nested := `loom job submit -- sh -c 'echo '"'"'hi'"'"''`
+	cases := []struct {
+		name    string
+		command string
+		argv    []string
+		want    string
+	}{
+		{"job 2371", job2371, []string{"sh", "-c", `cd prader-app && env CARGO_INCREMENTAL=0 direnv exec . sh -c 'PRADER_E2E_CHROMIUM="$(command -v chromium)" pnpm exec playwright test --project=web --reporter=line 2>&1 | tail -80'`}, "a1"},
+		{"a quote escaped between single quotes", `loom job submit -- sh -c 'echo '\''hi'\'''`, hi, "a1"},
+		{"escapes inside double quotes", `loom job submit -- sh -c "printf \"%s\n\" \$HOME"`, []string{"sh", "-c", `printf "%s\n" $HOME`}, "a1"},
+		{"backslashes outside quotes", `loom job submit -- echo a\ b\'c`, []string{"echo", "a b'c"}, "a1"},
+		{"a here document's apostrophe before the submit", "cat <<'EOF'\nit's done\nEOF\n" + nested, hi, "a1"},
+		{"a tab-indented here document's apostrophe", "cat <<-EOF\n\tit's done\n\tEOF\n" + nested, hi, "a1"},
+		{"a here string is no here document", "cat <<< 'x'\n" + nested, hi, "a1"},
+		{"a comment's apostrophe before the submit", "# don't wait\n" + nested, hi, "a1"},
+		{"a word holding # is no comment", "echo a#'b\nc'\n" + nested, hi, "a1"},
+		{"what the unquoting can't read, as written", `echo $'it\'s'; loom job submit -- sh -c "echo 'hi'"`, hi, "a1"},
+		{"the quoted argument differs", `loom job submit -- sh -c 'echo '\''ho'\'''`, hi, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := callModel(t)
+			reportCall(t, m, ModCall{ID: "c1", Agent: "a1", Command: c.command})
+			assert.Equal(t, c.want, submitFromL1(t, m, c.argv...))
+		})
+	}
+}
+
 // A call accounts for as many submits as its command runs, and no more: a
 // third submit of the same command came from somewhere loom can't see.
 func TestSubmit_ACallAccountsForAsManySubmitsAsItRuns(t *testing.T) {
