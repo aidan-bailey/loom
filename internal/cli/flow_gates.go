@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +16,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 )
 
 // gateRunSchema is the run record's version (flow in loom part 2, spec §5.4).
-const gateRunSchema = 1
+const gateRunSchema = flowrun.GateSchema
 
 // The verdicts a step can have (spec §5.2).
 const (
@@ -39,7 +38,7 @@ const (
 
 // failing is the verdicts that fail a run, in the order a tally lists them
 // after PASS.
-var failing = []string{verdictFail, verdictKilled, verdictInfra, verdictVacuous}
+var failing = flowrun.GateFailing()
 
 // runLockWait bounds how long a gates command waits for another to release
 // the run lock: each holds it only to judge, queue and save.
@@ -49,82 +48,28 @@ var runLockWait = 30 * time.Second
 var notName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
 // gateRun is one `loom flow gates start` and what became of it: the run
-// record, <state>/gates/<name>.json.
-type gateRun struct {
-	Schema    int        `json:"schema"`
-	Name      string     `json:"name"`
-	Kind      string     `json:"kind"` // "story" or "final"
-	Commits   []string   `json:"commits,omitempty"`
-	Cwd       string     `json:"cwd"` // where its jobs run, queued-again ones too
-	Steps     []gateStep `json:"steps"`
-	Cancelled bool       `json:"cancelled,omitempty"`
-	// Nonce is this run's own, which keys each of its submits (gateKey);
-	// "" in a record from before keys, whose submits carry none.
-	Nonce string `json:"nonce,omitempty"`
-}
+// record, <state>/gates/<name>.json (flowrun.GateRecord).
+type gateRun = flowrun.GateRecord
 
 // gateStep is one line of the expansion and what became of it.
-type gateStep struct {
-	Line    string        `json:"line"`              // as the expansion printed it, a LOCKED line as RUN <command>
-	Run     bool          `json:"run,omitempty"`     // a RUN or LOCKED line, which a job runs
-	Locks   []string      `json:"locks,omitempty"`   // a LOCKED line's locks, which each of its jobs takes
-	Jobs    []sched.JobID `json:"jobs,omitempty"`    // its job in each generation, the latest last
-	Verdict string        `json:"verdict,omitempty"` // "" until judged
-	Why     string        `json:"why,omitempty"`
-	Log     string        `json:"log,omitempty"` // its output, copied when its job ended
-}
-
-// text is the line past its first word: a RUN line's command, or a SKIPPED
-// or FAIL line's gate and why.
-func (s gateStep) text() string {
-	_, rest, _ := strings.Cut(s.Line, " ")
-	return rest
-}
-
-// job is the step's latest job, 0 for none.
-func (s gateStep) job() sched.JobID {
-	if len(s.Jobs) == 0 {
-		return 0
-	}
-	return s.Jobs[len(s.Jobs)-1]
-}
-
-// ended reports whether every step has a verdict, or the run was cancelled.
-func (r *gateRun) ended() bool {
-	return r.Cancelled || !slices.ContainsFunc(r.Steps, func(s gateStep) bool { return s.Verdict == "" })
-}
-
-// failed reports whether a step's verdict fails the run.
-func (r *gateRun) failed() bool {
-	return slices.ContainsFunc(r.Steps, func(s gateStep) bool { return slices.Contains(failing, s.Verdict) })
-}
-
-// gateOf is the table number of the step one of whose jobs is id, 0 for none.
-func (r *gateRun) gateOf(id sched.JobID) int {
-	for i, s := range r.Steps {
-		if id != 0 && slices.Contains(s.Jobs, id) {
-			return i + 1
-		}
-	}
-	return 0
-}
+type gateStep = flowrun.GateRecordStep
 
 // openJobs is the latest job of each RUN step not yet judged.
-func (r *gateRun) openJobs() []sched.JobID {
+func openJobs(r *gateRun) []sched.JobID {
 	var ids []sched.JobID
 	for _, s := range r.Steps {
-		if s.Run && s.Verdict == "" && s.job() != 0 {
-			ids = append(ids, s.job())
+		if s.Run && s.Verdict == "" && s.Job() != 0 {
+			ids = append(ids, s.Job())
 		}
 	}
 	return ids
 }
 
-// plan fills r's steps from the expansion's lines (spec §5.1): a RUN line a
+// planSteps fills r's steps from the expansion's lines (spec §5.1): a RUN line a
 // job will run, a LOCKED line one whose job takes the locks it names first
 // (LOCKED <lock>[,<lock>…] <command>), SKIPPED and FAIL lines judged as
 // printed, and in a story run every RUN line after the first FAIL SKIPPED.
-func (r *gateRun) plan(lines []string) error {
+func planSteps(r *gateRun, lines []string) error {
 	failedAt := 0
 	for _, line := range lines {
 		st := gateStep{Line: line}
@@ -221,7 +166,7 @@ func newFlowGatesStartCmd() *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: err.Error()}
 			}
-			if err := run.plan(lines); err != nil {
+			if err := planSteps(run, lines); err != nil {
 				return &ExitError{Code: exitNotRun, Msg: err.Error()}
 			}
 			// A daemon lost mid-chain (a restart) is joined again, and the
@@ -397,7 +342,7 @@ func (d *client) startRun(out io.Writer, dir string, run *gateRun) error {
 	fmt.Fprintf(out, "started %s: %d steps, %s\n", run.Name, len(run.Steps), jobsText(ids))
 	for i, st := range run.Steps {
 		if st.Verdict != "" {
-			fmt.Fprintf(out, "%d %s: %s%s\n", i+1, st.Verdict, st.text(), detail(st))
+			fmt.Fprintf(out, "%d %s: %s%s\n", i+1, st.Verdict, st.Text(), detail(st))
 		}
 	}
 	return nil
@@ -413,10 +358,10 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 	var ids []sched.JobID
 	var after sched.JobID
 	for _, i := range steps {
-		cmd := run.Steps[i].text()
+		cmd := run.Steps[i].Text()
 		sub := flowJob([]string{"bash", "-c", cmd}, fmt.Sprintf("gate %d/%d: %s", i+1, len(run.Steps), cmd), run.Cwd, after)
 		sub.Locks = slices.Clone(run.Steps[i].Locks)
-		sub.Key = run.gateKey(i)
+		sub.Key = gateKey(run, i)
 		id, err := submitFlowJob(d, sub)
 		if err == nil {
 			err = d.keptLocks(sub, id)
@@ -439,7 +384,7 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 // lost daemon has the same key, so the daemon answers it with the job the
 // lost try queued; a later generation, or another run, has another. "" for
 // a run with no nonce.
-func (r *gateRun) gateKey(i int) string {
+func gateKey(r *gateRun, i int) string {
 	if r.Nonce == "" {
 		return ""
 	}
@@ -487,12 +432,12 @@ func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, deadlin
 		if err != nil {
 			return err
 		}
-		if run.ended() || !time.Now().Before(deadline) {
+		if run.Ended() || !time.Now().Before(deadline) {
 			d.events()
 			printRun(out, d.Queue(), run)
 			return runExit(run)
 		}
-		open := run.openJobs()
+		open := openJobs(run)
 		_, err = d.await(max(time.Until(deadline), time.Millisecond), func([]core.Event) bool {
 			return slices.ContainsFunc(open, func(id sched.JobID) bool {
 				v, ok := jobOf(d.Queue(), id)
@@ -518,7 +463,7 @@ func (d *client) advance(conf flowConf, dir, name string) (*gateRun, error) {
 	if err != nil {
 		return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v; the record is left as it is", err)}
 	}
-	if run.ended() {
+	if run.Ended() {
 		return run, nil
 	}
 	d.events()
@@ -530,10 +475,10 @@ func (d *client) advance(conf flowConf, dir, name string) (*gateRun, error) {
 		if !st.Run || st.Verdict != "" {
 			continue
 		}
-		v, ok := jobOf(q, st.job())
+		v, ok := jobOf(q, st.Job())
 		switch {
 		case !ok:
-			st.Verdict, st.Why = verdictInfra, fmt.Sprintf("the queue no longer knows job %d", st.job())
+			st.Verdict, st.Why = verdictInfra, fmt.Sprintf("the queue no longer knows job %d", st.Job())
 		case !v.State.Finished():
 			continue
 		default:
@@ -581,7 +526,7 @@ func cascadedFrom(q core.QueueView, run *gateRun, v core.JobView) (int, bool) {
 		}
 		root, cascaded = prev, true
 	}
-	return run.gateOf(root.ID), cascaded
+	return run.GateOf(root.ID), cascaded
 }
 
 // judgeStep gives st its verdict from its ended job v (spec §5.2's table):
@@ -674,12 +619,12 @@ func printRun(out io.Writer, q core.QueueView, run *gateRun) {
 		if status == "" {
 			status = pendingStatus(q, run, st)
 		}
-		fmt.Fprintf(out, "%d %s: %s%s\n", i+1, status, st.text(), detail(st))
+		fmt.Fprintf(out, "%d %s: %s%s\n", i+1, status, st.Text(), detail(st))
 	}
 	switch {
 	case run.Cancelled:
 		fmt.Fprintln(out, "cancelled")
-	case run.ended():
+	case run.Ended():
 		fmt.Fprintf(out, "ended: %s\n", tally(run))
 	default:
 		fmt.Fprintf(out, "not ended: call loom flow gates wait %s again\n", run.Name)
@@ -692,12 +637,12 @@ func pendingStatus(q core.QueueView, run *gateRun, st gateStep) string {
 	if run.Cancelled {
 		return "cancelled"
 	}
-	v, ok := jobOf(q, st.job())
+	v, ok := jobOf(q, st.Job())
 	switch {
 	case !ok:
 		return "waiting"
 	case v.State == sched.Held:
-		if k := run.gateOf(v.After); k > 0 {
+		if k := run.GateOf(v.After); k > 0 {
 			return fmt.Sprintf("held after gate %d", k)
 		}
 	}
@@ -744,9 +689,9 @@ func tally(run *gateRun) string {
 // when it ended cancelled or failing, else 0.
 func runExit(run *gateRun) error {
 	switch {
-	case !run.ended():
+	case !run.Ended():
 		return &ExitError{Code: exitStillRunning}
-	case run.Cancelled || run.failed():
+	case run.Cancelled || run.Failed():
 		return &ExitError{Code: 1}
 	}
 	return nil
@@ -764,13 +709,13 @@ func (d *client) cancelRun(out io.Writer, dir, name string) error {
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v; the record is left as it is", err)}
 	}
-	if run.ended() {
+	if run.Ended() {
 		fmt.Fprintf(out, "nothing to cancel: %s has ended\n", run.Name)
 		return nil
 	}
 	d.events()
 	var open []sched.JobID
-	for _, id := range run.openJobs() {
+	for _, id := range openJobs(run) {
 		if v, ok := jobOf(d.Queue(), id); ok && !v.State.Finished() {
 			open = append(open, id)
 		}
@@ -803,33 +748,14 @@ func jobsText(ids []sched.JobID) string {
 }
 
 // runPath is run name's record in dir.
-func runPath(dir, name string) string { return filepath.Join(dir, name+".json") }
+func runPath(dir, name string) string { return flowrun.GatePath(dir, name) }
 
 // readRun reads a run record, refusing one it can't decode or of another
 // schema.
-func readRun(path string) (*gateRun, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var r gateRun
-	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if r.Schema != gateRunSchema {
-		return nil, fmt.Errorf("%s: schema %d, and this loom reads %d", path, r.Schema, gateRunSchema)
-	}
-	return &r, nil
-}
+func readRun(path string) (*gateRun, error) { return flowrun.ReadGate(path) }
 
 // saveRun writes r's record whole (a temp file renamed).
-func saveRun(dir string, r *gateRun) error {
-	b, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return err
-	}
-	return config.AtomicWriteFile(runPath(dir, r.Name), append(b, '\n'), 0o600)
-}
+func saveRun(dir string, r *gateRun) error { return flowrun.SaveGate(dir, r) }
 
 // activeRun is the name of a run in dir that hasn't ended, or "". A record
 // it can't read is an error, never passed over.
@@ -843,7 +769,7 @@ func activeRun(dir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if !r.ended() {
+		if !r.Ended() {
 			return r.Name, nil
 		}
 	}

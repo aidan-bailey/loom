@@ -963,7 +963,7 @@ func newFlowRunCancelCmd() *cobra.Command {
 					}
 				}
 				if n := len(st.Gates); n > 0 {
-					if r, err := readRun(runPath(dirs.gates, st.Gates[n-1])); err == nil && !r.ended() {
+					if r, err := readRun(runPath(dirs.gates, st.Gates[n-1])); err == nil && !r.Ended() {
 						if err := d.cancelRun(io.Discard, dirs.gates, st.Gates[n-1]); err != nil {
 							return err
 						}

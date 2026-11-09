@@ -115,10 +115,10 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 			if run, err = readAgentRun(agentPath(fx.agents, name)); err != nil {
 				return err
 			}
-			if run.ended() {
+			if run.Ended() {
 				read = filepath.Join(fx.agents, name, "report.md")
 				if run.Report == "" {
-					v, known := jobOf(d.Queue(), run.current().ID)
+					v, known := jobOf(d.Queue(), run.Current().ID)
 					read = ""
 					if known {
 						read = v.LogPath
@@ -126,7 +126,7 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 				}
 				return nil
 			}
-			id := run.current().ID
+			id := run.Current().ID
 			v, known := jobOf(d.Queue(), id)
 			if !known {
 				// The view of a job just queued can come after its Reply.
@@ -161,13 +161,13 @@ func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {
 	if err != nil {
 		return flowrun.Report{}, err
 	}
-	if run.current().Answer != text {
+	if run.Current().Answer != text {
 		if run.Status != "NEEDS_CONTEXT" && run.Status != "BLOCKED" && run.Status != agentTurnCap {
 			return flowrun.Report{}, fmt.Errorf("agent run %s is %s, and only a run at NEEDS_CONTEXT, BLOCKED or TURN_CAP is resumed", name, run.Status)
 		}
 		fx.logf("resume %s", name)
 		err := fx.daemon(func(d *client) error {
-			if r, err := readAgentRun(agentPath(fx.agents, name)); err != nil || r.current().Answer == text {
+			if r, err := readAgentRun(agentPath(fx.agents, name)); err != nil || r.Current().Answer == text {
 				return err // the lost daemon took the answer after all
 			}
 			return d.answerAgent(io.Discard, fx.agents, name, fx.root, text)
@@ -219,7 +219,7 @@ func (fx *runFX) Gates(name string, commits []string) (flowrun.GateResult, error
 		}
 		lines, err := fx.conf.Gates(args...)
 		if err == nil {
-			err = run.plan(lines)
+			err = planSteps(run, lines)
 		}
 		if err != nil {
 			return flowrun.GateResult{Ended: "infra", Table: "the gates couldn't be expanded: " + err.Error()}, nil
@@ -245,11 +245,11 @@ func (fx *runFX) Gates(name string, commits []string) (flowrun.GateResult, error
 			if err != nil {
 				return err
 			}
-			if run.ended() {
+			if run.Ended() {
 				res = gateResult(d.Queue(), run)
 				return nil
 			}
-			open := run.openJobs()
+			open := openJobs(run)
 			if _, err := d.await(170*time.Second, func([]core.Event) bool {
 				return slices.ContainsFunc(open, func(id sched.JobID) bool {
 					v, ok := jobOf(d.Queue(), id)
@@ -276,7 +276,7 @@ func gateResult(q core.QueueView, run *gateRun) flowrun.GateResult {
 		if !slices.Contains(failing, st.Verdict) {
 			continue
 		}
-		res.Failing = append(res.Failing, flowrun.GateStep{Line: st.text(), Verdict: st.Verdict, Log: st.Log})
+		res.Failing = append(res.Failing, flowrun.GateStep{Line: st.Text(), Verdict: st.Verdict, Log: st.Log})
 		if st.Verdict == verdictInfra {
 			res.Ended = "infra"
 		} else if res.Ended == "passed" {

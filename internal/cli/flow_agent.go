@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
@@ -22,43 +22,20 @@ import (
 // agentRunSchema is the agent-run record's version (spec §5.5).
 const agentRunSchema = 1
 
-// An agent run's statuses beside a report's own (spec §5.5).
+// An agent run's statuses beside a report's own (spec §5.5), and its
+// record's types, which internal/flowrun holds for internal/flowview too.
 const (
-	agentRunning   = "running"
-	agentFailed    = "failed"
-	agentCancelled = "cancelled"
+	agentRunning   = flowrun.AgentRunning
+	agentFailed    = flowrun.AgentFailed
+	agentCancelled = flowrun.AgentCancelled
 )
 
 // agentRun is one `loom flow agent run` and every job after it on its
-// Claude session: <state>/agents/<id>.json.
-type agentRun struct {
-	Schema   int        `json:"schema"`
-	ID       string     `json:"id"`
-	Role     string     `json:"role"`
-	Effort   string     `json:"effort,omitempty"`
-	Cwd      string     `json:"cwd"`
-	Brief    string     `json:"brief"`
-	Session  string     `json:"session,omitempty"`
-	Jobs     []agentJob `json:"jobs"`
-	Status   string     `json:"status"`
-	Question string     `json:"question,omitempty"`
-	Report   string     `json:"report,omitempty"`
-	CostUSD  float64    `json:"cost_usd,omitempty"`
-	Turns    int        `json:"turns,omitempty"`
-	Why      string     `json:"why,omitempty"`
-}
+// Claude session: <state>/agents/<id>.json (flowrun.AgentRecord).
+type agentRun = flowrun.AgentRecord
 
 // agentJob is one job of a run: its start, or an answer resuming it.
-type agentJob struct {
-	ID     sched.JobID `json:"id"`
-	Answer string      `json:"answer,omitempty"`
-	Read   bool        `json:"read,omitempty"` // its result is in the record
-}
-
-func (r *agentRun) current() *agentJob { return &r.Jobs[len(r.Jobs)-1] }
-
-// ended reports whether the run has a report or ended without one.
-func (r *agentRun) ended() bool { return r.Status != agentRunning }
+type agentJob = flowrun.AgentRecordJob
 
 func newFlowAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "agent", Short: "Run a flow agent headless as a job, wait for its report, answer its question"}
@@ -145,7 +122,7 @@ func (d *client) startAgent(out io.Writer, dir string, run *agentRun, argv []str
 				break
 			}
 		}
-	} else if old, err := readAgentRun(agentPath(dir, run.ID)); err == nil && !old.ended() {
+	} else if old, err := readAgentRun(agentPath(dir, run.ID)); err == nil && !old.Ended() {
 		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s hasn't ended (loom flow agent wait %s follows it)", run.ID, run.ID)}
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
@@ -228,10 +205,10 @@ func (d *client) waitAgent(out io.Writer, dir, id string, deadline time.Time) er
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
-	if !run.ended() {
-		v, known, err := d.jobWithin(run.current().ID, time.Until(deadline))
+	if !run.Ended() {
+		v, known, err := d.jobWithin(run.Current().ID, time.Until(deadline))
 		if err != nil {
-			return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: job %d goes on, but %v (loom flow agent wait %s follows it again)", run.current().ID, err, id)}
+			return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: job %d goes on, but %v (loom flow agent wait %s follows it again)", run.Current().ID, err, id)}
 		}
 		if known && !v.State.Finished() {
 			fmt.Fprintf(out, "running %s: job %d %s\n", id, v.ID, standing(d.Queue(), v))
@@ -255,10 +232,10 @@ func (d *client) settleAgent(dir, id string, v core.JobView, known bool) (*agent
 	if err != nil {
 		return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
-	if run.ended() || run.current().Read {
+	if run.Ended() || run.Current().Read {
 		return run, nil
 	}
-	job := run.current()
+	job := run.Current()
 	job.Read = true
 	switch {
 	case !known:
@@ -490,7 +467,7 @@ func newFlowAgentCancelCmd() *cobra.Command {
 					fmt.Fprintf(c.OutOrStdout(), "nothing to cancel: %s is %s\n", name, run.Status)
 					return nil
 				}
-				fmt.Fprintf(c.OutOrStdout(), "cancelled %s: job %d\n", name, run.current().ID)
+				fmt.Fprintf(c.OutOrStdout(), "cancelled %s: job %d\n", name, run.Current().ID)
 				return err
 			})
 		},
@@ -511,17 +488,17 @@ func (d *client) cancelAgentRun(dir, name string) (*agentRun, bool, error) {
 	if err != nil {
 		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
-	if run.ended() {
+	if run.Ended() {
 		return run, false, nil
 	}
 	// A job that has ended already is only marked: its cancel would be
 	// refused.
 	var refused error
 	d.events()
-	if v, ok := jobOf(d.Queue(), run.current().ID); ok && !v.State.Finished() {
+	if v, ok := jobOf(d.Queue(), run.Current().ID); ok && !v.State.Finished() {
 		refused = d.cancelJobs([]sched.JobID{v.ID})
 	}
-	run.current().Read = true
+	run.Current().Read = true
 	run.Status = agentCancelled
 	if err := saveAgentRun(dir, run); err != nil {
 		return nil, false, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v", err)}
@@ -532,7 +509,7 @@ func (d *client) cancelAgentRun(dir, name string) (*agentRun, bool, error) {
 	return run, true, nil
 }
 
-func agentPath(dir, id string) string { return filepath.Join(dir, id+".json") }
+func agentPath(dir, id string) string { return flowrun.AgentPath(dir, id) }
 
 // latestAgent is name checked, or dir's latest run when name is "". A name
 // with no record is exit 125.
@@ -564,32 +541,10 @@ func latestAgent(dir, name string) (string, error) {
 }
 
 // readAgentRun reads a record, refusing one it can't decode or of another schema.
-func readAgentRun(path string) (*agentRun, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var r agentRun
-	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if r.Schema != agentRunSchema {
-		return nil, fmt.Errorf("%s: schema %d, and this loom reads %d", path, r.Schema, agentRunSchema)
-	}
-	if len(r.Jobs) == 0 {
-		return nil, fmt.Errorf("%s: a run with no job", path)
-	}
-	return &r, nil
-}
+func readAgentRun(path string) (*agentRun, error) { return flowrun.ReadAgent(path) }
 
 // saveAgentRun writes r whole (a temp file renamed).
-func saveAgentRun(dir string, r *agentRun) error {
-	b, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return err
-	}
-	return config.AtomicWriteFile(agentPath(dir, r.ID), append(b, '\n'), 0o600)
-}
+func saveAgentRun(dir string, r *agentRun) error { return flowrun.SaveAgent(dir, r) }
 
 // lockAgents takes the agents dir's lock, so no two commands write a
 // record at once; the function it returns releases it.

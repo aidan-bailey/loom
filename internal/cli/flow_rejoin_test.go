@@ -351,8 +351,8 @@ func TestFlowGatesWait_ARestartMidRequeueQueuesNoGateTwice(t *testing.T) {
 	assert.Equal(t, 2, gatesNamed(d, "gate 2/3:"), "gate 2 ran in two generations, not three")
 	assert.Equal(t, 2, gatesNamed(d, "gate 3/3:"))
 	run := readTestRun(t, conf, "final")
-	assert.Equal(t, *queued, run.Steps[1].job(), "the job queued before the loss is the gate's")
-	assert.Equal(t, *queued, d.job(run.Steps[2].job()).After, "and the gate after it runs after it")
+	assert.Equal(t, *queued, run.Steps[1].Job(), "the job queued before the loss is the gate's")
+	assert.Equal(t, *queued, d.job(run.Steps[2].Job()).After, "and the gate after it runs after it")
 }
 
 // TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice: a start that loses
@@ -371,5 +371,5 @@ func TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("started final: 2 steps, jobs %d, %d\n", *queued, *queued+1), out)
 	assert.Len(t, d.jobs(), 2, "no gate was queued twice")
 	run := readTestRun(t, conf, "final")
-	assert.Equal(t, *queued, d.job(run.Steps[1].job()).After)
+	assert.Equal(t, *queued, d.job(run.Steps[1].Job()).After)
 }

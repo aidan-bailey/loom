@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,7 @@ func TestFlowGates_AFinalFailQueuesTheRestAgain(t *testing.T) {
 	again := run.Steps[1].Jobs[1]
 	assert.Equal(t, sched.Cancelled, d.job(run.Steps[1].Jobs[0]).State)
 	assert.Equal(t, sched.JobID(0), d.job(again).After, "the new chain's first gate runs after nothing")
-	assert.Equal(t, again, d.job(run.Steps[2].job()).After)
+	assert.Equal(t, again, d.job(run.Steps[2].Job()).After)
 }
 
 func TestFlowGates_EachVerdictComesFromTheJobsEnd(t *testing.T) {
@@ -162,8 +163,8 @@ func TestFlowGates_AGateWithLocksIsQueuedWithThem(t *testing.T) {
 	assert.Contains(t, out, "2 PASS: echo two\n")
 	run := readTestRun(t, conf, "final")
 	require.Len(t, run.Steps[1].Jobs, 2, "gate 2 ran in a second generation")
-	assert.Equal(t, []string{"port:4300", "e2e/db"}, d.job(run.Steps[1].job()).Locks, "a gate queued again keeps its locks")
-	assert.Empty(t, d.job(run.Steps[2].job()).Locks)
+	assert.Equal(t, []string{"port:4300", "e2e/db"}, d.job(run.Steps[1].Job()).Locks, "a gate queued again keeps its locks")
+	assert.Empty(t, d.job(run.Steps[2].Job()).Locks)
 }
 
 // A daemon from before locks drops a submission's Locks: the gate would run
@@ -192,12 +193,12 @@ func TestFlowGates_ADaemonThatIgnoresLocksQueuesNoChain(t *testing.T) {
 
 func TestGateRun_PlanReadsALockedLine(t *testing.T) {
 	r := &gateRun{Kind: "story"}
-	require.NoError(t, r.plan([]string{"LOCKED port:4300,e2e/db pnpm e2e --project x", "FAIL x (why)", "LOCKED port:1 echo"}))
+	require.NoError(t, planSteps(r, []string{"LOCKED port:4300,e2e/db pnpm e2e --project x", "FAIL x (why)", "LOCKED port:1 echo"}))
 	assert.Equal(t, gateStep{Line: "RUN pnpm e2e --project x", Run: true, Locks: []string{"port:4300", "e2e/db"}}, r.Steps[0])
 	assert.Equal(t, gateStep{Line: "RUN echo", Run: true, Locks: []string{"port:1"}, Verdict: verdictSkipped, Why: "not run: gate 2 failed"}, r.Steps[2],
 		"a locked gate after a story's FAIL is skipped like any other")
 	for _, bad := range []string{"LOCKED port:4300", "LOCKED  echo", "LOCKED port:4300, echo", "LOCKED port;1 echo", "LOCKED a,a echo"} {
-		assert.Error(t, (&gateRun{Kind: "final"}).plan([]string{bad}), bad)
+		assert.Error(t, planSteps(&gateRun{Kind: "final"}, []string{bad}), bad)
 	}
 }
 
@@ -364,4 +365,11 @@ func TestFlowGates_RunArgsAndSlug(t *testing.T) {
 	}
 	assert.Equal(t, "abc1234def56", runSlug("abc1234def5678"))
 	assert.Equal(t, "HEAD-2", runSlug("HEAD~2"))
+}
+
+// TestGateFailing_IsTheCLIsVerdicts holds flowrun's copy of the failing
+// verdicts, which internal/flowview judges gate records by, to the
+// verdicts this package writes.
+func TestGateFailing_IsTheCLIsVerdicts(t *testing.T) {
+	assert.Equal(t, []string{verdictFail, verdictKilled, verdictInfra, verdictVacuous}, flowrun.GateFailing())
 }
