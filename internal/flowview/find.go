@@ -6,11 +6,13 @@
 package flowview
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -18,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/internal/flowrun"
 )
 
@@ -226,7 +229,7 @@ func gather(top, base, recordsDir string) ([]*flow, error) {
 		}
 	}
 	for _, p := range files {
-		if !specDesign.MatchString(p) || named[p] || mentioned(planTexts, p) {
+		if !specDesign.MatchString(p) || named[p] || mentioned(planTexts, p) || grepPlans(top, filepath.Base(p)) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(top, p)); err != nil {
@@ -429,6 +432,19 @@ func mentioned(texts map[string]string, spec string) bool {
 		}
 	}
 	return false
+}
+
+// grepPlans reports whether a tracked file under a plans dir of top names
+// word (git grep): a spec whose plan was committed before the base. A grep
+// git can't run counts as a mention, so a doubt adds no flow.
+func grepPlans(top, word string) bool {
+	cmd := internalexec.GitCommand(context.Background(), top, "--no-optional-locks", "grep", "-q", "-F", "-e", word, "--", ":(glob)**/plans/**")
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return false
+	}
+	return true
 }
 
 // inDir reports whether p has a directory named dir among its parents.

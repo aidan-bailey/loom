@@ -120,3 +120,20 @@ func TestHistory_LeavesRetrosOut(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
+
+func TestHistory_ThePlanLinesOtherShapes(t *testing.T) {
+	dir := t.TempDir()
+	table := "\n## Stories\n\n| Story | Developer |\n|---|---|\n| 1 | junior-dev |\n| 2 | junior-dev |\n| 3 | intermediate-dev |\n\n## Notes\n"
+	writeFile(t, dir, "-k/2026-10-17-a.md", "# Run\n\n- Plan: `docs/plans/a.md` (10 stories, 4,561 lines)\n")
+	writeFile(t, dir, "-k/2026-11-04-b.md", "# Run\n\n- Plan: docs/superpowers/plans/b.md, 7 stories\n")
+	writeFile(t, dir, "-k/2026-10-22-c.md", "# Run\n\n- **Plan:** `docs/superpowers/plans/c.md`\n"+table)
+	got, err := History(dir)
+	require.NoError(t, err)
+	stories := map[string]int{}
+	for _, r := range got {
+		assert.Empty(t, r.Unreadable, r.File)
+		stories[r.File] = r.Stories
+	}
+	assert.Equal(t, map[string]int{"2026-10-17-a.md": 10, "2026-11-04-b.md": 7, "2026-10-22-c.md": 3}, stories,
+		"a count after the path in any shape, else the Stories table's rows")
+}

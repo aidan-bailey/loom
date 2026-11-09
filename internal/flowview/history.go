@@ -37,7 +37,7 @@ type PastRun struct {
 
 var (
 	headerLine  = regexp.MustCompile(`^-\s+(?:\*\*)?([A-Za-z ]+):(?:\*\*)?\s*(.*)$`)
-	storyCount  = regexp.MustCompile(`\((\d+) stor(?:y|ies)\)`)
+	storyCount  = regexp.MustCompile(`(\d+)\s+stor(?:y|ies)\b`)
 	startEnd    = regexp.MustCompile(`^([^,\s]+),?(?:\s+(?:\*\*)?End:(?:\*\*)?\s*(\S+))?`)
 	costComment = regexp.MustCompile(`<!-- agent-costs (\{.*\}) -->`)
 )
@@ -127,6 +127,9 @@ func readRecord(key, path string) PastRun {
 		r.HasUSD = true
 	}
 	r.FinalUSD, r.HasFinal = finalUSD(text)
+	if r.Stories == 0 {
+		r.Stories = storyRows(text)
+	}
 	switch {
 	case r.Plan == "":
 		problems = append([]string{"no Plan line"}, problems...)
@@ -137,6 +140,27 @@ func readRecord(key, path string) PastRun {
 		r.Unreadable = fmt.Sprintf("%s: %s", r.File, strings.Join(problems, "; "))
 	}
 	return r
+}
+
+// storyRows counts the rows of a record's Stories table, for a record whose
+// Plan line gives no story count.
+func storyRows(text string) int {
+	in, n := false, 0
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case t == "## Stories":
+			in = true
+		case !in:
+		case strings.HasPrefix(t, "#"):
+			return n
+		case strings.HasPrefix(t, "|"):
+			if !strings.HasPrefix(t, "|---") && !strings.HasPrefix(t, "| Story") && !strings.HasPrefix(t, "|:") {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // finalUSD sums the USD of the Cost by agent table's rows whose Agent cell

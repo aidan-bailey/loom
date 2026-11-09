@@ -77,6 +77,17 @@ func TestFind_ASpecWithNoPlanIsAFlowInDesign(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+func TestFind_ASpecWhosePlanWasCommittedBeforeTheBaseIsNoFlow(t *testing.T) {
+	repo := gitRepo(t)
+	commitFile(t, repo, "docs/superpowers/plans/2026-11-09-p.md", "# P plan\n\nSpec: `"+specP+"`\n")
+	base := head(t, repo)
+	git(t, repo, "checkout", "-q", "-b", "feat")
+	commitFile(t, repo, specP, "# P design\n")
+	got, err := Find(repo, base, t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, got, "the plan that names the spec sits before the base, outside the branch's files")
+}
+
 func TestFind_ARunStateNamesItsPlanEvenOutsideTheDiff(t *testing.T) {
 	repo := gitRepo(t)
 	commitFile(t, repo, specP, "# P design\n")

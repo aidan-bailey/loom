@@ -46,14 +46,17 @@ type GateLine struct {
 
 // StepView is one agent or gate run of a story.
 type StepView struct {
-	Name   string
-	Kind   string
-	K      int
-	Role   string // an agent's role, "" for a gate run
-	Status string // a report's status (DONE, BLOCKED, …), running, starting, failed, cancelled; a gate run's passed, failed, infra or running
-	Jobs   []sched.JobID
-	Report bool // agents/<name>/report.md exists
-	Gates  []GateLine
+	Name string
+	Kind string
+	K    int
+	Role string // an agent's role, "" for a gate run
+	// Session is an agent run's Claude session as its record has it, ""
+	// until its job has ended.
+	Session string
+	Status  string // a report's status (DONE, BLOCKED, …), running, starting, failed, cancelled; a gate run's passed, failed, infra or running
+	Jobs    []sched.JobID
+	Report  bool // agents/<name>/report.md exists
+	Gates   []GateLine
 	// Unreadable says why the step's record can't be read.
 	Unreadable string
 }
@@ -224,7 +227,7 @@ func agentStep(st *flowrun.State, name string, s flowrun.Step, dir string) StepV
 	case err != nil:
 		v.Unreadable = err.Error()
 	default:
-		v.Role, v.Status = rec.Role, rec.Status
+		v.Role, v.Status, v.Session = rec.Role, rec.Status, rec.Session
 		for _, j := range rec.Jobs {
 			v.Jobs = append(v.Jobs, j.ID)
 		}
