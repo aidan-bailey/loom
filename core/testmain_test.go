@@ -28,6 +28,10 @@ func TestMain(m *testing.M) {
 	// Exploring reads the host's CPU times: tests see none, so nothing
 	// explores, unless a test sets its own (wqIdle).
 	readHostCPU = func() (sched.CPUTimes, error) { return sched.CPUTimes{}, sched.ErrUnsupported }
+	// No look at sessions' flows on the tick or at a Stop: a look would add
+	// a background job to every count the tests make; the flow tests turn
+	// them on (newFlowFixture).
+	flowLooksOn = false
 	os.Exit(runTests(m))
 }
 

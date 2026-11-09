@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -295,6 +296,10 @@ func fill(t *testing.T, v reflect.Value, path string, depth int) {
 		s := reflect.MakeSlice(typ, 1, 1)
 		fill(t, s.Index(0), path+"[]", depth+1)
 		v.Set(s)
+	case reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			fill(t, v.Index(i), path+"["+strconv.Itoa(i)+"]", depth+1)
+		}
 	case reflect.Map:
 		k := reflect.New(typ.Key()).Elem()
 		fill(t, k, path+"{key}", depth+1)

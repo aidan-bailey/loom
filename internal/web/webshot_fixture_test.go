@@ -24,6 +24,9 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 		"launch-defaults.json": &launchDefaultsJSON{},
 		"job-log.json":         &jobLogJSON{},
 		"job-log-after.json":   &jobLogJSON{},
+		"flow.json":            &flowJSON{},
+		"flows.json":           &flowsJSON{},
+		"flow-doc.json":        &flowDocJSON{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(dir, name))
@@ -41,5 +44,5 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 	require.Contains(t, string(canned), `"`+mockupCSP+`"`, "webshot frames its mockup under the policy the layer serves it under")
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 8, "a new fixture is checked here too")
+	require.Len(t, entries, 11, "a new fixture is checked here too")
 }

@@ -1,0 +1,438 @@
+{
+  "summary": {
+    "plan": "docs/superpowers/plans/2026-11-09-flow-visualisation.md",
+    "spec": "docs/superpowers/specs/2026-11-09-flow-visualisation-design.md",
+    "title": "Loom PWA: a flow's design, spec, progress, story states and costs",
+    "stage": "run",
+    "status": "parked",
+    "run": "2026-11-09-flow-visualisation",
+    "done": 2,
+    "total": 5,
+    "drafted": 0,
+    "asks": "blocked-decision",
+    "phase": "story 3",
+    "updated": "now-4m",
+    "unreadable": "",
+    "spent": 4.71
+  },
+  "stages": [
+    {
+      "name": "design",
+      "state": "done",
+      "detail": "Loom PWA: a flow's design, spec, progress, story states and costs",
+      "doc": "spec"
+    },
+    {
+      "name": "spec",
+      "state": "done",
+      "detail": "docs/superpowers/specs/2026-11-09-flow-visualisation-design.md",
+      "doc": "skeleton"
+    },
+    {
+      "name": "draft",
+      "state": "done",
+      "detail": "by /flow:draft",
+      "doc": "plan"
+    },
+    {
+      "name": "run",
+      "state": "now",
+      "detail": "parked",
+      "doc": ""
+    },
+    {
+      "name": "record",
+      "state": "todo",
+      "detail": "",
+      "doc": ""
+    }
+  ],
+  "base": "5b466ccb",
+  "start": "now-1h12m",
+  "end": "",
+  "premise": {
+    "id": "P",
+    "developer": "",
+    "tier": "",
+    "review": "",
+    "line": 0,
+    "end": 0,
+    "reading": "",
+    "status": "",
+    "commits": 0,
+    "deviations": 0,
+    "findings": [
+      0,
+      0,
+      0
+    ],
+    "cells": {
+      "premise": "passed"
+    },
+    "steps": [
+      {
+        "name": "2026-11-09-flow-visualisation-premise1",
+        "kind": "premise",
+        "k": 1,
+        "role": "premise-check",
+        "status": "DONE",
+        "jobs": [
+          30
+        ],
+        "report": true,
+        "gates": [],
+        "started": "now-1h12m",
+        "ended": "now-1h10m",
+        "unreadable": ""
+      }
+    ]
+  },
+  "stories": [
+    {
+      "id": "1",
+      "developer": "intermediate-dev",
+      "tier": "deep",
+      "review": "full",
+      "line": 212,
+      "end": 604,
+      "reading": "spec \u00a71, \u00a72",
+      "status": "done",
+      "commits": 7,
+      "deviations": 1,
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "cells": {
+        "dev": "passed",
+        "gates": "passed",
+        "review": "passed",
+        "fix": "passed"
+      },
+      "steps": [
+        {
+          "name": "2026-11-09-flow-visualisation-s1-dev1",
+          "kind": "dev",
+          "k": 1,
+          "role": "intermediate-dev",
+          "status": "DONE",
+          "jobs": [
+            31
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-1h10m",
+          "ended": "now-56m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s1-gates1",
+          "kind": "gates",
+          "k": 1,
+          "role": "",
+          "status": "failed",
+          "jobs": [
+            32,
+            33,
+            34
+          ],
+          "report": false,
+          "gates": [
+            {
+              "text": "gofmt check",
+              "verdict": "PASS",
+              "job": 32
+            },
+            {
+              "text": "go vet ./...",
+              "verdict": "PASS",
+              "job": 33
+            },
+            {
+              "text": "go test ./...",
+              "verdict": "FAIL",
+              "job": 34
+            }
+          ],
+          "started": "now-56m",
+          "ended": "now-53m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s1-fix1",
+          "kind": "fix",
+          "k": 1,
+          "role": "intermediate-dev",
+          "status": "DONE",
+          "jobs": [
+            35
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-53m",
+          "ended": "now-44m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s1-gates2",
+          "kind": "gates",
+          "k": 2,
+          "role": "",
+          "status": "passed",
+          "jobs": [
+            36,
+            37,
+            38
+          ],
+          "report": false,
+          "gates": [
+            {
+              "text": "gofmt check",
+              "verdict": "PASS",
+              "job": 36
+            },
+            {
+              "text": "go vet ./...",
+              "verdict": "PASS",
+              "job": 37
+            },
+            {
+              "text": "go test ./...",
+              "verdict": "PASS",
+              "job": 38
+            }
+          ],
+          "started": "now-44m",
+          "ended": "now-40m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s1-review1",
+          "kind": "review",
+          "k": 1,
+          "role": "code-quality-reviewer",
+          "status": "DONE",
+          "jobs": [
+            39
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-40m",
+          "ended": "now-33m",
+          "unreadable": ""
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "developer": "intermediate-dev",
+      "tier": "deep",
+      "review": "full",
+      "line": 605,
+      "end": 930,
+      "reading": "spec \u00a73",
+      "status": "done",
+      "commits": 4,
+      "deviations": 0,
+      "findings": [
+        0,
+        0,
+        1
+      ],
+      "cells": {
+        "dev": "passed",
+        "gates": "passed",
+        "review": "passed",
+        "fix": "skipped"
+      },
+      "steps": [
+        {
+          "name": "2026-11-09-flow-visualisation-s2-dev1",
+          "kind": "dev",
+          "k": 1,
+          "role": "intermediate-dev",
+          "status": "DONE",
+          "jobs": [
+            40
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-33m",
+          "ended": "now-22m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s2-gates1",
+          "kind": "gates",
+          "k": 1,
+          "role": "",
+          "status": "passed",
+          "jobs": [
+            41,
+            42,
+            43
+          ],
+          "report": false,
+          "gates": [
+            {
+              "text": "go test ./...",
+              "verdict": "PASS",
+              "job": 43
+            }
+          ],
+          "started": "now-22m",
+          "ended": "now-18m",
+          "unreadable": ""
+        },
+        {
+          "name": "2026-11-09-flow-visualisation-s2-review1",
+          "kind": "review",
+          "k": 1,
+          "role": "code-quality-reviewer",
+          "status": "DONE",
+          "jobs": [
+            44
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-18m",
+          "ended": "now-12m",
+          "unreadable": ""
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "developer": "intermediate-dev",
+      "tier": "deep",
+      "review": "full",
+      "line": 931,
+      "end": 1300,
+      "reading": "spec \u00a74",
+      "status": "developing",
+      "commits": 0,
+      "deviations": 0,
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "cells": {
+        "dev": "asks",
+        "gates": "todo",
+        "review": "todo",
+        "fix": "todo"
+      },
+      "steps": [
+        {
+          "name": "2026-11-09-flow-visualisation-s3-dev1",
+          "kind": "dev",
+          "k": 1,
+          "role": "intermediate-dev",
+          "status": "BLOCKED",
+          "jobs": [
+            45
+          ],
+          "report": true,
+          "gates": [],
+          "started": "now-12m",
+          "ended": "now-4m",
+          "unreadable": ""
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "developer": "junior-dev",
+      "tier": "light",
+      "review": "vouched",
+      "line": 1301,
+      "end": 1500,
+      "reading": "spec \u00a75",
+      "status": "",
+      "commits": 0,
+      "deviations": 0,
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "cells": {
+        "dev": "todo",
+        "gates": "todo",
+        "review": "todo",
+        "fix": "todo"
+      },
+      "steps": []
+    },
+    {
+      "id": "5",
+      "developer": "intermediate-dev",
+      "tier": "deep",
+      "review": "full",
+      "line": 1501,
+      "end": 1800,
+      "reading": "spec \u00a75",
+      "status": "",
+      "commits": 0,
+      "deviations": 0,
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "cells": {
+        "dev": "todo",
+        "gates": "todo",
+        "review": "todo",
+        "fix": "todo"
+      },
+      "steps": []
+    }
+  ],
+  "final": null,
+  "question": {
+    "key": "blocked:2026-11-09-flow-visualisation-s3-dev1",
+    "kind": "blocked-decision",
+    "story": "3",
+    "text": "2026-11-09-flow-visualisation-s3-dev1 is BLOCKED: its report says on what. The spec doesn't say whether the fleet chip shows a parked run's question kind or the word asks."
+  },
+  "kept": [
+    "Minor internal/flowview/detail.go:88 name the cache key"
+  ],
+  "others": [],
+  "costs": {
+    "spent": 4.71,
+    "by_story": {
+      "P": 0.12,
+      "1": 1.41,
+      "2": 1.1,
+      "3": 0.62
+    },
+    "by_agent": {},
+    "by_role": {
+      "intermediate-dev": 2.1,
+      "code-quality-reviewer": 1.5,
+      "premise-check": 0.12,
+      "manager": 0.99
+    },
+    "unpriced": [],
+    "design": 3.14,
+    "draft": 12.05,
+    "flow": 19.9,
+    "flow_parts": 3,
+    "projection": 9.8,
+    "why": "",
+    "past": [
+      2.52,
+      2.37,
+      3.53,
+      2.1,
+      2.75
+    ],
+    "median": 2.52,
+    "this": 2.36,
+    "error": ""
+  }
+}

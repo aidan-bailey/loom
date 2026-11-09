@@ -96,6 +96,14 @@ type Core interface {
 	// A job of session id's output.log, the Reply's JobLog (sched.ReadLog):
 	// its tail when after < 0, else the bytes from after.
 	ReadJobLog(id InstanceID, job sched.JobID, after int64, req ReqID)
+	// A session's flows, read for the client that asks (spec
+	// 2026-11-09-flow-visualisation): one flow's board with its cost box,
+	// the Reply's Flow; every served session's flows and the host's past
+	// runs, the Reply's Flows; one of a flow's documents, the Reply's
+	// FlowDoc.
+	ReadFlow(id InstanceID, plan string, req ReqID)
+	ReadFlows(req ReqID)
+	ReadFlowDoc(id InstanceID, plan string, doc string, req ReqID)
 	// Delete idle and paused sessions' unused Rust executables now, or
 	// with DryRun list them: the Reply's Sweep (buildsweep.Report).
 	SweepBuilds(opts buildsweep.Options, req ReqID)

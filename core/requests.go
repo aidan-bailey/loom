@@ -88,6 +88,12 @@ func (m *Model) deliverTracked(t tracked) {
 		r.Mockup = res.page
 	case jobLogResult:
 		r.JobLog = res.read
+	case flowReadResult:
+		r.Flow = res.view
+	case flowsResult:
+		r.Flows = res.view
+	case flowDocResult:
+		r.FlowDoc = FlowDocView{Path: res.doc.Path, Text: res.doc.Text, Cut: res.doc.Cut}
 	case buildSweepResult:
 		r.Sweep = res.report
 	}
@@ -123,6 +129,12 @@ func outcome(result any) (err, notice error) {
 		return r.err, nil
 	case jobLogResult:
 		return r.err, nil
+	case flowReadResult:
+		return r.err, nil
+	case flowsResult:
+		return r.err, nil
+	case flowDocResult:
+		return r.err, nil
 	case buildSweepResult:
 		return r.err, nil
 	case resumeSkipped:
@@ -152,20 +164,23 @@ func (m *Model) refuse(req ReqID, id InstanceID, err error) {
 type requestOp string
 
 const (
-	opKill       requestOp = "kill"
-	opPause      requestOp = "pause"
-	opPush       requestOp = "push"
-	opResume     requestOp = "resume"
-	opRestart    requestOp = "restart"
-	opRecover    requestOp = "recover"
-	opMergeInto  requestOp = "merge into"
-	opMergeFrom  requestOp = "merge from"
-	opSend       requestOp = "send a prompt to"
-	opReadTurns  requestOp = "read the conversation of"
-	opReadDiff   requestOp = "read the diff of"
-	opReadMockup requestOp = "read the mockup of"
-	opReadJobLog requestOp = "read a job log of"
-	opAnswer     requestOp = "answer"
+	opKill        requestOp = "kill"
+	opPause       requestOp = "pause"
+	opPush        requestOp = "push"
+	opResume      requestOp = "resume"
+	opRestart     requestOp = "restart"
+	opRecover     requestOp = "recover"
+	opMergeInto   requestOp = "merge into"
+	opMergeFrom   requestOp = "merge from"
+	opSend        requestOp = "send a prompt to"
+	opReadTurns   requestOp = "read the conversation of"
+	opReadDiff    requestOp = "read the diff of"
+	opReadMockup  requestOp = "read the mockup of"
+	opReadJobLog  requestOp = "read a job log of"
+	opReadFlow    requestOp = "read a flow of"
+	opReadFlows   requestOp = "read the flows"
+	opReadFlowDoc requestOp = "read a flow document of"
+	opAnswer      requestOp = "answer"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and
@@ -242,8 +257,9 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case !session.IsClaudeProgram(inst.Program()):
 			why = "the session does not run Claude"
 		}
-	case opReadMockup, opReadJobLog:
-		// A companion, and a job, can outlive any status of its session.
+	case opReadMockup, opReadJobLog, opReadFlow, opReadFlowDoc:
+		// A companion, a job and a flow's files can outlive any status of
+		// its session.
 		if inst.IsWorkspaceTerminal {
 			why = "not allowed on a workspace terminal"
 		}

@@ -161,6 +161,9 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 			if r.mockup != nil {
 				applyMockup(r.instance, r.mockup)
 			}
+			if handsBack(r.result.Events) {
+				m.wantFlowLook(r.instance)
+			}
 		}
 		after := hookFaceOf(r.instance)
 		if after.conv != before.conv || after.transcript != before.transcript {

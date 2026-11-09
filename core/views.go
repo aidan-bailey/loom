@@ -109,6 +109,7 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 	if v.HasLastMessage {
 		v.Verdict, v.VerdictGist, v.VerdictStop, v.VerdictPending = m.verdictOf(inst)
 	}
+	v.Flows = m.flowSummaries(v.ID)
 	if screen, changed := inst.Mockup(); screen != "" {
 		start := inst.TurnStart()
 		v.Mockup = MockupView{Screen: screen, Changed: changed, Fresh: !start.IsZero() && !changed.Before(start)}
@@ -173,6 +174,7 @@ func (m *Model) publishViews() []Event {
 		if !live[inst] {
 			delete(m.ids, inst)
 			delete(m.idHolders, id)
+			delete(m.flows, id)
 		}
 	}
 	return events
@@ -186,6 +188,7 @@ func cloneViews(views []InstanceView) []InstanceView {
 	for i := range out {
 		out[i].Subagents = slices.Clone(out[i].Subagents)
 		out[i].Asks = cloneAsks(out[i].Asks)
+		out[i].Flows = slices.Clone(out[i].Flows)
 	}
 	return out
 }

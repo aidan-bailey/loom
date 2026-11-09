@@ -133,6 +133,10 @@ type sessionJSON struct {
 	// for none.
 	Verdict string `json:"verdict,omitempty"`
 	Gist    string `json:"gist,omitempty"`
+	// Flows are the flows of the session's worktree (flow.go), newest
+	// first: the fleet chip and the flow tab read them, GET …/flow the
+	// board of one; an empty list for none.
+	Flows []flowSummaryJSON `json:"flows"`
 }
 
 // mockupJSON is a session's brainstorm companion's screen: its file name,
@@ -275,6 +279,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		Jobs:        []jobJSON{},
 		ParityKnown: v.ParityKnown,
 		Claude:      session.IsClaudeProgram(v.Program),
+		Flows:       flowsOfView(v),
 	}
 	if !v.StatusSince.IsZero() {
 		s.Since = v.StatusSince.UTC().Format(time.RFC3339)

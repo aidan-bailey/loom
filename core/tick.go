@@ -144,6 +144,10 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()
+
+	// A look at the flows of each session never looked at, or whose run
+	// jobs started or ended (see maybeFlowLooks).
+	m.maybeFlowLooks()
 }
 
 // Tick runs the health tick's model half (tickInst), refreshing the full

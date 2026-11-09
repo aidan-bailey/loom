@@ -92,6 +92,9 @@ var apiRoutes = []struct {
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/diff$`), "diff.json", "", ""},
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/mockup$`), "mockup.html", "", ""},
 	{regexp.MustCompile(`^/api/v1/sessions/\d+/jobs/\d+/log$`), "job-log.json", "", "job-log-after.json"},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/flow$`), "flow.json", "", ""},
+	{regexp.MustCompile(`^/api/v1/sessions/\d+/flow/doc$`), "flow-doc.json", "", ""},
+	{regexp.MustCompile(`^/api/v1/flows$`), "flows.json", "", ""},
 	{regexp.MustCompile(`^/api/v1/launch-defaults$`), "launch-defaults.json", "", ""},
 }
 

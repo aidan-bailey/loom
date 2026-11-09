@@ -363,6 +363,38 @@ type ReadJobLogParams struct {
 type ReadJobLogResult struct {
 }
 
+// ReadFlowParams are ReadFlow's parameters on the wire.
+type ReadFlowParams struct {
+	ID   core.InstanceID `json:"id"`
+	Plan string          `json:"plan"`
+	Req  core.ReqID      `json:"req"`
+}
+
+// ReadFlowResult is ReadFlow's result on the wire; an error travels in the reply.
+type ReadFlowResult struct {
+}
+
+// ReadFlowsParams are ReadFlows's parameters on the wire.
+type ReadFlowsParams struct {
+	Req core.ReqID `json:"req"`
+}
+
+// ReadFlowsResult is ReadFlows's result on the wire; an error travels in the reply.
+type ReadFlowsResult struct {
+}
+
+// ReadFlowDocParams are ReadFlowDoc's parameters on the wire.
+type ReadFlowDocParams struct {
+	ID   core.InstanceID `json:"id"`
+	Plan string          `json:"plan"`
+	Doc  string          `json:"doc"`
+	Req  core.ReqID      `json:"req"`
+}
+
+// ReadFlowDocResult is ReadFlowDoc's result on the wire; an error travels in the reply.
+type ReadFlowDocResult struct {
+}
+
 // SweepBuildsParams are SweepBuilds's parameters on the wire.
 type SweepBuildsParams struct {
 	Opts buildsweep.Options `json:"opts"`
@@ -884,6 +916,9 @@ var methods = []methodInfo{
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
 	{Name: "ReadMockup", Kind: kindRequest, Params: ReadMockupParams{}, Result: ReadMockupResult{}},
 	{Name: "ReadJobLog", Kind: kindRequest, Params: ReadJobLogParams{}, Result: ReadJobLogResult{}},
+	{Name: "ReadFlow", Kind: kindRequest, Params: ReadFlowParams{}, Result: ReadFlowResult{}},
+	{Name: "ReadFlows", Kind: kindRequest, Params: ReadFlowsParams{}, Result: ReadFlowsResult{}},
+	{Name: "ReadFlowDoc", Kind: kindRequest, Params: ReadFlowDocParams{}, Result: ReadFlowDocResult{}},
 	{Name: "SweepBuilds", Kind: kindRequest, Params: SweepBuildsParams{}, Result: SweepBuildsResult{}},
 	{Name: "BuildSweep", Kind: kindLocal, Params: BuildSweepParams{}, Result: BuildSweepResult{}},
 	{Name: "ConfigureBuildSweep", Kind: kindRequest, Params: ConfigureBuildSweepParams{}, Result: ConfigureBuildSweepResult{}},
@@ -1228,6 +1263,36 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadJobLog(p.ID, p.Job, p.After, p.Req)
 		return ReadJobLogResult{}, nil, true
+	case "ReadFlow":
+		var p ReadFlowParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadFlow(p.ID, p.Plan, p.Req)
+		return ReadFlowResult{}, nil, true
+	case "ReadFlows":
+		var p ReadFlowsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadFlows(p.Req)
+		return ReadFlowsResult{}, nil, true
+	case "ReadFlowDoc":
+		var p ReadFlowDocParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadFlowDoc(p.ID, p.Plan, p.Doc, p.Req)
+		return ReadFlowDocResult{}, nil, true
 	case "SweepBuilds":
 		var p SweepBuildsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1824,6 +1889,24 @@ func (c *Client) ReadMockup(id core.InstanceID, req core.ReqID) {
 func (c *Client) ReadJobLog(id core.InstanceID, job sched.JobID, after int64, req core.ReqID) {
 	var r ReadJobLogResult
 	c.noteRefused(c.requestNoErr("ReadJobLog", ReadJobLogParams{ID: id, Job: job, After: after, Req: req}, &r), req)
+}
+
+// ReadFlow is core.Core's ReadFlow (request).
+func (c *Client) ReadFlow(id core.InstanceID, plan string, req core.ReqID) {
+	var r ReadFlowResult
+	c.noteRefused(c.requestNoErr("ReadFlow", ReadFlowParams{ID: id, Plan: plan, Req: req}, &r), req)
+}
+
+// ReadFlows is core.Core's ReadFlows (request).
+func (c *Client) ReadFlows(req core.ReqID) {
+	var r ReadFlowsResult
+	c.noteRefused(c.requestNoErr("ReadFlows", ReadFlowsParams{Req: req}, &r), req)
+}
+
+// ReadFlowDoc is core.Core's ReadFlowDoc (request).
+func (c *Client) ReadFlowDoc(id core.InstanceID, plan string, doc string, req core.ReqID) {
+	var r ReadFlowDocResult
+	c.noteRefused(c.requestNoErr("ReadFlowDoc", ReadFlowDocParams{ID: id, Plan: plan, Doc: doc, Req: req}, &r), req)
 }
 
 // SweepBuilds is core.Core's SweepBuilds (request).

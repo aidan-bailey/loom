@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -30,14 +31,17 @@ const (
 // the other fields are set only for the kinds that carry them. C holds the
 // children.
 type mdNode struct {
-	T     string    `json:"t"`
-	V     string    `json:"v,omitempty"`
-	Level int       `json:"level,omitempty"`
-	Start *int      `json:"start,omitempty"`
-	Lang  string    `json:"lang,omitempty"`
-	Href  string    `json:"href,omitempty"`
-	Align []string  `json:"align,omitempty"`
-	C     []*mdNode `json:"c,omitempty"`
+	T     string   `json:"t"`
+	V     string   `json:"v,omitempty"`
+	Level int      `json:"level,omitempty"`
+	Start *int     `json:"start,omitempty"`
+	Lang  string   `json:"lang,omitempty"`
+	Href  string   `json:"href,omitempty"`
+	Align []string `json:"align,omitempty"`
+	// Line is a heading's 1-based line in its source, set only in a flow
+	// document's tree (buildTreeLimit with lines), which the app scrolls to.
+	Line int       `json:"line,omitempty"`
+	C    []*mdNode `json:"c,omitempty"`
 }
 
 // messageJSON is GET /api/v1/sessions/{id}/message: the tree of a session's
@@ -53,10 +57,16 @@ type messageJSON struct {
 // its blocks, never nil, and whether anything was dropped. A parser is made
 // per call: goldmark does not promise that one is safe to share.
 func buildTree(msg string) ([]*mdNode, bool) {
+	return buildTreeLimit(msg, maxMessageBytes, maxTreeNodes, false)
+}
+
+// buildTreeLimit is buildTree within the bounds given: the bytes parsed and
+// the nodes kept; with lines, each heading carries its source line.
+func buildTreeLimit(msg string, maxBytes, maxNodes int, lines bool) ([]*mdNode, bool) {
 	src := []byte(msg)
 	cut := false
-	if len(src) > maxMessageBytes {
-		n := maxMessageBytes
+	if len(src) > maxBytes {
+		n := maxBytes
 		for n > 0 && !utf8.RuneStart(src[n]) {
 			n--
 		}
@@ -64,7 +74,7 @@ func buildTree(msg string) ([]*mdNode, bool) {
 	}
 	md := goldmark.New(goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.Linkify))
 	doc := md.Parser().Parse(text.NewReader(src))
-	b := &treeBuilder{src: src}
+	b := &treeBuilder{src: src, maxNodes: maxNodes, withLine: lines}
 	blocks := b.children(doc, 1)
 	if blocks == nil {
 		blocks = []*mdNode{}
@@ -74,16 +84,18 @@ func buildTree(msg string) ([]*mdNode, bool) {
 
 // treeBuilder turns goldmark's AST into the tree, counting what it keeps.
 type treeBuilder struct {
-	src     []byte
-	nodes   int
-	dropped bool
+	src      []byte
+	nodes    int
+	maxNodes int
+	withLine bool // headings carry their source line
+	dropped  bool
 }
 
 // room counts one node at depth, and reports false, marking the tree cut,
-// once maxTreeNodes are kept or when the node would sit deeper than
+// once its maxNodes are kept or when the node would sit deeper than
 // maxTreeDepth.
 func (b *treeBuilder) room(depth int) bool {
-	if b.nodes >= maxTreeNodes || depth > maxTreeDepth {
+	if b.nodes >= b.maxNodes || depth > maxTreeDepth {
 		b.dropped = true
 		return false
 	}
@@ -167,7 +179,11 @@ func (b *treeBuilder) node(n gast.Node, depth int) []*mdNode {
 	case *gast.Paragraph:
 		return b.wrap(n, depth, &mdNode{T: "p"})
 	case *gast.Heading:
-		return b.wrap(n, depth, &mdNode{T: "h", Level: n.Level})
+		nd := &mdNode{T: "h", Level: n.Level}
+		if b.withLine && n.Lines().Len() > 0 {
+			nd.Line = 1 + bytes.Count(b.src[:n.Lines().At(0).Start], []byte{'\n'})
+		}
+		return b.wrap(n, depth, nd)
 	case *gast.List:
 		if n.IsOrdered() {
 			start := n.Start

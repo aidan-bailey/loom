@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/attention"
+	"github.com/aidan-bailey/loom/internal/flowview"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
@@ -63,6 +65,9 @@ type InstanceView struct {
 	// Mockup is the session's brainstorm companion as the model last found
 	// it (core/mockup.go); Screen "" means none.
 	Mockup MockupView
+	// Flows are the flows of the session's worktree as the model last
+	// found them (core/flows.go), newest first; nil for none.
+	Flows []FlowSummary
 	// RemoteSession is the ID in the session's Remote Control link,
 	// https://claude.ai/code/<RemoteSession>. The model takes it from the
 	// roster's entry for the worktree (session.RosterEntry.RemoteSession),
@@ -97,6 +102,45 @@ type InstanceView struct {
 	// Bell is the TUI's own overlay (a bell rang in the pane since it was
 	// last focused). The model never sets it.
 	Bell bool
+}
+
+// FlowSummary is one of a session's flows (flowview.Summary) with what
+// only the model knows: Lost when its run says it runs while its engine
+// job has ended or left the queue, and Spent, the run's last priced total
+// (valid when Priced).
+type FlowSummary struct {
+	flowview.Summary
+	Lost   bool
+	Spent  float64
+	Priced bool
+}
+
+// FlowView is ReadFlow's answer: a flow's board, its cost box, and the
+// times of its steps' jobs that the queue still holds.
+type FlowView struct {
+	Detail flowview.FlowDetail
+	Costs  flowview.Costs
+	Times  map[sched.JobID]JobTimes
+}
+
+// JobTimes is a job's start and end, zero until each happens.
+type JobTimes struct {
+	Started time.Time
+	Ended   time.Time
+}
+
+// FlowsView is ReadFlows' answer: every served session's flows and the
+// host's past runs, newest first.
+type FlowsView struct {
+	Live    []LiveFlow
+	History []flowview.PastRun
+}
+
+// LiveFlow is one session's flow, with the session it belongs to.
+type LiveFlow struct {
+	Instance InstanceID
+	Title    string
+	Flow     FlowSummary
 }
 
 // MockupView is the screen a session's brainstorm companion serves and its

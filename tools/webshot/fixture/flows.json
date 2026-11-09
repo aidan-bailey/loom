@@ -1,0 +1,90 @@
+{
+  "live": [
+    {
+      "session": 6,
+      "title": "flow-run",
+      "flow": {
+        "plan": "docs/superpowers/plans/2026-11-09-flow-visualisation.md",
+        "spec": "docs/superpowers/specs/2026-11-09-flow-visualisation-design.md",
+        "title": "Loom PWA: a flow's design, spec, progress, story states and costs",
+        "stage": "run",
+        "status": "parked",
+        "run": "2026-11-09-flow-visualisation",
+        "done": 2,
+        "total": 5,
+        "drafted": 0,
+        "asks": "blocked-decision",
+        "phase": "story 3",
+        "updated": "now-4m",
+        "unreadable": "",
+        "spent": 4.71
+      }
+    },
+    {
+      "session": 4,
+      "title": "flow-docs",
+      "flow": {
+        "plan": "docs/superpowers/plans/2026-11-08-job-exploration.md",
+        "spec": "docs/superpowers/specs/2026-11-08-job-exploration-design.md",
+        "title": "Job exploration",
+        "stage": "draft",
+        "status": "drafting",
+        "run": "",
+        "done": 0,
+        "total": 4,
+        "drafted": 3,
+        "asks": "",
+        "phase": "fix round",
+        "updated": "now-20m",
+        "unreadable": "",
+        "spent": null
+      }
+    }
+  ],
+  "past": [
+    {
+      "key": "-tb-Source-Personal-loom",
+      "file": "2026-11-06-pwa-conversation-first.md",
+      "stem": "2026-11-06-pwa-conversation-first",
+      "plan": "docs/superpowers/plans/2026-11-06-pwa-conversation-first.md",
+      "stories": 4,
+      "ended": "stopped",
+      "end": "now-72h",
+      "usd": 10.08,
+      "unreadable": ""
+    },
+    {
+      "key": "-tb-Source-Personal-loom",
+      "file": "2026-11-04-work-scheduler.md",
+      "stem": "2026-11-04-work-scheduler",
+      "plan": "docs/superpowers/plans/2026-11-04-work-scheduler.md",
+      "stories": 6,
+      "ended": "done",
+      "end": "now-120h",
+      "usd": 14.2,
+      "unreadable": ""
+    },
+    {
+      "key": "-tb-Source-Personal-loom",
+      "file": "2026-10-22-loom-pwa.md",
+      "stem": "2026-10-22-loom-pwa",
+      "plan": "docs/superpowers/plans/2026-10-22-loom-pwa.md",
+      "stories": 9,
+      "ended": "supervised",
+      "end": "now-430h",
+      "usd": 31.77,
+      "unreadable": ""
+    },
+    {
+      "key": "-tb-Source-Academia-kermit",
+      "file": "2026-10-22-per-query-index-build.md",
+      "stem": "2026-10-22-per-query-index-build",
+      "plan": "docs/plans/2026-10-22-per-query-index-build.md",
+      "stories": 23,
+      "ended": "supervised",
+      "end": "now-432h",
+      "usd": 58.4,
+      "unreadable": ""
+    }
+  ]
+}

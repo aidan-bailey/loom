@@ -110,6 +110,15 @@ func (l *Loop) ReadMockup(id InstanceID, req ReqID) {
 func (l *Loop) ReadJobLog(id InstanceID, job sched.JobID, after int64, req ReqID) {
 	l.do(func(m *Model) { m.ReadJobLog(id, job, after, req) })
 }
+func (l *Loop) ReadFlow(id InstanceID, plan string, req ReqID) {
+	l.do(func(m *Model) { m.ReadFlow(id, plan, req) })
+}
+func (l *Loop) ReadFlows(req ReqID) {
+	l.do(func(m *Model) { m.ReadFlows(req) })
+}
+func (l *Loop) ReadFlowDoc(id InstanceID, plan string, doc string, req ReqID) {
+	l.do(func(m *Model) { m.ReadFlowDoc(id, plan, doc, req) })
+}
 func (l *Loop) SweepBuilds(opts buildsweep.Options, req ReqID) {
 	l.do(func(m *Model) { m.SweepBuilds(opts, req) })
 }

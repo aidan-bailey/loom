@@ -423,6 +423,8 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"read the diff of a terminal", func(f fixture) { f.m.ReadDiff(f.id["term"], 1) }, "read the diff of term: not allowed on a workspace terminal"},
 		{"read the mockup of a terminal", func(f fixture) { f.m.ReadMockup(f.id["term"], 1) }, "read the mockup of term: not allowed on a workspace terminal"},
 		{"read a job log of a terminal", func(f fixture) { f.m.ReadJobLog(f.id["term"], 1, -1, 1) }, "read a job log of term: not allowed on a workspace terminal"},
+		{"read a flow of a terminal", func(f fixture) { f.m.ReadFlow(f.id["term"], "p.md", 1) }, "read a flow of term: not allowed on a workspace terminal"},
+		{"read a flow document of a terminal", func(f fixture) { f.m.ReadFlowDoc(f.id["term"], "p.md", "spec", 1) }, "read a flow document of term: not allowed on a workspace terminal"},
 		{"read the diff of a loading session", func(f fixture) { f.m.ReadDiff(f.id["loading"], 1) }, "read the diff of loading: the session is busy (Loading)"},
 		{"read the diff of a deleting session", func(f fixture) { f.m.ReadDiff(f.id["deleting"], 1) }, "read the diff of deleting: the session is busy (Deleting)"},
 		{"read the diff of a paused session", func(f fixture) { f.m.ReadDiff(f.id["paused"], 1) }, "read the diff of paused: the session is not running (Paused)"},

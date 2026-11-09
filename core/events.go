@@ -240,6 +240,19 @@ type Reply struct {
 	Agent   AgentPage
 	// Note is the note FileFeedback filed.
 	Note feedback.NoteID
+	// Flow, Flows and FlowDoc are ReadFlow's, ReadFlows' and ReadFlowDoc's
+	// answers.
+	Flow    FlowView
+	Flows   FlowsView
+	FlowDoc FlowDocView
+}
+
+// FlowDocView is one of a flow's documents (flowview.ReadDoc): its path,
+// its text, and whether the text was cut at flowview.DocLimit.
+type FlowDocView struct {
+	Path string
+	Text string
+	Cut  bool
 }
 
 func (Reply) coreEvent() {}

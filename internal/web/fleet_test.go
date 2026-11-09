@@ -115,7 +115,7 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		"remote_url": "https://claude.ai/code/session_01AbC",
 		"claude": true,
 		"mockup": {"screen": "layout.html", "changed": "2026-10-21T09:29:00Z", "fresh": true},
-		"jobs": [], "jobs_label": "", "jobs_focus": 0
+		"jobs": [], "jobs_label": "", "jobs_focus": 0, "flows": []
 	}`, string(got))
 }
 

@@ -1,0 +1,147 @@
+{
+  "path": "docs/superpowers/specs/2026-11-09-flow-visualisation-design.md",
+  "cut": false,
+  "blocks": [
+    {
+      "t": "h",
+      "level": 1,
+      "line": 1,
+      "c": [
+        {
+          "t": "text",
+          "v": "Loom PWA: a flow's design, spec, progress, story states and costs"
+        }
+      ]
+    },
+    {
+      "t": "p",
+      "c": [
+        {
+          "t": "strong",
+          "c": [
+            {
+              "t": "text",
+              "v": "Date:"
+            }
+          ]
+        },
+        {
+          "t": "text",
+          "v": " 2026-11-09"
+        }
+      ]
+    },
+    {
+      "t": "h",
+      "level": 2,
+      "line": 8,
+      "c": [
+        {
+          "t": "text",
+          "v": "Problem"
+        }
+      ]
+    },
+    {
+      "t": "p",
+      "c": [
+        {
+          "t": "text",
+          "v": "A flow runs from a design session through "
+        },
+        {
+          "t": "code_inline",
+          "v": "/flow:draft"
+        },
+        {
+          "t": "text",
+          "v": " to a run, and ends in a record. Away from the desk the owner sees none of it."
+        }
+      ]
+    },
+    {
+      "t": "h",
+      "level": 2,
+      "line": 60,
+      "c": [
+        {
+          "t": "text",
+          "v": "Design"
+        }
+      ]
+    },
+    {
+      "t": "h",
+      "level": 3,
+      "line": 62,
+      "c": [
+        {
+          "t": "text",
+          "v": "1. Flows and their stages"
+        }
+      ]
+    },
+    {
+      "t": "p",
+      "c": [
+        {
+          "t": "text",
+          "v": "A "
+        },
+        {
+          "t": "strong",
+          "c": [
+            {
+              "t": "text",
+              "v": "flow"
+            }
+          ]
+        },
+        {
+          "t": "text",
+          "v": " is a plan file, or a spec on its way to one."
+        }
+      ]
+    },
+    {
+      "t": "h",
+      "level": 3,
+      "line": 120,
+      "c": [
+        {
+          "t": "text",
+          "v": "2. The reader (internal/flowview)"
+        }
+      ]
+    },
+    {
+      "t": "p",
+      "c": [
+        {
+          "t": "text",
+          "v": "A new package that reads files and returns plain values."
+        }
+      ]
+    },
+    {
+      "t": "h",
+      "level": 3,
+      "line": 190,
+      "c": [
+        {
+          "t": "text",
+          "v": "3. Costs"
+        }
+      ]
+    },
+    {
+      "t": "p",
+      "c": [
+        {
+          "t": "text",
+          "v": "All figures come from agent_costs.py, so the live board and the record agree."
+        }
+      ]
+    }
+  ]
+}

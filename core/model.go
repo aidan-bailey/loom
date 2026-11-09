@@ -259,6 +259,10 @@ type Model struct {
 	// attention is the stop classifier (attention.go).
 	attention *attentionState
 
+	// flows is each session's flows as the last look found them, and their
+	// pricings (flows.go); made on first use.
+	flows map[InstanceID]*flowState
+
 	// out holds the events and the jobs queued since the last take; bgJobs
 	// the background jobs (spawnBackground), kept apart so a loop stopping
 	// can wait for the others alone (takeJobsSplit).
@@ -539,7 +543,11 @@ func (m *Model) Deliver(msg any) {
 		m.deliverReset(msg)
 	case mockupResult:
 		m.deliverMockup(msg)
-	case issueResult, turnsResult, diffResult, jobLogResult:
+	case flowLookResult:
+		m.deliverFlowLook(msg)
+	case flowReadResult:
+		m.deliverFlowRead(msg)
+	case issueResult, turnsResult, diffResult, jobLogResult, flowsResult, flowDocResult:
 		// Only its Reply carries it (deliverTracked).
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
