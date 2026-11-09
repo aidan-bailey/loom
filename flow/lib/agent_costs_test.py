@@ -642,3 +642,110 @@ class PricesAndHomeStoreTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def run_fixture(root: Path, agents: dict[str, dict], transcripts: dict[str, list[str]]):
+    """A repo with run r (manager msess) naming agents (name: record), and transcripts (session: records) in a
+    config dir; returns (repo, env)."""
+    repo = root / "repo"
+    repo.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+    state = repo / ".git" / "flow"
+    (state / "runs").mkdir(parents=True)
+    (state / "agents").mkdir()
+    (state / "runs" / "r.json").write_text(json.dumps({
+        "managers": ["msess"], "agents": list(agents), "start": "2026-11-06T10:00:00Z"}))
+    for name, rec in agents.items():
+        (state / "agents" / f"{name}.json").write_text(json.dumps(rec))
+    cfg = root / "cfg"
+    (cfg / "projects" / "p").mkdir(parents=True)
+    for sid, lines in transcripts.items():
+        (cfg / "projects" / "p" / f"{sid}.jsonl").write_text("\n".join(lines))
+    return repo, {**env, "CLAUDE_CONFIG_DIR": str(cfg)}
+
+
+class RunJSONTest(unittest.TestCase):
+    """`run --json`: the board's figures (flow visualisation spec §3)."""
+
+    TRANSCRIPTS = {
+        "msess": [record("m1", "claude-opus-5-5", "2026-11-06T10:05:00Z", input_tokens=1000, output_tokens=100)],
+        "dsess": [record("d1", "claude-sonnet-5-5", "2026-11-06T10:10:00Z", input_tokens=1000, output_tokens=100)],
+        "rsess": [record("v1", "claude-opus-5-5", "2026-11-06T10:20:00Z", input_tokens=2000, output_tokens=200)],
+    }
+
+    def run_json(self, agents, *extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, env = run_fixture(Path(tmp), agents, self.TRANSCRIPTS)
+            result = subprocess.run([sys.executable, str(SCRIPT), "run", "r", "--json", *extra], capture_output=True,
+                                    text=True, cwd=repo, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+    def test_rows_in_dispatch_order_with_their_running_flags(self):
+        out = self.run_json({"r-s1-dev1": {"role": "intermediate-dev", "session": "dsess", "status": "DONE"},
+                             "r-s1-review1": {"role": "code-quality-reviewer", "session": "rsess", "status": "running"}})
+        self.assertEqual([a["name"] for a in out["agents"]], ["r-s1-dev1", "r-s1-review1"])
+        self.assertEqual([a["running"] for a in out["agents"]], [False, True])
+        self.assertEqual(out["agents"][0]["model"], "claude-sonnet-5-5")
+        self.assertGreater(out["agents"][1]["usd"], out["agents"][0]["usd"])
+        self.assertEqual(out["managers"][0]["session"], "msess")
+        self.assertEqual(out["managers"][0]["role"], "manager")
+        summed = sum(a["usd"] for a in out["agents"]) + out["managers"][0]["usd"]
+        self.assertAlmostEqual(out["total"]["usd"], summed)
+        self.assertIsNone(out["until"], "a run with no end is priced to now")
+
+    def test_an_agent_with_no_session_is_listed_unpriced_and_a_hint_prices_it(self):
+        agents = {"r-s1-dev1": {"role": "intermediate-dev", "status": "running"}}
+        out = self.run_json(agents)
+        self.assertIsNone(out["agents"][0]["usd"])
+        self.assertTrue(out["agents"][0]["running"])
+        out = self.run_json(agents, "--session", "r-s1-dev1=dsess")
+        self.assertGreater(out["agents"][0]["usd"], 0)
+
+    def test_a_hint_without_an_id_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, env = run_fixture(Path(tmp), {}, self.TRANSCRIPTS)
+            result = subprocess.run([sys.executable, str(SCRIPT), "run", "r", "--json", "--session", "r-s1-dev1"],
+                                    capture_output=True, text=True, cwd=repo, env=env)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("NAME=ID", result.stderr)
+
+
+class DesignTest(unittest.TestCase):
+    """`design`: the design session's cost (flow visualisation spec §3)."""
+
+    def test_prices_only_the_transcripts_that_wrote_the_spec_up_to_the_plans_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            (repo / "docs").mkdir(parents=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            env.update(GIT_AUTHOR_DATE="2026-11-09T12:00:00Z", GIT_COMMITTER_DATE="2026-11-09T12:00:00Z")
+            git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"]
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+            (repo / "docs" / "plan.md").write_text("# plan\n")
+            subprocess.run([*git, "add", "docs/plan.md"], check=True, env=env)
+            subprocess.run([*git, "commit", "-q", "-m", "plan"], check=True, env=env)
+            spec = repo / "docs" / "x-design.md"
+            write = {"type": "tool_use", "name": "Write", "input": {"file_path": str(spec), "content": "# x"}}
+            cfg = root / "cfg"
+            top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+            project = cfg / "projects" / re.sub(r"[^A-Za-z0-9]", "-", top)
+            project.mkdir(parents=True)
+            (project / "writer.jsonl").write_text("\n".join([
+                reply("w1", "claude-opus-5-5", "2026-11-09T11:00:00Z", write, input_tokens=1000, output_tokens=100),
+                record("w2", "claude-opus-5-5", "2026-11-09T13:00:00Z", input_tokens=1000, output_tokens=100),  # after the plan
+            ]))
+            (project / "other.jsonl").write_text(
+                record("o1", "claude-opus-5-5", "2026-11-09T11:00:00Z", input_tokens=1000, output_tokens=100))
+            result = subprocess.run([sys.executable, str(SCRIPT), "design", "docs/x-design.md", "--plan", "docs/plan.md", "--json"],
+                                    capture_output=True, text=True, cwd=repo, env={**env, "CLAUDE_CONFIG_DIR": str(cfg)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = json.loads(result.stdout)
+            self.assertEqual([s["session"] for s in out["sessions"]], ["writer"])
+            self.assertEqual(out["until"], "2026-11-09T12:00:00+00:00")
+            one = json.loads(subprocess.run([sys.executable, str(SCRIPT), "design", "docs/x-design.md", "--json"],
+                                            capture_output=True, text=True, cwd=repo,
+                                            env={**env, "CLAUDE_CONFIG_DIR": str(cfg)}).stdout)
+            self.assertGreater(one["total"]["usd"], out["total"]["usd"], "without a plan, every request counts")

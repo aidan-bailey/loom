@@ -17,6 +17,7 @@ Each stage (design, spec, draft, run, record) is read from what it leaves behind
 | `detail.go` | `FlowDetail`, `StoryView`, `StepView`, `GateLine`, `OtherRun`, the cells (`CellTodo` … `CellSkipped`), `Detail` and the board (`board`, `agentStep`, `gateStep`, `cells`) |
 | `history.go` | `PastRun`, `History`: the records' headers, their `agent-costs` totals and their final rows' USD |
 | `docs.go` | `Doc`, `DocLimit`, `ReadDoc` and `docPath`: the documents a flow opens |
+| `costs.go` | `Priced` (`loom flow costs run --json`), `Costs`, `Comparison`, `CostsOf`: sums by story, agent and role, the whole flow, the projection and the comparison |
 | `plan.go` | `planHeader`, `parsePlan`, `skeletonOf`, `phaseOf`, `readCapped`; the patterns copied from `check_plan.py` and `plan_join.py` |
 | `paths.go` | `profilePaths` (a reader of `paths.state` and `paths.drafts` only), `stateDir`, `draftsDir`, `gitOut`, `gitRaw` |
 | `branch.go` | `branchFiles`, `headTree` |

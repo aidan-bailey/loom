@@ -59,7 +59,10 @@ A record has four parts.
    manager session (a usage-limit pause, then a resume) pastes one output per
    session, `loom flow costs session <session id> --since <start> --until <end>`,
    and `records` sums them into one run. The figures are API list prices; on a
-   subscription they are relative weights, not a bill.
+   subscription they are relative weights, not a bill. loom's flow board on the
+   phone prices a run as it goes with `loom flow costs run <run> --json` (the same
+   figures, as one object) and the design session with
+   `loom flow costs design <spec> --plan <plan>`; neither writes a record.
 3. **Stories**: one row per story, copied from the supervisor's state file:
 
    | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit |

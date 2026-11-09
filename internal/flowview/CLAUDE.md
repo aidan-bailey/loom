@@ -1,6 +1,6 @@
 # internal/flowview
 
-The flow visualisation's reader (spec `docs/superpowers/specs/2026-11-09-flow-visualisation-design.md`): `Find`, `Detail`, `History` and `ReadDoc` turn a worktree's flow files (plans, specs in design, drafts, `<state>/runs|agents|gates`, the repo's run records) into plain values. `core` calls it on job goroutines. Full reference in [`README.md`](README.md).
+The flow visualisation's reader (spec `docs/superpowers/specs/2026-11-09-flow-visualisation-design.md`): `Find`, `Detail`, `History` and `ReadDoc` turn a worktree's flow files (plans, specs in design, drafts, `<state>/runs|agents|gates`, the repo's run records) into plain values, and `CostsOf` builds the cost box from `loom flow costs run --json`. `core` calls it on job goroutines. Full reference in [`README.md`](README.md).
 
 ## Rules when modifying this package
 

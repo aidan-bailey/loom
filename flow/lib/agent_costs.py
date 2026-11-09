@@ -20,7 +20,8 @@ only the estimate beyond it is booked. It reads files only and costs no model to
 
     agent_costs.py session [SESSION] [--since ISO] [--until ISO]
     agent_costs.py records [FILE ...]
-    agent_costs.py run RUN
+    agent_costs.py run RUN [--json] [--session NAME=ID ...]
+    agent_costs.py design SPEC [--plan PLAN] [--json]
 
 `session` prints markdown tables and closes with an `<!-- agent-costs {...} -->`
 comment carrying the same totals as JSON. SESSION is a session id, a session
@@ -32,7 +33,11 @@ a table each, then a pooled one. A run that spanned several manager sessions
 carries one comment per session, and its sessions are summed into one run. `run` prices a loom flow
 run (flow in loom part 3b): its manager sessions as `main` and each headless agent run by its role,
 over the run's window, read from the run's state file and the agent records it names; a second
-`<!-- agent-costs-managers {...} -->` comment gives each manager session's models.
+`<!-- agent-costs-managers {...} -->` comment gives each manager session's models. `run --json` prints the
+same figures as one object for loom's flow board: a row per agent run (priced to now while the run has no end,
+marked running while its record says so, usd null with no transcript) and per manager session; `--session`
+names the session of an agent run whose record has none yet. `design` prices the design session: the
+transcripts in the worktree's project dir that wrote SPEC, up to the commit that added PLAN.
 
 Prices are Anthropic API list prices, read from prices.toml beside this script;
 on a subscription read them as relative weights for comparing agents, not as a bill.
@@ -396,45 +401,141 @@ def find_session(arg: str | None) -> Path:
     return sessions[-1]
 
 
-def run_report(run: str) -> str:
-    """A loom flow run's agents (flow in loom part 3b): each manager session and its subagents as `main`,
-    and each headless agent run by its role, over the run's window, from <state>/runs/RUN.json and the
-    agent records it names. The comment carries the run and each manager session's models."""
+def run_inputs(run: str, hints: dict[str, str] | None = None) -> tuple[dict, list, list]:
+    """A loom flow run's state and its transcripts, from <state>/runs/RUN.json and the agent records it names:
+    each manager session as (label, session id, its entries: its own transcript as `main`, then its subagents'),
+    and each agent run as (name, role, transcript or None, status). An agent run whose record has no session yet
+    takes its session from hints (name: session id). What can't be read is said on stderr, as run_report says it."""
     import flowconf  # noqa: PLC0415  (flow_data is imported above; the rest only here)
 
+    hints = hints or {}
     top = flowconf.toplevel(Path.cwd())
     state = flowconf.state_dir(top, flowconf.optional_profile(top))
     try:
         st = json.loads((state / "runs" / f"{run}.json").read_text())
     except (OSError, ValueError) as err:
         sys.exit(f"agent_costs: the run {run}: {err}")
-    since, until = parse_time(st.get("start")), parse_time(st.get("end"))
-    entries: list[tuple[str, str, Path, bool]] = []
-    managers: dict[str, str] = {}
+    managers: list[tuple[str, str, list[tuple[str, str, Path, bool]]]] = []
     for sid in st.get("managers") or []:
         path = locate_session(sid)
         if path is None:
             print(f"agent_costs: no transcript for manager session {sid}", file=sys.stderr)
             continue
         label = f"manager {sid[:8]}"
-        managers[label] = sid
-        entries += [("main", label, path, True), *subagent_entries(path)]
+        managers.append((label, sid, [("main", label, path, True), *subagent_entries(path)]))
+    agents: list[tuple[str, str, Path | None, str]] = []
     for name in st.get("agents") or []:
         try:
             rec = json.loads((state / "agents" / f"{name}.json").read_text())
         except (OSError, ValueError) as err:
             print(f"agent_costs: the agent run {name}: {err}", file=sys.stderr)
+            agents.append((name, "?", None, ""))
             continue
-        path = locate_session(rec.get("session") or "")
+        path = locate_session(rec.get("session") or hints.get(name, ""))
         if path is None:
             print(f"agent_costs: no transcript for agent run {name}", file=sys.stderr)
-            continue
-        entries.append((rec.get("role", "?"), name, path, True))
+        agents.append((name, rec.get("role", "?"), path, rec.get("status", "")))
+    return st, managers, agents
+
+
+def run_report(run: str) -> str:
+    """A loom flow run's agents (flow in loom part 3b): each manager session and its subagents as `main`,
+    and each headless agent run by its role, over the run's window, from <state>/runs/RUN.json and the
+    agent records it names. The comment carries the run and each manager session's models."""
+    st, managers, agents = run_inputs(run)
+    since, until = parse_time(st.get("start")), parse_time(st.get("end"))
+    entries: list[tuple[str, str, Path, bool]] = []
+    for _, _, own in managers:
+        entries += own
+    entries += [(role, name, path, True) for name, role, path, _ in agents if path is not None]
     models_of: dict[str, set[str]] = {}
     report = agents_report(f"Run `{run}`" + (f", {since.isoformat()} to {until.isoformat() if until else 'end'}" if since else ""),
                            entries, since, until, {"session": run, "run": run}, models_of)
     # The managers' models go in a comment of their own: the totals comment's shape stays the one records reads.
-    return report + "\n" + f"<!-- agent-costs-managers {json.dumps({sid: sorted(models_of.get(label, ())) for label, sid in managers.items()}, sort_keys=True)} -->"
+    return report + "\n" + f"<!-- agent-costs-managers {json.dumps({sid: sorted(models_of.get(label, ())) for label, sid, _ in managers}, sort_keys=True)} -->"
+
+
+def usd_cells(usage: Usage) -> dict:
+    return {"usd": usage.usd, "usd_incl_est": usage.usd + usage.usd_thinking}
+
+
+def run_json(run: str, hints: dict[str, str]) -> str:
+    """run_report's figures as one JSON object (flow visualisation spec §3): a row per agent run, in dispatch
+    order, priced to now while the run has no end and marked running while its record says so, with usd null
+    for one no transcript was found for; a row per manager session, its subagents summed into it; the total."""
+    st, managers, agents = run_inputs(run, hints)
+    since, until = parse_time(st.get("start")), parse_time(st.get("end"))
+    total = Usage()
+    mans = []
+    for label, sid, own in managers:
+        summed, models = Usage(), set()
+        for _, _, path, _ in own:
+            usage, used, _ = transcript_usage(path, since, until)
+            summed.add(usage)
+            models |= used
+        total.add(summed)
+        mans.append({"name": label, "role": "manager", "session": sid, "model": ", ".join(sorted(models)), **usd_cells(summed)})
+    rows = []
+    for name, role, path, status in agents:
+        row = {"name": name, "role": role, "model": "", "usd": None, "usd_incl_est": None, "running": status == "running"}
+        if path is not None:
+            usage, models, _ = transcript_usage(path, since, until)
+            total.add(usage)
+            row.update(model=", ".join(sorted(models)), **usd_cells(usage))
+        rows.append(row)
+    return json.dumps({"run": run, "since": st.get("start"), "until": st.get("end"), "agents": rows,
+                       "managers": mans, "total": usd_cells(total)}, sort_keys=True)
+
+
+# The tools whose input names a file the session wrote.
+WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+
+def wrote(path: Path, target: Path) -> bool:
+    """Whether transcript path holds a Write or Edit of target."""
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        if '"tool_use"' not in line:
+            continue
+        try:
+            content = (json.loads(line).get("message") or {}).get("content") or []
+        except ValueError:
+            continue
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") not in WRITE_TOOLS:
+                continue
+            named = (block.get("input") or {}).get("file_path") or (block.get("input") or {}).get("notebook_path")
+            if isinstance(named, str) and named and Path(named).expanduser().resolve() == target:
+                return True
+    return False
+
+
+def design_json(spec: str, plan: str | None) -> dict:
+    """The design session's cost (flow visualisation spec §3): the transcripts in the worktree's project dir that
+    wrote the spec, each priced from its first request up to the commit that added the plan (now while it isn't
+    committed)."""
+    top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or os.getcwd())
+    target = (top / spec).resolve()
+    until = None
+    if plan:
+        added = subprocess.run(["git", "-C", str(top), "log", "-1", "--diff-filter=A", "--format=%cI", "--", plan],
+                               capture_output=True, text=True).stdout.strip()
+        until = parse_time(added) if added else None
+    # The worktree's spellings: Claude names a project dir after the cwd it ran in, which may be a symlinked path.
+    spellings = {str(top), os.getcwd(), os.path.realpath(top), os.path.realpath(os.getcwd())}
+    projects = sorted({projects_root() / re.sub(r"[^A-Za-z0-9]", "-", s) for s in spellings})
+    sessions, total = [], Usage()
+    for project in projects:
+        for path in sorted(project.glob("*.jsonl")):
+            if not wrote(path, target):
+                continue
+            usage, _, _ = transcript_usage(path, None, until)
+            total.add(usage)
+            sessions.append({"session": path.stem, **usd_cells(usage)})
+    return {"spec": spec, "until": until.isoformat() if until else None, "sessions": sessions, "total": usd_cells(total)}
 
 
 def locate_session(sid: str) -> Path | None:
@@ -614,12 +715,36 @@ def main(argv: list[str]) -> int:
     records.add_argument("files", nargs="*")
     run = sub.add_parser("run", help="price a loom flow run's manager sessions and agent runs")
     run.add_argument("run", help="the run's ID, as loom flow run list prints it")
+    run.add_argument("--json", action="store_true", help="one JSON object: a row per agent run and manager session")
+    run.add_argument("--session", action="append", default=[], metavar="NAME=ID",
+                     help="the session of an agent run whose record has none yet (repeatable)")
+    design = sub.add_parser("design", help="price the design session: the transcripts that wrote the spec")
+    design.add_argument("spec", help="the spec's path from the top level")
+    design.add_argument("--plan", help="the plan, whose adding commit ends the design")
+    design.add_argument("--json", action="store_true", help="one JSON object")
     args = parser.parse_args(argv)
     if args.command == "session":
         print(session_report(find_session(args.session), parse_time(args.since), parse_time(args.until)))
         return 0
     if args.command == "run":
-        print(run_report(args.run))
+        if not args.json:
+            print(run_report(args.run))
+            return 0
+        hints = {}
+        for hint in args.session:
+            name, sep, sid = hint.partition("=")
+            if not sep or not name or not sid:
+                parser.error(f"--session {hint!r}: give NAME=ID")
+            hints[name] = sid
+        print(run_json(args.run, hints))
+        return 0
+    if args.command == "design":
+        data = design_json(args.spec, args.plan)
+        if args.json:
+            print(json.dumps(data, sort_keys=True))
+        else:
+            print(f"design {args.spec}: {len(data['sessions'])} sessions, ${data['total']['usd']:.2f} logged, "
+                  f"${data['total']['usd_incl_est']:.2f} with estimated thinking")
         return 0
     text, code = records_report(args.files or home_records())
     print(text, file=sys.stderr if code else sys.stdout)
