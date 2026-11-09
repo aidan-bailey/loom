@@ -25,8 +25,11 @@ const pendingFor = 5000;
 // "#s/<id>/diff" its changes, "#s/<id>/mockup" its brainstorm mockup and
 // "#s/<id>/mockup/full" the mockup alone (full: no header, no reply box),
 // "#s/<id>/agent/<agentId>" one of its subagents' turns, "#s/<id>/job/<n>"
-// one of its work-queue jobs, "#new", "#settings",
-// "#pair"; anything else is the fleet. The session's id is a number, as in the
+// one of its work-queue jobs, "#s/<id>/flow?plan=" its flow board,
+// "#s/<id>/flow/<story>?plan=" one of the board's rows,
+// "#s/<id>/flow/doc/<doc>?plan=&at=" one of the flow's documents, "#flows"
+// the host's flows, "#new", "#settings", "#pair"; anything else is the
+// fleet. The session's id is a number, as in the
 // JSON. "#s/<id>/turns" is the conversation's old address: it parses as
 // "turns" with legacy set, and settle answers it in place.
 export function parseRoute(hash) {
@@ -34,6 +37,16 @@ export function parseRoute(hash) {
   if (h === "new") return { name: "new" };
   if (h === "settings") return { name: "settings" };
   if (h === "pair") return { name: "pair" };
+  if (h === "flows") return { name: "flows" };
+  const f = h.match(/^s\/(\d+)\/flow(?:\/(doc\/([^/?]+)|[^/?]+))?(?:\?(.*))?$/);
+  if (f) {
+    const q = new URLSearchParams(f[4] || "");
+    const id = Number(f[1]);
+    const plan = q.get("plan") || "";
+    if (f[3]) return { name: "flowdoc", id, plan, doc: f[3], at: q.get("at") || "" };
+    if (f[2]) return { name: "flowstory", id, plan, story: f[2] };
+    return { name: "flow", id, plan };
+  }
   const a = h.match(/^s\/(\d+)\/agent\/([^/]+)$/);
   if (a && AGENT_ID.test(a[2])) return { name: "agent", id: Number(a[1]), agent: a[2] };
   const j = h.match(/^s\/(\d+)\/job\/([1-9]\d*)$/);

@@ -43,6 +43,8 @@ type screen struct{ name, hash string }
 // opens on its conversation; "info" is the tab that holds its tiles, agents
 // and actions; "agent" is the screen of session 1's running subagent (recon,
 // the one its conversation links to); "job" is session 1's running job.
+// The flow screens are session 6's flow (a run parked on story 3): its
+// board, story 1's row, its spec, and the host's Flows screen.
 var screens = []screen{
 	{"fleet", ""},
 	{"conversation", "#s/1"},
@@ -53,6 +55,10 @@ var screens = []screen{
 	{"diff", "#s/1/diff"},
 	{"mockup", "#s/7/mockup"},
 	{"mockup-full", "#s/7/mockup/full"},
+	{"flow", "#s/6/flow"},
+	{"flow-story", "#s/6/flow/1"},
+	{"flow-doc", "#s/6/flow/doc/spec?at=%C2%A72"},
+	{"flows", "#flows"},
 	{"new", "#new"},
 	{"settings", "#settings"},
 }

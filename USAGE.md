@@ -715,7 +715,19 @@ and answers only phones you have paired.
   runs (with its line counts), **info**, and **mockup** while the
   brainstorming skill's visual companion runs in the session's worktree
   (marked when its screen changed in the latest turn): the page the
-  companion shows, sandboxed, with a full-screen view. A strip under the
+  companion shows, sandboxed, with a full-screen view. A **flow** tab
+  shows while the session's worktree holds a flow (a plan with the
+  `plan_join` marker or a `**Spec:**` line on its branch, a run of
+  `loom flow run`, or a spec still in design), dotted amber while its run
+  asks: the stage strip (design, spec, draft, run, record, each opening its
+  document), the run's open question with a way to the manager's
+  conversation, a row per story with its steps (dev, gate, review, fix) as
+  cells, and the cost box (the run's spend at API list prices, the whole
+  flow's, a projection, and the cost per story beside the repo's past
+  runs). A row opens its steps, findings and the plan and spec sections it
+  reads. The fleet row shows a flow's chip (`flow 2/5 · asks · $4.71`), and
+  **flows** in the fleet's header opens every session's flows and the
+  host's past runs. The flow screens only show. A strip under the
   tabs shows the session's state and age, its line counts, its pull
   request and its account's usage; tap it for the info tab. The
   conversation is its recent turns: each prompt (yours, a background

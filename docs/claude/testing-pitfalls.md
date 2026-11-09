@@ -15,6 +15,7 @@
 - **A synchronous test client hides ordering.** The app tests' client pings before every read and after every cast, so a production path that casts and then reads back the effect passes there. Ordering tests belong in `core/rpc`, which uses production clients.
 - **Another client's view lags until it syncs.** `internal/cli`'s `TestJobInterrupted_AJobThatEndedReportsItsOutcome` followed a job to its end with `loom job run` on one connection, then asked the test daemon's own client (`d.client`) about it: under `-race` that client's copy still showed the job running 1 run in 8, and the test read "continues". Read another client's view through `d.job`/`d.jobs` (`FlushForTest`, then `Sync`) before acting on it.
 - **A test inherits the session it runs from.** A `loom job` carries the submitting shell's environment, and a loom pane's holds `LOOM_MOD_SOCKET` and `LOOM_LAUNCH`, the session's links to the real daemon. On 2026-11-05 the e2e suite, run as a job, started fake agents in sandboxes that set no mod of their own; `tools/fakeagent` plays the mod whenever both are set, so they said hello to the real daemon as the submitting session (86 `mod.new_poller` lines, one `mod.live … claude=fakeagent` in `serve.log`), took its mod's place, and the session's next job messages were recorded `undelivered`. `IsolateLoomDirs` and `Sandbox.Environ` now clear them; a new route from a test to a launched process must too.
+- **New background work on the tick or a hook scan breaks `core`'s job counts.** Many `core` tests assert how many jobs a step queued (`TestTick_GivesEverySelectedInstanceItsFullDiff` expects the probe alone, `TestAttention_WhatQueuesNothing` none at all), so a job the model now spawns on its own, such as the flow visualisation's look at each session at first sight and at a Stop, fails them while doing exactly what it should. Turn it off in `core/testmain_test.go` with a package switch, as `newConfiner = nil` and `flowLooksOn = false` do, and turn it back on in its own tests.
 - **A parity probe pins only the corpus you chose.** A `send-keys -l` against PTY-write parity gate passed until a reviewer tried a trailing `;` and 17 KiB of text, which falsified the design. Attack a gate's corpus, not just its verdict.
 
 ## Guards
@@ -56,6 +57,10 @@ Loom runs `git add -N .` in every session worktree on each diff probe (`session/
 ## Suites that run at the same time
 
 A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (every `TestMain`) puts in a directory of the process's own under `os.TempDir()` (`loom-log-*`), removed by `log.Close()`. Until 2026-11-05 every test process shared `os.TempDir()/loom.log`, and one process renamed it to `loom.log.1` at 5 MB while another counted its lines: `core`'s `TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce`, `TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce` and `TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew` read 0 whenever two suites ran at once. A test that counts log lines reads `log.LogFilePath()`, never a fixed path; a new `TestMain` ends with `log.Close()`, or leaves a `loom-log-*` directory per run. Concurrent suites still share the host: tmux servers, ports and CPU time.
+
+## A gate's exit code
+
+A gate run through a pipe ends with the pipe's last command's status: `loom job run -- sh -c 'go test ./... | grep -v ^ok'` exited 0 on 2026-11-09 with three `core` failures in its output, and the gate read as passed. Write the output to a file and test each command's own status (`go test … > log; t=$?; …; [ $t -eq 0 ]`), or read the output for `FAIL` before trusting a 0.
 
 ## What the gates won't tell you
 

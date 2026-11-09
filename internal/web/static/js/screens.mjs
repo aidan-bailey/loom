@@ -12,6 +12,9 @@ import { Changes } from "./changes.mjs";
 import { Mockup } from "./mockup.mjs";
 import { Agent, AgentHead } from "./agent.mjs";
 import { Job, JobHead } from "./job.mjs";
+import { Flow, FlowStory } from "./flow.mjs";
+import { FlowDoc } from "./flowdoc.mjs";
+import { Flows, FlowsHead } from "./flows.mjs";
 
 export const screens = {
   fleet: { Screen: Fleet, Head: FleetHead },
@@ -23,4 +26,8 @@ export const screens = {
   mockup: { Screen: Mockup, Head: SessionHead },
   agent: { Screen: Agent, Head: AgentHead },
   job: { Screen: Job, Head: JobHead },
+  flow: { Screen: Flow, Head: SessionHead },
+  flowstory: { Screen: FlowStory, Head: SessionHead },
+  flowdoc: { Screen: FlowDoc, Head: SessionHead },
+  flows: { Screen: Flows, Head: FlowsHead },
 };

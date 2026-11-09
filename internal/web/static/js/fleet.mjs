@@ -4,6 +4,7 @@ import { pref } from "./store.mjs";
 import { glyphOf, GearIcon } from "./skin.mjs";
 import { ContextRow } from "./chrome.mjs";
 import { rowShare } from "./usage.mjs";
+import { chipClass, flowChip } from "./flow.mjs";
 
 export const GROUPS = [
   { key: "needs_you", title: "Needs you" },
@@ -156,6 +157,7 @@ function Row({ s, chip, fresh, share }) {
   if (agents > 0) meta.push(html`<span>${plural(agents, "agent")}</span>`);
   if (d.added || d.removed) meta.push(html`<span><span class="sc-add">+${d.added}</span> <span class="sc-del">−${d.removed}</span></span>`);
   if (s.pr) meta.push(html`<span>PR #${s.pr.number} <${PrMark} pr=${s.pr} /></span>`);
+  for (const f of s.flows || []) meta.push(html`<span class=${chipClass(f)}>${flowChip(f)}</span>`);
   if (s.jobs_label) meta.push(html`<span class="sc-job">${s.jobs_label}</span>`);
   if (chip && !waiting) meta.push(html`<span class="sc-ws">${chip}</span>`);
   return html`
@@ -250,8 +252,10 @@ export function Fleet({ snap }) {
 
 // FleetHead is the fleet's context row: its title, the gear and + new (off
 // while the stream is down).
-export function FleetHead({ stale, go }) {
+export function FleetHead({ snap, stale, go }) {
+  const flows = allSessions(snap).some((s) => (s.flows || []).length > 0);
   return html`<${ContextRow} title="Fleet">
+    ${flows ? html`<a class="sc-icon sc-flows-link" href="#flows" aria-label="Flows">flows</a>` : null}
     <a class="sc-icon" href="#settings" aria-label="Settings"><${GearIcon} /></a>
     <button class="sc-btn sc-primary" type="button" disabled=${stale} onClick=${() => go("#new")}>+ new</button>
   <//>`;

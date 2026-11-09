@@ -450,3 +450,18 @@ screen fetches on open and on pull-to-refresh.
    regeneration and the web routes.
 4. **The phone.** The tab, the chip, the board, the story detail, the
    document viewer and the Flows screen, with their webshots.
+
+## Planning amendments
+
+Decided while planning and building (plan `docs/superpowers/plans/2026-11-09-flow-visualisation.md`):
+
+1. The moved record types are `flowrun.AgentRecord`, `AgentRecordJob`, `GateRecord` and `GateRecordStep` (`flowrun` already had a `GateStep`); `internal/cli` keeps its names as aliases, and the gate run's CLI-only methods became functions (`openJobs`, `planSteps`, `gateKey`).
+2. flowview's tests write their fixtures through `flowrun.Save`, `SaveAgent` and `SaveGate`; the engine's own names are parsed in `flowrun` (`TestStepOf_ParsesEveryNameTheEngineSubmits`), where its fake effects live.
+3. A step's start and end come from the queue's records (`FlowView.Times`), for the jobs the queue still holds; an agent record holds no times.
+4. flowview reads `paths.state` and `paths.drafts` itself (`profilePaths`): `loom flow conf state` and `drafts` make the directories they print. It runs `git status` with `--no-optional-locks`, so a look never refreshes the index.
+5. The branch's files are `git log --first-parent --no-merges --name-only <base>..HEAD` and `git status`: a merge of main brings in none of main's plans.
+6. A document's tree is built by `buildTreeLimit` (1 MiB, 40,000 nodes, headings with their source line); a message's stays at `buildTree`'s 64 KiB.
+7. `Find` and `Detail` take the records dir; `Summary` carries the run's `Engine` job, which `lost` is judged by.
+8. A spec in design stops being a flow once any plan on the branch mentions it, flow's or not: a design carried on without flow leaves no chip behind.
+9. The draft stage is done for a plan with joined stories and no drafts dir ("written by hand"), and a flow's status before a run is `designing`, `designed`, `drafting` or `drafted`.
+10. `ReadFlow` prices the design session too (`loom flow costs design`), cached once the design stage is done.

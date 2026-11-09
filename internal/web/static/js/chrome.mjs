@@ -59,9 +59,10 @@ export function ContextRow({ back, title, children }) {
 // SessionTabs are a session's views under its context row: its conversation
 // (conversation: a Claude session; the tab key is "turns" and #s/<id> its
 // address), its changes (changes: while its diff can be read, with its line
-// counts), its info and its mockup. A tab shows when it applies or is the
-// current one, so a session that pauses on its changes keeps the tab under
-// the user; a lone info tab draws no row.
+// counts), its info, its mockup and its flow (while its worktree holds one;
+// the board, a row and a document all light it). A tab shows when it
+// applies or is the current one, so a session that pauses on its changes
+// keeps the tab under the user; a lone info tab draws no row.
 export function SessionTabs({ s, current, conversation, changes }) {
   const base = "#s/" + s.id;
   const d = s.diff || {};
@@ -76,13 +77,20 @@ export function SessionTabs({ s, current, conversation, changes }) {
   if (s.mockup || current === "mockup") {
     tabs.push({ key: "mockup", label: "mockup", href: base + "/mockup", fresh: Boolean(s.mockup && s.mockup.fresh) });
   }
+  // The flow tab shows while the session's worktree holds a flow
+  // (s.flows), and on its own screens; its dot is amber while a run asks.
+  const onFlow = current === "flow" || current === "flowstory" || current === "flowdoc";
+  if ((s.flows && s.flows.length > 0) || onFlow) {
+    tabs.push({ key: "flow", label: "flow", href: base + "/flow", attention: (s.flows || []).some((f) => f.asks) });
+  }
   if (tabs.length === 1) return null;
   return html`<nav class="sc-tabs" aria-label="Session views">
     ${tabs.map(
-      (t) => html`<a key=${t.key} class=${"sc-tab" + (t.key === current ? " sc-tab-on" : "")} href=${t.href} aria-current=${t.key === current ? "page" : undefined}>
+      (t) => html`<a key=${t.key} class=${"sc-tab" + (t.key === current || (t.key === "flow" && onFlow) ? " sc-tab-on" : "")} href=${t.href} aria-current=${t.key === current || (t.key === "flow" && onFlow) ? "page" : undefined}>
         ${t.label}
         ${t.diff ? html`<span class="sc-tab-diff"><span class="sc-add">+${t.diff.added || 0}</span> <span class="sc-del">−${t.diff.removed || 0}</span></span>` : null}
         ${t.fresh ? html`<span class="sc-tab-dot" aria-label="new"></span>` : null}
+        ${t.attention ? html`<span class="sc-tab-dot sc-tab-dot-attn" aria-label="asks"></span>` : null}
       </a>`,
     )}
   </nav>`;
