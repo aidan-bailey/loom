@@ -37,13 +37,15 @@ review column and landmines are in the state file; you may also re-run
 
 1. Run `loom flow conf doctor`. If it reports a FAIL, report its
    FAIL lines and stop. Then run `loom flow conf show --for supervisor`
-   once and keep its output. Its `[developer]`, `[verifier]` and `[reviewer]`
-   blocks go into those roles' briefs as they stand, and its `[supervisor]`
+   once and keep its output. Its `[developer]`, `[verifier]`, `[reviewer]` and
+   `[doc-writer]` blocks go into those roles' briefs as they stand, and its `[supervisor]`
    block gives the exclusive builds and the state directory. The developer
    block carries the prefix, the services (each started, as written, before
    the tests that need it) and, on a deep story, the landmine notes; the
    verifier block, the services and the vacuous patterns; the reviewer block,
-   the prefix, the landmine notes and the idioms.
+   the prefix, the landmine notes and the idioms; the doc-writer block, the
+   prefix, the doc paths, the generated files, the idioms and the design
+   registries.
 2. Run `loom flow check-plan <plan>`. If it fails, report its FAIL
    lines and stop: each story's **Developer**, **Files**, **Interfaces** and
    **Verify** lines are what you route, parallelise and review from. Keep its
@@ -121,7 +123,19 @@ review column and landmines are in the state file; you may also re-run
    with `flow:story-reviewer`, giving it the fix's range and the findings.
    Findings still Critical or Important after that, and a story reviewer's
    **Plan** lines, go to `main`.
-7. Update the state file.
+7. Run the story's doc pass. Dispatch `flow:doc-writer` with the plan's path
+   and the story's line range, the spec's path, the story's range (its base,
+   and its head after the last fix round), the developer's deviation list,
+   the Critical and Important findings its fix rounds took, each with its
+   `file:line` and the reviewer's reason, and the `[doc-writer]` block. When
+   it committed: run
+   `loom flow conf docs-check --base <the head before it> --head <HEAD>`, which
+   lists what it changed outside the doc paths; for each such path, ask `main`
+   whether to keep it, and otherwise send a fresh `flow:doc-writer` to undo it
+   with an inverse edit; then dispatch `flow:verifier` with the word "story"
+   and the story's commits. Whether or not it committed, keep its FINDING
+   lines with the Minors for the final fix round.
+8. Update the state file.
 
 Run stories one after another. Two may run at once only when `loom flow check-plan`
 listed them as a parallel-safe pair — disjoint **Files**, at most one
@@ -137,7 +151,8 @@ concurrent heavy builds. Run a verifier only while no developer is building.
 2. Dispatch `flow:code-quality-reviewer` once over the whole `BASE_SHA..HEAD` with
    an anti-seam brief and the `[reviewer]` block: contracts between stories,
    values one story produces that no other reads, units or limits that
-   disagree across a boundary.
+   disagree across a boundary, and docs the run changed that contradict the
+   code.
 3. Route its findings together with the Minors the stories kept, briefed and
    re-reviewed as in step 6, one fresh `flow:intermediate-dev` per group of
    findings in the same files; this round runs for Minors alone too. Then
@@ -149,7 +164,8 @@ concurrent heavy builds. Run a verifier only while no developer is building.
 Keep the state file current, one row per story: developer, tier, review
 column (`vouched` or `full`), landmines, status, commits, deviations,
 BLOCKED re-dispatches up a tier, questions escalated to `main`, review
-findings by severity, and whether the developer hit its turn cap — plus every
+findings by severity, whether the developer hit its turn cap and the doc
+pass's DOC and LESSON counts — plus every
 open question and every Minor kept for the final fix round, with its
 `file:line`. The manager copies the story rows into the run's record, so
 keep them to counts with a one-line note. Write it with a quoted heredoc

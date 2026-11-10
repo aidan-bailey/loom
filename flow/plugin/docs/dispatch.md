@@ -405,6 +405,7 @@ divert that spend:
 | Plan-task implementation | a developer: `flow:junior-dev` or `flow:intermediate-dev`; `flow:senior-dev` only as a last resort |
 | A whole plan, under the `supervised` option | `flow:plan-execution-supervisor` |
 | Review outside the `supervised` option | `flow:spec-reviewer`, then `flow:code-quality-reviewer` |
+| A story's docs, after its review and fix rounds | `flow:doc-writer` |
 | Design, planning, prod ops, anything judgment-maximal | stays in the main session |
 
 **Never fork a briefed worker.** A `fork` starts with its parent's whole
@@ -647,6 +648,30 @@ estimate reads "mechanical" is exactly what goes to `flow:junior-dev`, so a floo
 set purely by prediction applies the thinnest review to the output of the
 cheapest developer, which is where a vacuous test is likeliest to survive.
 
+## The doc pass
+
+After a story's review and fix rounds and its PLAN-lines question,
+`flow:doc-writer` (Sonnet @ high) brings the docs into line with the story as
+it landed. The plan's own doc edits are predictions written before the code
+existed: a fix round can overtake them, and what the plan left out stays out.
+The doc writer reads the story's diff, its plan section, its developer's
+deviations and the Critical and Important findings its fix rounds took. It
+fixes the docs the change made false and adds those the repo would expect for
+what the story added, leaving a doc a later story's **Files** line names to
+that story; writes a lesson where the repo's CLAUDE.md says lessons go, when a
+fixed finding shows a trap no doc captures, and skips it when unsure; updates
+a diagram the change made false and creates none; and where the code
+contradicts the spec or the plan it documents nothing and reports a `FINDING:`
+line, which joins the Minors kept for the final round.
+
+It never touches code, generated files or the owner's memory, which the
+manager updates at the run's end. When it committed,
+`loom flow conf docs-check --base <the head before it> --head <HEAD>` lists
+the paths it changed that aren't doc paths (the profile's `[docs] paths`,
+`*.md` by default, less its `generated`), and the story gates run again. Its
+commits get no review of their own, like any docs-only change; the final
+anti-seam review reads every doc the run changed.
+
 ## The verifier runs gates check-only
 
 `flow:verifier` (Haiku @ high) runs the gates through `loom flow gates` — per
@@ -681,21 +706,22 @@ story abandons.
 supervisor. `loom flow run start` queues an engine, a Go process running as a
 `run` job, that takes the supervisor's mechanical steps itself:
 
-- it dispatches each developer, fixer, reviewer and premise-check as a
-  headless agent job (`loom flow agent`), with the briefs the supervisor
-  wrote;
+- it dispatches each developer, fixer, reviewer, doc writer and
+  premise-check as a headless agent job (`loom flow agent`), with the briefs
+  the supervisor wrote;
 - it routes a story by its tier, its review column and the conformance
   markers;
 - it runs the profile's services and the gates itself, so no
   `flow:verifier` is dispatched;
-- it reads a review's `FINDING:`, `PLAN:` and `VERDICT:` lines, which the
-  headless preamble asks reviewers for;
+- it reads a review's `FINDING:`, `PLAN:` and `VERDICT:` lines and a doc
+  writer's `DOC:`, `LESSON:` and `FINDING:` lines, which the headless
+  preamble asks for;
 - it writes the run's record.
 
 It asks the manager every judgement as a typed question: a NEEDS_CONTEXT,
 an intermediate's BLOCKED, a design finding, a premise's DESIGN verdict,
 findings a fix round left open, a second gate failure, a failed agent, a
-tree that moved. The manager waits on `loom flow run wait` in a background
+doc pass that changed what isn't a doc, a tree that moved. The manager waits on `loom flow run wait` in a background
 Bash, which costs no turns, and answers with `loom flow run answer --from
 spec|owner`: the record counts the questions the spec settled, which a
 judge (3c, not built) could have answered, against the ones that needed the
@@ -787,7 +813,7 @@ nothing, so the choice stays explicit. The hour has a price: a one-hour cache
 write costs twice the base input rate, against 1.25 times for five minutes, so
 an agent that never pauses for five minutes pays more for nothing. `flow:glance`,
 `flow:recon`, `flow:premise-check`, `flow:story-reviewer`, `flow:code-quality-reviewer`,
-`flow:intermediate-dev`, `flow:spec-reviewer` and `flow:drafter` set `5m`; the supervisor,
+`flow:intermediate-dev`, `flow:spec-reviewer`, `flow:drafter` and `flow:doc-writer` set `5m`; the supervisor,
 `flow:senior-dev`, `flow:verifier` and `flow:junior-dev` set `1h`. The cost of `5m` is a cold
 resume: an agent resumed after five minutes idle writes its whole context
 again, which a `flow:drafter` seldom pays, since every fix job goes to a fresh

@@ -1,6 +1,6 @@
 # flow
 
-The agent flow loom ships: the `flow` Claude plugin (`plugin/`: 12 pinned agents, the owner-started skills `/flow:init`, `/flow:draft`, `/flow:supervise`, `/flow:run` and `/flow:retro`, the preloaded `flow:habits`, and the dispatch guide) and the tools behind `loom flow` (`lib/`, Python and bash), embedded in the binary. `session` writes a copy into each Claude launch's hooks folder (`Write`). Full reference in [`README.md`](README.md).
+The agent flow loom ships: the `flow` Claude plugin (`plugin/`: 13 pinned agents, the owner-started skills `/flow:init`, `/flow:draft`, `/flow:supervise`, `/flow:run` and `/flow:retro`, the preloaded `flow:habits`, and the dispatch guide) and the tools behind `loom flow` (`lib/`, Python and bash), embedded in the binary. `session` writes a copy into each Claude launch's hooks folder (`Write`). Full reference in [`README.md`](README.md).
 
 ## Rules when modifying this package
 

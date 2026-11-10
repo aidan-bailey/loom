@@ -65,12 +65,13 @@ A record has four parts.
    `loom flow costs design <spec> --plan <plan>`; neither writes a record.
 3. **Stories**: one row per story, copied from the supervisor's state file:
 
-   | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit |
-   |---|---|---|---|---|---|---|---|---|---|---|
+   | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|
 
    **Tier** is the story's `deep` or `light` and **Review** its `vouched` or
    `full`, as `loom flow check-plan` printed them and the supervisor's state file
-   carries them.
+   carries them. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
+   of the story's doc pass, `—` for a run without one.
 4. **Notes**: facts worth keeping, such as answers the manager or owner gave
    and anything that surprised. No conclusions; those belong to a retro.
 

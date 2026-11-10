@@ -52,13 +52,17 @@ so walk from `/`: at each level, take the directory entry whose `-`-encoded
 name continues the key, and go into it. When the walk fails (the repo moved or
 was deleted), show the raw key.
 
-- **Cost share**: developers, reviews, supervisor and manager. A review on
+- **Cost share**: developers, reviews, the doc writer, supervisor and manager. A review on
   Opus can outweigh the story it checks, and the manager's own turns
   often outweigh every subagent together.
 - **Rework by developer tier**: deviations, BLOCKED stories moved up a tier,
   escalations to the manager, review findings and turn-cap hits, per story. A
   cheap tier whose stories come back BLOCKED or full of findings costs more
   than the tier above it once the rework is counted.
+- **Doc passes**: the doc writer's cost against what it changed (each story's
+  Docs and Lessons) and the doc findings the final review raised anyway. A
+  pass that changes nothing on most stories, or whose docs the final review
+  keeps correcting, is a candidate for another effort, another tier or none.
 - **Cache**: the share of an agent type's cost in one-hour cache writes. One
   that rarely pauses for five minutes pays double for writes it never reuses,
   which makes it a candidate for `cacheTtl: 5m`. The baseline retro,

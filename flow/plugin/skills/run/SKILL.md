@@ -45,5 +45,7 @@ short.
    again.
 5. When it returns ended, read the record it names. When the profile's
    `Record copy in the repo:` names a directory, commit the copy there by
-   pathspec. Then tell the owner what was built, what failed, and what needs
-   them.
+   pathspec. Record the run's outcome in your memory, when you keep one (what
+   was built, its commits, what is still open), and nothing the repo's docs
+   can hold: the doc passes put the run's lessons in the repo. Then tell the
+   owner what was built, what failed, and what needs them.

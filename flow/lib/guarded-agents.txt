@@ -6,4 +6,5 @@
 junior-dev developer
 intermediate-dev developer
 senior-dev developer
+doc-writer developer
 drafter drafter

@@ -1,12 +1,12 @@
 ---
 name: habits
-description: The binding habits of the developer subagents (junior-dev, intermediate-dev and senior-dev), which preload this skill through their skills field. Not for the main session or any other agent to invoke.
+description: The binding habits of the developer subagents (junior-dev, intermediate-dev and senior-dev) and the doc writer, which preload this skill through their skills field. Not for the main session or any other agent to invoke.
 user-invocable: false
 ---
 
 # Developer habits
 
-These habits bind every developer subagent. You work in the repository the
+These habits bind every developer subagent and the doc writer. You work in the repository the
 session is in, and its CLAUDE.md files are its rules: where one of them and a
 habit here differ, the CLAUDE.md wins. Your agent definition adds your lane:
 which decisions are yours to make.

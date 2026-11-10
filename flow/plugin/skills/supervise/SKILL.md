@@ -78,4 +78,7 @@ the less each one costs. Keep your own turns short for the same reason.
    `~/.loom/flow/records/` is no repository: the record is not committed
    there. When the supervisor block's `Record copy in the repo:` names a directory,
    write the same file there too and commit it in this repo by pathspec.
-9. Tell the owner what was built, what failed, and what needs them.
+9. Record the run's outcome in your memory, when you keep one (what was
+   built, its commits, what is still open), and nothing the repo's docs can
+   hold: the doc passes put the run's lessons in the repo. Then tell the owner
+   what was built, what failed, and what needs them.
