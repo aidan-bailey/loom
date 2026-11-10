@@ -62,6 +62,10 @@ A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (ev
 
 A gate run through a pipe ends with the pipe's last command's status: `loom job run -- sh -c 'go test ./... | grep -v ^ok'` exited 0 on 2026-11-09 with three `core` failures in its output, and the gate read as passed. Write the output to a file and test each command's own status (`go test … > log; t=$?; …; [ $t -eq 0 ]`), or read the output for `FAIL` before trusting a 0.
 
+## A gate over a tree you are still editing
+
+A queued `go test ./...` compiles each package from the files on disk when it reaches that package, not when it was submitted. A minutes-long suite run beside your edits tests a mix of two trees: a package it reaches after an edit runs new code against whatever else, a golden file say, the edit hasn't touched yet, and its verdict belongs to no commit. On 2026-11-10 review fixes landed while a full-suite job ran on the doc pass's branch, and its result was thrown away. Commit, then gate; when you must edit while a gate runs, cancel it (`loom job cancel N`) and submit it again on the commit.
+
 ## What the gates won't tell you
 
 No test checks a fake against the component it stands in for, or that a guard has a positive control. Review asks those questions, and only if someone asks them on purpose.
