@@ -100,6 +100,15 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("doctor: 0 FAIL", out)
 
+    def test_doc_paths_pass_when_a_tracked_file_matches_and_warn_when_none_does(self):
+        self.profile('schema = 1\n[gates]\nstory = ["sh -c true"]\n')
+        _, out = self.doctor()
+        self.assertIn("WARN doc paths: no tracked file is a doc path (`*.md`, less the generated files)", out)
+        (self.repo / "README.md").write_text("x\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", "README.md"], check=True, env=CLEAN_ENV)
+        _, out = self.doctor()
+        self.assertIn("PASS doc paths: `*.md`", out)
+
     def test_a_gate_table_is_checked_by_its_command(self):
         self.profile('schema = 1\n[gates]\nstory = ["sh -c true"]\nfinal = [{ run = "no-such-program-xyz", locks = ["port:4300"] }]\n')
         code, out = self.doctor()

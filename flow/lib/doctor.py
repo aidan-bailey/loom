@@ -24,7 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flowconf import FlowError, Profile, drafts_dir, exclude_line, flow_root, load_profile, state_dir, toplevel
+from flowconf import (FlowError, Profile, drafts_dir, exclude_line, flow_root, git, glob_match, is_generated, load_profile,
+                      state_dir, toplevel)
 
 # Cargo's own subcommands. Any other `cargo <sub>` runs the program `cargo-<sub>`.
 CARGO_BUILTINS = frozenset(
@@ -231,6 +232,15 @@ def registry_paths_missing(top: Path, profile: Profile) -> list[str]:
     return missing
 
 
+def doc_paths_problem(top: Path, profile: Profile) -> str | None:
+    """Why no tracked file is a doc path, or None when one is: a doc pass would then have no doc to change."""
+    tracked = git(top, "ls-files", "-z").split("\0")
+    if any(p and glob_match(p, profile.doc_paths) and not is_generated(p, profile.generated) for p in tracked):
+        return None
+    globs = ", ".join(f"`{glob}`" for glob in profile.doc_paths) or "no globs"
+    return f"no tracked file is a doc path ({globs}, less the generated files)"
+
+
 def doctor(cwd: Path) -> tuple[list[str], int]:
     """The PASS, FAIL and WARN lines for this repo, and the number of FAILs."""
     lines: list[str] = []
@@ -280,6 +290,11 @@ def doctor(cwd: Path) -> tuple[list[str], int]:
             lines.append(f"WARN design registries: `{path}` names nothing in this worktree")
         if not stale:
             lines.append("PASS design registries")
+        problem = doc_paths_problem(top, profile)
+        if problem:
+            lines.append(f"WARN doc paths: {problem}")
+        else:
+            lines.append("PASS doc paths: " + ", ".join(f"`{glob}`" for glob in profile.doc_paths))
     report("state", state_problem(top, profile))
     return lines, fails
 

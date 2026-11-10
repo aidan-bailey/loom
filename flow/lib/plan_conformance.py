@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import difflib
-import fnmatch
 import posixpath
 import re
 import subprocess
@@ -39,21 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_plan import parse as parse_stories  # noqa: E402
 from check_plan import repo_root  # noqa: E402
 from plan_premises import ELIDED, Plan, Tree, Walker, find_span, gather  # noqa: E402
-from flowconf import FlowError, load_profile  # noqa: E402
+from flowconf import FlowError, is_generated, load_profile  # noqa: E402
 
 COMMAND_FENCES = {"bash", "sh", "shell", "console", "text", "txt"}
-# Lockfiles a story regenerates rather than writes: their lines are counted, not listed. A repo
-# adds its own generated files with its profile's `generated` globs.
-COMMON_LOCKFILES = {"Cargo.lock", "pnpm-lock.yaml", "package-lock.json", "uv.lock", "go.sum", "flake.lock"}
-
-
-def is_generated(path: str, globs: tuple[str, ...]) -> bool:
-    """Whether a changed file is generated: a common lockfile, or a match for one of the profile's
-    globs, tried on the whole path and on the file's name."""
-    name = posixpath.basename(path)
-    return name in COMMON_LOCKFILES or any(fnmatch.fnmatch(path, glob) or fnmatch.fnmatch(name, glob) for glob in globs)
-
-
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # A block this long that doesn't match whole is aligned line by line instead.
 ALIGN_FROM = 8

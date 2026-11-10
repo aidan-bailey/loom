@@ -29,6 +29,11 @@ refused by name, so a typo can't silently drop a landmine.
                                    the story gates, `{packages}` expanded for
                                    the files those commits changed
     flowconf.py gates --final      the final gates
+    flowconf.py docs-check --base B --head H
+                                   the paths B..H changed that aren't doc paths
+                                   (docs.paths, default *.md, less the generated
+                                   files), one per line; exit 0 when there is
+                                   none, 1 when any, 2 on an error
     flowconf.py doctor             check that a run can start here (doctor.py)
 
 The role blocks (spec §5.4): the developer gets the prefix, the services (start
@@ -36,18 +41,22 @@ each, as written, before the tests that need them) and the landmine notes (for
 a deep story); the verifier the services and `vacuous`; the reviewer the prefix,
 the landmine notes and the idioms. The drafter (part 2 spec §6.3) gets the
 prefix, the story gates and the `{packages}` rule, the generated globs, the
-landmine markers and notes, the idioms and the design registries.
+landmine markers and notes, the idioms and the design registries. The doc writer
+(the doc pass's spec §5.2) gets the prefix, the doc paths, the generated globs,
+the idioms and the design registries.
 
 Every command but `roster` works on the repo of the current directory. Exit 0
-on success, 1 when there is no usable profile, git fails or a gate is FAIL, 2 on a usage error. `vacuous` and `roster` exit 2 on any
+on success, 1 when there is no usable profile, git fails or a gate is FAIL, 2 on a usage error. `vacuous`, `docs-check` and `roster` exit 2 on any
 error, as their callers read 1 as an answer or a verdict.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -60,7 +69,9 @@ if sys.version_info < (3, 11):
 import tomllib  # noqa: E402
 
 SCHEMA = 1
-ROLES = ("supervisor", "developer", "verifier", "reviewer")
+# The doc pass's agent (the doc pass's spec, 2026-11-10): the supervisor pastes its block into its briefs.
+DOC_WRITER = "doc-writer"
+ROLES = ("supervisor", "developer", "verifier", "reviewer", DOC_WRITER)
 # /flow:draft's role, not the supervisor's: `show --for supervisor` prints every role in ROLES and leaves it out.
 DRAFTER = "drafter"
 # Every key a schema-1 profile may hold, by table ("" is the top level), with its type.
@@ -77,6 +88,7 @@ KEYS: dict[str, dict[str, object]] = {
     "review": {"idioms": TEXT},
     "paths": {"state": str, "records": str, "drafts": str},
     "design": {"registries": TEXT},
+    "docs": {"paths": list},
 }
 # Where /flow:draft keeps each plan's drafts when paths.drafts says nothing, under the worktree's top level
 # (part 2 spec §6.1): inside the worktree, where a drafter's Write and Edit need no permission prompt.
@@ -84,6 +96,11 @@ DEFAULT_DRAFTS = ".flow/drafts"
 # A lock's name, as loom's work queue takes it (sched.ValidLockName), and how many one job may name.
 LOCK_NAME = re.compile(r"[A-Za-z0-9._:/-]{1,64}")
 MAX_LOCKS = 8
+# The files a doc pass may change when docs.paths says nothing: every Markdown file (the doc pass's spec, §4).
+DEFAULT_DOC_PATHS = ("*.md",)
+# Lockfiles a story regenerates rather than writes: their lines are counted, not listed. A repo
+# adds its own generated files with its profile's `generated` globs.
+COMMON_LOCKFILES = {"Cargo.lock", "pnpm-lock.yaml", "package-lock.json", "uv.lock", "go.sum", "flake.lock"}
 
 
 class FlowError(Exception):
@@ -113,6 +130,7 @@ class Profile:
     records: str = ""
     drafts: str = ""
     registries: str = ""
+    doc_paths: tuple[str, ...] = DEFAULT_DOC_PATHS
 
 
 def flow_root() -> Path:
@@ -253,6 +271,7 @@ def validate(data: dict, path: Path, digest: str) -> Profile:
         records=values.get("paths.records", ""),
         drafts=drafts,
         registries=values.get("design.registries", ""),
+        doc_paths=values.get("docs.paths", DEFAULT_DOC_PATHS),
     )
 
 
@@ -354,6 +373,25 @@ def vacuous_lines(text: str, patterns: tuple[str, ...]) -> list[str]:
     return [line for line in text.splitlines() if any(rx.search(line) for rx in compiled)]
 
 
+def glob_match(path: str, globs: tuple[str, ...]) -> bool:
+    """Whether one of `globs` matches `path`, tried on the whole path and on the file's name. `fnmatch`'s `*`
+    crosses `/`, so `*.md` matches every Markdown file at any depth."""
+    name = posixpath.basename(path)
+    return any(fnmatch.fnmatch(path, glob) or fnmatch.fnmatch(name, glob) for glob in globs)
+
+
+def is_generated(path: str, globs: tuple[str, ...]) -> bool:
+    """Whether a changed file is generated: a common lockfile, or a match for one of the profile's globs."""
+    return posixpath.basename(path) in COMMON_LOCKFILES or glob_match(path, globs)
+
+
+def doc_strays(top: Path, profile: Profile, base: str, head: str) -> list[str]:
+    """The doc pass's spec, §5.4: the paths base..head changed that aren't doc paths, matched by no
+    `docs.paths` glob, or generated. A rename counts by both its names, a deletion by its path."""
+    out = git(top, "diff", "-z", "--name-only", "--no-renames", f"{base}..{head}", "--")
+    return [p for p in out.split("\0") if p and (not glob_match(p, profile.doc_paths) or is_generated(p, profile.generated))]
+
+
 def _listed(items: tuple[str, ...]) -> str:
     return ", ".join(f"`{item}`" for item in items) if items else "none"
 
@@ -403,6 +441,16 @@ def role_block(profile: Profile, role: str, top: Path) -> list[str]:
             "Idioms to check beyond CLAUDE.md:",
             *_indented(profile.idioms),
         ]
+    if role == DOC_WRITER:
+        return [
+            f"Prefix for every check command: {prefix}",
+            f"Doc paths (change only files these match): {_listed(profile.doc_paths)}",
+            f"Generated files (never edit them by hand, Markdown or not): {_listed(profile.generated)}",
+            "Idioms beyond CLAUDE.md (some say which doc follows which code):",
+            *_indented(profile.idioms),
+            "Design registries (a story that adds what one lists edits it too):",
+            *_indented(profile.registries),
+        ]
     return [
         f"Profile: {profile.path} sha256:{profile.digest}",
         f"Prefix: {prefix}",
@@ -446,6 +494,19 @@ def _vacuous_command(file: str, cwd: Path) -> int:
     return 0 if matches else 1
 
 
+def _docs_check_command(base: str, head: str, cwd: Path) -> int:
+    """0 when base..head changed only doc paths, 1 when it printed the paths that aren't, 2 on an error."""
+    try:
+        top = toplevel(cwd)
+        strays = doc_strays(top, load_profile(top), base, head)
+    except FlowError as err:
+        print(f"flowconf: {err}", file=sys.stderr)
+        return 2
+    for path in strays:
+        print(path)
+    return 1 if strays else 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="flowconf.py", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -464,6 +525,9 @@ def main(argv: list[str]) -> int:
     kind = gates_parser.add_mutually_exclusive_group(required=True)
     kind.add_argument("--story", nargs="+", metavar="COMMIT", help="the story's own commits")
     kind.add_argument("--final", action="store_true", help="the final gates")
+    docs_parser = sub.add_parser("docs-check", help="the paths a doc pass changed that aren't doc paths")
+    docs_parser.add_argument("--base", required=True, metavar="COMMIT", help="the head before the doc pass")
+    docs_parser.add_argument("--head", required=True, metavar="COMMIT", help="the head after it")
     sub.add_parser("doctor", help="check that a run can start here")
     try:
         args = parser.parse_args(argv)
@@ -502,6 +566,8 @@ def main(argv: list[str]) -> int:
             import packages  # imported here: packages imports this module
 
             return packages.gates_command(args.story, args.final, cwd)
+        elif args.command == "docs-check":
+            return _docs_check_command(args.base, args.head, cwd)
         elif args.command == "doctor":
             import doctor  # imported here: doctor imports this module
 

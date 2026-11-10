@@ -422,5 +422,79 @@ class FlowconfTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("FLOW_ROSTER is not set", err)
 
+    def commit_all(self) -> str:
+        """Commit everything staged or tracked-and-changed, and return HEAD."""
+        git(self.repo, "add", "-u")
+        git(self.repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "c")
+        return git(self.repo, "rev-parse", "HEAD")
+
+    def test_doc_paths_default_to_markdown_and_take_the_profiles_globs(self):
+        self.repo_profile()
+        self.assertEqual(flowconf.load_profile(self.repo).doc_paths, ("*.md",))
+        self.repo_profile('schema = 1\n[docs]\npaths = ["*.md", "docs/*.svg"]\n')
+        self.assertEqual(flowconf.load_profile(self.repo).doc_paths, ("*.md", "docs/*.svg"))
+        self.assertIn("docs.paths: must be a list of strings", self.refused('schema = 1\n[docs]\npaths = "*.md"\n'))
+        self.assertIn("docs.globs: unknown key", self.refused('schema = 1\n[docs]\nglobs = ["*.md"]\n'))
+
+    def test_glob_match_tries_the_whole_path_and_the_name(self):
+        self.assertTrue(flowconf.glob_match("README.md", ("*.md",)))
+        self.assertTrue(flowconf.glob_match("docs/claude/a.md", ("*.md",)), "fnmatch's * crosses /")
+        self.assertTrue(flowconf.glob_match("pkg/README", ("README",)), "by its name")
+        self.assertFalse(flowconf.glob_match("main.go", ("*.md",)))
+        self.assertTrue(flowconf.is_generated("sub/go.sum", ()), "a common lockfile")
+        self.assertTrue(flowconf.is_generated("CHANGELOG.md", ("CHANGELOG.md",)))
+        self.assertFalse(flowconf.is_generated("README.md", ("CHANGELOG.md",)))
+
+    def test_the_doc_writers_block_holds_what_a_doc_pass_needs(self):
+        self.repo_profile(GOOD + '[design]\nregistries = ["a route joins the table in routes.rs"]\n')
+        profile = flowconf.load_profile(self.repo)
+        block = flowconf.show(profile, "doc-writer", self.repo)
+        self.assertTrue(block.startswith("[doc-writer]\n"), block)
+        for value in ("`nix develop --command`", "Doc paths (change only files these match): `*.md`", "`*.gen.rs`",
+                      "tracing, not println.", "a route joins the table in routes.rs"):
+            self.assertIn(value, block)
+        for value in ("scripts/db.sh", "filtered out", "single-threaded", "cargo clippy"):
+            self.assertNotIn(value, block)
+        self.assertIn("[doc-writer]", flowconf.show(profile, "supervisor", self.repo))
+
+    def test_docs_check_lists_what_a_range_changed_outside_the_doc_paths(self):
+        self.repo_profile('schema = 1\ngenerated = ["CHANGELOG.md"]\n')
+        base = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "guide.md").write_text("g\n")
+        (self.repo / "README.md").write_text("y\n")
+        git(self.repo, "add", "docs/guide.md")
+        head = self.commit_all()
+        self.assertEqual(self.run_cli("docs-check", "--base", base, "--head", head)[:2], (0, ""))
+        (self.repo / "main.go").write_text("package main\n")
+        (self.repo / "CHANGELOG.md").write_text("c\n")
+        git(self.repo, "add", "main.go", "CHANGELOG.md")
+        head = self.commit_all()
+        code, out, err = self.run_cli("docs-check", "--base", base, "--head", head)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(sorted(out.splitlines()), ["CHANGELOG.md", "main.go"], "code, and a generated Markdown file")
+
+    def test_docs_check_takes_a_deleted_doc_and_checks_a_rename_by_both_names(self):
+        self.repo_profile("schema = 1\n")
+        (self.repo / "NOTES.md").write_text("n\n")
+        git(self.repo, "add", "NOTES.md")
+        base = self.commit_all()
+        git(self.repo, "rm", "-q", "NOTES.md")
+        head = self.commit_all()
+        self.assertEqual(self.run_cli("docs-check", "--base", base, "--head", head)[:2], (0, ""), "a deleted doc")
+        git(self.repo, "mv", "README.md", "README.txt")
+        head = self.commit_all()
+        self.assertEqual(self.run_cli("docs-check", "--base", base, "--head", head)[:2], (1, "README.txt\n"))
+
+    def test_docs_check_errors_exit_2(self):
+        self.repo_profile("schema = 1\n")
+        code, _, err = self.run_cli("docs-check", "--base", "no-such-rev", "--head", "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("no-such-rev", err)
+        self.repo_profile("schema = 2\n")
+        self.assertEqual(self.run_cli("docs-check", "--base", "HEAD", "--head", "HEAD")[0], 2)
+        self.assertEqual(self.run_cli("docs-check", "--base", "HEAD")[0], 2, "a usage error")
+
+
 if __name__ == "__main__":
     unittest.main()
