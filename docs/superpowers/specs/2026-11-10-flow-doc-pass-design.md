@@ -131,7 +131,7 @@ In `story()`, after `planLines` and before `commitsAt(p+":done", base)`, when `S
 4. `headAt(name)`. When HEAD moved, `Effects.DocsCheck(before, head)`, memoized as `docs:<name>`. Strays ask the `docs-strayed` question (§5.5). With none, or once the manager accepts them, the story gates run: `gateLoop(s, p, base)`, over the story's commits with the pass's included, with a fix after a failure as after any of the story's gates.
 5. The findings append to `e.st.Kept`. The row's `Docs` and `Lessons` are the counts summed over the pass's attempts that reported `DONE`. A pass that changed nothing leaves a note (`<story>: the doc pass changed no docs`), and so do kept findings (`<story>: the doc pass kept N findings for the final round`).
 
-`loom flow run start` sets `State.Docs`. A state without it, written by an older build, runs no doc pass, so its replay doesn't change.
+`loom flow run start` sets `State.Docs` when the profile printed a `[doc-writer]` block, which a flow root from before the doc pass doesn't. A state without it, written by an older build, runs no doc pass, so its replay doesn't change.
 
 `AntiSeamBrief` gains: docs the run changed that contradict the code are findings too, each with the doc's `file:line`.
 
@@ -143,11 +143,11 @@ In `story()`, after `planLines` and before `commitsAt(p+":done", base)`, when `S
 
 The profile's `[docs]` table holds one key, `paths`, a list of globs. `validate` refuses another key and a value that isn't a list, as it does for every table, and `doctor` reports the globs in use.
 
-The engine reaches the tool through `DocsCheck` on `internal/cli/flow_conf.go`'s `flowConf` and on the run's `Effects` adapter (`runFX`), as it reaches conformance.
+The engine reaches the tool through `DocsCheck` on `internal/cli/flow_conf.go`'s `runTools` (`scriptTools`) and on the run's `Effects` adapter (`runFX`), as it reaches conformance.
 
 ### 5.5 The `docs-strayed` question
 
-Key `strays:<name>`, kind `docs-strayed` (`flowrun.KindDocsStrayed`); its text names the strays, and its path is the doc writer's report. It takes `accept` (keep the changes: the gates and the final review judge them), `stop`, or a decision. A decision runs a fresh doc writer whose brief carries the earlier report, the decision and the strays, with the instruction to undo the strays' changes with inverse edits and commit them, since the habits forbid `revert` and `reset`. Its `DocsCheck` runs over `before..` its own head, so a full undo clears the strays. In `CheckAnswer`'s table: `KindDocsStrayed: {[]string{WordAccept, WordStop}, true}`. `loom flow run answer`'s help and the dispatch guide's list of question kinds name it.
+Key `strays:<name>`, kind `docs-strayed` (`flowrun.KindDocsStrayed`); its text names the strays, and its path is the doc writer's report. It takes `accept` (keep the changes: the gates and the final review judge them), `stop`, or a decision. A decision runs a fresh doc writer whose brief carries the earlier report, the decision and the strays, with the instruction to undo the strays' changes with inverse edits and commit them, since the habits forbid `revert` and `reset`. Its `DocsCheck` runs over `before..` its own head, so a full undo clears the strays. In `CheckAnswer`'s table: `KindDocsStrayed: {[]string{WordAccept, WordStop}, true}`. The dispatch guide's list of the engine's questions names it; `loom flow run answer` lists no kinds, and says what each question takes through `Takes`.
 
 ### 5.6 The supervisor
 
@@ -163,7 +163,7 @@ Key `strays:<name>`, kind `docs-strayed` (`flowrun.KindDocsStrayed`); its text n
 
 ### 5.7 The board and the record
 
-- `internal/flowview/detail.go`'s `rowKinds` gains `flowrun.KindDocs`. In `internal/web/static/js/flow.mjs`, `KINDS.story` gains `"docs"` and `LABEL.docs` is `"doc"`. A run without the pass shows the cell empty. The cost bar counts the doc writer under `other`, as it does any role `ROLE_CLASS` doesn't name.
+- `internal/flowview/detail.go`'s `rowKinds` gains `flowrun.KindDocs`, and `kindReached` reads `documenting`. A story's gates after its doc pass set its status back to `gating`, so `cells` treats a kind before any kind with an attempt as passed by: a fix round the story never had shows skipped, not todo. In `internal/web/static/js/flow.mjs`, `KINDS.story` gains `"docs"` and `LABEL.docs` is `"doc"`. A run without the pass shows the cell skipped (`—`). The cost bar counts the doc writer under `other`, as it does any role `ROLE_CLASS` doesn't name.
 - `internal/flowrun/record.go`'s story table appends two columns, `Docs` and `Lessons`, `—` for a run without the pass. Nothing parses the table's columns. `flow/plugin/docs/records.md` documents them, and the supervisor's state file carries them for the manager to copy. The cost by type gives the doc writer its own row unchanged, since `agent_costs.py` groups by agent type.
 - `/flow:retro`'s cost share adds the doc passes, paired with their outcome: their cost against their Docs and Lessons counts per story, and the doc findings the final review raised anyway.
 
@@ -176,7 +176,8 @@ Step 5 of `/flow:run` and step 9 of `/flow:supervise` add: record the run's outc
 | Case | What happens |
 |---|---|
 | `NEEDS_CONTEXT` | a `needs-context` question; the answer resumes the doc writer |
-| `BLOCKED`, a turn cap, no report, a report or `FINDING:` line that doesn't parse | an `agent-failed` question; `retry` or a decision runs a fresh doc writer with the earlier report |
+| `BLOCKED`, a turn cap, no report | an `agent-failed` question; `retry` or a decision runs a fresh doc writer |
+| `DONE` with a `FINDING:` line that doesn't parse | an `agent-failed` question; the engine takes the pass's commits as its own (`headAt`), so its retry goes on from them, with its report in the brief, and `docs-check` covers both |
 | `DONE` with no commits | no `docs-check`, no gates; a note in the record |
 | a stray | a `docs-strayed` question (§5.5) |
 | the story gates fail after the pass | the gate loop's fix, and its question on a second failure, as after any of the story's gates |
@@ -200,7 +201,7 @@ Step 5 of `/flow:run` and step 9 of `/flow:supervise` add: record the run's outc
 | `flow/plugin/docs/records.md` | the story table's columns |
 | `flow/README.md`, `flow/CLAUDE.md` | 13 pinned agents, the doc writer among them |
 | `internal/flowrun/` | `KindDocs`, `KindDocsStrayed`, `State.Docs`, `Blocks.DocWriter`, the row's `Docs` and `Lessons`, the step in `story()`, `DocsBrief`, the report parser, `AntiSeamBrief`, `StepOf` and `QuestionStep`, `Record`'s columns, `Effects.DocsCheck`, `README.md`'s procedure |
-| `internal/cli/` | `rolePreamble("doc-writer")`, `flowConf.DocsCheck`, `runFX.DocsCheck`, `start` filling `Blocks.DocWriter` and `State.Docs`, `answer`'s help |
+| `internal/cli/` | `rolePreamble("doc-writer")`, `scriptTools.DocsCheck`, `runFX.DocsCheck`, `start` filling `Blocks.DocWriter` and `State.Docs` |
 | `internal/flowview/detail.go`, `internal/web/static/js/flow.mjs` | the docs cell |
 
 ## 8. Testing
