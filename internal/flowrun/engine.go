@@ -61,6 +61,9 @@ type Effects interface {
 	Conformance(story, base, head string) (Conformance, error)
 	// Premises is plan_premises.py's output when it flagged anything, else "".
 	Premises(rev string) (string, error)
+	// DocsCheck is the paths base..head changed that aren't doc paths
+	// (loom flow conf docs-check): none when it changed only docs.
+	DocsCheck(base, head string) ([]string, error)
 	Save(st *State) error
 }
 
@@ -83,6 +86,7 @@ type engine struct {
 	seq     map[string]int // attempts at each name prefix, this pass
 	resumes map[string]int // resumes of each agent run, this pass
 	final   Story
+	sent    []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
 }
 
 // Run drives st until it parks or ends, saving it after every step. It
@@ -640,9 +644,9 @@ func (e *engine) conformance(key string, s *Story, base, head string) (Conforman
 	return c, e.remember("conformance:"+key, c)
 }
 
-// story runs one story: developer, gates, review, findings (spec §5.3).
+// story runs one story: developer, gates, review, findings, doc pass (spec §5.3).
 func (e *engine) story(s *Story) error {
-	e.cur, e.st.Phase = s.ID, "story "+s.ID
+	e.cur, e.st.Phase, e.sent = s.ID, "story "+s.ID, nil
 	defer func() { e.cur = "" }()
 	p := storyPrefix(s.ID)
 	// The story's base is the head the engine last recorded, never a fresh
@@ -679,6 +683,11 @@ func (e *engine) story(s *Story) error {
 	}
 	if err := e.planLines(s, p, base, plan, len(e.st.Kept)-kept); err != nil {
 		return err
+	}
+	if e.st.Docs {
+		if err := e.docs(s, p, base, dev.Path); err != nil {
+			return err
+		}
 	}
 	commits, err := e.commitsAt(p+":done", base)
 	if err != nil {
@@ -723,6 +732,7 @@ func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan
 			decision = a
 		}
 	}
+	e.sendFindings(rev, rep)
 	return e.fixRound(s, p, base, rev.Findings, nil, decision, plan)
 }
 
@@ -758,6 +768,7 @@ func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix 
 			e.note("%s: the manager accepted %d findings left open", storyName(s), len(blocking(rev.Findings)))
 			return nil
 		}
+		e.sendFindings(rev, rep)
 		findings, planFix, decision = rev.Findings, nil, a
 	}
 }
@@ -796,6 +807,123 @@ func (e *engine) planLines(s *Story, p, base string, notes planNotes, kept int) 
 		e.note("%s: a re-review's plan problem, not asked again: %s", storyName(s), l)
 	}
 	return nil
+}
+
+// sendFindings keeps rev's Critical and Important findings, which go to a
+// fix round, for the story's doc pass.
+func (e *engine) sendFindings(rev Review, rep Report) {
+	for _, f := range blocking(rev.Findings) {
+		e.sent = append(e.sent, SentFinding{Finding: f, Report: rep.Path})
+	}
+}
+
+// docs runs story s's doc pass (the doc pass's spec, §5.3): a doc writer
+// over the story as it landed, then docs-check and the story's gates when
+// it committed. Its findings join the kept ones, for the final round.
+func (e *engine) docs(s *Story, p, base, devReport string) error {
+	s.Row.Status = "documenting"
+	before := e.head
+	brief := DocsBrief(e.st, s, base, before, devReport, e.sent)
+	next := brief
+	var found []Finding
+	for {
+		name := e.next(p + "-docs")
+		r, d, err := e.docPass(name, next)
+		if err != nil {
+			return err
+		}
+		if d == nil {
+			var earlier []string
+			if r.done() {
+				// Its lines don't parse, but it finished: its commits are its
+				// own, and the retry goes on from them.
+				if _, err := e.headAt(name); err != nil {
+					return err
+				}
+				earlier = paths(r.Path)
+			}
+			decision, err := e.failed(name, r)
+			if err != nil {
+				return err
+			}
+			next = withEarlier(brief, earlier, decision)
+			continue
+		}
+		s.Row.Docs, s.Row.Lessons = s.Row.Docs+d.Docs, s.Row.Lessons+d.Lessons
+		for _, f := range d.Findings {
+			if !slices.Contains(found, f) {
+				found = append(found, f)
+			}
+		}
+		head, err := e.headAt(name)
+		if err != nil {
+			return err
+		}
+		if head == before {
+			e.note("%s: the doc pass changed no docs", storyName(s))
+			break
+		}
+		strays, err := e.docsCheck(name, before, head)
+		if err != nil {
+			return err
+		}
+		if len(strays) > 0 {
+			a, err := e.ask(Question{Key: "strays:" + name, Kind: KindDocsStrayed, Text: name + " changed paths that aren't doc paths:\n- " + strings.Join(strays, "\n- "), Paths: paths(r.Path)})
+			if err != nil {
+				return err
+			}
+			switch a {
+			case WordStop:
+				return errStopped
+			case WordAccept:
+				e.note("%s: the manager kept the doc pass's changes to %s", storyName(s), strings.Join(strays, ", "))
+			default:
+				next = withEarlier(brief, paths(r.Path), a) + undoStrays(strays)
+				continue
+			}
+		}
+		if err := e.gateLoop(s, p, base); err != nil {
+			return err
+		}
+		break
+	}
+	if len(found) > 0 {
+		e.st.Kept = append(e.st.Kept, found...)
+		e.note("%s: the doc pass kept %d findings for the final round", storyName(s), len(found))
+	}
+	return nil
+}
+
+// docPass is doc writer run name's report and its lines, or a nil DocPass
+// when the run failed: it didn't report done, or its lines don't parse,
+// which r.Why then says.
+func (e *engine) docPass(name, brief string) (Report, *DocPass, error) {
+	r, err := e.agent(name, "doc-writer", "", brief)
+	if err == nil {
+		r, err = e.settle(name, r)
+	}
+	if err != nil || !r.done() {
+		return r, nil, err
+	}
+	d, perr := ParseDocs(r.Text)
+	if perr != nil {
+		r.Why = perr.Error()
+		return r, nil, nil
+	}
+	return r, &d, nil
+}
+
+// docsCheck is DocsCheck over base..head, memoized under name.
+func (e *engine) docsCheck(name, base, head string) ([]string, error) {
+	var strays []string
+	if e.recall("docs:"+name, &strays) {
+		return strays, nil
+	}
+	strays, err := e.fx.DocsCheck(base, head)
+	if err != nil {
+		return nil, err
+	}
+	return strays, e.remember("docs:"+name, strays)
 }
 
 // finalRound runs the final gates, the anti-seam review and the final fix

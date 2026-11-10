@@ -1,0 +1,10 @@
+Update the docs for Story 2 of the plan p.md: its section is plan lines 200-299. The spec is s.md.
+The story landed as h1..h6: that diff is what the docs follow.
+The plan's header and the later stories' **Files** lines say which story owns which doc edit: leave a doc a later story's **Files** line names to that story.
+Its developer's report, whose DEVIATION lines say where the code left the plan, and so where the plan's doc edits may have gone stale: /state/agents/r-s2-dev1/report.md
+The Critical and Important findings its reviews sent to a fix round, for lessons, each with the report that found it:
+- Critical a.go:3 guard it (/state/agents/r-s2-review1/report.md)
+
+[doc-writer]
+Prefix for every check command: none
+Doc paths (change only files these match): `*.md`

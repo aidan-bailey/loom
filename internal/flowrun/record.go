@@ -2,6 +2,7 @@ package flowrun
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -42,8 +43,8 @@ func Record(st *State, in RecordInputs) string {
 	}
 	fmt.Fprintf(&b, "- Ended: %s\n- Engine: loom flow run (flow in loom part 3b)\n\n", st.Status)
 	fmt.Fprintf(&b, "## Cost\n\n%s\n\n## Stories\n\n", strings.TrimSpace(in.Cost))
-	b.WriteString("| Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, s := range st.Stories {
 		r := s.Row
 		dev := r.Developer
@@ -58,8 +59,12 @@ func Record(st *State, in RecordInputs) string {
 		if r.TurnCap {
 			cap = "yes"
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s | %d | %d | %d | %d/%d/%d | %s |\n",
-			s.ID, dev, s.Tier, s.Review, r.Commits, status, r.Deviations, r.UpATier, r.Escalated, r.Findings[0], r.Findings[1], r.Findings[2], cap)
+		docs, lessons := "—", "—"
+		if st.Docs {
+			docs, lessons = strconv.Itoa(r.Docs), strconv.Itoa(r.Lessons)
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s | %d | %d | %d | %d/%d/%d | %s | %s | %s |\n",
+			s.ID, dev, s.Tier, s.Review, r.Commits, status, r.Deviations, r.UpATier, r.Escalated, r.Findings[0], r.Findings[1], r.Findings[2], cap, docs, lessons)
 	}
 	b.WriteString("\n## Notes\n\n")
 	if len(st.Answers) > 0 {

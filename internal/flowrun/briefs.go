@@ -124,7 +124,47 @@ func ReReviewBrief(st *State, s *Story, base, head string, findings []Finding, p
 func AntiSeamBrief(st *State, head string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Review the whole implementation of the plan %s, %s..%s, for its seams: contracts between stories, values one story produces that no other reads, units or limits that disagree across a boundary. The spec is %s.\n", st.Plan, st.Base, head, st.Spec)
+	b.WriteString("Docs the run changed that contradict the code are findings too, each at the doc's file:line.\n")
 	fmt.Fprintf(&b, "\n[reviewer]\n%s\n", st.Blocks.Reviewer)
+	return b.String()
+}
+
+// SentFinding is a Critical or Important finding a review sent to a fix
+// round, with the report that found it: what a doc pass reads for lessons.
+type SentFinding struct {
+	Finding
+	Report string
+}
+
+// DocsBrief is a story's doc pass brief (the doc pass's spec, §5.2): the
+// story as it landed, base..head, its developer's report, the findings
+// its fix rounds took, and the [doc-writer] block.
+func DocsBrief(st *State, s *Story, base, head, devReport string, sent []SentFinding) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Update the docs for Story %s of the plan %s: its section is plan lines %d-%d. The spec is %s.\n", s.ID, st.Plan, s.Line, s.End, st.Spec)
+	fmt.Fprintf(&b, "The story landed as %s..%s: that diff is what the docs follow.\n", base, head)
+	b.WriteString("The plan's header and the later stories' **Files** lines say which story owns which doc edit: leave a doc a later story's **Files** line names to that story.\n")
+	fmt.Fprintf(&b, "Its developer's report, whose DEVIATION lines say where the code left the plan, and so where the plan's doc edits may have gone stale: %s\n", devReport)
+	if len(sent) == 0 {
+		b.WriteString("Its reviews sent no Critical or Important finding to a fix round.\n")
+	} else {
+		b.WriteString("The Critical and Important findings its reviews sent to a fix round, for lessons, each with the report that found it:\n")
+		for _, f := range sent {
+			fmt.Fprintf(&b, "- %s (%s)\n", f.Finding, f.Report)
+		}
+	}
+	fmt.Fprintf(&b, "\n[doc-writer]\n%s\n", st.Blocks.DocWriter)
+	return b.String()
+}
+
+// undoStrays is what a doc pass's retry adds after the manager's decision
+// on its strays: the paths to put back.
+func undoStrays(strays []string) string {
+	var b strings.Builder
+	b.WriteString("\nThe earlier pass changed these paths, which aren't doc paths; unless the manager's decision says otherwise, undo its changes to them with inverse edits, and commit that:\n")
+	for _, p := range strays {
+		fmt.Fprintf(&b, "- %s\n", p)
+	}
 	return b.String()
 }
 

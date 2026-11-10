@@ -48,6 +48,7 @@ type State struct {
 	RecordCopy  string                     `json:"record_copy,omitempty"` // the profile's in-repo record dir, "" for none
 	Managers    []string                   `json:"managers"`
 	Blocks      Blocks                     `json:"blocks"`
+	Docs        bool                       `json:"docs,omitempty"` // a doc pass after each story (doc pass spec); start sets it, so an older build's run replays without one
 	Stories     []Story                    `json:"stories"`
 	Engine      int64                      `json:"engine,omitempty"` // the latest engine job
 	Agents      []string                   `json:"agents"`           // every agent run, in dispatch order
@@ -70,6 +71,7 @@ type Blocks struct {
 	Verifier   string   `json:"verifier"`
 	Reviewer   string   `json:"reviewer"`
 	Supervisor string   `json:"supervisor"`
+	DocWriter  string   `json:"doc_writer,omitempty"`
 	Services   []string `json:"services,omitempty"`
 }
 
@@ -101,7 +103,7 @@ func (s *Story) baseRange() (int, int) {
 
 // Row is what the run made of a story, for show and the record.
 type Row struct {
-	Status      string   `json:"status,omitempty"` // developing, gating, reviewing, fixing, done
+	Status      string   `json:"status,omitempty"` // developing, gating, reviewing, fixing, documenting, done
 	Developer   string   `json:"developer,omitempty"`
 	Base        string   `json:"base,omitempty"`
 	Head        string   `json:"head,omitempty"`
@@ -112,6 +114,8 @@ type Row struct {
 	Findings    [3]int   `json:"findings"` // Critical, Important, Minor of its first review
 	TurnCap     bool     `json:"turn_cap,omitempty"`
 	Corrections []string `json:"corrections,omitempty"`
+	Docs        int      `json:"docs,omitempty"`    // its doc pass's DOC lines
+	Lessons     int      `json:"lessons,omitempty"` // and LESSON lines
 }
 
 // Question is a parked run's open question (spec §5.4).

@@ -16,6 +16,7 @@ func TestCheckAnswer(t *testing.T) {
 		KindGateFailure:   {"text", WordRetry, WordAccept, WordStop},
 		KindAgentFailed:   {"text", WordRetry, WordStop},
 		KindTreeMoved:     {WordContinue, WordStop},
+		KindDocsStrayed:   {"text", WordAccept, WordStop},
 	}
 	for kind, ok := range takes {
 		for _, answer := range []string{"Use the cache.", WordStop, WordAccept, WordRetry, WordContinue} {
@@ -49,6 +50,7 @@ func TestTakes(t *testing.T) {
 	assert.Equal(t, "a decision, retry, accept or stop", Takes(KindGateFailure))
 	assert.Equal(t, "continue or stop", Takes(KindTreeMoved))
 	assert.Equal(t, "a decision, retry or stop", Takes(KindAgentFailed))
+	assert.Equal(t, "a decision, accept or stop", Takes(KindDocsStrayed))
 }
 
 func contains(xs []string, x string) bool {

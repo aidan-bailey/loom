@@ -207,7 +207,8 @@ type runTools interface {
 	// Premises is plan_premises.py's output when it flagged anything, else "".
 	Premises(plan, rev string) (string, error)
 	Conformance(plan, story, base, head string) (string, error)
-	Costs(run string) (string, error) // agent_costs.py run RUN
+	DocsCheck(base, head string) ([]string, error) // flowconf.py docs-check: the paths that aren't docs
+	Costs(run string) (string, error)              // agent_costs.py run RUN
 }
 
 // newRunTools is the runTools of the flow root root.
@@ -289,6 +290,20 @@ func (s scriptTools) Premises(plan, rev string) (string, error) {
 func (s scriptTools) Conformance(plan, story, base, head string) (string, error) {
 	out, _, err := s.run("plan_conformance.py", []int{0, 1}, plan, "--story", story, "--base", base, "--head", head)
 	return out, err
+}
+
+func (s scriptTools) DocsCheck(base, head string) ([]string, error) {
+	out, _, err := s.run("flowconf.py", []int{0, 1}, "docs-check", "--base", base, "--head", head)
+	if err != nil {
+		return nil, err
+	}
+	var strays []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimRight(l, "\r"); l != "" {
+			strays = append(strays, l)
+		}
+	}
+	return strays, nil
 }
 
 func (s scriptTools) Costs(run string) (string, error) {

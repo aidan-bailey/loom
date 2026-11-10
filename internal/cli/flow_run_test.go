@@ -23,7 +23,8 @@ import (
 // it reports DONE, Story 2's developer first asks a question, Story 3's
 // developer ends with no result (no report), any other story's developer
 // commits and reports DONE, Story 1's
-// first review finds a Critical, any other review approves; with
+// first review finds a Critical, any other review approves; Story 1's doc
+// writer commits a doc, any other doc writer changes nothing; with
 // $FAKE_SLOW set, Story 1's developer takes a few seconds.
 const fakeRunClaude = `#!/bin/sh
 n=$(ls "$FAKE_CLAUDE_LOG" | grep -c '\.args$')
@@ -42,6 +43,8 @@ result() { printf '%s\n' '{"type":"result","subtype":"success","is_error":false,
 commit() { git -c user.name=f -c user.email=f@f commit -q --allow-empty -m "$1" >/dev/null 2>&1; }
 if [ -n "$resume" ]; then commit resumed; result 'resumed\nSTATUS: DONE'; exit 0; fi
 case "$prompt" in
+  *"Update the docs for Story 1 "*) commit docs; result 'DOC: README.md the new flag\nSTATUS: DONE';;
+  *"Update the docs for Story"*) result 'nothing to change\nSTATUS: DONE';;
   *"Build Story 1"*) [ -n "$FAKE_SLOW" ] && sleep 4; commit s1; result 'built\nDEVIATION: renamed x\nSTATUS: DONE';;
   *"Build Story 2"*) result 'need one\nSTATUS: NEEDS_CONTEXT\nQUESTION: Which colour?';;
   *"Build Story 3"*) ;;
@@ -69,7 +72,7 @@ func (f fakeRunTools) CheckPlan(string) ([]byte, string, error) {
 }
 func (f fakeRunTools) Show() (string, error) {
 	return "[supervisor]\nProfile: /repo/.claude/flow.toml sha256:abcdefabcdef\nRecord copy in the repo: none\n\n" +
-		"[developer]\nPrefix: none\n\n[verifier]\nServices: none\n\n[reviewer]\nPrefix: none\n", nil
+		"[developer]\nPrefix: none\n\n[verifier]\nServices: none\n\n[reviewer]\nPrefix: none\n\n[doc-writer]\nPrefix for every check command: none\n", nil
 }
 func (f fakeRunTools) Services() ([]string, error)             { return nil, nil }
 func (f fakeRunTools) Key() (string, error)                    { return "-the-repo", nil }
@@ -77,6 +80,7 @@ func (f fakeRunTools) Premises(string, string) (string, error) { return "", nil 
 func (f fakeRunTools) Conformance(_, story, _, _ string) (string, error) {
 	return "conformance of " + story + "\n", nil
 }
+func (f fakeRunTools) DocsCheck(string, string) ([]string, error) { return nil, nil }
 func (f fakeRunTools) Costs(run string) (string, error) {
 	return "COST of " + run + "\n<!-- agent-costs {} -->\n<!-- agent-costs-managers {\"m1\": [\"claude-fake\"]} -->", nil
 }
@@ -92,7 +96,7 @@ func runStory(id, developer string) flowrun.Story {
 // and the fake claude's log dir.
 func runFixture(t *testing.T, stories ...flowrun.Story) (*testDaemon, string, string) {
 	t.Helper()
-	d, conf, logDir := agentFixture(t, "junior-dev", "intermediate-dev", "senior-dev", "story-reviewer", "code-quality-reviewer", "premise-check")
+	d, conf, logDir := agentFixture(t, "junior-dev", "intermediate-dev", "senior-dev", "story-reviewer", "code-quality-reviewer", "premise-check", "doc-writer")
 	bin := filepath.Dir(firstOnPath(t, "claude"))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"), []byte(fakeRunClaude), 0o700))
 	conf.gates = []string{"RUN true"}
@@ -180,8 +184,11 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 
 	st, err := flowrun.Load(filepath.Join(state, "runs", id+".json"))
 	require.NoError(t, err)
-	assert.Equal(t, []string{id + "-s1-dev1", id + "-s1-review1", id + "-s1-fix1", id + "-s1-review2", id + "-s2-dev1", id + "-s2-review1", id + "-final-review1"}, st.Agents)
-	assert.Equal(t, []string{id + "-s1-gates1", id + "-s1-gates2", id + "-s2-gates1", id + "-final-gates1"}, st.Gates, "the fix was gated again")
+	assert.Equal(t, []string{id + "-s1-dev1", id + "-s1-review1", id + "-s1-fix1", id + "-s1-review2", id + "-s1-docs1",
+		id + "-s2-dev1", id + "-s2-review1", id + "-s2-docs1", id + "-final-review1"}, st.Agents)
+	assert.Equal(t, []string{id + "-s1-gates1", id + "-s1-gates2", id + "-s1-gates3", id + "-s2-gates1", id + "-final-gates1"}, st.Gates,
+		"the fix and the doc pass were gated again")
+	assert.True(t, st.Docs, "start switches the doc pass on when the profile prints its block")
 	assert.Equal(t, []string{"m1"}, st.Managers)
 	record, err := os.ReadFile(st.Record)
 	require.NoError(t, err)
@@ -191,7 +198,7 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, text, "- Design stage: 1 session, 20 minutes")
 	assert.Contains(t, text, "- Manager: claude-fake m1")
 	assert.Contains(t, text, "COST of "+id)
-	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | 2 | done | 1 | 0 | 0 | 1/0/0 | no |")
+	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | 3 | done | 1 | 0 | 0 | 1/0/0 | no | 1 | 0 |")
 	assert.Contains(t, text, "- Questions: 1; answered from the spec: 0; by the owner: 1.")
 	assert.Contains(t, text, "- Asked (needs-context, Story 2): Which colour?\n  Answered by the owner: Blue.")
 	require.Len(t, st.Answers, 1)

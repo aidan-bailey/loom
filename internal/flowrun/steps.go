@@ -14,6 +14,7 @@ const (
 	KindGates   = "gates"
 	KindReview  = "review"
 	KindFix     = "fix"
+	KindDocs    = "docs"
 )
 
 // Step is what an attempt's name says: the story it belongs to ("" for the
@@ -28,7 +29,7 @@ type Step struct {
 
 // attempt is a name's tail past its story or final prefix: a kind and an
 // attempt number from 1, as engine.next counts them.
-var attempt = regexp.MustCompile(`^(dev|gates|review|fix)([1-9][0-9]*)$`)
+var attempt = regexp.MustCompile(`^(dev|gates|review|fix|docs)([1-9][0-9]*)$`)
 
 // premiseAttempt is a premise step's tail.
 var premiseAttempt = regexp.MustCompile(`^premise([1-9][0-9]*)$`)
@@ -48,7 +49,7 @@ func StepOf(run, name string, stories []Story) (Step, bool) {
 	}
 	if tail, ok := strings.CutPrefix(rest, finalStory+"-"); ok {
 		m := attempt.FindStringSubmatch(tail)
-		if m == nil || m[1] == KindDev {
+		if m == nil || m[1] == KindDev || m[1] == KindDocs { // the final round has no developer and no doc pass
 			return Step{}, false
 		}
 		n, _ := strconv.Atoi(m[2])
@@ -74,14 +75,14 @@ func StepOf(run, name string, stories []Story) (Step, bool) {
 
 // QuestionStep is the step a parked run's question is about, for the
 // board's amber cell: a key that names an attempt (tree:, ctx:, failed:,
-// blocked:, gates:) is that attempt; a review's question (design:,
+// blocked:, gates:, strays:) is that attempt; a review's question (design:,
 // unresolved:, plan:) is its story's review, or the final round's; the
 // premises' question is the premise row's. ok is false for a key this
 // build doesn't know.
 func QuestionStep(run string, q Question, stories []Story) (Step, bool) {
 	head, rest, _ := strings.Cut(q.Key, ":")
 	switch head {
-	case "tree", "ctx", "failed", "blocked", "gates":
+	case "tree", "ctx", "failed", "blocked", "gates", "strays":
 		name, _, _ := strings.Cut(rest, ":")
 		return StepOf(run, name, stories)
 	case "design", "unresolved", "plan":

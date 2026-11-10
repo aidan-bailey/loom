@@ -298,6 +298,7 @@ func TestAgentArgv_RolePreamblesAndMaxTurns(t *testing.T) {
 	write("story-reviewer", "model: opus\n")
 	write("intermediate-dev", "model: sonnet\nmaxTurns: 250\n")
 	write("recon", "model: sonnet\n")
+	write("doc-writer", "model: sonnet\nmaxTurns: 100\n")
 	cwd := t.TempDir()
 	argvOf := func(role string) string {
 		argv, err := agentArgv(root, role, "", cwd, []byte("Go."))
@@ -311,6 +312,11 @@ func TestAgentArgv_RolePreamblesAndMaxTurns(t *testing.T) {
 	assert.NotContains(t, dev, reviewPreamble)
 	assert.NotContains(t, recon, reviewPreamble)
 	assert.NotContains(t, recon, developerPreamble)
+	docs := argvOf("doc-writer")
+	assert.Contains(t, docs, docWriterPreamble)
+	assert.NotContains(t, docs, reviewPreamble)
+	assert.NotContains(t, docs, developerPreamble)
+	assert.Contains(t, docs, "\n--max-turns\n100\n")
 	assert.Contains(t, dev, "\n--max-turns\n250\n")
 	assert.NotContains(t, review, "--max-turns", "no maxTurns, no flag")
 

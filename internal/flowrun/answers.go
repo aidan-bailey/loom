@@ -16,6 +16,7 @@ const (
 	KindGateFailure   = "gate-failure"
 	KindAgentFailed   = "agent-failed"
 	KindTreeMoved     = "tree-moved"
+	KindDocsStrayed   = "docs-strayed"
 )
 
 // The answer words.
@@ -41,6 +42,7 @@ var takes = map[string]struct {
 	KindGateFailure:   {[]string{WordRetry, WordAccept, WordStop}, true},
 	KindAgentFailed:   {[]string{WordRetry, WordStop}, true},
 	KindTreeMoved:     {[]string{WordContinue, WordStop}, false},
+	KindDocsStrayed:   {[]string{WordAccept, WordStop}, true},
 }
 
 // CheckAnswer checks answer against kind: the word it is, or "" for a text

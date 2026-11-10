@@ -19,12 +19,14 @@ func TestStepOf(t *testing.T) {
 		"r-final-gates1":  {Final: true, Kind: KindGates, K: 1},
 		"r-final-review2": {Final: true, Kind: KindReview, K: 2},
 		"r-final-fix4":    {Final: true, Kind: KindFix, K: 4},
+		"r-s1-docs1":      {Story: "1", Kind: KindDocs, K: 1},
+		"r-s2-b-docs3":    {Story: "2-b", Kind: KindDocs, K: 3},
 	} {
 		got, ok := StepOf("r", name, stories)
 		assert.True(t, ok, name)
 		assert.Equal(t, want, got, name)
 	}
-	for _, name := range []string{"other-s1-dev1", "r-s3-dev1", "r-s1-build1", "r-s1-dev", "r-s1-dev0", "r-s1-dev01", "r-final-dev1", "r-premise", "r-premise0", "r", "r-"} {
+	for _, name := range []string{"other-s1-dev1", "r-s3-dev1", "r-s1-build1", "r-s1-dev", "r-s1-dev0", "r-s1-dev01", "r-final-dev1", "r-final-docs1", "r-premise", "r-premise0", "r", "r-"} {
 		_, ok := StepOf("r", name, stories)
 		assert.False(t, ok, name)
 	}
@@ -43,6 +45,7 @@ func TestStepOf_ParsesEveryNameTheEngineSubmits(t *testing.T) {
 		setup   func(f *fakeFX)
 		stories []Story
 		answers map[string]string
+		docs    bool
 	}{
 		"plain": {stories: []Story{story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full")}},
 		"gates fail, are fixed and fail again": {
@@ -63,6 +66,12 @@ func TestStepOf_ParsesEveryNameTheEngineSubmits(t *testing.T) {
 			},
 			stories: []Story{story("1", "intermediate-dev", "vouched")},
 		},
+		"a doc pass with a stray decided": {
+			setup:   func(f *fakeFX) { f.strays["h2"] = []string{"main.go"} },
+			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			answers: map[string]string{"strays:r-s1-docs1": "Undo it."},
+			docs:    true,
+		},
 		"final gates fail": {
 			setup:   func(f *fakeFX) { f.gates["r-final-gates1"] = failed },
 			stories: []Story{story("1", "intermediate-dev", "vouched")},
@@ -74,6 +83,7 @@ func TestStepOf_ParsesEveryNameTheEngineSubmits(t *testing.T) {
 				c.setup(f)
 			}
 			st := newState(c.stories...)
+			st.Docs = c.docs
 			drive(t, st, f, c.answers)
 			names := append(append([]string{}, st.Agents...), st.Gates...)
 			assert.NotEmpty(t, names)
@@ -106,6 +116,7 @@ func TestQuestionStep(t *testing.T) {
 		{Question{Key: "design:final", Story: "final"}, Step{Final: true, Kind: KindReview}, true},
 		{Question{Key: "unresolved:final:2"}, Step{Final: true, Kind: KindReview}, true},
 		{Question{Key: "premise-design"}, Step{Kind: KindPremise}, true},
+		{Question{Key: "strays:r-s1-docs2", Story: "1"}, Step{Story: "1", Kind: KindDocs, K: 2}, true},
 		{Question{Key: "plan:3"}, Step{}, false},
 		{Question{Key: "something-new"}, Step{}, false},
 	} {

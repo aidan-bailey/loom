@@ -37,6 +37,7 @@ type fakeFX struct {
 	dirty      bool
 	premises   string
 	markers    []string
+	strays     map[string][]string // DocsCheck's answer, by head
 	serviceErr error
 	calls      []string
 	saves      int
@@ -47,12 +48,16 @@ type fakeFX struct {
 func newFake() *fakeFX {
 	return &fakeFX{reports: map[string]Report{}, resumes: map[string][]Report{}, gates: map[string]GateResult{},
 		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{},
-		answered: map[string]string{}, answerRep: map[string]Report{}}
+		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}}
 }
 
 func isDev(role string) bool {
 	return role == "junior-dev" || role == "intermediate-dev" || role == "senior-dev"
 }
+
+// commits says whether role's done report moves HEAD: a developer's, and
+// a doc writer's.
+func commits(role string) bool { return isDev(role) || role == "doc-writer" }
 
 func defaultReport(name, role string) Report {
 	r := Report{Status: "DONE", Text: "STATUS: DONE", Path: "/reports/" + name}
@@ -83,7 +88,7 @@ func (f *fakeFX) Agent(name, role, effort, brief string) (Report, error) {
 	}
 	f.started[name], f.roles[name], f.briefs[name] = true, role, brief
 	f.calls = append(f.calls, strings.TrimSpace(fmt.Sprintf("agent %s %s %s", name, role, effort)))
-	if isDev(role) && r.done() && !f.noCommit[name] {
+	if commits(role) && r.done() && !f.noCommit[name] {
 		f.head++
 	}
 	return r, nil
@@ -104,7 +109,7 @@ func (f *fakeFX) Resume(name, text string) (Report, error) {
 	if r.Path == "" {
 		r.Path = "/reports/" + name
 	}
-	if isDev(f.roles[name]) && r.done() {
+	if commits(f.roles[name]) && r.done() {
 		f.head++
 	}
 	f.answered[name], f.answerRep[name] = text, r
@@ -149,6 +154,11 @@ func (f *fakeFX) Conformance(story, _, head string) (Conformance, error) {
 }
 
 func (f *fakeFX) Premises(string) (string, error) { return f.premises, nil }
+
+func (f *fakeFX) DocsCheck(base, head string) ([]string, error) {
+	f.calls = append(f.calls, "docs-check "+base+".."+head)
+	return f.strays[head], nil
+}
 
 func (f *fakeFX) Save(st *State) error {
 	f.saves++
@@ -755,16 +765,124 @@ func TestRun_StopEndsStopped(t *testing.T) {
 	assert.NotContains(t, strings.Join(f.calls, "\n"), "r-s2-dev1")
 }
 
-// script is a two-story run with a question, a fix round and a kept Minor.
+// docState is a run with the doc pass (the doc pass's spec, 2026-11-10).
+func docState(stories ...Story) *State {
+	st := newState(stories...)
+	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
+	return st
+}
+
+func TestRun_TheDocPass(t *testing.T) {
+	t.Run("a pass with commits is checked, then gated", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\n**DOC:** USAGE.md its key\nLESSON: docs/claude/x.md a trap\nSTATUS: DONE"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.Equal(t, []string{
+			"agent r-s1-dev1 intermediate-dev", "services", "gates r-s1-gates1", "agent r-s1-review1 story-reviewer",
+			"agent r-s1-docs1 doc-writer", "docs-check h1..h2", "services", "gates r-s1-gates2",
+			"services", "gates r-final-gates1", "agent r-final-review1 code-quality-reviewer",
+		}, f.calls)
+		assert.Equal(t, Row{Status: "done", Developer: "intermediate-dev", Base: "h0", Head: "h2", Commits: 2, Docs: 2, Lessons: 1}, st.Stories[0].Row)
+		brief := f.briefs["r-s1-docs1"]
+		assert.Contains(t, brief, "Update the docs for Story 1 of the plan p.md: its section is plan lines 100-199. The spec is s.md.")
+		assert.Contains(t, brief, "The story landed as h0..h1")
+		assert.Contains(t, brief, "/reports/r-s1-dev1")
+		assert.Contains(t, brief, "Its reviews sent no Critical or Important finding to a fix round.")
+		assert.Contains(t, brief, "[doc-writer]\nDoc paths")
+	})
+	t.Run("a pass with no commits runs neither", func(t *testing.T) {
+		f := newFake()
+		f.noCommit["r-s1-docs1"] = true
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.NotContains(t, strings.Join(f.calls, "\n"), "docs-check")
+		assert.NotContains(t, f.calls, "gates r-s1-gates2")
+		assert.Contains(t, st.Notes, "Story 1: the doc pass changed no docs")
+		assert.Equal(t, "h1", st.Stories[0].Row.Head)
+	})
+	t.Run("the findings its fix rounds took reach its brief", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nFINDING: Minor a.go:5 tidy\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		brief := f.briefs["r-s1-docs1"]
+		assert.Contains(t, brief, "- Critical a.go:3 guard it (/reports/r-s1-review1)")
+		assert.NotContains(t, brief, "tidy", "a Minor is no lesson")
+		assert.Contains(t, brief, "The story landed as h0..h2", "after its fix round")
+	})
+	t.Run("a stray asks, and accept gates it", func(t *testing.T) {
+		f := newFake()
+		f.strays["h2"] = []string{"main.go", "go.sum"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, Question{Key: "strays:r-s1-docs1", Kind: KindDocsStrayed, Story: "1", At: "h2",
+			Text: "r-s1-docs1 changed paths that aren't doc paths:\n- main.go\n- go.sum", Paths: []string{"/reports/r-s1-docs1"}}, *st.Question)
+		require.NoError(t, st.Answer("accept", "m", FromSpec, ""))
+		drive(t, st, f, nil)
+		assert.Contains(t, f.submits(), "gates r-s1-gates2")
+		assert.Contains(t, st.Notes, "Story 1: the manager kept the doc pass's changes to main.go, go.sum")
+	})
+	t.Run("a decision on a stray runs a fresh pass to undo it", func(t *testing.T) {
+		f := newFake()
+		f.strays["h2"] = []string{"main.go"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"strays:r-s1-docs1": "Keep the docs, undo the code."})
+		brief := f.briefs["r-s1-docs2"]
+		assert.Contains(t, brief, "/reports/r-s1-docs1")
+		assert.Contains(t, brief, "Keep the docs, undo the code.")
+		assert.Contains(t, brief, "undo its changes to them with inverse edits, and commit that:\n- main.go")
+		assert.Contains(t, f.calls, "docs-check h1..h3", "over the whole pass")
+		assert.Contains(t, f.submits(), "gates r-s1-gates2")
+	})
+	t.Run("a finding joins the kept ones for the final round", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Important design a.go:7 the spec says three retries\nSTATUS: DONE"}
+		f.noCommit["r-s1-docs1"] = true
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.Contains(t, f.briefs["r-final-fix1"], "Important a.go:7 the spec says three retries")
+		assert.NotContains(t, f.briefs["r-final-fix1"], "(design)", "the spec already decided it")
+		assert.Contains(t, st.Notes, "Story 1: the doc pass kept 1 findings for the final round")
+	})
+	t.Run("a FINDING it can't read fails the pass, and its retry goes on from its commits", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Severe a.go:7 no\nSTATUS: DONE"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "failed:r-s1-docs1", st.Question.Key)
+		assert.Contains(t, st.Question.Text, "a FINDING line it can't read")
+		require.NoError(t, st.Answer("retry", "m", FromSpec, ""))
+		drive(t, st, f, nil) // a tree-moved question fails the test
+		assert.Contains(t, f.briefs["r-s1-docs2"], "/reports/r-s1-docs1")
+		assert.Contains(t, f.calls, "docs-check h1..h3")
+	})
+	t.Run("a run without Docs has no pass", func(t *testing.T) {
+		f := newFake()
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		st.Blocks.DocWriter = "Doc paths: `*.md`"
+		drive(t, st, f, nil)
+		assert.NotContains(t, strings.Join(f.calls, "\n"), "doc-writer")
+		assert.Contains(t, Record(st, RecordInputs{}), "| no | — | — |")
+	})
+}
+
+// script is a two-story run with a question, a fix round, a kept Minor and
+// doc passes: Story 1's keeps a finding, and Story 2's stray is accepted.
 func script() (*State, *fakeFX, map[string]string) {
 	f := newFake()
 	f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nFINDING: Minor a.go:5 tidy\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\nLESSON: docs/claude/x.md a trap\nFINDING: Important b.go:2 the spec says two\nSTATUS: DONE"}
 	f.reports["r-s2-dev1"] = Report{Status: "BLOCKED"}
 	f.gates["r-s2-gates1"] = GateResult{Ended: "failed", Failing: []GateStep{{Line: "go vet", Verdict: "FAIL"}}}
 	f.reports["r-s2-review1"] = Report{Status: "failed", Why: "it ended with no result"}
+	f.strays["h6"] = []string{"main.go"}
 	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"))
-	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one.", "failed:r-s2-review1": "Read the conformance first."}
+	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
+	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one.", "failed:r-s2-review1": "Read the conformance first.", "strays:r-s2-docs1": "accept"}
 }
 
 func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {

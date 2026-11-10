@@ -247,7 +247,8 @@ func newFlowRunStartCmd() *cobra.Command {
 				Profile: blockLine(blocks["supervisor"], "Profile: "), DesignStage: designStage(string(text)),
 				RecordCopy: strings.TrimSuffix(blockLine(blocks["supervisor"], "Record copy in the repo: "), "none"),
 				Blocks: flowrun.Blocks{Developer: blocks["developer"], Verifier: blocks["verifier"], Reviewer: blocks["reviewer"],
-					Supervisor: blocks["supervisor"], Services: services},
+					Supervisor: blocks["supervisor"], DocWriter: blocks["doc-writer"], Services: services},
+				Docs:    blocks["doc-writer"] != "", // a flow root from before the doc pass prints no [doc-writer] block
 				Stories: checked.Stories, Memo: map[string]json.RawMessage{},
 			}
 			if s := os.Getenv("CLAUDE_CODE_SESSION_ID"); s != "" {

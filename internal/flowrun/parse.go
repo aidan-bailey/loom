@@ -78,12 +78,11 @@ func ParseReview(text string) (Review, error) {
 	var r Review
 	for _, line := range strings.Split(text, "\n") {
 		if v, ok := TagLine(line, "FINDING:"); ok {
-			m := findingRE.FindStringSubmatch(v)
-			if m == nil {
-				return Review{}, fmt.Errorf("a FINDING line it can't read: %q", v)
+			f, err := parseFinding(v)
+			if err != nil {
+				return Review{}, err
 			}
-			n, _ := strconv.Atoi(m[4])
-			r.Findings = append(r.Findings, Finding{Severity: m[1], Design: m[2] != "", File: m[3], Line: n, Fix: m[5]})
+			r.Findings = append(r.Findings, f)
 		} else if v, ok := TagLine(line, "PLAN:"); ok && v != "" {
 			r.Plan = append(r.Plan, v)
 		} else if v, ok := TagLine(line, "VERDICT:"); ok {
@@ -94,6 +93,45 @@ func ParseReview(text string) (Review, error) {
 		return Review{}, errors.New("its report has no VERDICT line")
 	}
 	return r, nil
+}
+
+// parseFinding reads a FINDING line's value.
+func parseFinding(v string) (Finding, error) {
+	m := findingRE.FindStringSubmatch(v)
+	if m == nil {
+		return Finding{}, fmt.Errorf("a FINDING line it can't read: %q", v)
+	}
+	n, _ := strconv.Atoi(m[4])
+	return Finding{Severity: m[1], Design: m[2] != "", File: m[3], Line: n, Fix: m[5]}, nil
+}
+
+// DocPass is a doc writer's report lines (the doc pass's spec, §4): how
+// many DOC and LESSON lines it wrote, and its FINDING lines.
+type DocPass struct {
+	Docs, Lessons int
+	Findings      []Finding
+}
+
+// ParseDocs reads a doc writer's DOC, LESSON and FINDING lines. A FINDING
+// line it can't read is an error, as in a review; a finding's design flag
+// is dropped, since the spec already decided what the code should do.
+func ParseDocs(text string) (DocPass, error) {
+	var d DocPass
+	for _, line := range strings.Split(text, "\n") {
+		if v, ok := TagLine(line, "DOC:"); ok && v != "" {
+			d.Docs++
+		} else if v, ok := TagLine(line, "LESSON:"); ok && v != "" {
+			d.Lessons++
+		} else if v, ok := TagLine(line, "FINDING:"); ok {
+			f, err := parseFinding(v)
+			if err != nil {
+				return DocPass{}, err
+			}
+			f.Design = false
+			d.Findings = append(d.Findings, f)
+		}
+	}
+	return d, nil
 }
 
 // Blocking reports whether r found a Critical or an Important.

@@ -28,6 +28,7 @@ func briefState() (*State, *Story) {
 	st := newState(story("2", "intermediate-dev", "vouched"))
 	st.Blocks.Developer = "Prefix for every build and test command: none\nServices: none\nLandmine notes (deep stories only):\n    Never drop a stash.\n    Never run loom."
 	st.Blocks.Reviewer = "Prefix: none\nLandmine notes:\n    Never drop a stash."
+	st.Blocks.DocWriter = "Prefix for every check command: none\nDoc paths (change only files these match): `*.md`"
 	s := &st.Stories[0]
 	s.Interfaces = "exposes `Run`"
 	s.Row.Corrections = []string{"plan:212 | MOVED | COSMETIC | a.go:4 | it is in a.go now"}
@@ -45,6 +46,9 @@ func TestBriefs(t *testing.T) {
 	golden(t, "review.golden", ReviewBrief(st, s, "h1", "h4", "/state/runs/r/conformance-2-h4.txt", "/state/agents/r-s2-dev1/report.md"))
 	golden(t, "re-review.golden", ReReviewBrief(st, s, "h4", "h6", findings, nil))
 	golden(t, "anti-seam.golden", AntiSeamBrief(st, "h9"))
+	sent := []SentFinding{{Finding: Finding{Severity: "Critical", File: "a.go", Line: 3, Fix: "guard it"}, Report: "/state/agents/r-s2-review1/report.md"}}
+	golden(t, "docs.golden", DocsBrief(st, s, "h1", "h6", "/state/agents/r-s2-dev1/report.md", sent))
+	assert.Contains(t, DocsBrief(st, s, "h1", "h6", "/state/agents/r-s2-dev1/report.md", nil), "\nIts reviews sent no Critical or Important finding to a fix round.\n")
 	golden(t, "premise.golden", PremiseBrief(st, PremiseGroup{Stories: []string{"2"}, Text: "Story 2 (plan:200): 3 premises, 1 flagged\n  plan:212  missing  a.go\n"}))
 	final := Story{ID: finalStory}
 	assert.Contains(t, FixFindingsBrief(st, &final, "h0", "h9", findings, nil, ""), "Fix these review findings in the whole implementation.")

@@ -339,6 +339,10 @@ func (fx *runFX) Conformance(story, base, head string) (flowrun.Conformance, err
 
 func (fx *runFX) Premises(rev string) (string, error) { return fx.tools.Premises(fx.plan, rev) }
 
+func (fx *runFX) DocsCheck(base, head string) ([]string, error) {
+	return fx.tools.DocsCheck(base, head)
+}
+
 func (fx *runFX) Save(st *flowrun.State) error { return flowrun.Save(fx.statePath, st) }
 
 // shortSHA is sha's first nine characters.

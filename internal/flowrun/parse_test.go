@@ -44,6 +44,19 @@ func TestParseReview(t *testing.T) {
 
 // TagLine takes a markdown wrapper off a tagged line, and never a code
 // span of its value (feedback thread 18).
+func TestParseDocs(t *testing.T) {
+	d, err := ParseDocs("Changed two.\nDOC: README.md the flag\n**DOC:** USAGE.md its key\nDOC:\nLESSON: docs/claude/x.md a trap\n" +
+		"`FINDING: Important design a.go:7 the spec says three`\nSTATUS: DONE")
+	require.NoError(t, err)
+	assert.Equal(t, DocPass{Docs: 2, Lessons: 1, Findings: []Finding{{Severity: "Important", File: "a.go", Line: 7, Fix: "the spec says three"}}}, d,
+		"an empty DOC line counts nothing, and the design flag is dropped")
+	d, err = ParseDocs("nothing to change\nSTATUS: DONE")
+	require.NoError(t, err)
+	assert.Equal(t, DocPass{}, d)
+	_, err = ParseDocs("FINDING: Severe a.go:7 no\nSTATUS: DONE")
+	assert.ErrorContains(t, err, "a FINDING line it can't read")
+}
+
 func TestTagLine(t *testing.T) {
 	for _, c := range []struct{ line, value string }{
 		{"PLAN: the loop", "the loop"},

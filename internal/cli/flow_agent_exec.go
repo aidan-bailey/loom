@@ -39,6 +39,13 @@ const reviewPreamble = "Before your STATUS line, end your report with one line `
 // planning amendment 6): the run's record counts these lines.
 const developerPreamble = "Before your STATUS line, list each deviation from the plan on its own line `DEVIATION: <what and why>`."
 
+// docWriterPreamble follows headlessPreamble for a doc writer's run (the
+// doc pass's spec, §4): loom flow run counts these lines and keeps the
+// findings for the final round.
+const docWriterPreamble = "Before your STATUS line, end your report with one line `DOC: <path> <what changed and why>` per file you changed, " +
+	"one line `LESSON: <path> <the trap>` per lesson you wrote, and one line `FINDING: <severity> <file>:<line> <what the code does, and what the spec or plan says>` " +
+	"per place the code contradicts the spec or the plan, the severity being Critical, Important or Minor. Write none of these lines when there is none."
+
 // rolePreamble is headlessPreamble with role's own lines.
 func rolePreamble(role string) string {
 	switch role {
@@ -46,6 +53,8 @@ func rolePreamble(role string) string {
 		return headlessPreamble + " " + reviewPreamble
 	case "junior-dev", "intermediate-dev", "senior-dev":
 		return headlessPreamble + " " + developerPreamble
+	case "doc-writer":
+		return headlessPreamble + " " + docWriterPreamble
 	}
 	return headlessPreamble
 }
