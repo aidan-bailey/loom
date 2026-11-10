@@ -132,8 +132,8 @@ review column and landmines are in the state file; you may also re-run
    `loom flow conf docs-check --base <the head before it> --head <HEAD>`, which
    lists what it changed outside the doc paths; for each such path, ask `main`
    whether to keep it, and otherwise send a fresh `flow:doc-writer` to undo it
-   with an inverse edit; then dispatch `flow:verifier` with the word "story"
-   and the story's commits. Whether or not it committed, keep its FINDING
+   with an inverse edit and run `docs-check` again from the same base; then
+   dispatch `flow:verifier` with the word "story" and the story's commits. Whether or not it committed, keep its FINDING
    lines with the Minors for the final fix round.
 8. Update the state file.
 

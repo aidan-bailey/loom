@@ -311,16 +311,16 @@ func kindReached(status string) int {
 }
 
 // cells is each kind's cell over steps: the latest attempt of the kind
-// decides; a kind with none is skipped when reached passes it, or a later
-// kind has an attempt, else todo.
+// decides; a kind with none is skipped when reached passes it, or the
+// story's doc pass has started, else todo.
 func cells(steps []StepView, kinds []string, reached int) map[string]string {
 	out := map[string]string{}
-	// A kind before one with an attempt went by without one, whatever the
-	// row's status says: a story gated again after its doc pass is gating.
-	for i, kind := range kinds {
-		if slices.ContainsFunc(steps, func(s StepView) bool { return s.Kind == kind }) {
-			reached = max(reached, i)
-		}
+	// A doc pass comes after the rest of its story, whose gates then run
+	// again and say gating: a kind before a docs attempt with none of its
+	// own went by without one. Only docs: a gate's fixer is a fix attempt
+	// before the review has run.
+	if i := slices.Index(kinds, flowrun.KindDocs); i >= 0 && slices.ContainsFunc(steps, func(s StepView) bool { return s.Kind == flowrun.KindDocs }) {
+		reached = max(reached, i)
 	}
 	for i, kind := range kinds {
 		var latest *StepView

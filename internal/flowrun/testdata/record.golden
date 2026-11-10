@@ -34,7 +34,7 @@ COST TABLES
   Answered from the spec: accept
 - Asked (blocked-decision, Story 2): Which store?
   Answered by the owner: The cache.
-- Story 1: the doc pass kept 1 findings for the final round
+- Story 1: the doc pass kept 1 finding for the final round
 - Story 2: r-s2-dev1 reported BLOCKED; a fresh intermediate-dev took it
 - Story 2: the manager kept the doc pass's changes to main.go
 - Gates r-s1-gates1: passed

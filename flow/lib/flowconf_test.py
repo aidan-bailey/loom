@@ -486,6 +486,16 @@ class FlowconfTest(unittest.TestCase):
         head = self.commit_all()
         self.assertEqual(self.run_cli("docs-check", "--base", base, "--head", head)[:2], (1, "README.txt\n"))
 
+    def test_docs_check_refuses_a_path_that_isnt_utf8(self):
+        self.repo_profile("schema = 1\n")
+        base = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / os.fsdecode(b"bad\xff.md")).write_text("x\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True, capture_output=True)
+        head = self.commit_all()
+        code, out, err = self.run_cli("docs-check", "--base", base, "--head", head)
+        self.assertEqual((code, out), (2, ""), err)
+        self.assertIn("isn't UTF-8", err)
+
     def test_docs_check_errors_exit_2(self):
         self.repo_profile("schema = 1\n")
         code, _, err = self.run_cli("docs-check", "--base", "no-such-rev", "--head", "HEAD")

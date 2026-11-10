@@ -826,21 +826,20 @@ func (e *engine) docs(s *Story, p, base, devReport string) error {
 	brief := DocsBrief(e.st, s, base, before, devReport, e.sent)
 	next := brief
 	var found []Finding
+	var earlier []string // every attempt's report, for the next one's brief
 	for {
 		name := e.next(p + "-docs")
 		r, d, err := e.docPass(name, next)
 		if err != nil {
 			return err
 		}
+		earlier = append(earlier, paths(r.Path)...)
 		if d == nil {
-			var earlier []string
-			if r.done() {
-				// Its lines don't parse, but it finished: its commits are its
-				// own, and the retry goes on from them.
-				if _, err := e.headAt(name); err != nil {
-					return err
-				}
-				earlier = paths(r.Path)
+			// Whatever a failed pass did, its commits are its own: take them,
+			// so its retry goes on from them rather than parking as
+			// tree-moved; docs-check spans every attempt from before.
+			if _, err := e.headAt(name); err != nil {
+				return err
 			}
 			decision, err := e.failed(name, r)
 			if err != nil {
@@ -878,7 +877,7 @@ func (e *engine) docs(s *Story, p, base, devReport string) error {
 			case WordAccept:
 				e.note("%s: the manager kept the doc pass's changes to %s", storyName(s), strings.Join(strays, ", "))
 			default:
-				next = withEarlier(brief, paths(r.Path), a) + undoStrays(strays)
+				next = withEarlier(brief, earlier, a) + undoStrays(strays)
 				continue
 			}
 		}
@@ -889,7 +888,11 @@ func (e *engine) docs(s *Story, p, base, devReport string) error {
 	}
 	if len(found) > 0 {
 		e.st.Kept = append(e.st.Kept, found...)
-		e.note("%s: the doc pass kept %d findings for the final round", storyName(s), len(found))
+		word := "findings"
+		if len(found) == 1 {
+			word = "finding"
+		}
+		e.note("%s: the doc pass kept %d %s for the final round", storyName(s), len(found), word)
 	}
 	return nil
 }

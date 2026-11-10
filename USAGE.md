@@ -1261,7 +1261,7 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 
 | Command | Description |
 |---------|-------------|
-| `flow conf <key\|status\|show --for ROLE\|state\|drafts STEM\|vacuous FILE\|roster\|gates …\|doctor>` | The repo's flow key, profile and role blocks, its state and drafts directories, the gates to run, and the roster ID |
+| `flow conf <key\|status\|show --for ROLE\|state\|drafts STEM\|vacuous FILE\|roster\|gates …\|docs-check --base B --head H\|doctor>` | The repo's flow key, profile and role blocks, its state and drafts directories, the gates to run, the roster ID, and the paths a doc pass changed that aren't docs |
 | `flow check-plan <plan>` | Check that a plan is ready for the supervised option |
 | `flow packet`, `flow join`, `flow premises`, `flow conformance` | The drafting and review tools `/flow:draft` and the supervisor run |
 | `flow costs session [<id>] [--since T] [--until T]`, `flow costs records [FILE …]`, `flow costs run <run>` | Token usage and API-price cost of a session's agents, totals over run records, or a `/flow:run` run's manager sessions and headless agent runs |

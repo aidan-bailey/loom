@@ -136,6 +136,59 @@ func TestDetail_TheDocCell(t *testing.T) {
 	assert.Equal(t, CellSkipped, d.Stories[1].Cells["docs"], "a done story with no doc pass")
 }
 
+// A gate's fixer is a fix attempt before the review: the review, and the
+// doc pass after it, are still to come, in a story's row and the final
+// one.
+func TestDetail_AGateFixLeavesTheReviewToCome(t *testing.T) {
+	t.Run("a story", func(t *testing.T) {
+		repo, base, records, state := boardRepo(t)
+		st := runState("r", flowrun.Running,
+			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "gating"}})
+		st.Docs = true
+		st.Agents = []string{"r-s1-dev1", "r-s1-fix1"}
+		st.Gates = []string{"r-s1-gates1", "r-s1-gates2"}
+		for i, name := range st.Agents {
+			agentRec(t, state, name, "intermediate-dev", "DONE", sched.JobID(i+1))
+			memo(t, st, "agent:"+name, flowrun.Report{Status: "DONE"})
+		}
+		gateRec(t, state, "r-s1-gates1", "FAIL", 10)
+		memo(t, st, "gates:r-s1-gates1", flowrun.GateResult{Ended: "failed"})
+		gateRec(t, state, "r-s1-gates2", "PASS", 11)
+		memo(t, st, "gates:r-s1-gates2", flowrun.GateResult{Ended: "passed"})
+		writeRun(t, state, st)
+
+		d, err := Detail(repo, base, records, planP)
+		require.NoError(t, err)
+		require.Len(t, d.Stories, 1)
+		assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellTodo, "fix": CellPassed, "docs": CellTodo}, d.Stories[0].Cells)
+	})
+	t.Run("the final round", func(t *testing.T) {
+		repo, base, records, state := boardRepo(t)
+		st := runState("r", flowrun.Running,
+			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "done"}})
+		st.Agents = []string{"r-s1-dev1", "r-s1-review1", "r-final-fix1"}
+		st.Gates = []string{"r-s1-gates1", "r-final-gates1"}
+		for i, name := range st.Agents {
+			role := "intermediate-dev"
+			if name == "r-s1-review1" {
+				role = "story-reviewer"
+			}
+			agentRec(t, state, name, role, "DONE", sched.JobID(i+1))
+			memo(t, st, "agent:"+name, flowrun.Report{Status: "DONE"})
+		}
+		gateRec(t, state, "r-s1-gates1", "PASS", 10)
+		memo(t, st, "gates:r-s1-gates1", flowrun.GateResult{Ended: "passed"})
+		gateRec(t, state, "r-final-gates1", "FAIL", 11)
+		memo(t, st, "gates:r-final-gates1", flowrun.GateResult{Ended: "failed"})
+		writeRun(t, state, st)
+
+		d, err := Detail(repo, base, records, planP)
+		require.NoError(t, err)
+		require.NotNil(t, d.Final)
+		assert.Equal(t, CellTodo, d.Final.Cells["review"], "the anti-seam review hasn't run")
+	})
+}
+
 func TestDetail_RunningAndFailedCells(t *testing.T) {
 	repo, base, records, state := boardRepo(t)
 	st := runState("r", flowrun.Running,

@@ -292,18 +292,28 @@ func (s scriptTools) Conformance(plan, story, base, head string) (string, error)
 	return out, err
 }
 
+// DocsCheck is `flowconf.py docs-check`'s strays. Exit 1 lists them; a
+// crash exits 1 too, listing none, and must not read as a pass that
+// changed only docs (fail closed).
 func (s scriptTools) DocsCheck(base, head string) ([]string, error) {
-	out, _, err := s.run("flowconf.py", []int{0, 1}, "docs-check", "--base", base, "--head", head)
+	var out, errOut bytes.Buffer
+	code, err := flowScript(s.root, "flowconf.py", []string{"docs-check", "--base", base, "--head", head}, strings.NewReader(""), &out, &errOut)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("flowconf.py: %w", err)
 	}
 	var strays []string
-	for _, l := range strings.Split(out, "\n") {
+	for _, l := range strings.Split(out.String(), "\n") {
 		if l = strings.TrimRight(l, "\r"); l != "" {
 			strays = append(strays, l)
 		}
 	}
-	return strays, nil
+	switch {
+	case code == 0 && len(strays) == 0, code == 1 && len(strays) > 0:
+		return strays, nil
+	case code == 1:
+		return nil, fmt.Errorf("flowconf.py docs-check exited 1 and listed no paths: %s", strings.TrimSpace(errOut.String()))
+	}
+	return nil, fmt.Errorf("flowconf.py docs-check exited %d: %s", code, strings.TrimSpace(errOut.String()))
 }
 
 func (s scriptTools) Costs(run string) (string, error) {

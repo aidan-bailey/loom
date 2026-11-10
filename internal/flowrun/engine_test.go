@@ -38,6 +38,7 @@ type fakeFX struct {
 	premises   string
 	markers    []string
 	strays     map[string][]string // DocsCheck's answer, by head
+	commitsOn  map[string]bool     // a run that commits though it doesn't report done
 	serviceErr error
 	calls      []string
 	saves      int
@@ -48,7 +49,7 @@ type fakeFX struct {
 func newFake() *fakeFX {
 	return &fakeFX{reports: map[string]Report{}, resumes: map[string][]Report{}, gates: map[string]GateResult{},
 		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{},
-		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}}
+		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}, commitsOn: map[string]bool{}}
 }
 
 func isDev(role string) bool {
@@ -88,7 +89,7 @@ func (f *fakeFX) Agent(name, role, effort, brief string) (Report, error) {
 	}
 	f.started[name], f.roles[name], f.briefs[name] = true, role, brief
 	f.calls = append(f.calls, strings.TrimSpace(fmt.Sprintf("agent %s %s %s", name, role, effort)))
-	if commits(role) && r.done() && !f.noCommit[name] {
+	if commits(role) && (r.done() || f.commitsOn[name]) && !f.noCommit[name] {
 		f.head++
 	}
 	return r, nil
@@ -844,7 +845,7 @@ func TestRun_TheDocPass(t *testing.T) {
 		drive(t, st, f, nil)
 		assert.Contains(t, f.briefs["r-final-fix1"], "Important a.go:7 the spec says three retries")
 		assert.NotContains(t, f.briefs["r-final-fix1"], "(design)", "the spec already decided it")
-		assert.Contains(t, st.Notes, "Story 1: the doc pass kept 1 findings for the final round")
+		assert.Contains(t, st.Notes, "Story 1: the doc pass kept 1 finding for the final round")
 	})
 	t.Run("a FINDING it can't read fails the pass, and its retry goes on from its commits", func(t *testing.T) {
 		f := newFake()
@@ -858,6 +859,26 @@ func TestRun_TheDocPass(t *testing.T) {
 		drive(t, st, f, nil) // a tree-moved question fails the test
 		assert.Contains(t, f.briefs["r-s1-docs2"], "/reports/r-s1-docs1")
 		assert.Contains(t, f.calls, "docs-check h1..h3")
+	})
+	t.Run("a pass that commits and hits its turn cap is retried from its commits", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-docs1"] = Report{Status: "TURN_CAP"}
+		f.commitsOn["r-s1-docs1"] = true
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-docs1": "retry"}) // a tree-moved question fails the test
+		assert.Contains(t, f.briefs["r-s1-docs2"], "/reports/r-s1-docs1")
+		assert.Contains(t, f.calls, "docs-check h1..h3")
+	})
+	t.Run("a retry's brief names every earlier attempt", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Severe a.go:7 no\nSTATUS: DONE"}
+		f.strays["h3"] = []string{"main.go"}
+		st := docState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"failed:r-s1-docs1": "retry", "strays:r-s1-docs2": "Undo it."})
+		brief := f.briefs["r-s1-docs3"]
+		assert.Contains(t, brief, "/reports/r-s1-docs1")
+		assert.Contains(t, brief, "/reports/r-s1-docs2")
+		assert.Contains(t, f.calls, "docs-check h1..h4")
 	})
 	t.Run("a run without Docs has no pass", func(t *testing.T) {
 		f := newFake()

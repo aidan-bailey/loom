@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/aidan-bailey/loom/flow"
 	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,4 +111,40 @@ func TestFlowDaemon_ADaemonItCantReachExits125(t *testing.T) {
 	_, _, err := runFlow(t, "wait", "start", "build", "--", "true")
 	assert.Equal(t, exitNotRun, flowExit(err))
 	assert.ErrorContains(t, err, "no way to reach the loom daemon")
+}
+
+// docs-check's exit 1 lists the strays, but a crash exits 1 too: one with
+// no paths is an error, never a pass that changed only docs (the doc pass's
+// spec, §5.4).
+func TestScriptTools_DocsCheck(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, flow.RosterFile), []byte("loom flow roster 0123456789ab\n"), 0o600))
+	stub := func(code int, out string) {
+		script := fmt.Sprintf("import sys\nsys.stdout.write(%q)\nsys.stderr.write('why it failed')\nsys.exit(%d)\n", out, code)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "flowconf.py"), []byte(script), 0o600))
+	}
+	tools := scriptTools{root: root}
+
+	stub(0, "")
+	strays, err := tools.DocsCheck("b", "h")
+	require.NoError(t, err)
+	assert.Empty(t, strays)
+
+	stub(1, "main.go\ngo.sum\n")
+	strays, err = tools.DocsCheck("b", "h")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"main.go", "go.sum"}, strays)
+
+	stub(1, "")
+	_, err = tools.DocsCheck("b", "h")
+	assert.ErrorContains(t, err, "exited 1 and listed no paths: why it failed")
+
+	stub(2, "")
+	_, err = tools.DocsCheck("b", "h")
+	assert.ErrorContains(t, err, "exited 2: why it failed")
+
+	stub(0, "main.go\n")
+	_, err = tools.DocsCheck("b", "h")
+	assert.Error(t, err, "exit 0 with a path is no answer")
 }

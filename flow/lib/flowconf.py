@@ -502,6 +502,9 @@ def _docs_check_command(base: str, head: str, cwd: Path) -> int:
     except FlowError as err:
         print(f"flowconf: {err}", file=sys.stderr)
         return 2
+    except UnicodeError as err:
+        print(f"flowconf: docs-check: a path git printed isn't UTF-8 ({err})", file=sys.stderr)
+        return 2
     for path in strays:
         print(path)
     return 1 if strays else 0
