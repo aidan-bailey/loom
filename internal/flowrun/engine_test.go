@@ -564,6 +564,77 @@ func TestRun_PlanLinesAreAskedOnce(t *testing.T) {
 	assert.Contains(t, strings.Join(st.Notes, "\n"), "not asked again: another one")
 }
 
+// The plan question names the reports its PLAN lines came from, and says
+// what Minors the story's reviews kept for the final round, so a manager
+// doesn't read them as lost (feedback thread 18).
+func TestRun_ThePlanQuestionNamesItsReports(t *testing.T) {
+	t.Run("one review, and the Minor it kept", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nPLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		q := st.Question
+		assert.Equal(t, "plan:1", q.Key)
+		assert.Equal(t, []string{"/reports/r-s1-review1"}, q.Paths)
+		assert.Contains(t, q.Text, "\n- its loop never ends")
+		assert.Contains(t, q.Text, "1 Minor finding, which the final round fixes")
+	})
+	t.Run("two Minors kept", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nFINDING: Minor b.go:4 and this\nPLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Contains(t, st.Question.Text, "They also kept 2 Minor findings, which the final round fixes; their reports have the FINDING lines.")
+	})
+	t.Run("a fix round's re-review adds its report", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nPLAN: its loop never ends\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		f.reports["r-s1-review2"] = Report{Status: "DONE", Text: "PLAN: another one\nVERDICT: APPROVED\nSTATUS: DONE"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		q := st.Question
+		assert.Equal(t, "plan:1", q.Key)
+		assert.Equal(t, []string{"/reports/r-s1-review1", "/reports/r-s1-review2"}, q.Paths)
+		assert.Contains(t, q.Text, "\n- its loop never ends\n- another one")
+		assert.NotContains(t, q.Text, "Minor", "the Critical's review kept nothing: its Minors go to the fix round")
+	})
+	t.Run("a re-review with no PLAN line adds no report", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nPLAN: its loop never ends\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, []string{"/reports/r-s1-review1"}, st.Question.Paths)
+	})
+}
+
+// An unresolved question lists the Critical and Important findings it asks
+// about; its report has the rest (feedback thread 18).
+func TestRun_AnUnresolvedQuestionListsItsFindings(t *testing.T) {
+	critical := Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	still := Report{Status: "DONE", Text: "FINDING: Important b.go:4 still races\nFINDING: Critical design c.go:9 pick one owner\nFINDING: Minor d.go:1 tidy it\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	for _, c := range []struct{ name, first, second, key string }{
+		{"a story's", "r-s1-review1", "r-s1-review2", "unresolved:s1:1"},
+		{"the final round's", "r-final-review1", "r-final-review2", "unresolved:final:1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFake()
+			f.reports[c.first], f.reports[c.second] = critical, still
+			st := newState(story("1", "intermediate-dev", "vouched"))
+			require.NoError(t, Run(st, f))
+			require.Equal(t, Parked, st.Status)
+			q := st.Question
+			require.Equal(t, c.key, q.Key)
+			assert.Equal(t, []string{"/reports/" + c.second}, q.Paths)
+			assert.Contains(t, q.Text, "still finds Critical or Important issues:\n- Important b.go:4 still races\n- Critical (design) c.go:9 pick one owner")
+			assert.NotContains(t, q.Text, "tidy it", "a Minor isn't what it asks about")
+		})
+	}
+}
+
 func TestRun_Premises(t *testing.T) {
 	flagged := "plan_premises: p.md against the tree at h0\n" +
 		"Story 1 (plan:100): 3 premises, 2 flagged\n  plan:120  missing  a.go: no such file\n  plan:130  stale    b.go: changed\n" +

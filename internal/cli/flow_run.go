@@ -1055,7 +1055,7 @@ func newFlowRunShowCmd() *cobra.Command {
 				fmt.Fprintf(w, "engine: job %d\n", st.Engine)
 			}
 			if n := len(st.Agents); n > 0 {
-				fmt.Fprintf(w, "last agent run: %s\n", st.Agents[n-1])
+				fmt.Fprintf(w, "last agent run: %s\n", agentRunLine(dirs.agents, st.Agents[n-1]))
 			}
 			if n := len(st.Gates); n > 0 {
 				fmt.Fprintf(w, "last gate run: %s\n", st.Gates[n-1])
@@ -1066,6 +1066,20 @@ func newFlowRunShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// agentRunLine is agent run name with its current job and, when it ended
+// with one, its report, read from its record in dir: the name alone when
+// the record can't be read (feedback thread 18).
+func agentRunLine(dir, name string) string {
+	run, err := readAgentRun(agentPath(dir, name))
+	if err != nil { // ReadAgent refuses a run with no job
+		return name
+	}
+	if run.Report == "" { // a running one has none: a resume clears it
+		return fmt.Sprintf("%s (job %d)", name, run.Current().ID)
+	}
+	return fmt.Sprintf("%s (job %d, report %s)", name, run.Current().ID, filepath.Join(dir, name, "report.md"))
 }
 
 // engineLost is lostEngine's line for run id when its state says running

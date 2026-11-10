@@ -32,6 +32,46 @@ func TestParseReview(t *testing.T) {
 	assert.ErrorContains(t, err, "no VERDICT line")
 	_, err = ParseReview("VERDICT: MAYBE")
 	assert.Error(t, err)
+
+	// Bold tags, and values that start or end in a code span (feedback
+	// thread 18: a PLAN line lost its closing backtick).
+	r, err = ParseReview("**FINDING:** Minor a.go:1 rename `foo`\n**PLAN:** `snapshot` redraws the cell under `cursor`\n**VERDICT:** APPROVED")
+	require.NoError(t, err)
+	assert.Equal(t, "APPROVED", r.Verdict)
+	assert.Equal(t, []Finding{{Severity: "Minor", File: "a.go", Line: 1, Fix: "rename `foo`"}}, r.Findings)
+	assert.Equal(t, []string{"`snapshot` redraws the cell under `cursor`"}, r.Plan)
+}
+
+// TagLine takes a markdown wrapper off a tagged line, and never a code
+// span of its value (feedback thread 18).
+func TestTagLine(t *testing.T) {
+	for _, c := range []struct{ line, value string }{
+		{"PLAN: the loop", "the loop"},
+		{"  PLAN:   the loop  ", "the loop"},
+		{"PLAN:", ""},
+		{"PLAN: fails the plan's own `a_row_too_wide`", "fails the plan's own `a_row_too_wide`"},
+		{"PLAN: `snapshot` builds the footer", "`snapshot` builds the footer"},
+		{"PLAN: `a` and `b`", "`a` and `b`"},
+		{"**PLAN:** the loop", "the loop"},
+		{"`PLAN:` the loop", "the loop"},
+		{"**`PLAN:`** the loop", "the loop"},
+		{"**PLAN: the loop**", "the loop"},
+		{"`PLAN: the loop`", "the loop"},
+		{"**PLAN: uses `foo`**", "uses `foo`"},
+		{"PLAN: `the whole value`", "the whole value"},
+		{"PLAN: **the whole value**", "the whole value"},
+		{"PLAN: **", "**"},
+		{"PLAN: `", "`"},
+		{"**PLAN:**", ""},
+	} {
+		v, ok := TagLine(c.line, "PLAN:")
+		assert.True(t, ok, "%q", c.line)
+		assert.Equal(t, c.value, v, "%q", c.line)
+	}
+	for _, line := range []string{"the PLAN: here", "PLANS: x", "- PLAN: a list item", ""} {
+		_, ok := TagLine(line, "PLAN:")
+		assert.False(t, ok, "%q", line)
+	}
 }
 
 func TestDeviations(t *testing.T) {

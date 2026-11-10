@@ -255,6 +255,48 @@ func TestFlowRunShow_ARunningEngineIsRunning(t *testing.T) {
 	assert.NotContains(t, out, "lost")
 }
 
+// show names the last agent run's job and report, so a manager doesn't
+// search the queue for them (feedback thread 18).
+func TestFlowRunShow_NamesTheLastAgentRunsJobAndReport(t *testing.T) {
+	_, state, _ := runFixture(t, runStory("2", "intermediate-dev"))
+	_, _, err := runRun(t, "", "start", "docs/plan.md")
+	require.NoError(t, err)
+	_, _, err = runRun(t, "", "engine", "plan")
+	require.NoError(t, err)
+	out, _, err := runRun(t, "", "wait", "plan")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "parked plan: needs-context (story 2)")
+	rec, err := flowrun.LoadAgent(filepath.Join(state, "agents"), "plan-s2-dev1")
+	require.NoError(t, err)
+
+	out, _, err = runRun(t, "", "show", "plan")
+
+	require.NoError(t, err)
+	report := filepath.Join(state, "agents", "plan-s2-dev1", "report.md")
+	require.FileExists(t, report)
+	assert.Contains(t, out, fmt.Sprintf("last agent run: plan-s2-dev1 (job %d, report %s)\n", rec.Current().ID, report))
+}
+
+// agentRunLine names a report only once the run has ended with one, and
+// the bare name when it can't read the record.
+func TestAgentRunLine(t *testing.T) {
+	dir := t.TempDir()
+	save := func(name, status, report string) {
+		require.NoError(t, flowrun.SaveAgent(dir, &flowrun.AgentRecord{Schema: flowrun.AgentSchema, ID: name, Role: "story-reviewer",
+			Jobs: []flowrun.AgentRecordJob{{ID: 7}, {ID: 9, Answer: "go on"}}, Status: status, Report: report}))
+	}
+	save("ended", "DONE", "VERDICT: APPROVED")
+	save("running", flowrun.AgentRunning, "")
+	save("failed", flowrun.AgentFailed, "")
+	require.NoError(t, flowrun.SaveAgent(dir, &flowrun.AgentRecord{Schema: flowrun.AgentSchema, ID: "jobless", Role: "story-reviewer", Status: "DONE", Report: "x"}))
+
+	assert.Equal(t, "ended (job 9, report "+filepath.Join(dir, "ended", "report.md")+")", agentRunLine(dir, "ended"))
+	assert.Equal(t, "running (job 9)", agentRunLine(dir, "running"))
+	assert.Equal(t, "failed (job 9)", agentRunLine(dir, "failed"), "a run that left no report names its job alone")
+	assert.Equal(t, "missing", agentRunLine(dir, "missing"))
+	assert.Equal(t, "jobless", agentRunLine(dir, "jobless"), "a record with no job is one it can't read")
+}
+
 func TestFlowRunShow_WithoutADaemonPrintsTheState(t *testing.T) {
 	d, _, _ := runFixture(t, runStory("1", "intermediate-dev"))
 	_, _, err := runRun(t, "", "start", "docs/plan.md")

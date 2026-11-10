@@ -15,6 +15,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/flow"
+	"github.com/aidan-bailey/loom/internal/flowrun"
 )
 
 // headlessPreamble goes before every agent run's first prompt (flow in loom
@@ -335,21 +336,20 @@ func withoutFrontmatter(b []byte) string {
 	return text
 }
 
-// statusLines is a report's last STATUS line's value, markdown's `*` and
-// backticks trimmed (spec §2a, 9), or, when it has none, its last line that
-// is a status word alone; and for NEEDS_CONTEXT its last QUESTION line,
-// wherever it stands. Real runs wrote the question before the status line,
-// and once a bare NEEDS_CONTEXT (2026-11-06), and lost the question.
+// statusLines is a report's last STATUS line's value, markdown's wrapper
+// taken off (spec §2a, 9; flowrun.TagLine), or, when it has none, its last
+// line that is a status word alone; and for NEEDS_CONTEXT its last QUESTION
+// line, wherever it stands. Real runs wrote the question before the status
+// line, and once a bare NEEDS_CONTEXT (2026-11-06), and lost the question.
 func statusLines(report string) (status, question string) {
 	bare := ""
 	for _, line := range strings.Split(report, "\n") {
-		line = strings.Trim(strings.TrimSpace(line), "*`")
-		if v, ok := strings.CutPrefix(line, "STATUS:"); ok {
-			status = strings.Trim(strings.TrimSpace(v), "*`")
-		} else if v, ok := strings.CutPrefix(line, "QUESTION:"); ok {
-			question = strings.Trim(strings.TrimSpace(v), "*`")
-		} else if slices.Contains(agentStatuses, line) {
-			bare = line
+		if v, ok := flowrun.TagLine(line, "STATUS:"); ok {
+			status = v
+		} else if v, ok := flowrun.TagLine(line, "QUESTION:"); ok {
+			question = v
+		} else if word := strings.Trim(strings.TrimSpace(line), "*`"); slices.Contains(agentStatuses, word) {
+			bare = word
 		}
 	}
 	if status == "" {

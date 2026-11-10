@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -19,12 +20,56 @@ type Review struct {
 // reviewer copying the notation writes it (part 3b's probe, 2026-11-06).
 var findingRE = regexp.MustCompile(`^(Critical|Important|Minor)\s+(\[?design\]?\s+)?(\S+?):(\d+)(?:-\d+)?\s+(.+)$`)
 
-// tagLine is line trimmed of space and markdown's `*` and backticks, and its
-// value after tag ("FINDING:"), if it starts with it.
-func tagLine(line, tag string) (string, bool) {
-	line = strings.Trim(strings.TrimSpace(line), "*`")
-	v, ok := strings.CutPrefix(line, tag)
-	return strings.Trim(strings.TrimSpace(v), "*`"), ok
+// TagLine is line's value after tag ("FINDING:"), if line starts with it,
+// with markdown's wrapper taken off: the run of `*` and backticks opening
+// the line, closed right after the tag (**FINDING:** …) or at the line's
+// end (**FINDING: …**), and a pair around the whole value (QUESTION:
+// `Which?`). A code span inside the value stays whole; trimming every
+// marker off both ends cut a PLAN line's closing backtick, and left a bold
+// tag's value a leading space no FINDING or VERDICT read (feedback thread
+// 18).
+func TagLine(line, tag string) (string, bool) {
+	line = strings.TrimSpace(line)
+	open := markers(line)
+	v, ok := strings.CutPrefix(line[len(open):], tag)
+	if !ok {
+		return "", false
+	}
+	v = strings.TrimSpace(v)
+	if closing := reversed(open); closing != "" {
+		if after, ok := strings.CutPrefix(v, closing); ok {
+			v = after
+		} else {
+			v = strings.TrimSuffix(v, closing)
+		}
+	}
+	return unwrapped(strings.TrimSpace(v)), true
+}
+
+// markers is s's leading run of markdown's `*` and backticks.
+func markers(s string) string { return s[:len(s)-len(strings.TrimLeft(s, "*`"))] }
+
+// reversed is the marker run s backwards, the run that closes it.
+func reversed(s string) string {
+	b := []byte(s)
+	slices.Reverse(b)
+	return string(b)
+}
+
+// unwrapped is v without a marker pair around the whole of it (`all of
+// it`, **all of it**); a value with markers inside keeps them all, since
+// its ends belong to spans of its own (`a` and `b`).
+func unwrapped(v string) string {
+	open := markers(v)
+	closing := reversed(open)
+	if open == "" || len(v) <= 2*len(open) || !strings.HasSuffix(v, closing) {
+		return v
+	}
+	inner := v[len(open) : len(v)-len(closing)]
+	if strings.ContainsAny(inner, "*`") {
+		return v
+	}
+	return strings.TrimSpace(inner)
 }
 
 // ParseReview reads a review's FINDING, PLAN and VERDICT lines. A review
@@ -32,16 +77,16 @@ func tagLine(line, tag string) (string, bool) {
 func ParseReview(text string) (Review, error) {
 	var r Review
 	for _, line := range strings.Split(text, "\n") {
-		if v, ok := tagLine(line, "FINDING:"); ok {
+		if v, ok := TagLine(line, "FINDING:"); ok {
 			m := findingRE.FindStringSubmatch(v)
 			if m == nil {
 				return Review{}, fmt.Errorf("a FINDING line it can't read: %q", v)
 			}
 			n, _ := strconv.Atoi(m[4])
 			r.Findings = append(r.Findings, Finding{Severity: m[1], Design: m[2] != "", File: m[3], Line: n, Fix: m[5]})
-		} else if v, ok := tagLine(line, "PLAN:"); ok && v != "" {
+		} else if v, ok := TagLine(line, "PLAN:"); ok && v != "" {
 			r.Plan = append(r.Plan, v)
-		} else if v, ok := tagLine(line, "VERDICT:"); ok {
+		} else if v, ok := TagLine(line, "VERDICT:"); ok {
 			r.Verdict = v
 		}
 	}
@@ -95,7 +140,7 @@ func (r Review) Minors() []Finding {
 func Deviations(text string) int {
 	n := 0
 	for _, line := range strings.Split(text, "\n") {
-		if v, ok := tagLine(line, "DEVIATION:"); ok && v != "" {
+		if v, ok := TagLine(line, "DEVIATION:"); ok && v != "" {
 			n++
 		}
 	}

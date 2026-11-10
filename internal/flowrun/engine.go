@@ -671,11 +671,13 @@ func (e *engine) story(s *Story) error {
 		return err
 	}
 	s.Row.Findings = rev.Counts()
-	plan := rev.Plan
+	var plan planNotes
+	plan.add(rev, rep)
+	kept := len(e.st.Kept)
 	if err := e.findings(s, p, base, rev, rep, &plan); err != nil {
 		return err
 	}
-	if err := e.planLines(s, p, base, plan); err != nil {
+	if err := e.planLines(s, p, base, plan, len(e.st.Kept)-kept); err != nil {
 		return err
 	}
 	commits, err := e.commitsAt(p+":done", base)
@@ -686,9 +688,22 @@ func (e *engine) story(s *Story) error {
 	return nil
 }
 
+// planNotes is the PLAN lines a story's reviews found, and the reports of
+// the reviews that found them, which the plan question names.
+type planNotes struct {
+	lines, reports []string
+}
+
+func (n *planNotes) add(rev Review, rep Report) {
+	if len(rev.Plan) > 0 {
+		n.lines = append(n.lines, rev.Plan...)
+		n.reports = append(n.reports, paths(rep.Path)...)
+	}
+}
+
 // findings routes a review's findings: Minors kept, a blocking review
 // fixed and re-reviewed until clean or the manager decides (spec §5.3, 5).
-func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan *[]string) error {
+func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan *planNotes) error {
 	if !rev.Blocking() {
 		e.st.Kept = append(e.st.Kept, rev.Minors()...)
 		return nil
@@ -713,7 +728,7 @@ func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan
 
 // fixRound fixes findings and re-reviews them until the re-review is clean
 // or the manager accepts what it found.
-func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix []string, decision string, plan *[]string) error {
+func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix []string, decision string, plan *planNotes) error {
 	for round := 1; ; round++ {
 		s.Row.Status = "fixing"
 		fixBase := e.head
@@ -727,14 +742,12 @@ func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix 
 		if err != nil {
 			return err
 		}
-		if plan != nil {
-			*plan = append(*plan, rev.Plan...)
-		}
+		plan.add(rev, rep)
 		if !rev.Blocking() {
 			e.st.Kept = append(e.st.Kept, rev.Minors()...)
 			return nil
 		}
-		a, err := e.ask(Question{Key: fmt.Sprintf("unresolved:%s:%d", p, round), Kind: KindUnresolved, Text: "After a fix round, a re-review of " + storyName(s) + " still finds Critical or Important issues", Paths: paths(rep.Path)})
+		a, err := e.ask(Question{Key: fmt.Sprintf("unresolved:%s:%d", p, round), Kind: KindUnresolved, Text: listed("After a fix round, a re-review of "+storyName(s)+" still finds Critical or Important issues:", blocking(rev.Findings)), Paths: paths(rep.Path)})
 		if err != nil {
 			return err
 		}
@@ -750,12 +763,21 @@ func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix 
 }
 
 // planLines asks the manager once about a story's PLAN lines (planning
-// amendment 15).
-func (e *engine) planLines(s *Story, p, base string, plan []string) error {
+// amendment 15), naming the reports they came from and the Minors the
+// story's reviews kept, which the final round fixes.
+func (e *engine) planLines(s *Story, p, base string, notes planNotes, kept int) error {
+	plan := notes.lines
 	if len(plan) == 0 {
 		return nil
 	}
-	a, err := e.ask(Question{Key: "plan:" + s.ID, Kind: KindUnresolved, Text: "Reviews of " + storyName(s) + " found problems in the plan's own code:\n- " + strings.Join(plan, "\n- ")})
+	text := "Reviews of " + storyName(s) + " found problems in the plan's own code:\n- " + strings.Join(plan, "\n- ")
+	switch {
+	case kept == 1:
+		text += "\nThey also kept 1 Minor finding, which the final round fixes; their reports have the FINDING lines."
+	case kept > 1:
+		text += fmt.Sprintf("\nThey also kept %d Minor findings, which the final round fixes; their reports have the FINDING lines.", kept)
+	}
+	a, err := e.ask(Question{Key: "plan:" + s.ID, Kind: KindUnresolved, Text: text, Paths: notes.reports})
 	if err != nil {
 		return err
 	}
@@ -766,11 +788,11 @@ func (e *engine) planLines(s *Story, p, base string, plan []string) error {
 		e.note("%s: the manager accepted the plan problems: %s", storyName(s), strings.Join(plan, "; "))
 		return nil
 	}
-	var later []string
+	var later planNotes
 	if err := e.fixRound(s, p, base, nil, plan, a, &later); err != nil {
 		return err
 	}
-	for _, l := range later {
+	for _, l := range later.lines {
 		e.note("%s: a re-review's plan problem, not asked again: %s", storyName(s), l)
 	}
 	return nil
@@ -824,7 +846,7 @@ func (e *engine) finalRound() error {
 		if !rev.Blocking() {
 			return nil
 		}
-		a, err := e.ask(Question{Key: fmt.Sprintf("unresolved:final:%d", round), Kind: KindUnresolved, Text: "After the final fix round, its re-review still finds Critical or Important issues", Paths: paths(rep.Path)})
+		a, err := e.ask(Question{Key: fmt.Sprintf("unresolved:final:%d", round), Kind: KindUnresolved, Text: listed("After the final fix round, its re-review still finds Critical or Important issues:", blocking(rev.Findings)), Paths: paths(rep.Path)})
 		if err != nil {
 			return err
 		}
@@ -837,6 +859,17 @@ func (e *engine) finalRound() error {
 		}
 		findings, decision = rev.Findings, a
 	}
+}
+
+// listed is text with each of fs on a line of its own, as the question
+// asking about them shows them.
+func listed(text string, fs []Finding) string {
+	var b strings.Builder
+	b.WriteString(text)
+	for _, f := range fs {
+		fmt.Fprintf(&b, "\n- %s", f)
+	}
+	return b.String()
 }
 
 // byFile groups findings by file, in the order each file first appears.

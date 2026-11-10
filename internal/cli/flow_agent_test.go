@@ -249,6 +249,11 @@ func TestStatusLines(t *testing.T) {
 		{"**DONE**", "DONE", ""},
 		{"BLOCKED\nlater\nSTATUS: DONE", "DONE", ""},
 		{"we're not DONE yet", "", ""},
+		// A bold tag, and a question ending in a code span (feedback
+		// thread 18).
+		{"**STATUS:** DONE", "DONE", ""},
+		{"**QUESTION:** Rename `foo` to `bar`?\n**STATUS:** NEEDS_CONTEXT", "NEEDS_CONTEXT", "Rename `foo` to `bar`?"},
+		{"QUESTION: Keep `foo`\nSTATUS: NEEDS_CONTEXT", "NEEDS_CONTEXT", "Keep `foo`"},
 		{"no lines at all", "", ""},
 	} {
 		status, question := statusLines(c.report)
