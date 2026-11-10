@@ -721,7 +721,7 @@ and answers only phones you have paired.
   `loom flow run`, or a spec still in design), dotted amber while its run
   asks: the stage strip (design, spec, draft, run, record, each opening its
   document), the run's open question with a way to the manager's
-  conversation, a row per story with its steps (dev, gate, review, fix) as
+  conversation, a row per story with its steps (dev, gate, review, fix, doc) as
   cells, and the cost box (the run's spend at API list prices, the whole
   flow's, a projection, and the cost per story beside the repo's past
   runs). A row opens its steps, findings and the plan and spec sections it

@@ -12,8 +12,8 @@ import { sessionOf } from "./fleet.mjs";
 import { elapsed } from "./session.mjs";
 
 // KINDS is each row's step kinds in their order, LABEL a cell's word.
-const KINDS = { story: ["dev", "gates", "review", "fix"], P: ["premise"], F: ["gates", "review", "fix"] };
-const LABEL = { dev: "dev", gates: "gate", review: "rev", fix: "fix", premise: "prem" };
+const KINDS = { story: ["dev", "gates", "review", "fix", "docs"], P: ["premise"], F: ["gates", "review", "fix"] };
+const LABEL = { dev: "dev", gates: "gate", review: "rev", fix: "fix", docs: "doc", premise: "prem" };
 
 // The stages' words, in order.
 const STAGES = ["design", "spec", "draft", "run", "record"];

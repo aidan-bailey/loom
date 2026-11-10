@@ -31,7 +31,7 @@ const stepStarting = "starting"
 // rowKinds is a story's step kinds in their order; premiseKinds and
 // finalKinds the premise and final rows'.
 var (
-	rowKinds     = []string{flowrun.KindDev, flowrun.KindGates, flowrun.KindReview, flowrun.KindFix}
+	rowKinds     = []string{flowrun.KindDev, flowrun.KindGates, flowrun.KindReview, flowrun.KindFix, flowrun.KindDocs}
 	premiseKinds = []string{flowrun.KindPremise}
 	finalKinds   = []string{flowrun.KindGates, flowrun.KindReview, flowrun.KindFix}
 )
@@ -302,6 +302,8 @@ func kindReached(status string) int {
 		return 2
 	case "fixing":
 		return 3
+	case "documenting":
+		return 4
 	case "done":
 		return len(rowKinds)
 	}
@@ -309,9 +311,17 @@ func kindReached(status string) int {
 }
 
 // cells is each kind's cell over steps: the latest attempt of the kind
-// decides; a kind with none is skipped when reached passes it, else todo.
+// decides; a kind with none is skipped when reached passes it, or a later
+// kind has an attempt, else todo.
 func cells(steps []StepView, kinds []string, reached int) map[string]string {
 	out := map[string]string{}
+	// A kind before one with an attempt went by without one, whatever the
+	// row's status says: a story gated again after its doc pass is gating.
+	for i, kind := range kinds {
+		if slices.ContainsFunc(steps, func(s StepView) bool { return s.Kind == kind }) {
+			reached = max(reached, i)
+		}
+	}
 	for i, kind := range kinds {
 		var latest *StepView
 		for j := range steps {

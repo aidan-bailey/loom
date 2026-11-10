@@ -78,9 +78,9 @@ func TestDetail_TheBoard(t *testing.T) {
 	d, err := Detail(repo, base, records, planP)
 	require.NoError(t, err)
 	require.Len(t, d.Stories, 3)
-	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellPassed}, d.Stories[0].Cells)
-	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellSkipped}, d.Stories[1].Cells)
-	assert.Equal(t, map[string]string{"dev": CellAsks, "gates": CellTodo, "review": CellTodo, "fix": CellTodo}, d.Stories[2].Cells)
+	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellPassed, "docs": CellSkipped}, d.Stories[0].Cells)
+	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellSkipped, "docs": CellSkipped}, d.Stories[1].Cells)
+	assert.Equal(t, map[string]string{"dev": CellAsks, "gates": CellTodo, "review": CellTodo, "fix": CellTodo, "docs": CellTodo}, d.Stories[2].Cells)
 	require.NotNil(t, d.Premise)
 	assert.Equal(t, map[string]string{"premise": CellPassed}, d.Premise.Cells)
 	assert.Nil(t, d.Final, "no final step yet")
@@ -99,6 +99,41 @@ func TestDetail_TheBoard(t *testing.T) {
 	assert.Equal(t, []GateLine{{Text: "go test ./...", Verdict: "FAIL", Job: 3}}, gate.Gates)
 	assert.Equal(t, "spec §1", d.Stories[0].Reading)
 	assert.Equal(t, 7, d.Stories[0].Row.Commits)
+}
+
+// A doc pass has its cell, and a story gated again after it shows the kinds
+// it went past without an attempt as skipped, whatever its status says (the
+// doc pass's spec, §5.7).
+func TestDetail_TheDocCell(t *testing.T) {
+	repo, base, records, state := boardRepo(t)
+	st := runState("r", flowrun.Running,
+		flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "gating"}},
+		flowrun.Story{ID: "2", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "done"}})
+	st.Docs = true
+	st.Agents = []string{"r-s1-dev1", "r-s1-review1", "r-s1-docs1", "r-s2-dev1", "r-s2-review1"}
+	st.Gates = []string{"r-s1-gates1", "r-s1-gates2", "r-s2-gates1"}
+	roles := map[string]string{"r-s1-review1": "story-reviewer", "r-s1-docs1": "doc-writer", "r-s2-review1": "story-reviewer"}
+	for i, name := range st.Agents {
+		role := roles[name]
+		if role == "" {
+			role = "intermediate-dev"
+		}
+		agentRec(t, state, name, role, "DONE", sched.JobID(i+1))
+		memo(t, st, "agent:"+name, flowrun.Report{Status: "DONE"})
+	}
+	for i, name := range st.Gates {
+		gateRec(t, state, name, "PASS", sched.JobID(i+10))
+		memo(t, st, "gates:"+name, flowrun.GateResult{Ended: "passed"})
+	}
+	writeRun(t, state, st)
+
+	d, err := Detail(repo, base, records, planP)
+	require.NoError(t, err)
+	require.Len(t, d.Stories, 2, "a run's rows are its state's stories")
+	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellSkipped, "docs": CellPassed}, d.Stories[0].Cells,
+		"its gates after the doc pass say gating; the fix it never had is skipped, not todo")
+	assert.Equal(t, CellSkipped, d.Stories[1].Cells["fix"])
+	assert.Equal(t, CellSkipped, d.Stories[1].Cells["docs"], "a done story with no doc pass")
 }
 
 func TestDetail_RunningAndFailedCells(t *testing.T) {
