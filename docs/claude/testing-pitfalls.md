@@ -66,6 +66,10 @@ A gate run through a pipe ends with the pipe's last command's status: `loom job 
 
 A queued `go test ./...` compiles each package from the files on disk when it reaches that package, not when it was submitted. A minutes-long suite run beside your edits tests a mix of two trees: a package it reaches after an edit runs new code against whatever else, a golden file say, the edit hasn't touched yet, and its verdict belongs to no commit. On 2026-11-10 review fixes landed while a full-suite job ran on the doc pass's branch, and its result was thrown away. Commit, then gate; when you must edit while a gate runs, cancel it (`loom job cancel N`) and submit it again on the commit.
 
+## An assertion over a process's environment
+
+`assert.Contains(t, string(env), "NAME=value")` over a child's logged environment prints the whole string when it fails, and the string is the developer's shell: on 2026-11-11 a mutation check failed such an assertion and wrote a GitHub token into the session's transcript and the job's log. Parse the dump into a map and compare the variables the test names (`jobEnv`, `internal/cli/flow_agent_test.go`). A mutation check queued through `loom job` also leaves the mutant in the tree for as long as the job waits: mutate and restore inside the job's own command.
+
 ## What the gates won't tell you
 
 No test checks a fake against the component it stands in for, or that a guard has a positive control. Review asks those questions, and only if someone asks them on purpose.

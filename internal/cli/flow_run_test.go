@@ -548,7 +548,5 @@ func TestFlowRun_TheEngineMarksItsJobs(t *testing.T) {
 	t.Setenv(sched.EnvJob, "1") // as the shim sets it for the engine's job
 	_, _, err = runRun(t, "", "engine", "plan")
 	require.NoError(t, err)
-	env, err := os.ReadFile(filepath.Join(logDir, "0.env"))
-	require.NoError(t, err)
-	assert.Contains(t, string(env), "\n"+envFlowRun+"=1\n", "an agent of the run carries the run's job, which a pause spares")
+	assert.Equal(t, "1", jobEnv(t, logDir, "0.env")[envFlowRun], "an agent of the run carries the run's job, which a pause spares")
 }

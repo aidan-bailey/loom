@@ -69,6 +69,23 @@ func agentFixture(t *testing.T, agents ...string) (*testDaemon, *fakeConf, strin
 	return d, conf, logDir
 }
 
+// jobEnv is the environment the fake claude logged as file under logDir,
+// by name. A test compares the variables it names, never the whole text: a
+// failed Contains over it prints every variable the test ran with, the
+// developer's tokens among them (2026-11-11).
+func jobEnv(t *testing.T, logDir, file string) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(logDir, file))
+	require.NoError(t, err)
+	env := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if name, value, ok := strings.Cut(line, "="); ok {
+			env[name] = value
+		}
+	}
+	return env
+}
+
 // runAgent runs `loom flow agent args…` with stdin.
 func runAgent(t *testing.T, stdin string, args ...string) (string, string, error) {
 	t.Helper()
@@ -116,11 +133,11 @@ func TestFlowAgent_RunWaitDone(t *testing.T) {
 	assert.Contains(t, args, "flow guard", "the git guard")
 	assert.NotContains(t, args, "--json-schema", "--agent turns it off (spec §2a, 9)")
 	assert.NotContains(t, args, "--resume")
-	env, err := os.ReadFile(filepath.Join(logDir, "0.env"))
-	require.NoError(t, err)
-	assert.Contains(t, string(env), "LOOM_FLOW_AGENT=intermediate-dev")
-	assert.Contains(t, string(env), "CLAUDE_CONFIG_DIR="+account, "the starting session's account")
-	assert.NotContains(t, string(env), "the-parent", "the parent session's variables are dropped")
+	env := jobEnv(t, logDir, "0.env")
+	assert.Equal(t, "intermediate-dev", env["LOOM_FLOW_AGENT"])
+	assert.Equal(t, account, env["CLAUDE_CONFIG_DIR"], "the starting session's account")
+	_, kept := env["CLAUDE_CODE_SESSION_ID"]
+	assert.False(t, kept, "the parent session's variables are dropped")
 
 	out, _, err = runAgent(t, "", "show")
 	require.NoError(t, err)
@@ -237,20 +254,14 @@ func TestFlowAgent_AFiveMinutePinReachesTheJob(t *testing.T) {
 	}
 	pin("intermediate-dev", "5m")
 	pin("junior-dev", "1h")
-	// The switch's value in the job's environment, "" when it has none. The
-	// assertions compare that value alone: a failed Contains over the whole
-	// environment would print every variable the test ran with.
+	// The switch in the job's environment, "" when it has none.
 	switchOf := func(role, log string) string {
 		_, _, err := runAgent(t, "Build it.", "run", role)
 		require.NoError(t, err)
 		_, _, err = runAgent(t, "", "wait", "60")
 		require.NoError(t, err)
-		env, err := os.ReadFile(filepath.Join(logDir, log))
-		require.NoError(t, err)
-		for _, line := range strings.Split(string(env), "\n") {
-			if v, ok := strings.CutPrefix(line, "FORCE_PROMPT_CACHING_5M="); ok {
-				return "set to " + v
-			}
+		if v, ok := jobEnv(t, logDir, log)["FORCE_PROMPT_CACHING_5M"]; ok {
+			return "set to " + v
 		}
 		return ""
 	}
