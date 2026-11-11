@@ -174,6 +174,26 @@ func TestFlowAgent_AJobWithoutAUsableReportFails(t *testing.T) {
 	}
 }
 
+// TestReadResult_AnErrorResultSaysWhatItSays pins that an error result's
+// text and API error reach the failure, as a usage limit's does (thread 19:
+// Claude Code 2.1.322's result event, subtype success with is_error).
+func TestReadResult_AnErrorResultSaysWhatItSays(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","num_turns":1,"total_cost_usd":0,"session_id":"s","result":"You've hit your 5-hour limit · resets 4:30pm"}`,
+			"it ended with an error result: You've hit your 5-hour limit · resets 4:30pm (API 429, usage_limit_reached)"},
+		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":529,"num_turns":1,"result":"Overloaded"}`,
+			"it ended with an error result: Overloaded (API 529)"},
+		{`{"type":"result","subtype":"success","is_error":true,"api_error":"connection_failed","num_turns":1,"result":""}`,
+			"it ended with an error result (connection_failed)"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":null,"num_turns":1}`,
+			"it ended with an error result"},
+	} {
+		_, err := readResult([]byte(tc.line + "\n"))
+		require.Error(t, err)
+		assert.Equal(t, tc.want, err.Error())
+	}
+}
+
 func TestFlowAgent_Refusals(t *testing.T) {
 	agentFixture(t, "intermediate-dev", "stray")
 	stray := filepath.Join(os.Getenv(flow.EnvRoot), "plugin", "agents", "stray.md")
