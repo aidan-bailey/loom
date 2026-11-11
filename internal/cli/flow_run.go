@@ -417,7 +417,7 @@ func newFlowRunEngineCmd() *cobra.Command {
 				return err
 			}
 			fx := &runFX{c: c, root: root, conf: dirs.conf, tools: newRunTools(root), agents: dirs.agents, gates: dirs.gates,
-				runDir: filepath.Join(dirs.runs, id), statePath: runStatePath(dirs.runs, id), cwd: cwd, plan: st.Plan, out: c.OutOrStdout()}
+				runDir: filepath.Join(dirs.runs, id), statePath: runStatePath(dirs.runs, id), cwd: cwd, plan: st.Plan, spec: st.Spec, out: c.OutOrStdout()}
 			fx.logf("engine for %s", id)
 			if err := flowrun.Run(st, fx); err != nil {
 				fx.logf("the engine stopped: %v", err)
@@ -803,17 +803,8 @@ func takenHead(fx *runFX, st *flowrun.State) string {
 	if status, err := fx.git("status", "--porcelain"); err != nil || status != "" {
 		return ""
 	}
-	if _, err := fx.git("merge-base", "--is-ancestor", at, head); err != nil {
+	if ok, err := onlyPlanCommits(fx.git, st.Plan, st.Spec, at, head); err != nil || !ok {
 		return ""
-	}
-	names, err := fx.git("diff", "--name-only", "--no-renames", at, head)
-	if err != nil {
-		return ""
-	}
-	for _, name := range strings.Split(names, "\n") {
-		if name != st.Plan && (st.Spec == "" || name != st.Spec) {
-			return ""
-		}
 	}
 	return head
 }
@@ -1044,11 +1035,19 @@ func newFlowRunShowCmd() *cobra.Command {
 				if status == "" {
 					status = "not started"
 				}
+				if r.Lane != "" && status == "developing" {
+					status = "developing (lane)"
+				}
 				dev := r.Developer
 				if dev == "" {
 					dev = s.Developer
 				}
-				fmt.Fprintf(w, "  Story %-4s %-11s %-17s %d commits, findings %d/%d/%d\n", s.ID, status, dev, r.Commits, r.Findings[0], r.Findings[1], r.Findings[2])
+				fmt.Fprintf(w, "  Story %-4s %-17s %-17s %d commits, findings %d/%d/%d\n", s.ID, status, dev, r.Commits, r.Findings[0], r.Findings[1], r.Findings[2])
+			}
+			for _, s := range st.Stories {
+				if s.Row.Lane != "" && s.Row.Status == "developing" {
+					fmt.Fprintf(w, "lane: Story %s at %s\n", s.ID, s.Row.Lane)
+				}
 			}
 			if q := st.Question; q != nil {
 				fmt.Fprintf(w, "question (%s): %s\n", q.Kind, oneLine(q.Text))
@@ -1064,6 +1063,15 @@ func newFlowRunShowCmd() *cobra.Command {
 			}
 			if n := len(st.Agents); n > 0 {
 				fmt.Fprintf(w, "last agent run: %s\n", agentRunLine(dirs.agents, st.Agents[n-1]))
+			}
+			if st.Status == flowrun.Parked {
+				// With a lane, the other track's agent may still work while
+				// the run is parked (parallel pairs spec §5.4).
+				for _, name := range st.Agents {
+					if run, err := readAgentRun(agentPath(dirs.agents, name)); err == nil && !run.Ended() {
+						fmt.Fprintf(w, "in flight: %s\n", agentRunLine(dirs.agents, name))
+					}
+				}
 			}
 			if n := len(st.Gates); n > 0 {
 				fmt.Fprintf(w, "last gate run: %s\n", st.Gates[n-1])

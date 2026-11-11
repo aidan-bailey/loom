@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/internal/flowrun"
@@ -36,6 +37,7 @@ type runFX struct {
 	statePath string
 	cwd       string
 	plan      string
+	spec      string
 	out       io.Writer  // the engine job's output.log
 	mu        sync.Mutex // logf's: the engine's tracks log at once (parallel pairs spec §5.3)
 }
@@ -363,6 +365,189 @@ func (fx *runFX) DocsCheck(base, head string) ([]string, error) {
 }
 
 func (fx *runFX) Save(st *flowrun.State) error { return flowrun.Save(fx.statePath, st) }
+
+// Lane is the lane named name for a laned story (parallel pairs spec §5.3):
+// a worktree of this repository at <global dir>/flow/lanes/<key>/<name>,
+// detached at base, outside .loom/worktrees, where loom's orphan sweep
+// looks. A path that is already this repository's worktree is reused, and
+// anything else there refused.
+func (fx *runFX) Lane(name, base string) (string, error) {
+	key, err := fx.tools.Key()
+	if err != nil {
+		return "", err
+	}
+	global, err := config.GetGlobalConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(global, "flow", "lanes", key, name)
+	switch _, err := os.Stat(dir); {
+	case err == nil:
+		if !fx.ownWorktree(dir) {
+			return "", fmt.Errorf("the lane %s exists and is no worktree of this repository", dir)
+		}
+		return dir, nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return "", err
+	}
+	if _, err := fx.git("worktree", "add", "--detach", dir, base); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// ownWorktree reports whether dir is a worktree of the run's repository:
+// its own top level, sharing the run's git common dir. git run in a plain
+// directory walks up to whatever repository encloses it.
+func (fx *runFX) ownWorktree(dir string) bool {
+	top, err := fx.gitIn(dir, "rev-parse", "--show-toplevel")
+	if err != nil || config.CanonicalPath(top) != config.CanonicalPath(dir) {
+		return false
+	}
+	theirs, err := fx.gitIn(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return false
+	}
+	mine, err := fx.git("rev-parse", "--path-format=absolute", "--git-common-dir")
+	return err == nil && config.CanonicalPath(mine) == config.CanonicalPath(theirs)
+}
+
+// picking reports whether a cherry-pick is in progress in the run's worktree.
+func (fx *runFX) picking() bool {
+	if _, err := fx.git("rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD"); err == nil {
+		return true
+	}
+	seq, err := fx.git("rev-parse", "--path-format=absolute", "--git-path", "sequencer")
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(seq)
+	return err == nil
+}
+
+// Pick cherry-picks commits onto the run's worktree (spec §5.5). A pick a
+// crash left in progress is aborted first, which returns HEAD to where that
+// pick began; commits already on HEAD past onto are matched to a prefix of
+// commits by patch ID and not picked again. A conflict aborts the whole
+// pick and is a *flowrun.PickConflict.
+func (fx *runFX) Pick(commits []string, onto string) ([]string, error) {
+	if fx.picking() {
+		if _, err := fx.git("cherry-pick", "--abort"); err != nil {
+			return nil, err
+		}
+	}
+	head, err := fx.Head("")
+	if err != nil {
+		return nil, err
+	}
+	done, err := fx.pickedSoFar(commits, onto, head)
+	if err != nil {
+		return nil, err
+	}
+	if rest := commits[len(done):]; len(rest) > 0 {
+		if _, err := fx.git(append([]string{"cherry-pick"}, rest...)...); err != nil {
+			if !fx.picking() {
+				return nil, err
+			}
+			stopped, _ := fx.git("rev-parse", "CHERRY_PICK_HEAD")
+			files, _ := fx.git("diff", "--name-only", "--diff-filter=U")
+			if _, aerr := fx.git("cherry-pick", "--abort"); aerr != nil {
+				return nil, fmt.Errorf("%v; and its abort: %v", err, aerr)
+			}
+			return nil, &flowrun.PickConflict{Commit: stopped, Files: strings.Fields(files)}
+		}
+	}
+	if head, err = fx.Head(""); err != nil {
+		return nil, err
+	}
+	return fx.Commits(onto, head)
+}
+
+// pickedSoFar is the commits from onto to head, when they are picks of a
+// prefix of commits, matched by patch ID.
+func (fx *runFX) pickedSoFar(commits []string, onto, head string) ([]string, error) {
+	if head == onto {
+		return nil, nil
+	}
+	if _, err := fx.git("merge-base", "--is-ancestor", onto, head); err != nil {
+		return nil, fmt.Errorf("HEAD %s doesn't descend from %s, the head the pick is onto", shortSHA(head), shortSHA(onto))
+	}
+	have, err := fx.Commits(onto, head)
+	if err != nil {
+		return nil, err
+	}
+	if len(have) > len(commits) {
+		return nil, fmt.Errorf("HEAD moved %d commits past %s, more than the %d to pick", len(have), shortSHA(onto), len(commits))
+	}
+	for i, c := range have {
+		a, err := fx.patchID(c)
+		if err != nil {
+			return nil, err
+		}
+		b, err := fx.patchID(commits[i])
+		if err != nil {
+			return nil, err
+		}
+		if a != b {
+			return nil, fmt.Errorf("HEAD moved past %s: %s is no pick of %s", shortSHA(onto), shortSHA(c), shortSHA(commits[i]))
+		}
+	}
+	return have, nil
+}
+
+// patchID is commit's stable patch ID.
+func (fx *runFX) patchID(commit string) (string, error) {
+	var diff, out, errOut bytes.Buffer
+	show := internalexec.GitCommand(context.Background(), fx.cwd, "diff-tree", "-p", "--no-color", "--no-ext-diff", commit)
+	show.Stdout, show.Stderr = &diff, &errOut
+	if err := show.Run(); err != nil {
+		return "", fmt.Errorf("git diff-tree %s: %v: %s", commit, err, strings.TrimSpace(errOut.String()))
+	}
+	id := internalexec.GitCommand(context.Background(), fx.cwd, "patch-id", "--stable")
+	id.Stdin, id.Stdout, id.Stderr = &diff, &out, &errOut
+	if err := id.Run(); err != nil {
+		return "", fmt.Errorf("git patch-id: %v: %s", err, strings.TrimSpace(errOut.String()))
+	}
+	if f := strings.Fields(out.String()); len(f) > 0 {
+		return f[0], nil
+	}
+	return "", nil
+}
+
+// DropLane removes the lane at dir with git, which refuses one that isn't clean.
+func (fx *runFX) DropLane(dir string) error {
+	_, err := fx.git("worktree", "remove", dir)
+	return err
+}
+
+func (fx *runFX) OnlyPlanCommits(base, head string) (bool, error) {
+	return onlyPlanCommits(fx.git, fx.plan, fx.spec, base, head)
+}
+
+// onlyPlanCommits reports whether head descends from base and base..head
+// touches only plan and spec: the manager's commits that loom flow run
+// answer takes, and the engine adopts (spec §5.7).
+func onlyPlanCommits(git func(...string) (string, error), plan, spec, base, head string) (bool, error) {
+	if base == head {
+		return false, nil
+	}
+	if _, err := git("merge-base", "--is-ancestor", base, head); err != nil {
+		return false, nil
+	}
+	names, err := git("diff", "--name-only", "--no-renames", base, head)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range strings.Split(names, "\n") {
+		if name != plan && (spec == "" || name != spec) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 
 // shortSHA is sha's first nine characters.
 func shortSHA(sha string) string {
