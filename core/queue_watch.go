@@ -40,7 +40,8 @@ func endJob(rec *sched.Record, state sched.State, now time.Time) {
 }
 
 // settledJob does what a job's end brings with it: its usage, trace, hold
-// and wait reasons go, a client is told (rev), its run is recorded, and the jobs held
+// and wait reasons go, a client is told (rev), its run is recorded, a failed
+// agent's log is read for a usage limit (readUsageLimit), and the jobs held
 // after it are released or cancelled, with its message and theirs
 // (settleChain). Job i of the store has already been ended (endJob).
 func (m *Model) settledJob(i int) {
@@ -50,6 +51,7 @@ func (m *Model) settledJob(i int) {
 	q.forgetRunning(rec.ID)
 	q.moved()
 	m.recordRun(rec, trace)
+	m.spawnBackground(m.readUsageLimit(rec))
 	m.settleChain(rec)
 }
 

@@ -147,3 +147,42 @@ func WindowLabel(w string) string {
 	}
 	return w
 }
+
+// LimitMargin is how long past its reset an account's usage limit still
+// holds its agents (usage-limit hold spec §2), so the first agent after it
+// is not refused by a clock a little behind the server's.
+const LimitMargin = time.Minute
+
+// AccountLimits is the usage limits the daemon knows, by account key
+// (Record.AccountKey). Admission holds an account's queued agent jobs while
+// its limit's reset, plus LimitMargin, is still ahead; a limit with no reset
+// holds nothing.
+type AccountLimits map[string]UsageLimit
+
+// holding is why l holds account's queued agents at now, or "".
+func (l AccountLimits) holding(account string, now time.Time) string {
+	u, ok := l[account]
+	if !ok || u.Resets.IsZero() || !now.Before(u.Resets.Add(LimitMargin)) {
+		return ""
+	}
+	return "waits for the account's usage limit (" + WindowLabel(u.Window) + ", resets " + ResetText(u.Resets, now) + ")"
+}
+
+// ResetText is when a limit resets, in local time, as short as now allows:
+// the time alone on now's day, with the weekday within the week, else with
+// the date.
+func ResetText(at, now time.Time) string {
+	if at.IsZero() {
+		return "an unknown time"
+	}
+	at, now = at.Local(), now.Local()
+	y, m, d := at.Date()
+	ny, nm, nd := now.Date()
+	switch {
+	case y == ny && m == nm && d == nd:
+		return at.Format("15:04")
+	case at.After(now) && at.Sub(now) < 6*24*time.Hour:
+		return at.Format("Mon 15:04")
+	}
+	return at.Format("2 Jan 15:04")
+}

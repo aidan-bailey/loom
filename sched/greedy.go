@@ -24,6 +24,9 @@ type Greedy struct {
 	// tight (Tight).
 	Used  map[JobID]int64
 	Tight bool
+	// Limits is the accounts whose agents a usage limit holds (usage-limit
+	// hold spec §2), as Admit's limits.
+	Limits AccountLimits
 }
 
 // Budget is the memory greedy admission packs into, in KB (cgroup spec
@@ -39,7 +42,7 @@ func Budget(usedKB, availKB int64, p Policy) int64 {
 // its arguments.
 func AdmitGreedy(jobs []Record, p Policy, now time.Time, g Greedy) Decision {
 	f := &greedyFit{p: p, g: g, now: now}
-	d := admitWith(jobs, p, now, f)
+	d := admitWith(jobs, p, now, f, g.Limits)
 	d.OnMemory = f.onMemory
 	return d
 }

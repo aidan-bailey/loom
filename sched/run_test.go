@@ -70,7 +70,7 @@ func TestGrant_PassesRunJobsOver(t *testing.T) {
 	build := Record{ID: 1, Order: 1, State: Queued, Submitted: now, Claim: Claim{CPUs: 4, MemoryGB: 2},
 		Sources: ClaimSources{SourceLearned, SourceLearned, SourceDefault}}
 	jobs := []Record{build, runJob(2, Running, time.Hour), runJob(3, Queued, time.Minute)}
-	dec := Admit(jobs, p, now, nil)
+	dec := Admit(jobs, p, now, nil, nil)
 	require.Contains(t, dec.Start, JobID(3))
 	got := Grant(dec, jobs, p, nil, func(r Record) *Belief {
 		if r.Kind == KindRun {

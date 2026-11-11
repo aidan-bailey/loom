@@ -90,6 +90,7 @@ func (m *Model) admitJobs() {
 		m.releaseOverdueAsks(now)
 		m.resizeQueued(policy)
 		m.refreshHolds(policy, now)
+		q.pruneLimits(now)
 		// A queued record whose lock could not be tested stays out of the
 		// walk (a shim may be behind it, and it would run the command again
 		// after it): it claims nothing and starts nothing.
@@ -111,7 +112,7 @@ func (m *Model) admitJobs() {
 			bor = sched.Borrow(jobs, dec, policy, now, g)
 			m.makeFirm(bor.Firm)
 		} else {
-			dec = sched.Admit(jobs, policy, now, q.holding)
+			dec = sched.Admit(jobs, policy, now, q.holding, q.limits)
 		}
 		maps.Copy(waiting, dec.Waiting)
 		granted := dec

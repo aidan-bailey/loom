@@ -95,8 +95,8 @@ func (f *claimFit) take(r Record)        { f.used = f.used.plus(r.Claim.Need(f.p
 // running job counts at its hold in holds (past-peak holds spec §6), at its
 // claim with none. The walk is admitWith's. It is a pure function of its
 // arguments.
-func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decision {
-	return admitWith(jobs, p, now, &claimFit{p: p, holds: holds})
+func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, limits AccountLimits) Decision {
+	return admitWith(jobs, p, now, &claimFit{p: p, holds: holds}, limits)
 }
 
 // admitWith walks the queued jobs in queue order (Order, then ID), counting
@@ -114,8 +114,9 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 //     the running jobs and the jobs started before it leave.
 //
 // Agent jobs (Kind KindAgent) are apart: each starts, in queue order, while
-// fewer than p.AgentJobs of its account run; they take nothing from the caps
-// and are never the head. Run jobs (Kind KindRun) start at once, take
+// fewer than p.AgentJobs of its account run, unless limits holds the
+// account (usage-limit hold spec §2); they take nothing from the caps and
+// are never the head. Run jobs (Kind KindRun) start at once, take
 // nothing from the caps and are never the head.
 //
 // Named locks (Record.Locks) come before the fit: a job naming a lock that
@@ -125,7 +126,7 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need) Decisio
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen. A policy without caps
 // (the zero Policy) starts nothing. The jobs slice is left as it is.
-func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
+func admitWith(jobs []Record, p Policy, now time.Time, f fitter, limits AccountLimits) Decision {
 	d := Decision{Waiting: map[JobID]string{}}
 	var queued, agents, runs []Record
 	running := map[string]int{} // running agent jobs per account key
@@ -161,6 +162,8 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter) Decision {
 	for _, r := range agents {
 		switch {
 		case !p.usable():
+		case limits.holding(r.AccountKey, now) != "":
+			d.Waiting[r.ID] = limits.holding(r.AccountKey, now)
 		case running[r.AccountKey] >= p.AgentJobs:
 			d.Waiting[r.ID] = fmt.Sprintf("waits for an agent slot (%d of %d running on this account)", running[r.AccountKey], p.AgentJobs)
 		default:
