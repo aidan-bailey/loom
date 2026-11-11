@@ -50,7 +50,8 @@ exclusive build, its tier, whether the plan review vouches for it and the landmi
 holds, then the pairs of stories that may run at once: disjoint files and at most one exclusive
 build. With --json, a plan that passes prints one JSON object instead: its spec, its plan review and
 each story's id, first and last plan lines, developer, tier, review column, landmines, Interfaces and
-Verify lines, which loom flow run reads (flow in loom part 3b); a failing one prints its FAIL lines.
+Verify lines, which loom flow run reads (flow in loom part 3b), and `part`, `[N, M]`, when the plan has a
+`**Part:** N of M` line; a failing one prints its FAIL lines.
 Exit 0 when every plan passes, 1 when any fails, 2 on a usage error.
 """
 
@@ -84,6 +85,8 @@ FIELD_RE = re.compile(
 )
 SPEC_RE = re.compile(r"^\*\*(?:Spec|Design):\*\*\s*(.*)$")
 REVIEW_RE = re.compile(r"^\*\*Plan review:\*\*\s*(.*)$")
+PART_RE = re.compile(r"^\*\*Part:\*\*\s*(.*)$")
+PART_VALUE_RE = re.compile(r"^(\d+) of (\d+)\.?$")
 PARALLEL_RE = re.compile(r"^\*\*Parallel:\*\*\s*(.*)$")
 PAIR_RE = re.compile(r"^([^\s+,]+)\s*\+\s*([^\s+,]+)$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
@@ -190,6 +193,28 @@ def plan_review(text: str) -> str | None:
             if review:
                 return review.group(1).strip() or None
     return None
+
+
+def part_line(text: str) -> str | None:
+    """The text of the plan's `**Part:**` line before its first story, None when it has none."""
+    fenced = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            if STORY_RE.match(line):
+                return None
+            named = PART_RE.match(line)
+            if named:
+                return named.group(1).strip()
+    return None
+
+
+def plan_part(text: str) -> tuple[int, int] | None:
+    """The plan's part as (N, M) from a `**Part:** N of M` line, None when it has none or the line doesn't parse."""
+    raw = part_line(text)
+    value = PART_VALUE_RE.match(raw) if raw is not None else None
+    return (int(value.group(1)), int(value.group(2))) if value else None
 
 
 def declared_pairs(text: str) -> tuple[list[tuple[str, str]], list[str]]:
@@ -481,8 +506,12 @@ def main(argv: list[str]) -> int:
         if as_json:
             vouch = vouched(review, stories)
             laned = {b for _, b in pairs}
-            print(json.dumps({"spec": spec, "plan_review": review,
-                              "stories": [story_json(s, vouch, profile.markers, s.sid in laned) for s in stories]}))
+            out = {"spec": spec, "plan_review": review,
+                   "stories": [story_json(s, vouch, profile.markers, s.sid in laned) for s in stories]}
+            part = plan_part(text)
+            if part:
+                out["part"] = list(part)
+            print(json.dumps(out))
             continue
         print(f"OK: {arg}: {len(stories)} stories; spec {spec}")
         print(f"  Plan review: {review}" if review else "  Plan review: none recorded, so every story gets the full code-quality review")

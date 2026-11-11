@@ -506,5 +506,17 @@ class FlowconfTest(unittest.TestCase):
         self.assertEqual(self.run_cli("docs-check", "--base", "HEAD")[0], 2, "a usage error")
 
 
+class SizeKeyTest(unittest.TestCase):
+    def test_size_plan_is_read_and_defaults_to_fifteen(self):
+        self.assertEqual(flowconf.validate({"schema": 1, "size": {"plan": 20}}, Path("p.toml"), "d").plan_size, 20)
+        self.assertEqual(flowconf.validate({"schema": 1}, Path("p.toml"), "d").plan_size, flowconf.DEFAULT_PLAN_SIZE)
+        self.assertEqual(flowconf.DEFAULT_PLAN_SIZE, 15)
+
+    def test_size_plan_must_be_a_positive_integer(self):
+        for bad in (0, -1, "15", True, 1.5):
+            with self.assertRaisesRegex(flowconf.FlowError, r"size\.plan: must be a positive integer"):
+                flowconf.validate({"schema": 1, "size": {"plan": bad}}, Path("p.toml"), "d")
+
+
 if __name__ == "__main__":
     unittest.main()

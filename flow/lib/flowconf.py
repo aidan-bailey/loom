@@ -82,6 +82,9 @@ DRAFTER = "drafter"
 # `{ run = "pnpm e2e", locks = ["port:4300"] }`.
 TEXT = "text"
 GATES = "gates"
+POSITIVE = "positive"
+# The most stories a plan lists before the skeleton lint wants an epic or a reason (the spec-splitting spec, §4).
+DEFAULT_PLAN_SIZE = 15
 KEYS: dict[str, dict[str, object]] = {
     "": {"schema": int, "prefix": str, "services": list, "generated": list},
     "gates": {"story": GATES, "final": GATES, "vacuous": list},
@@ -91,6 +94,7 @@ KEYS: dict[str, dict[str, object]] = {
     "paths": {"state": str, "records": str, "drafts": str},
     "design": {"registries": TEXT},
     "docs": {"paths": list},
+    "size": {"plan": POSITIVE},
 }
 # Where /flow:draft keeps each plan's drafts when paths.drafts says nothing, under the worktree's top level
 # (part 2 spec §6.1): inside the worktree, where a drafter's Write and Edit need no permission prompt.
@@ -133,6 +137,7 @@ class Profile:
     drafts: str = ""
     registries: str = ""
     doc_paths: tuple[str, ...] = DEFAULT_DOC_PATHS
+    plan_size: int = DEFAULT_PLAN_SIZE
 
 
 def flow_root() -> Path:
@@ -244,6 +249,10 @@ def validate(data: dict, path: Path, digest: str) -> Profile:
                 if not isinstance(item, str):
                     raise FlowError(f"{path}: {dotted}: must be a string")
                 values[dotted] = item
+            elif kind == POSITIVE:
+                if type(item) is not int or item < 1:
+                    raise FlowError(f"{path}: {dotted}: must be a positive integer")
+                values[dotted] = item
     for pattern in values.get("gates.vacuous", ()):
         try:
             re.compile(pattern)
@@ -274,6 +283,7 @@ def validate(data: dict, path: Path, digest: str) -> Profile:
         drafts=drafts,
         registries=values.get("design.registries", ""),
         doc_paths=values.get("docs.paths", DEFAULT_DOC_PATHS),
+        plan_size=values.get("size.plan", DEFAULT_PLAN_SIZE),
     )
 
 

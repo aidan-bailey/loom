@@ -1,5 +1,6 @@
 """Tests for plan_skeleton.py. Run from lib/: python3 -m unittest -q plan_skeleton_test.py"""
 
+import os
 import re
 import sys
 import tempfile
@@ -11,6 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import plan_skeleton  # noqa: E402
 from plan_join import MARKER  # noqa: E402
+
+_HOME = tempfile.TemporaryDirectory()
+
+
+def setUpModule():
+    os.environ["FLOW_HOME"] = _HOME.name
+
+
+def tearDownModule():
+    _HOME.cleanup()
 
 
 def entry(sid, files="`a.py`", extra=()):
@@ -33,18 +44,46 @@ def skeleton(contract, stories=None, head=("# Plan", "", "**Spec:** `docs/spec.m
     return "\n".join([*head, "## Names contract", "", *contract, "", "## Stories", "", *stories, "", MARKER]) + "\n"
 
 
-def lint(text, spec=True):
-    """lint's problems for a skeleton written into a throwaway repo."""
+def lint(text, spec=True, spec_text="# Spec\n", profile=None):
+    """lint's problems for a skeleton written into a throwaway repo, with its spec's text and an optional profile."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / ".git").mkdir()
         if spec:
             (root / "docs").mkdir()
-            (root / "docs" / "spec.md").write_text("# Spec\n")
+            (root / "docs" / "spec.md").write_text(spec_text)
+        if profile is not None:
+            (root / ".claude").mkdir()
+            (root / ".claude" / "flow.toml").write_text(profile)
         plan = root / "plan.md"
         plan.write_text(text)
         problems, _, _ = plan_skeleton.lint(text, plan)
         return problems
+
+
+def stories(n):
+    """The story-list lines of Stories 1 to n."""
+    return [line for sid in range(1, n + 1) for line in entry(str(sid))]
+
+
+DELIVERY = textwrap.dedent(
+    """\
+    # Spec
+
+    ## Delivery
+
+    An epic of 3 parts.
+
+    1. **Part 1: kernel.** Stage 0.
+    2. **Part 2: markets.** Stages 1 and 2.
+    3. **Part 3: identity.** Stage 3.
+
+    ### Part 2 settlements (2026-11-14)
+
+    1. **Part 9: not a part.** A settlement's own list.
+    """
+)
+PART_HEAD = ("# Plan", "", "**Spec:** `docs/spec.md`", "**Part:** 2 of 3", "")
 
 
 def flagged(text, problems):
@@ -246,6 +285,62 @@ class ModelledContractTest(unittest.TestCase):
         self.assertEqual(flagged(text, problems), MODELLED_FLAGS)
         # subscribe's two bare parameters are two problems.
         self.assertEqual(len(problems), len(MODELLED_FLAGS) + 1, problems)
+
+
+class PartTest(unittest.TestCase):
+    def test_a_part_the_delivery_list_holds_passes(self):
+        self.assertEqual(lint(skeleton([], head=PART_HEAD), spec_text=DELIVERY), [])
+
+    def test_a_split_spec_needs_a_part_line(self):
+        problems = lint(skeleton([]), spec_text=DELIVERY)
+        self.assertTrue(any("the spec delivers 3 parts: name this plan's part" in p for p in problems), problems)
+
+    def test_a_part_line_needs_a_delivery_list(self):
+        problems = lint(skeleton([], head=PART_HEAD))
+        self.assertTrue(any("the spec has no ## Delivery section" in p for p in problems), problems)
+
+    def test_a_part_outside_the_list_or_a_wrong_count_fails(self):
+        for line in ("**Part:** 4 of 3", "**Part:** 2 of 4", "**Part:** 0 of 3"):
+            head = ("# Plan", "", "**Spec:** `docs/spec.md`", line, "")
+            problems = lint(skeleton([], head=head), spec_text=DELIVERY)
+            self.assertTrue(any("doesn't match the spec's ## Delivery list of 3 parts" in p for p in problems), (line, problems))
+
+    def test_a_part_line_that_is_not_n_of_m_fails(self):
+        head = ("# Plan", "", "**Spec:** `docs/spec.md`", "**Part:** two", "")
+        problems = lint(skeleton([], head=head), spec_text=DELIVERY)
+        self.assertTrue(any("must read `N of M`" in p for p in problems), problems)
+
+    def test_a_delivery_list_out_of_order_fails(self):
+        spec = DELIVERY.replace("2. **Part 2: markets.**", "3. **Part 3: markets.**")
+        problems = lint(skeleton([], head=PART_HEAD), spec_text=spec)
+        self.assertTrue(any("number its parts 1 to M in order" in p for p in problems), problems)
+
+    def test_delivery_parts_stops_at_the_settlements(self):
+        self.assertEqual(plan_skeleton.delivery_parts(DELIVERY), [(1, 1), (2, 2), (3, 3)])
+        self.assertIsNone(plan_skeleton.delivery_parts("# Spec\n"))
+
+
+class BudgetTest(unittest.TestCase):
+    def test_the_default_budget_is_fifteen_stories(self):
+        self.assertEqual(lint(skeleton([], stories=stories(15))), [])
+        problems = lint(skeleton([], stories=stories(16)))
+        self.assertTrue(any("16 stories, over the plan budget of 15" in p for p in problems), problems)
+
+    def test_a_size_line_with_a_reason_lets_it_through_and_an_empty_one_does_not(self):
+        reasoned = ("# Plan", "", "**Spec:** `docs/spec.md`", "**Size:** one migration ties every stage", "")
+        self.assertEqual(lint(skeleton([], stories=stories(16), head=reasoned)), [])
+        empty = ("# Plan", "", "**Spec:** `docs/spec.md`", "**Size:**", "")
+        problems = lint(skeleton([], stories=stories(16), head=empty))
+        self.assertTrue(any("the **Size:** line gives no reason" in p for p in problems), problems)
+
+    def test_the_profile_sets_the_budget(self):
+        self.assertEqual(lint(skeleton([], stories=stories(16)), profile="schema = 1\n[size]\nplan = 20\n"), [])
+        problems = lint(skeleton([], stories=stories(4)), profile="schema = 1\n[size]\nplan = 3\n")
+        self.assertTrue(any("4 stories, over the plan budget of 3" in p for p in problems), problems)
+
+    def test_a_profile_the_flow_refuses_is_a_problem_not_a_crash(self):
+        problems = lint(skeleton([]), profile="schema = 1\n[size]\nplan = 0\n")
+        self.assertTrue(any("the profile can't be read" in p and "positive integer" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,11 @@
 - the entries: each gives its Developer (a developer the run knows), a Files line with a backticked
   path, Interfaces, a Verify line with a backticked command, a Review line (when present) of deep or
   light, and a Reading line, each once; and every bold Story bullet of the list is in the grammar the
-  join reads (`- **Story <id>**` at column 0).
+  join reads (`- **Story <id>**` at column 0);
+- the part: a `**Part:** N of M` line agreeing with the spec's `## Delivery` list (`N. **Part N: <title>.**`,
+  numbered 1 to M), needed when the spec has one;
+- the story budget: more stories than the profile's `[size] plan` (15 when unset) need a `**Size:**` line with a
+  reason.
 
 The rules are heuristics over backticked spans: a contract written as an expression rather than a
 signature can draw a false flag, and the cure is to type it.
@@ -30,7 +34,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from check_plan import CODE_RE, DEVELOPERS, FIELDS, H2_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root
+from check_plan import (
+    CODE_RE, DEVELOPERS, FIELDS, H2_RE, PART_RE, PART_VALUE_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root,
+)
+from flowconf import DEFAULT_PLAN_SIZE, FlowError, optional_profile
 from plan_join import ENTRY_RE, MARKER, STORIES_HEADING, Entry, JoinError, entries, unfenced
 
 CONTRACT_HEADING = "## Names contract"
@@ -54,6 +61,9 @@ PROPOSES_RE = re.compile(r"\(Story\s+([0-9A-Za-z][\w-]*)\s+proposes\)")
 BULLET_RE = re.compile(r"^\s*[-*]\s")
 LOOSE_ENTRY_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+\*\*Story\b")
 SHORT = 80
+SIZE_RE = re.compile(r"^\*\*Size:\*\*\s*(.*)$")
+DELIVERY_HEADING = "## Delivery"
+DELIVERY_ITEM_RE = re.compile(r"^(\d+)\.\s+\*\*Part\s+(\d+):")
 
 
 def indent(line: str) -> int:
@@ -205,6 +215,57 @@ def contract_problems(contract: list[tuple[int, str]], ids: set[str]) -> list[st
     return problems
 
 
+def delivery_parts(spec_text: str) -> list[tuple[int, int]] | None:
+    """Each part of the spec's `## Delivery` list as (item number, part number), up to the section's first `###`;
+    None when the spec has no such section."""
+    found: list[tuple[int, int]] | None = None
+    for _, line in unfenced(spec_text):
+        if line.rstrip() == DELIVERY_HEADING:
+            found = []
+        elif found is not None and (H2_RE.match(line) or line.startswith("### ")):
+            break
+        elif found is not None:
+            item = DELIVERY_ITEM_RE.match(line)
+            if item:
+                found.append((int(item.group(1)), int(item.group(2))))
+    return found
+
+
+def part_problems(head: list[tuple[int, str]], spec_text: str) -> list[str]:
+    """What keeps the skeleton's `**Part:**` line and its spec's `## Delivery` list from agreeing."""
+    parts = delivery_parts(spec_text)
+    if parts is not None and (not parts or any(item != i or part != i for i, (item, part) in enumerate(parts, 1))):
+        return ["the spec's ## Delivery list must number its parts 1 to M in order, each as `N. **Part N: <title>.**`"]
+    raw = next((m.group(1).strip() for _, line in head if (m := PART_RE.match(line))), None)
+    if raw is None:
+        if parts:
+            return [f"the spec delivers {len(parts)} parts: name this plan's part in a **Part:** line, as `**Part:** 1 of {len(parts)}`"]
+        return []
+    value = PART_VALUE_RE.match(raw)
+    if not value:
+        return [f"the **Part:** line must read `N of M`, not {raw!r}"]
+    n, m = int(value.group(1)), int(value.group(2))
+    if parts is None:
+        return ["the **Part:** line names a part, but the spec has no ## Delivery section listing its parts"]
+    if m != len(parts) or not 1 <= n <= m:
+        return [f"**Part:** {n} of {m} doesn't match the spec's ## Delivery list of {len(parts)} parts"]
+    return []
+
+
+def size_problems(head: list[tuple[int, str]], stories: int, budget: int) -> list[str]:
+    """The story budget: more stories than `budget` need a `**Size:**` line with a reason."""
+    if stories <= budget:
+        return []
+    reason = next((m.group(1).strip() for _, line in head if (m := SIZE_RE.match(line))), None)
+    if reason:
+        return []
+    problem = (
+        f"{stories} stories, over the plan budget of {budget} ([size] plan in the profile): split the spec into an "
+        "epic in its ## Delivery section, or say why it stays one plan in a **Size:** line"
+    )
+    return [problem + ("; the **Size:** line gives no reason" if reason == "" else "")]
+
+
 def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
     """Every problem of the skeleton above its marker, its story count, and its contract's non-blank line count."""
     problems: list[str] = []
@@ -218,6 +279,7 @@ def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
     head = [(n, line) for n, line in numbered if n < end]
     head_text = "\n".join(text.split("\n")[: end - 1])
 
+    spec_text: str | None = None
     spec = next((CODE_RE.findall(m.group(1)) for _, line in head if (m := SPEC_RE.match(line))), None)
     if spec is None:
         problems.append("no **Spec:** line: the drafters and the run find the spec through it")
@@ -225,6 +287,13 @@ def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
         problems.append("the **Spec:** line names no `backticked` path")
     elif not (repo_root(plan) / spec[0]).is_file():
         problems.append(f"the spec {spec[0]} does not exist")
+    else:
+        try:
+            spec_text = (repo_root(plan) / spec[0]).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as err:
+            problems.append(f"the spec {spec[0]} cannot be read: {getattr(err, 'strerror', None) or err}")
+    if spec_text is not None:
+        problems += part_problems(head, spec_text)
     for n, line in head:
         if STORY_RE.match(line):
             problems.append(f"line {n}: a ## Story heading: the join writes the stories below the marker")
@@ -251,4 +320,12 @@ def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
             problems.append(f"line {n}: the join reads an entry only as `- **Story <id>**` at column 0: {line.strip()}")
     if listed:
         problems += contract_problems(contract, {entry.sid for entry in listed})
+    try:
+        profile = optional_profile(repo_root(plan))
+        budget = profile.plan_size if profile else DEFAULT_PLAN_SIZE
+    except FlowError as err:
+        problems.append(f"the profile can't be read: {err}")
+        budget = DEFAULT_PLAN_SIZE
+    if listed:
+        problems += size_problems(head, len(listed), budget)
     return problems, len(listed), sum(1 for _, line in contract if line.strip())

@@ -291,6 +291,13 @@ class JsonTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
 
 
+    def test_a_part_line_is_passed_on_and_absent_without_one(self):
+        code, out = run(GOOD.replace("**Spec:** `docs/spec.md`, approved.", "**Spec:** `docs/spec.md`, approved.\n**Part:** 2 of 3"), as_json=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["part"], [2, 3])
+        code, out = run(GOOD, as_json=True)
+        self.assertNotIn("part", json.loads(out))
+
 class ReviewLineTest(unittest.TestCase):
     def test_parse_reads_tier_and_reason(self):
         text = tiered(("1", "deep", "x"), ("2", "light (docs only)", "x"), ("3", "light", "x"))
