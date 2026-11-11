@@ -1,6 +1,6 @@
 # Flow: Story, Task, Subtask
 
-Status: design approved section by section 2026-11-11; awaiting review of this file.
+Status: approved by the owner 2026-11-11, then pinned the same day before planning: spec splitting comes first.
 
 The flow calls a plan's unit of developer work a story (`## Story 3`), and the TDD cycles inside it tasks (`### Task 3.1`). This spec renames them: what one plan delivers is a **Story**, made of **Tasks** (today's stories), each made of **Subtasks** (today's tasks). It lands in three stages, readers first, so that a session whose plugin copy predates the change keeps working against a new `loom` binary. It prepares spec splitting, a later spec, in which a spec too big for one Story splits into several Stories that together form an **Epic**.
 
