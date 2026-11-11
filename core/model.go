@@ -519,6 +519,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverBuildSweep(msg)
 	case jobNoticeBuilt:
 		m.deliverJobNotice(msg)
+	case usageLimitRead:
+		m.deliverUsageLimit(msg)
 	case queuePassResult:
 		m.deliverQueuePass(msg)
 	case jobStarted:

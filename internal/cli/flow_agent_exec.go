@@ -16,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/flow"
 	"github.com/aidan-bailey/loom/internal/flowrun"
+	"github.com/aidan-bailey/loom/sched"
 )
 
 // headlessPreamble goes before every agent run's first prompt (flow in loom
@@ -457,6 +458,7 @@ type agentResult struct {
 	Question string
 	CostUSD  float64
 	Turns    int
+	Limit    *flowrun.Limit // at flowrun.AgentUsageLimit; At is the caller's
 }
 
 // readResult reads an ended agent job's stream-json log: the session from
@@ -498,6 +500,10 @@ func readResult(log []byte) (agentResult, error) {
 		Cost    float64 `json:"total_cost_usd"`
 		Turns   int     `json:"num_turns"`
 		Result  string  `json:"result"`
+		// Set on an API error's result (Claude Code 2.1.322: a usage limit
+		// is status 429, api_error "usage_limit_reached").
+		APIStatus *int   `json:"api_error_status"`
+		APIError  string `json:"api_error"`
 	}
 	if err := json.Unmarshal(final, &result); err != nil {
 		return res, fmt.Errorf("its result can't be read: %w", err)
@@ -510,7 +516,13 @@ func readResult(log []byte) (agentResult, error) {
 		return res, nil
 	}
 	if result.IsError {
-		return res, errors.New("it ended with an error result")
+		// A usage limit is no broken agent: it resumes once the limit resets
+		// (usage-limit hold spec §3), read as the daemon reads it.
+		if l, ok := sched.UsageLimitOf(log); ok {
+			res.Status, res.Limit = flowrun.AgentUsageLimit, &flowrun.Limit{Window: l.Window, Resets: l.Resets}
+			return res, nil
+		}
+		return res, errorResult(result.Result, result.APIStatus, result.APIError)
 	}
 	status, question := statusLines(result.Result)
 	switch {
@@ -523,6 +535,33 @@ func readResult(log []byte) (agentResult, error) {
 	}
 	res.Status, res.Report, res.Question = status, result.Result, question
 	return res, nil
+}
+
+// limitWhy is why a run stopped on l: "it stopped on the account's usage
+// limit (5-hour, resets 16:30)".
+func limitWhy(l *flowrun.Limit) string {
+	return fmt.Sprintf("it stopped on the account's usage limit (%s, resets %s)", sched.WindowLabel(l.Window), sched.ResetText(l.Resets, l.At))
+}
+
+// errorResult says what an error result says: its text, and its API
+// error's status and kind when it has them, so a usage limit's question names
+// the limit and when it resets (thread 19).
+func errorResult(text string, status *int, kind string) error {
+	msg := "it ended with an error result"
+	if t := strings.TrimSpace(text); t != "" {
+		msg += ": " + t
+	}
+	var api []string
+	if status != nil {
+		api = append(api, fmt.Sprintf("API %d", *status))
+	}
+	if kind != "" {
+		api = append(api, kind)
+	}
+	if len(api) > 0 {
+		msg += " (" + strings.Join(api, ", ") + ")"
+	}
+	return errors.New(msg)
 }
 
 // flowRootOfSession is the launch's flow root, refused outside a session.

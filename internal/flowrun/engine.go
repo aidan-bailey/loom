@@ -8,15 +8,18 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aidan-bailey/loom/sched"
 )
 
 // Report is an agent run's end, as 3a's record holds it.
 type Report struct {
-	Status   string `json:"status"` // DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, BLOCKED, TURN_CAP, failed, cancelled
+	Status   string `json:"status"` // DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, BLOCKED, TURN_CAP, USAGE_LIMIT, failed, cancelled
 	Text     string `json:"text,omitempty"`
 	Question string `json:"question,omitempty"`
 	Path     string `json:"path,omitempty"` // report.md
 	Why      string `json:"why,omitempty"`
+	Limit    *Limit `json:"limit,omitempty"` // at USAGE_LIMIT: which limit, and when it resets
 }
 
 func (r Report) done() bool { return r.Status == "DONE" || r.Status == "DONE_WITH_CONCERNS" }
@@ -70,6 +73,12 @@ type Effects interface {
 	Save(st *State) error
 }
 
+// LimitWaitWithin is how far off a usage limit's reset may be, from when
+// the agent stopped on it, for the engine to retry the step on its own
+// (usage-limit hold spec §3): any 5-hour window's. A reset further away, or
+// an unknown one, asks the manager.
+const LimitWaitWithin = 6 * time.Hour
+
 var (
 	errParked  = errors.New("the run parked")
 	errStopped = errors.New("the manager stopped the run")
@@ -88,8 +97,16 @@ type engine struct {
 	cur     string         // the story in hand, "" outside one
 	seq     map[string]int // attempts at each name prefix, this pass
 	resumes map[string]int // resumes of each agent run, this pass
-	final   Story
-	sent    []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
+	limits  map[string]int // usage limits each agent run stopped on, this pass
+	// lastReset is the reset of the last usage limit each agent run stopped
+	// on, this pass.
+	lastReset map[string]time.Time
+	final     Story
+	sent      []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
+	// accepted is each story's gate steps the manager accepted failing, by
+	// step line, with the gate run they were accepted at. A replay rebuilds
+	// it from the recalled gate results and answers (thread 20).
+	accepted map[string]map[string]string
 }
 
 // Run drives st until it parks or ends, saving it after every step. It
@@ -97,7 +114,7 @@ type engine struct {
 // could not get past (a lost daemon, a file it can't write), with st left
 // running for `loom flow run resume`.
 func Run(st *State, fx Effects) error {
-	e := &engine{st: st, fx: fx, head: st.Base, seq: map[string]int{}, resumes: map[string]int{}, final: Story{ID: finalStory}}
+	e := &engine{st: st, fx: fx, head: st.Base, seq: map[string]int{}, resumes: map[string]int{}, limits: map[string]int{}, lastReset: map[string]time.Time{}, final: Story{ID: finalStory}, accepted: map[string]map[string]string{}}
 	st.Status, st.Question, st.Why = Running, nil, ""
 	st.Phase, st.Notes, st.Kept = "", nil, nil
 	for i := range st.Stories {
@@ -260,7 +277,7 @@ func (e *engine) checkTree(name string) error {
 func (e *engine) agent(name, role, effort, brief string) (Report, error) {
 	var r Report
 	if e.recall("agent:"+name, &r) {
-		return r, nil
+		return e.outlast(name, r)
 	}
 	started, err := e.fx.AgentStarted(name)
 	if err != nil {
@@ -280,11 +297,73 @@ func (e *engine) agent(name, role, effort, brief string) (Report, error) {
 	if r, err = e.fx.Agent(name, role, effort, brief); err != nil {
 		return r, err
 	}
-	return r, e.remember("agent:"+name, r)
+	if err := e.remember("agent:"+name, r); err != nil {
+		return r, err
+	}
+	return e.outlast(name, r)
 }
 
-// resume is the report of name resumed with text (planning amendment 13).
+// resume is the report of name resumed with text (planning amendment 13),
+// past any usage limit it stops on (outlast).
 func (e *engine) resume(name, text string) (Report, error) {
+	r, err := e.resumeOnce(name, text)
+	if err != nil {
+		return r, err
+	}
+	return e.outlast(name, r)
+}
+
+// outlast retries name past each usage limit it stops on (usage-limit hold
+// spec §3), and is its report once it ends otherwise. A reset within
+// LimitWaitWithin of the stop is waited out with a note: the retry's job
+// waits in the queue, which holds the account's agents until the reset. A
+// reset further away, an unknown one, or the reset the run's last limit
+// named (its retry ran unheld), asks the manager: wait retries the same
+// way, stop stops. The retry resumes the run's session (the CLI
+// starts the run again from its brief when it has none), with a text of
+// its own for each limit, so a follow after a restart never takes one
+// retry for another.
+func (e *engine) outlast(name string, r Report) (Report, error) {
+	for r.Status == AgentUsageLimit {
+		e.limits[name]++
+		n := e.limits[name]
+		l := Limit{}
+		if r.Limit != nil {
+			l = *r.Limit
+		}
+		window := sched.WindowLabel(l.Window)
+		when := sched.ResetText(l.Resets, l.At)
+		// The same reset twice means the retry ran before it: the queue did
+		// not hold it (a daemon that keeps no hold), so a further retry would
+		// only be refused again, every few seconds until the reset.
+		again := !l.Resets.IsZero() && l.Resets.Equal(e.lastReset[name])
+		e.lastReset[name] = l.Resets
+		if !again && !l.Resets.IsZero() && l.Resets.Sub(l.At) <= LimitWaitWithin {
+			e.note("%s: usage limit (%s), waiting for the reset at %s", name, window, when)
+		} else {
+			text := fmt.Sprintf("%s stopped on the account's usage limit (%s limit, resets %s)", name, window, when)
+			if again {
+				text += ", again before that reset: the queue did not hold its retry"
+			}
+			a, err := e.ask(Question{Key: fmt.Sprintf("limit:%s:%d", name, n), Kind: KindUsageLimit, Text: text})
+			if err != nil {
+				return r, err
+			}
+			if a == WordStop {
+				return r, errStopped
+			}
+		}
+		var err error
+		text := fmt.Sprintf("The usage limit that stopped you has reset (retry %d). Continue from where you stopped.", n)
+		if r, err = e.resumeOnce(name, text); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+// resumeOnce is the report of name resumed with text, memoized.
+func (e *engine) resumeOnce(name, text string) (Report, error) {
 	e.resumes[name]++
 	key := fmt.Sprintf("resume:%s:%d", name, e.resumes[name])
 	var r Report
@@ -523,8 +602,15 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 		}
 		failures++
 		decision := ""
-		if res.Ended == "infra" || failures > 1 {
-			a, err := e.ask(Question{Key: "gates:" + name, Kind: KindGateFailure, Text: name + " failed:\n" + res.Table, Paths: logsOf(res)})
+		// A failure only on steps the manager accepted is asked about, not
+		// fixed: a fixer can't fix what the plan accepts (thread 20).
+		at := e.acceptedAt(s, res)
+		if res.Ended == "infra" || failures > 1 || at != nil {
+			text := name + " failed:\n" + res.Table
+			if at != nil {
+				text = name + " failed only on steps the manager accepted at " + strings.Join(at, ", ") + ":\n" + res.Table
+			}
+			a, err := e.ask(Question{Key: "gates:" + name, Kind: KindGateFailure, Text: text, Paths: logsOf(res)})
 			if err != nil {
 				return err
 			}
@@ -533,6 +619,7 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 				return errStopped
 			case WordAccept:
 				e.note("%s: the manager accepted the failing gates of %s", storyName(s), name)
+				e.accept(s, name, res)
 				return nil
 			case WordRetry:
 				continue
@@ -543,6 +630,38 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 			return err
 		}
 	}
+}
+
+// accept records res's failing steps as accepted for s at gate run name.
+func (e *engine) accept(s *Story, name string, res GateResult) {
+	steps := e.accepted[s.ID]
+	if steps == nil {
+		steps = map[string]string{}
+		e.accepted[s.ID] = steps
+	}
+	for _, f := range res.Failing {
+		steps[f.Line] = name
+	}
+}
+
+// acceptedAt is the gate runs at which the manager accepted every step res
+// fails on, in the order res lists them, or nil when res fails on a step
+// not accepted for s (or on none, as a service's infra failure does).
+func (e *engine) acceptedAt(s *Story, res GateResult) []string {
+	if len(res.Failing) == 0 {
+		return nil
+	}
+	var at []string
+	for _, f := range res.Failing {
+		name, ok := e.accepted[s.ID][f.Line]
+		if !ok {
+			return nil
+		}
+		if !slices.Contains(at, name) {
+			at = append(at, name)
+		}
+	}
+	return at
 }
 
 // premises sends the plan's flagged premises to premise-check and settles

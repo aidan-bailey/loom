@@ -37,7 +37,7 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 		}
 		return fallback
 	}
-	g := sched.Greedy{Running: map[sched.JobID]sched.Prediction{}, Used: map[sched.JobID]int64{}}
+	g := sched.Greedy{Running: map[sched.JobID]sched.Prediction{}, Used: map[sched.JobID]int64{}, Limits: m.queue.limits}
 	var used int64
 	for i := range q.store.Jobs {
 		rec := q.store.Jobs[i]

@@ -78,10 +78,11 @@ func (g *GitWorktree) Patch() (string, error) {
 	if base == "" {
 		return "", fmt.Errorf("base commit SHA not set")
 	}
-	if err := g.ensureUntrackedStaged(time.Now); err != nil {
+	env, err := g.prepareProbe(time.Now)
+	if err != nil {
 		return "", err
 	}
-	return g.runGitStdout(g.worktreePath, "--no-pager", "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base)
+	return g.runGitCore(env, gitTimeout, true, g.worktreePath, "--no-pager", "diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base)
 }
 
 // SplitPatch splits a patch Patch returned into its files, in git's order.

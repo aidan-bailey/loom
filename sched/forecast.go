@@ -19,16 +19,17 @@ const (
 // job the simulation starts counts at its claim.
 // At each expected end the job's claim is freed and Admit runs again with
 // the clock at that time, so the starvation guard and the over-cap skip
-// apply as they will. Jobs being sized are left out. A held job joins the
-// simulated queue when its prerequisite's expected end comes, at the lower of
+// apply as they will, and an account limit in limits holds its agents until
+// the simulated clock passes it. Jobs being sized are left out. A held job
+// joins the simulated queue when its prerequisite's expected end comes, at the lower of
 // its order and its prerequisite's, as a release does (dependent jobs spec
 // §5.3); one whose prerequisite never ends in the simulation gets no start.
 // It stops after
 // forecastSteps steps or past forecastHorizon; a job it hasn't started by
 // then has no entry.
-func Forecast(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
+func Forecast(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, limits AccountLimits, usual func(Record) (time.Duration, bool), fallback time.Duration) map[JobID]time.Time {
 	return forecastWith(jobs, p, now, usual, fallback, func(sim []Record, clock time.Time) Decision {
-		return Admit(sim, p, clock, holds)
+		return Admit(sim, p, clock, holds, limits)
 	})
 }
 

@@ -123,10 +123,13 @@ type FlowView struct {
 	Times  map[sched.JobID]JobTimes
 }
 
-// JobTimes is a job's start and end, zero until each happens.
+// JobTimes is a job's start and end, zero until each happens, and why it
+// waits while it is queued or held (the queue view's JobView.Waiting), so a
+// waiting step can say why (usage-limit hold spec §2).
 type JobTimes struct {
 	Started time.Time
 	Ended   time.Time
+	Waiting string
 }
 
 // FlowsView is ReadFlows' answer: every served session's flows and the

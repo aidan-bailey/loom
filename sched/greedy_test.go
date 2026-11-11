@@ -50,7 +50,7 @@ func TestAdmitGreedy_PeaksThatDontMeetBothStart(t *testing.T) {
 	}
 	jobs := []Record{running(1, Claim{CPUs: 4, MemoryGB: 10}), queued(2, Claim{CPUs: 4, MemoryGB: 10})}
 	assert.Equal(t, []JobID{2}, AdmitGreedy(jobs, greedyPolicy(), t0, g).Start)
-	assert.Empty(t, Admit(jobs, greedyPolicy(), t0, nil).Start, "claims alone would hold it back")
+	assert.Empty(t, Admit(jobs, greedyPolicy(), t0, nil, nil).Start, "claims alone would hold it back")
 }
 
 func TestAdmitGreedy_PeaksThatMeetWait(t *testing.T) {

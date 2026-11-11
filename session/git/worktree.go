@@ -5,6 +5,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"time"
@@ -91,6 +92,16 @@ type GitWorktree struct {
 	untrackedCheckedAt time.Time
 	// untrackedHadAny is the result of the most recent ls-files probe.
 	untrackedHadAny bool
+
+	// probeMu serializes the diff probe's writes to its private index (see
+	// prepareProbe) and guards the fields below. Held across the copy and
+	// the add -N subprocess, never across the diff itself.
+	probeMu sync.Mutex
+	// probeIndex is the private index last prepared, "" before the first
+	// probe; probeIndexFrom is the real index it was copied from, nil when
+	// the worktree had none.
+	probeIndex     string
+	probeIndexFrom fs.FileInfo
 }
 
 // untrackedCacheTTL caps how long an untracked-file check is trusted.

@@ -333,3 +333,16 @@ func TestInitSession(t *testing.T) {
 	assert.Empty(t, initSession(p), "only the init line names it")
 	assert.Empty(t, initSession(filepath.Join(dir, "missing")))
 }
+
+// A waiting step's job carries why it waits to the board (usage-limit hold
+// spec §2), as the queue view says it.
+func TestFlowJobFacts_CarryWhyAJobWaits(t *testing.T) {
+	f := newFlowFixture(t)
+	f.job(9, sched.KindAgent, 0, sched.Queued)
+	f.job(10, sched.KindAgent, 0, sched.Running)
+	why := "waits for the account's usage limit (5-hour, resets 16:30)"
+	f.m.queue.waiting[9] = why
+	times, _ := f.m.flowJobFacts(f.id)
+	assert.Equal(t, why, times[9].Waiting)
+	assert.Empty(t, times[10].Waiting, "a running job waits for nothing")
+}

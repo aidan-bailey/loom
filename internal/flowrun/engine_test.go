@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -458,6 +460,46 @@ func TestRun_GateFailures(t *testing.T) {
 		assert.Equal(t, "gates:r-s1-gates1", st.Question.Key)
 		assert.Contains(t, st.Question.Text, "a service failed: db: exit 1")
 		assert.NotContains(t, f.calls, "gates r-s1-gates1")
+	})
+}
+
+// TestRun_AnAcceptedGateFailure pins thread 20: once the manager accepts a
+// story's failing steps, a later gate run of the story that fails only on
+// them asks again rather than dispatching a fixer, and one failing on any
+// other step still gets a fixer. Each question ends a Run, so the next Run
+// knows the accepted steps only by replaying the earlier gate run.
+func TestRun_AnAcceptedGateFailure(t *testing.T) {
+	step := func(line string) GateStep { return GateStep{Line: line, Verdict: "FAIL", Log: "/logs/" + line} }
+	accepted := GateResult{Ended: "failed", Failing: []GateStep{step("npm test"), step("npm run lint")}, Table: "FAIL npm test\nFAIL npm run lint"}
+	// gates1 and gates2 fail, the manager accepts at gates2; the review's fix
+	// round (r-s1-fix2) then gates again at gates3.
+	setup := func(gates3 GateResult) (*State, *fakeFX) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.gates["r-s1-gates2"], f.gates["r-s1-gates3"] = accepted, accepted, gates3
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		return newState(story("1", "intermediate-dev", "vouched")), f
+	}
+	t.Run("failing only on accepted steps asks", func(t *testing.T) {
+		st, f := setup(GateResult{Ended: "failed", Failing: []GateStep{step("npm run lint")}, Table: "FAIL npm run lint"})
+		require.NoError(t, Run(st, f))
+		require.Equal(t, "gates:r-s1-gates2", st.Question.Key)
+		require.NoError(t, st.Answer("accept", "m", FromSpec, ""))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "gates:r-s1-gates3", st.Question.Key, "no fixer before the question")
+		assert.Equal(t, KindGateFailure, st.Question.Kind)
+		assert.Contains(t, st.Question.Text, "accepted at r-s1-gates2")
+		assert.Equal(t, []string{"/logs/npm run lint"}, st.Question.Paths)
+		assert.NotContains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
+		drive(t, st, f, map[string]string{"gates:r-s1-gates3": "accept"})
+		assert.Equal(t, Done, st.Status)
+		assert.NotContains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
+	})
+	t.Run("failing on a step not accepted gets a fixer", func(t *testing.T) {
+		st, f := setup(GateResult{Ended: "failed", Failing: []GateStep{step("npm run lint"), step("go test ./...")}, Table: "FAIL npm run lint\nFAIL go test"})
+		drive(t, st, f, map[string]string{"gates:r-s1-gates2": "accept"}) // gates3 asking fails the test
+		assert.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
 	})
 }
 
@@ -991,4 +1033,145 @@ func TestRun_ARestartRebuildsTheRowsOnce(t *testing.T) {
 	assert.Equal(t, once.Stories, st.Stories)
 	assert.Equal(t, once.Notes, st.Notes)
 	assert.Equal(t, once.Kept, st.Kept)
+}
+
+// limitAt is a usage-limit report of window, hit at t0 and resetting after
+// in; in 0 leaves the reset unknown.
+func limitAt(window string, in time.Duration) Report {
+	t0 := time.Date(2026, 11, 11, 9, 0, 0, 0, time.Local)
+	l := &Limit{Window: window, At: t0}
+	if in > 0 {
+		l.Resets = t0.Add(in)
+	}
+	return Report{Status: AgentUsageLimit, Why: "it stopped on a usage limit", Limit: l}
+}
+
+// resumesOf is f's resume calls of name.
+func (f *fakeFX) resumesOf(name string) []string {
+	var out []string
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "resume "+name+" ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestRun_AUsageLimit(t *testing.T) {
+	t.Run("a reset within six hours retries with no question", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = limitAt("five_hour", 2*time.Hour)
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.Equal(t, Done, st.Status)
+		require.Len(t, f.resumesOf("r-s1-dev1"), 1, "the same run is resumed, and the queue holds it")
+		assert.NotContains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "no fresh attempt")
+		l := f.reports["r-s1-dev1"].Limit
+		assert.Contains(t, st.Notes, "r-s1-dev1: usage limit (5-hour), waiting for the reset at "+sched.ResetText(l.Resets, l.At))
+		assert.Empty(t, st.Answers, "nothing was asked")
+	})
+	t.Run("exactly six hours still waits", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = limitAt("five_hour", LimitWaitWithin)
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.Equal(t, Done, st.Status)
+	})
+	for _, tc := range []struct {
+		name, window string
+		in           time.Duration
+		says         string
+	}{
+		{"a reset further away parks", "seven_day", 3 * 24 * time.Hour, "7-day limit, resets "},
+		{"an unknown reset parks", "", 0, "an unknown time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake()
+			f.reports["r-s1-review1"] = limitAt(tc.window, tc.in)
+			st := newState(story("1", "intermediate-dev", "vouched"))
+			require.NoError(t, Run(st, f))
+			require.Equal(t, Parked, st.Status)
+			assert.Equal(t, "limit:r-s1-review1:1", st.Question.Key)
+			assert.Equal(t, KindUsageLimit, st.Question.Kind)
+			assert.Contains(t, st.Question.Text, tc.says)
+			assert.Empty(t, f.resumesOf("r-s1-review1"), "nothing is resubmitted before the answer")
+
+			drive(t, st, f, map[string]string{"limit:r-s1-review1:1": "wait"})
+			assert.Equal(t, Done, st.Status)
+			assert.Len(t, f.resumesOf("r-s1-review1"), 1, "wait resubmits")
+		})
+	}
+	t.Run("stop stops", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = limitAt("seven_day", 3*24*time.Hour)
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"limit:r-s1-dev1:1": "stop"})
+		assert.Equal(t, Stopped, st.Status)
+		assert.Empty(t, f.resumesOf("r-s1-dev1"))
+	})
+	t.Run("the same reset again asks: the queue did not hold the retry", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = limitAt("five_hour", time.Hour)
+		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour)}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "limit:r-s1-dev1:2", st.Question.Key)
+		assert.Contains(t, st.Question.Text, "again before that reset")
+		drive(t, st, f, map[string]string{"limit:r-s1-dev1:2": "wait"})
+		assert.Equal(t, Done, st.Status)
+	})
+	t.Run("a limit on a resume, twice, retries each time", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
+		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour), limitAt("five_hour", 5*time.Hour)}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, map[string]string{"ctx:r-s1-dev1:1": "That one."})
+		assert.Equal(t, Done, st.Status)
+		got := f.resumesOf("r-s1-dev1")
+		require.Len(t, got, 3, "the answer, then a retry after each limit")
+		assert.NotEqual(t, got[1], got[2], "each retry's text is its own, so a follow never takes one for another")
+	})
+}
+
+// limitScript is a run whose developer stops on a 5-hour limit, its
+// resume on another, and its reviewer on a 7-day one the manager waits for.
+func limitScript() (*State, *fakeFX, map[string]string) {
+	f := newFake()
+	f.reports["r-s1-dev1"] = limitAt("five_hour", time.Hour)
+	f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", 2*time.Hour), {Status: "DONE", Text: "STATUS: DONE"}}
+	f.reports["r-s1-review1"] = limitAt("seven_day", 48*time.Hour)
+	st := newState(story("1", "intermediate-dev", "vouched"))
+	return st, f, map[string]string{"limit:r-s1-review1:1": "wait"}
+}
+
+func TestRun_AUsageLimitReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) {
+	st, f, answers := limitScript()
+	drive(t, st, f, answers)
+	require.Equal(t, Done, st.Status)
+	want := slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1"))
+	require.Len(t, f.resumesOf("r-s1-dev1"), 2)
+	notes := st.Notes
+	for k := 1; k <= f.saves; k++ {
+		t.Run(fmt.Sprintf("a crash at save %d", k), func(t *testing.T) {
+			st, f, answers := limitScript()
+			f.failAt = k
+			err := Run(st, f)
+			for err != nil || st.Status == Parked {
+				if err != nil {
+					require.ErrorIs(t, err, errCrash)
+					st = clone(f.saved)
+					if f.saved == nil {
+						st, _, _ = limitScript()
+					}
+				} else {
+					require.NoError(t, st.Answer(answers[st.Question.Key], "m", FromSpec, ""))
+				}
+				err = Run(st, f)
+			}
+			require.Equal(t, Done, st.Status)
+			assert.Equal(t, want, slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1")), "nothing submitted or resumed twice")
+			assert.Equal(t, notes, st.Notes)
+		})
+	}
 }

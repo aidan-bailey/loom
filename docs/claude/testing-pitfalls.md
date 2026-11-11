@@ -33,11 +33,11 @@
 
 ## The worktree's index
 
-Loom runs `git add -N .` in every session worktree on each diff probe (`session/git/diff.go`), and a session's own repo checkout is such a worktree. A file that exists there even for seconds gets an intent-to-add entry: new files show as `A` before anyone stages them, and one deleted afterwards shows as ` D`, a "deleted" file that was never committed. A mutation backup of `core/load.go` once appeared this way in another agent's `git status`.
+Loom's diff probe works on a private copy of each session worktree's index (`loom-diff-index` in the worktree's git dir, `session/git/diff.go`) and never writes the real one. Older builds ran `git add -N .` on the real index, and worktrees made then still hold those intent-to-add entries: a file that existed there even for seconds shows as `A` before anyone staged it, or, once deleted, as ` D`, a "deleted" file that was never committed. A mutation backup of `core/load.go` once appeared this way in another agent's `git status`.
 
-- Put scratch files, backups and tool output in the scratchpad, never in the worktree.
-- If one lands in the worktree, delete it and `git rm --cached` it.
-- Claude Code's Edit and Write tools write `<file>.tmp.<pid>.<hash>` beside the file and rename it into place, so a probe that runs mid-edit leaves a ` D <file>.tmp.…` entry. Check `git status --short` after editing and before committing; it happened twice in one session on 2026-11-05.
+- Put scratch files, backups and tool output in the scratchpad, never in the worktree: the session's diff shows every untracked file while it exists, and a broad add or loom's push (`git add .`) commits it.
+- A ` D` entry for a file never committed is such a leftover: `git rm --cached` it.
+- Claude Code's Edit and Write tools write `<file>.tmp.<pid>.<hash>` beside the file and rename it into place; under the old probe, one caught mid-edit left a ` D <file>.tmp.…` entry (twice in one session on 2026-11-05). Check `git status --short` after editing and before committing.
 - Commit with explicit `git commit -m … -- <paths>`, never `-a`, `git add -A` or `git add .`; check `git status` before every commit.
 - Several agents in one worktree share one index: `git commit -- <file>` commits the whole working-tree file, another agent's uncommitted hunks included, so check the committed diff. Never amend, rebase or `git stash` there: the stash stack is shared by every worktree of the repo.
 

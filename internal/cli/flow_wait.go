@@ -149,12 +149,15 @@ func newFlowWaitWaitCmd() *cobra.Command {
 				}
 			}
 			logPath := filepath.Join(dir, name+".log")
-			deadline := time.Now().Add(bound)
-			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitStep(c.OutOrStdout(), name, id, logPath, deadline) })
+			deadline := waitDeadline(bound)
+			err = rejoin(c, deadline, 0, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitStep(c.OutOrStdout(), name, id, logPath, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {
 				fmt.Fprintf(c.OutOrStdout(), "running %s: job %d goes on, but %v (loom flow wait wait %s follows it again)\n", name, id, away, name)
 				return &ExitError{Code: exitStillRunning}
+			}
+			if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+				return up.exit("loom flow wait", "loom flow wait wait "+name)
 			}
 			return err
 		},

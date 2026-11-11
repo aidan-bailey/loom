@@ -372,7 +372,7 @@ func (m *Model) queueView() QueueView {
 		}
 		starts = sched.ForecastGreedy(q.store.Jobs, q.policy, now, g, m.usualOf, m.hostUsual())
 	} else {
-		starts = sched.Forecast(q.store.Jobs, q.policy, now, q.holding, m.usualOf, m.hostUsual())
+		starts = sched.Forecast(q.store.Jobs, q.policy, now, q.holding, q.limits, m.usualOf, m.hostUsual())
 	}
 	for _, r := range slices.Concat(running, queued, finished) {
 		jv := m.queueJobView(q, r, byID)
@@ -487,19 +487,29 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		if h, ok := q.holding[r.ID]; ok && h != jv.Need {
 			jv.Holds = h
 		}
-	case sched.Held:
-		jv.Waiting = q.heldWaiting(r)
 	case sched.Queued:
 		jv.Ideal = sched.SpareWidth(r, b)
 		if q.policy.Explore {
 			jv.Explore = sched.ExploreWidth(r, b, q.policy.Caps.CPUs)
 		}
-		jv.Waiting = q.waiting[r.ID]
-		if jv.Waiting == "" && q.paused != "" {
-			jv.Waiting = "admission paused: " + q.paused
-		}
 	}
+	jv.Waiting = q.waitingOf(r)
 	return jv
+}
+
+// waitingOf is why r waits: a held job for its prerequisite, a queued one
+// for what the last admission pass said, or the pause; "" for any other.
+func (q *queueState) waitingOf(r sched.Record) string {
+	switch r.State {
+	case sched.Held:
+		return q.heldWaiting(r)
+	case sched.Queued:
+		if w := q.waiting[r.ID]; w != "" || q.paused == "" {
+			return w
+		}
+		return "admission paused: " + q.paused
+	}
+	return ""
 }
 
 // ShortAgent is a subagent's ID as the job views show it: its first 7

@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/flow"
+	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +19,9 @@ import (
 // ending in status lines as a headless agent's does (spec §2a, 9): ASK →
 // NEEDS_CONTEXT; CAPPED → the turn cap's error result; BROKEN → no result; FAILING → an error result; BADSTATUS →
 // a status no report has; NOSTATUS → none; MUTE → NEEDS_CONTEXT with no
-// question; anything else, or a resume → DONE.
+// question; SLOW → DONE after 30 s; LIMITED → a usage limit's refusal
+// (5-hour, resetting at 1794360600); NOSESSION → a usage limit with no
+// session the first time, DONE after; anything else, or a resume → DONE.
 const fakeAgentClaude = `#!/bin/sh
 n=$(ls "$FAKE_CLAUDE_LOG" | grep -c '\.args$')
 printf '%s\n' "$@" > "$FAKE_CLAUDE_LOG/$n.args"
@@ -30,6 +34,13 @@ while [ $# -gt 0 ]; do
     *) shift;;
   esac
 done
+limited() {
+  printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[]},"api_error_status":429,"api_error":"usage_limit_reached","api_error_params":{"rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1794360600}}}'
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","num_turns":1,"total_cost_usd":0,"result":"You have hit your 5-hour limit"}'
+}
+case "$prompt" in
+  *NOSESSION*) if [ ! -e "$FAKE_CLAUDE_LOG/nosession" ]; then touch "$FAKE_CLAUDE_LOG/nosession"; limited; exit 1; fi;;
+esac
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-1","model":"claude-fake"}'
 result() { printf '%s\n' '{"type":"result","subtype":"success","is_error":'"$1"',"num_turns":3,"total_cost_usd":0.25,"session_id":"sess-1","result":"'"$2"'"}'; }
 if [ -n "$resume" ]; then result false 'answered\nSTATUS: DONE'; exit 0; fi
@@ -39,6 +50,8 @@ case "$prompt" in
   *BADSTATUS*) result false 'x\nSTATUS: MAYBE';;
   *NOSTATUS*) result false 'just words';;
   *MUTE*) result false 'x\nSTATUS: NEEDS_CONTEXT';;
+  *LIMITED*) limited; exit 1;;
+  *SLOW*) sleep 30; result false 'late\nSTATUS: DONE';;
   *CAPPED*) printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"total_cost_usd":0.1,"session_id":"sess-1"}'; exit 1;;
   *ASK*) result false 'need one\n**STATUS: NEEDS_CONTEXT**\nQUESTION: ` + "`Which colour?`" + `';;
   *) result false 'all done\nSTATUS: DONE';;
@@ -189,6 +202,85 @@ func TestFlowAgent_AJobWithoutAUsableReportFails(t *testing.T) {
 		assert.Contains(t, out, "failed "+name+": ", prompt)
 		assert.Contains(t, out, why, prompt)
 	}
+}
+
+// TestReadResult_AnErrorResultSaysWhatItSays pins that an error result's
+// text and API error reach the failure, as a usage limit's does (thread 19:
+// Claude Code 2.1.322's result event, subtype success with is_error).
+func TestReadResult_AnErrorResultSaysWhatItSays(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"num_turns":1,"total_cost_usd":0,"session_id":"s","result":"Rate limited"}`,
+			"it ended with an error result: Rate limited (API 429)"},
+		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":529,"num_turns":1,"result":"Overloaded"}`,
+			"it ended with an error result: Overloaded (API 529)"},
+		{`{"type":"result","subtype":"success","is_error":true,"api_error":"connection_failed","num_turns":1,"result":""}`,
+			"it ended with an error result (connection_failed)"},
+		{`{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":null,"num_turns":1}`,
+			"it ended with an error result"},
+	} {
+		_, err := readResult([]byte(tc.line + "\n"))
+		require.Error(t, err)
+		assert.Equal(t, tc.want, err.Error())
+	}
+}
+
+// A usage limit is a status of its own, not a failure: the window and the
+// reset from the log, and when the run stopped on it (usage-limit hold spec
+// §3).
+func TestReadResult_AUsageLimitIsItsOwnStatus(t *testing.T) {
+	log := `{"type":"system","subtype":"init","session_id":"s"}` + "\n" +
+		`{"type":"assistant","message":{"role":"assistant","content":[]},"api_error_status":429,"api_error":"usage_limit_reached","api_error_params":{"rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1794360600}}}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","num_turns":1,"session_id":"s","result":"You've hit your 5-hour limit · resets 4:30pm"}` + "\n"
+	res, err := readResult([]byte(log))
+	require.NoError(t, err)
+	assert.Equal(t, flowrun.AgentUsageLimit, res.Status)
+	assert.Equal(t, "s", res.Session)
+	require.NotNil(t, res.Limit)
+	assert.Equal(t, "five_hour", res.Limit.Window)
+	assert.True(t, time.Unix(1794360600, 0).Equal(res.Limit.Resets))
+}
+
+// An agent stopped on a usage limit ends USAGE_LIMIT with the limit in its
+// record, and an answer resumes its session; with no session, the answer
+// starts it again from its brief.
+func TestFlowAgent_AUsageLimitIsResumable(t *testing.T) {
+	_, _, logDir := agentFixture(t, "intermediate-dev")
+	_, _, err := runAgent(t, "LIMITED work", "run", "intermediate-dev", "--name", "l1")
+	require.NoError(t, err)
+	out, _, err := runAgent(t, "", "wait", "l1", "60")
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Contains(t, out, "failed l1: it stopped on the account's usage limit (5-hour, resets ")
+	dir, cleanup, err := agentDir()
+	require.NoError(t, err)
+	defer cleanup()
+	run, err := readAgentRun(agentPath(dir, "l1"))
+	require.NoError(t, err)
+	assert.Equal(t, flowrun.AgentUsageLimit, run.Status)
+	require.NotNil(t, run.Limit)
+	assert.Equal(t, "five_hour", run.Limit.Window)
+	assert.False(t, run.Limit.At.IsZero(), "when it stopped, which the engine measures from")
+
+	out, _, err = runAgent(t, "Continue.", "answer", "l1")
+	require.NoError(t, err, out)
+	out, _, err = runAgent(t, "", "wait", "l1", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done l1: DONE\n"), out)
+	b, err := os.ReadFile(filepath.Join(logDir, "1.args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "--resume\nsess-1\n")
+
+	_, _, err = runAgent(t, "NOSESSION work", "run", "intermediate-dev", "--name", "l2")
+	require.NoError(t, err)
+	_, _, _ = runAgent(t, "", "wait", "l2", "60")
+	out, _, err = runAgent(t, "Continue.", "answer", "l2")
+	require.NoError(t, err, out)
+	out, _, err = runAgent(t, "", "wait", "l2", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done l2: DONE\n"), out)
+	b, err = os.ReadFile(filepath.Join(logDir, "3.args"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "--resume", "no session to resume")
+	assert.Contains(t, string(b), "NOSESSION work", "it starts again from its brief")
 }
 
 func TestFlowAgent_Refusals(t *testing.T) {

@@ -101,6 +101,11 @@ type queueState struct {
 	traces  map[sched.JobID]*sched.Trace
 	holds   map[sched.JobID]sched.HoldState
 	holding map[sched.JobID]sched.Need
+	// limits is the accounts a usage limit holds (usage-limit hold spec §2),
+	// from the logs of agent jobs that failed on one (noteUsageLimit). In
+	// memory only: a restart forgets it, and the next agent to hit the limit
+	// records it again.
+	limits sched.AccountLimits
 	// doomed holds the IDs retention dropped from the store, whose
 	// directories go once a write of the shorter jobs.json succeeds.
 	doomed []sched.JobID
@@ -195,6 +200,7 @@ func newQueueState() *queueState {
 		traces:     map[sched.JobID]*sched.Trace{},
 		holds:      map[sched.JobID]sched.HoldState{},
 		holding:    map[sched.JobID]sched.Need{},
+		limits:     sched.AccountLimits{},
 		unprobed:   map[sched.JobID]error{},
 		lockLogged: map[sched.JobID]string{},
 		noLend:     map[sched.JobID]bool{},

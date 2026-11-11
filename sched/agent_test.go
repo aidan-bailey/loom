@@ -99,7 +99,7 @@ func TestGrant_PassesAgentJobsOver(t *testing.T) {
 		{ID: 3, Order: 3, State: Queued, Kind: KindAgent, AccountKey: "a", Submitted: now},
 		{ID: 4, Order: 4, State: Queued, Kind: KindAgent, AccountKey: "b", Submitted: now},
 	}
-	dec := Admit(jobs, p, now, nil)
+	dec := Admit(jobs, p, now, nil, nil)
 	require.Equal(t, "waits for an agent slot (1 of 1 running on this account)", dec.Waiting[3])
 	require.Contains(t, dec.Start, JobID(4))
 	got := Grant(dec, jobs, p, nil, func(r Record) *Belief {
@@ -147,4 +147,42 @@ func TestStore_RoundTripsAnAgentJob(t *testing.T) {
 	require.Len(t, got.Jobs, 1)
 	assert.Equal(t, KindAgent, got.Jobs[0].Kind)
 	assert.Equal(t, "/acc/a", got.Jobs[0].AccountKey)
+}
+
+func TestAdmit_AccountLimits(t *testing.T) {
+	p := admitPolicy()
+	p.AgentJobs = 4
+	resets := admitNow.Add(2 * time.Hour)
+	limits := AccountLimits{"/acc/a": {Window: "five_hour", Resets: resets}}
+	jobs := []Record{
+		agentJob(1, "/acc/a", Queued, time.Minute),
+		agentJob(2, "/acc/b", Queued, time.Minute),
+		queuedJob(3, admitSmall, time.Minute),
+		agentJob(4, "/acc/a", Queued, time.Hour),
+	}
+	why := "waits for the account's usage limit (5-hour, resets " + ResetText(resets, admitNow) + ")"
+
+	dec := Admit(jobs, p, admitNow, nil, limits)
+	assert.Equal(t, []JobID{2, 3}, dec.Start, "another account's agent and a build start")
+	assert.Equal(t, map[JobID]string{1: why, 4: why}, dec.Waiting, "every queued agent of the account waits")
+
+	g := Greedy{BudgetKB: 64 * kbPerGB, Predict: func(Record, time.Time) Prediction { return Prediction{} }, Limits: limits}
+	assert.Equal(t, why, AdmitGreedy(jobs, p, admitNow, g).Waiting[1], "greedy admission holds it too")
+
+	assert.Equal(t, map[JobID]string{1: why, 4: why}, Admit(jobs, p, resets.Add(LimitMargin-time.Second), nil, limits).Waiting,
+		"the hold lasts a margin past the reset")
+	later := Admit(jobs, p, resets.Add(LimitMargin), nil, limits)
+	assert.Equal(t, []JobID{1, 2, 4, 3}, later.Start, "the hold ends at the reset plus the margin")
+	assert.Empty(t, later.Waiting)
+
+	unknown := AccountLimits{"/acc/a": {}}
+	assert.Empty(t, Admit(jobs, p, admitNow, nil, unknown).Waiting, "a limit with no reset holds nothing")
+}
+
+func TestResetText(t *testing.T) {
+	now := time.Date(2026, 11, 10, 9, 0, 0, 0, time.Local) // a Tuesday
+	assert.Equal(t, "16:30", ResetText(time.Date(2026, 11, 10, 16, 30, 0, 0, time.Local), now), "today: the time alone")
+	assert.Equal(t, "Wed 14:00", ResetText(time.Date(2026, 11, 11, 14, 0, 0, 0, time.Local), now), "this week: the day too")
+	assert.Equal(t, "20 Nov 14:00", ResetText(time.Date(2026, 11, 20, 14, 0, 0, 0, time.Local), now), "further: the date")
+	assert.Equal(t, "an unknown time", ResetText(time.Time{}, now))
 }

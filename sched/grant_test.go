@@ -23,7 +23,7 @@ func TestGrant(t *testing.T) {
 		return Record{ID: 9, State: Running, Claim: Claim{CPUs: cores, MemoryGB: 2}, Started: now}
 	}
 	grant := func(b *Belief, jobs ...Record) map[JobID]Claim {
-		return Grant(Admit(jobs, p, now, nil), jobs, p, nil, func(Record) *Belief { return b }, HostIdle{}).Spare
+		return Grant(Admit(jobs, p, now, nil, nil), jobs, p, nil, func(Record) *Belief { return b }, HostIdle{}).Spare
 	}
 
 	assert.Equal(t, 8, SpareWidth(learned(1, 4, 2), wide))
@@ -79,9 +79,9 @@ func TestGrant_CountsARunningJobAtItsHold(t *testing.T) {
 	job := Record{ID: 1, Order: 1, State: Queued, Submitted: now, Claim: Claim{CPUs: 4, MemoryGB: 2},
 		Sources: ClaimSources{SourceLearned, SourceLearned, SourceDefault}}
 	jobs := []Record{{ID: 9, State: Running, Claim: Claim{CPUs: 6, MemoryGB: 2}, Started: now}, job}
-	assert.Nil(t, Grant(Admit(jobs, p, now, nil), jobs, p, nil, wide, HostIdle{}).Spare, "at its claim the reserve is all that is left")
+	assert.Nil(t, Grant(Admit(jobs, p, now, nil, nil), jobs, p, nil, wide, HostIdle{}).Spare, "at its claim the reserve is all that is left")
 	holds := map[JobID]Need{9: {CPUs: 2, MemoryGB: 1}}
-	assert.Equal(t, map[JobID]Claim{1: {CPUs: 4, MemoryGB: 2}}, Grant(Admit(jobs, p, now, holds), jobs, p, holds, wide, HostIdle{}).Spare,
+	assert.Equal(t, map[JobID]Claim{1: {CPUs: 4, MemoryGB: 2}}, Grant(Admit(jobs, p, now, holds, nil), jobs, p, holds, wide, HostIdle{}).Spare,
 		"at its hold, 14 − 2 − 4 − the reserve's 4 leaves 4 cores")
 }
 
@@ -115,7 +115,7 @@ func TestGrant_Explores(t *testing.T) {
 			Sources: ClaimSources{SourceLearned, SourceLearned, SourceDefault}}
 	}
 	grant := func(b *Belief, idle HostIdle, jobs ...Record) Grants {
-		return Grant(Admit(jobs, p, now, nil), jobs, p, nil, func(Record) *Belief { return b }, idle)
+		return Grant(Admit(jobs, p, now, nil, nil), jobs, p, nil, func(Record) *Belief { return b }, idle)
 	}
 	idle := func(cores float64) HostIdle { return HostIdle{Cores: cores, Known: true} }
 	explored := func(spare map[JobID]Claim) Grants {
@@ -138,7 +138,7 @@ func TestGrant_Explores(t *testing.T) {
 	assert.Equal(t, Grants{}, grant(narrow, HostIdle{}, learned(1, 2, 4)), "idle cores unknown")
 	off := p
 	off.Explore = false
-	assert.Equal(t, Grants{}, Grant(Admit([]Record{learned(1, 2, 4)}, off, now, nil), []Record{learned(1, 2, 4)}, off, nil,
+	assert.Equal(t, Grants{}, Grant(Admit([]Record{learned(1, 2, 4)}, off, now, nil, nil), []Record{learned(1, 2, 4)}, off, nil,
 		func(Record) *Belief { return narrow }, idle(12)), "explore off")
 
 	waiter := Record{ID: 2, Order: 2, State: Queued, Submitted: now, Claim: Claim{CPUs: 13, MemoryGB: 1}, Sources: all(SourceExplicit)}

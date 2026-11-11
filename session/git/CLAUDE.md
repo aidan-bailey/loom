@@ -22,8 +22,10 @@ Git worktree operations: each session's worktree under `<configDir>/worktrees/` 
 - **Have `StashListed` fail, never answer "not listed", when the list can't be read.** Callers forget a stash that isn't listed, and a misread forgets the only copy of work. **Enforced** by `TestStashListed_LookupFailureIsNeverAbsence` and `TestStashListed_ListFailureIsAnError`.
 - **Return `ErrStashNotDropped` from `ApplyStash` when the apply worked but the drop didn't.** The caller clears the reference and reports the leftover entry as a notice instead of failing the resume. **Enforced** by `TestApplyStash_DropFailureIsReported`.
 
-### Patches
+### Diffs and patches
 
+- **Run every diff-probe command (`Diff`, `DiffShortStat`, `Patch`) through `prepareProbe` and `runProbe`, on the private index (`loom-diff-index` in the worktree's git dir) with `GIT_OPTIONAL_LOCKS=0`; never let the probe touch the worktree's real index.** `git add -N .` there takes `index.lock`, and an agent's git command started meanwhile fails: a merge left half applied, with no `MERGE_HEAD`. Copy the real index only when its file, size or mtime changed, and reset the untracked cache with each copy. **Enforced** by `TestDiffProbe_LeavesTheRealIndexAlone`, `TestDiffProbe_WorksWhileAnAgentHoldsTheIndexLock`, `TestDiffProbe_FollowsTheRealIndex` and `TestNoAddIntentToAddOutsideTheProbe`.
+- **Run the workspace terminal's diffs (`DiffUncommitted`, `DiffUncommittedShortStat`) on tracked files only, with `GIT_OPTIONAL_LOCKS=0`.** They run in the user's own checkout, whose index loom must never write or lock. **Enforced** by `TestWorkspaceTerminalDiffs_TakeNoOptionalLocks`.
 - **Parse only `Patch`'s output (`SplitPatch`), never `Diff`'s.** `Diff` folds stderr into its text and runs under the user's diff config, so a warning, `color.diff=always`, `diff.noprefix` or `diff.external` changes what a parser reads, silently; `Patch` reads stdout alone with colour, external drivers and the `a/` `b/` prefixes pinned. **Enforced** by `TestPatch_TheUsersDiffConfigChangesNothing`.
 
 ### Branches and sidecars

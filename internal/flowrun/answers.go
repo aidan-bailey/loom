@@ -17,6 +17,10 @@ const (
 	KindAgentFailed   = "agent-failed"
 	KindTreeMoved     = "tree-moved"
 	KindDocsStrayed   = "docs-strayed"
+	// KindUsageLimit is an agent stopped on a usage limit that resets more
+	// than LimitWaitWithin away, or at a time it didn't say (usage-limit
+	// hold spec §3).
+	KindUsageLimit = "usage-limit"
 )
 
 // The answer words.
@@ -25,9 +29,12 @@ const (
 	WordAccept   = "accept"
 	WordRetry    = "retry"
 	WordContinue = "continue"
+	// WordWait resubmits a step a usage limit stopped; the queue holds it
+	// until the limit resets.
+	WordWait = "wait"
 )
 
-var allWords = []string{WordStop, WordAccept, WordRetry, WordContinue}
+var allWords = []string{WordStop, WordAccept, WordRetry, WordContinue, WordWait}
 
 // takes is each kind's words, and whether it takes text (a decision).
 var takes = map[string]struct {
@@ -43,6 +50,7 @@ var takes = map[string]struct {
 	KindAgentFailed:   {[]string{WordRetry, WordStop}, true},
 	KindTreeMoved:     {[]string{WordContinue, WordStop}, false},
 	KindDocsStrayed:   {[]string{WordAccept, WordStop}, true},
+	KindUsageLimit:    {[]string{WordWait, WordStop}, false},
 }
 
 // CheckAnswer checks answer against kind: the word it is, or "" for a text
