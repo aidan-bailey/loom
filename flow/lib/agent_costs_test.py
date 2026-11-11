@@ -793,3 +793,81 @@ class DesignTest(unittest.TestCase):
                                             capture_output=True, text=True, cwd=repo,
                                             env={**env, "CLAUDE_CONFIG_DIR": str(cfg)}).stdout)
             self.assertGreater(one["total"]["usd"], out["total"]["usd"], "without a plan, every request counts")
+
+
+import flowconf  # noqa: E402
+
+DESIGN1, DRAFT1, MANAGER1, DESIGN2 = (f"{n}{n}{n}{n}{n}{n}{n}{n}-{n}{n}{n}{n}-{n}{n}{n}{n}-{n}{n}{n}{n}-{n * 12}" for n in "1234")
+
+
+def epic_fixture(root: Path):
+    """A repo whose spec delivers 2 parts: part 1's plan (committed 12:00, its Design stage naming DRAFT1) and part 2's
+    (committed 18:00); part 1's run record names MANAGER1; DESIGN1, DRAFT1, MANAGER1 and DESIGN2 each wrote the spec, at
+    11:00, 13:00, 14:00 and 16:00. Returns (repo, env)."""
+    repo = root / "repo"
+    (repo / "docs").mkdir(parents=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+    spec = repo / "docs" / "x-design.md"
+    spec.write_text("# X\n\n## Delivery\n\n1. **Part 1: a.** A.\n2. **Part 2: b.** B.\n")
+    stage = f"**Design stage:** /flow:draft session {DRAFT1}, 2026-11-09T12:10:00Z to 2026-11-09T12:50:00Z UTC: $10.00 logged, $10.00 with estimated thinking; 5000 plan lines, $2.00 per 1,000 lines."
+    for name, part, when, extra in (("plan1.md", 1, "2026-11-09T12:00:00Z", stage + "\n"), ("plan2.md", 2, "2026-11-09T18:00:00Z", "")):
+        (repo / "docs" / name).write_text(f"# Plan\n\n**Spec:** `docs/x-design.md`\n**Part:** {part} of 2\n{extra}\n## Stories\n")
+        dated = {**env, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+        subprocess.run([*git, "add", f"docs/{name}", "docs/x-design.md"], check=True, env=dated)
+        subprocess.run([*git, "commit", "-q", "-m", name], check=True, env=dated)
+    data = root / "data"
+    key = flowconf.repo_key(repo)
+    (data / "records" / key).mkdir(parents=True)
+    costs = json.dumps({"by_type": {}, "total": {"usd": 20.0}})
+    (data / "records" / key / "run1.md").write_text(
+        f"<!-- agent-costs {costs} -->\n# Run: run1\n\n- Plan: docs/plan1.md (1 stories)\n- Spec: docs/x-design.md\n"
+        f"- Part: 1 of 2 of docs/x-design.md\n- Manager: claude-opus-5-5 {MANAGER1}\n")
+    cfg = root / "cfg"
+    top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    project = cfg / "projects" / re.sub(r"[^A-Za-z0-9]", "-", top)
+    project.mkdir(parents=True)
+    write = {"type": "tool_use", "name": "Edit", "input": {"file_path": str(spec), "old_string": "a", "new_string": "b"}}
+    for sid, when in ((DESIGN1, "11:00"), (DRAFT1, "13:00"), (MANAGER1, "14:00"), (DESIGN2, "16:00")):
+        (project / f"{sid}.jsonl").write_text(
+            reply(sid[:2], "claude-opus-5-5", f"2026-11-09T{when}:00Z", write, input_tokens=1000, output_tokens=100))
+    return repo, {**env, "CLAUDE_CONFIG_DIR": str(cfg), "FLOW_DATA": str(data)}
+
+
+class EpicTest(unittest.TestCase):
+    def costs(self, *args):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, env = epic_fixture(Path(tmp))
+            return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, cwd=repo, env=env)
+
+    def test_a_later_parts_design_leaves_out_earlier_parts_sessions(self):
+        result = self.costs("design", "docs/x-design.md", "--plan", "docs/plan2.md", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual([s["session"] for s in out["sessions"]], [DESIGN2])
+        self.assertEqual(out["since"], "2026-11-09T12:00:00+00:00")
+        self.assertEqual(out["excluded"], sorted([DRAFT1, MANAGER1]))
+
+    def test_the_first_part_keeps_todays_rule(self):
+        out = json.loads(self.costs("design", "docs/x-design.md", "--plan", "docs/plan1.md", "--json").stdout)
+        self.assertEqual([s["session"] for s in out["sessions"]], [DESIGN1])
+        self.assertIsNone(out["since"])
+
+    def test_epic_gives_a_row_per_part_and_a_total(self):
+        result = self.costs("epic", "docs/x-design.md")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        part1 = next(l for l in lines if l.startswith("| 1 |"))
+        part2 = next(l for l in lines if l.startswith("| 2 |"))
+        self.assertIn("| $10.00 | $20.00 | 5,000 |", part1)
+        self.assertIn("| — |", part2, "part 2 has no run record yet")
+        self.assertTrue(any(l.startswith("| **Total** |") for l in lines))
+
+    def test_epic_refuses_a_spec_that_is_no_epic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, env = epic_fixture(Path(tmp))
+            (repo / "docs" / "y-design.md").write_text("# Y\n")
+            result = subprocess.run([sys.executable, str(SCRIPT), "epic", "docs/y-design.md"], capture_output=True, text=True, cwd=repo, env=env)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("is no epic", result.stderr)

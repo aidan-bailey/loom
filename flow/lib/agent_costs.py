@@ -22,6 +22,7 @@ only the estimate beyond it is booked. It reads files only and costs no model to
     agent_costs.py records [FILE ...]
     agent_costs.py run RUN [--json] [--session NAME=ID ...]
     agent_costs.py design SPEC [--plan PLAN] [--json]
+    agent_costs.py epic SPEC
 
 `session` prints markdown tables and closes with an `<!-- agent-costs {...} -->`
 comment carrying the same totals as JSON. SESSION is a session id, a session
@@ -38,7 +39,11 @@ over the run's window, read from the run's state file and the agent records it n
 same figures as one object for loom's flow board: a row per agent run (priced to now while the run has no end,
 marked running while its record says so, usd null with no transcript) and per manager session; `--session`
 names the session of an agent run whose record has none yet. `design` prices the design session: the
-transcripts in the worktree's project dir that wrote SPEC, up to the commit that added PLAN.
+transcripts in the worktree's project dir that wrote SPEC with a request in the window, up to the commit that
+added PLAN; for a later part of an epic (PLAN's `**Part:** N of M`, N above 1) the window opens at the previous
+part's last commit to its plan, and the sessions earlier parts' Design stage lines and run records name are left
+out. `epic` prints a row per part of SPEC's epic (design, /flow:draft and run cost, plan lines, $ per 1,000
+lines) and the total, from the plans' Part and Design stage lines and the run records' Part lines.
 
 Prices are Anthropic API list prices, read from prices.toml beside this script;
 on a subscription read them as relative weights for comparing agents, not as a bill.
@@ -57,7 +62,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flowconf import flow_data  # noqa: E402
+from flowconf import flow_data, repo_key  # noqa: E402
 
 import tomllib  # noqa: E402  (after flowconf, whose Python-version message comes first)
 
@@ -537,13 +542,112 @@ def wrote(path: Path, target: Path) -> bool:
     return False
 
 
+PLAN_SPEC_RE = re.compile(r"^\*\*(?:Spec|Design):\*\*\s*.*?`([^`]+)`", re.M)
+PLAN_PART_RE = re.compile(r"^\*\*Part:\*\*\s*(\d+) of (\d+)\.?\s*$", re.M)
+PLAN_STAGE_RE = re.compile(r"^\*\*Design stage:\*\*\s*(.*)$", re.M)
+SESSION_ID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+LOGGED_RE = re.compile(r"\$([0-9][0-9,]*(?:\.[0-9]+)?) logged")
+PLAN_LINES_RE = re.compile(r"([0-9][0-9,]*) plan lines")
+RECORD_SPEC_RE = re.compile(r"^- Spec: (.*)$", re.M)
+RECORD_PART_RE = re.compile(r"^- Part: (\d+) of (\d+)", re.M)
+RECORD_MANAGER_RE = re.compile(r"^- Manager: (.*)$", re.M)
+MANAGERS_RE = re.compile(r"<!-- agent-costs-managers (\{.*?\}) -->", re.S)
+DELIVERY_ITEM_RE = re.compile(r"^(\d+)\.\s+\*\*Part\s+(\d+):", re.M)
+
+
+def toplevel() -> Path:
+    return Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or os.getcwd())
+
+
+def plan_head(text: str) -> str:
+    """A plan's text before its first story."""
+    cut = re.search(r"^## Story\s", text, re.M)
+    return text[: cut.start()] if cut else text
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def epic_plans(top: Path, spec: str) -> dict[int, tuple[str, int]]:
+    """{N: (plan path, M)} for each tracked plan whose **Spec:** line names spec and that has a **Part:** line."""
+    listed = subprocess.run(["git", "-C", str(top), "grep", "-l", "-F", "**Part:**", "--", "*.md"],
+                            capture_output=True, text=True).stdout.split()
+    plans: dict[int, tuple[str, int]] = {}
+    for rel in listed:
+        head = plan_head(read_text(top / rel))
+        named, part = PLAN_SPEC_RE.search(head), PLAN_PART_RE.search(head)
+        if named and part and named.group(1) == spec:
+            plans[int(part.group(1))] = (rel, int(part.group(2)))
+    return plans
+
+
+def epic_records(top: Path, spec: str) -> dict[int, list[Path]]:
+    """{N: run records} of this repo's records whose Spec line is spec and that carry a Part line, by name."""
+    found: dict[int, list[Path]] = {}
+    for path in sorted((flow_data() / "records" / repo_key(top)).glob("*.md")):
+        text = read_text(path)
+        named, part = RECORD_SPEC_RE.search(text), RECORD_PART_RE.search(text)
+        if named and part and named.group(1).strip() == spec:
+            found.setdefault(int(part.group(1)), []).append(path)
+    return found
+
+
+def record_managers(path: Path) -> set[str]:
+    """The manager session ids a run record names: its Manager line and its agent-costs-managers comment."""
+    text = read_text(path)
+    ids = set()
+    line = RECORD_MANAGER_RE.search(text)
+    if line:
+        ids |= set(SESSION_ID_RE.findall(line.group(1)))
+    for comment in MANAGERS_RE.finditer(text):
+        ids |= set(json.loads(comment.group(1)))
+    return ids
+
+
+def record_usd(path: Path) -> float | None:
+    """A run record's total USD from its agent-costs comments, None without one."""
+    comments = [json.loads(m.group(1)) for m in COMMENT_RE.finditer(read_text(path))]
+    return merge_sessions(comments)["total"].get("usd", 0.0) if comments else None
+
+
+def design_window(top: Path, spec: str, plan: str) -> tuple[datetime | None, set[str], str | None]:
+    """For a part after the first: the time its design window opens (the previous part's last commit to its plan),
+    the sessions earlier parts' Design stage lines and run records name, and a note when the previous part has no
+    plan; (None, set(), None) for anything else."""
+    part = PLAN_PART_RE.search(plan_head(read_text(top / plan)))
+    if not part or int(part.group(1)) < 2:
+        return None, set(), None
+    n = int(part.group(1))
+    plans = epic_plans(top, spec)
+    if n - 1 not in plans:
+        return None, set(), f"part {n - 1} has no plan in the repo: priced as a single plan's design"
+    last = subprocess.run(["git", "-C", str(top), "log", "-1", "--format=%cI", "--", plans[n - 1][0]],
+                          capture_output=True, text=True).stdout.strip()
+    excluded: set[str] = set()
+    for k, (rel, _) in plans.items():
+        stage = PLAN_STAGE_RE.search(plan_head(read_text(top / rel)))
+        if k < n and stage:
+            excluded |= set(SESSION_ID_RE.findall(stage.group(1)))
+    for k, records in epic_records(top, spec).items():
+        if k < n:
+            for path in records:
+                excluded |= record_managers(path)
+    return (parse_time(last) if last else None), excluded, None
+
+
 def design_json(spec: str, plan: str | None) -> dict:
     """The design session's cost (flow visualisation spec §3): the transcripts in the worktree's project dir that
     wrote the spec, each priced from its first request up to the commit that added the plan (now while it isn't
-    committed)."""
-    top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or os.getcwd())
+    committed). For a later part of an epic (the spec-splitting spec, §7) the window opens at the previous part's
+    last commit to its plan, and the sessions earlier parts name are left out."""
+    top = toplevel()
     target = (top / spec).resolve()
     until = None
+    since, excluded, note = (design_window(top, spec, plan) if plan else (None, set(), None))
     if plan:
         added = subprocess.run(["git", "-C", str(top), "log", "-1", "--diff-filter=A", "--format=%cI", "--", plan],
                                capture_output=True, text=True).stdout.strip()
@@ -554,12 +658,50 @@ def design_json(spec: str, plan: str | None) -> dict:
     sessions, total = [], Usage()
     for project in projects:
         for path in sorted(project.glob("*.jsonl")):
-            if not wrote(path, target):
+            if path.stem in excluded or not wrote(path, target):
                 continue
-            usage, _, _ = transcript_usage(path, None, until)
+            usage, _, _ = transcript_usage(path, since, until)
+            if not usage.requests:
+                continue  # it wrote the spec, but outside this design's window
             total.add(usage)
             sessions.append({"session": path.stem, **usd_cells(usage)})
-    return {"spec": spec, "until": until.isoformat() if until else None, "sessions": sessions, "total": usd_cells(total)}
+    return {"spec": spec, "since": since.isoformat() if since else None, "until": until.isoformat() if until else None,
+            "excluded": sorted(excluded), "note": note, "sessions": sessions, "total": usd_cells(total)}
+
+
+def epic_report(spec: str) -> tuple[str, int]:
+    """One row per part of the epic: design, /flow:draft and run cost, plan lines and $ per 1,000 lines; then the total."""
+    top = toplevel()
+    spec_text = read_text(top / spec)
+    delivery = spec_text.split("\n## Delivery\n", 1)[1] if "\n## Delivery\n" in spec_text else ""
+    delivery = re.split(r"^#{2,3} ", delivery, maxsplit=1, flags=re.M)[0]
+    listed = [int(m.group(2)) for m in DELIVERY_ITEM_RE.finditer(delivery)]
+    plans, records = epic_plans(top, spec), epic_records(top, spec)
+    if not listed and not plans:
+        return f"agent_costs: {spec} is no epic: no ## Delivery section and no plan with a **Part:** line", 1
+    rows = ["| Part | Plan | Design | Draft | Run | Plan lines | $ per 1,000 lines |", "|---:|---|---:|---:|---:|---:|---:|"]
+    sums = [0.0, 0.0, 0.0, 0]
+    for n in sorted(set(listed) | set(plans)):
+        if n not in plans:
+            rows.append(f"| {n} | not designed | — | — | — | — | — |")
+            continue
+        rel = plans[n][0]
+        text = read_text(top / rel)
+        design = design_json(spec, rel)["total"]["usd"]
+        stage = PLAN_STAGE_RE.search(plan_head(text))
+        logged = LOGGED_RE.search(stage.group(1)) if stage else None
+        counted = PLAN_LINES_RE.search(stage.group(1)) if stage else None
+        draft = float(logged.group(1).replace(",", "")) if logged else None
+        lines = int(counted.group(1).replace(",", "")) if counted else len(text.splitlines())
+        run = record_usd(records[n][-1]) if records.get(n) else None
+        spent = design + (draft or 0.0) + (run or 0.0)
+        sums = [sums[0] + design, sums[1] + (draft or 0.0), sums[2] + (run or 0.0), sums[3] + lines]
+        cell = lambda v: fmt(v, usd=True) if v is not None else "—"  # noqa: E731
+        rows.append(f"| {n} | {rel} | {cell(design)} | {cell(draft)} | {cell(run)} | {lines:,} | {fmt(spent * 1000 / lines, usd=True) if lines else '—'} |")
+    total = sum(sums[:3])
+    rows.append(f"| **Total** | | {fmt(sums[0], usd=True)} | {fmt(sums[1], usd=True)} | {fmt(sums[2], usd=True)} | {sums[3]:,} | "
+                f"{fmt(total * 1000 / sums[3], usd=True) if sums[3] else '—'} |")
+    return f"Epic {spec}\n\n" + "\n".join(rows), 0
 
 
 def locate_session(sid: str) -> Path | None:
@@ -760,6 +902,8 @@ def main(argv: list[str]) -> int:
     design.add_argument("spec", help="the spec's path from the top level")
     design.add_argument("--plan", help="the plan, whose adding commit ends the design")
     design.add_argument("--json", action="store_true", help="one JSON object")
+    epic = sub.add_parser("epic", help="price an epic part by part: design, /flow:draft and run")
+    epic.add_argument("spec", help="the epic's spec, from the top level")
     args = parser.parse_args(argv)
     if args.command == "session":
         print(session_report(find_session(args.session), parse_time(args.since), parse_time(args.until)))
@@ -783,7 +927,13 @@ def main(argv: list[str]) -> int:
         else:
             print(f"design {args.spec}: {len(data['sessions'])} sessions, ${data['total']['usd']:.2f} logged, "
                   f"${data['total']['usd_incl_est']:.2f} with estimated thinking")
+            if data["note"]:
+                print(f"note: {data['note']}")
         return 0
+    if args.command == "epic":
+        text, code = epic_report(args.spec)
+        print(text, file=sys.stderr if code else sys.stdout)
+        return code
     text, code = records_report([record_path(arg) for arg in args.files] or home_records())
     print(text, file=sys.stderr if code else sys.stdout)
     return code
