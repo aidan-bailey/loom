@@ -174,8 +174,12 @@ func newFlowGatesStartCmd() *cobra.Command {
 			// before the loss is queued once.
 			err = rejoin(c, time.Now().Add(waitCap), 0, sayOnStderr(c), func(d *client) error { return d.startRun(c.OutOrStdout(), dir, run) })
 			var away *outOfReachError
-			if errors.As(err, &away) {
+			var up *daemonUpgradedError
+			switch {
+			case errors.As(err, &away):
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow gates: %v, and gates queued before it may still run: loom job list shows them", away)}
+			case errors.As(err, &up):
+				return up.exit("loom flow gates", "loom job list shows any gates it queued")
 			}
 			return err
 		},
@@ -222,6 +226,9 @@ func newFlowGatesWaitCmd() *cobra.Command {
 			if errors.As(err, &away) {
 				fmt.Fprintf(c.OutOrStdout(), "%s: the run's jobs go on, but %v (loom flow gates wait %s follows them again)\n", name, away, name)
 				return &ExitError{Code: exitStillRunning}
+			}
+			if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+				return up.exit("loom flow gates", "loom flow gates wait "+name)
 			}
 			return err
 		},

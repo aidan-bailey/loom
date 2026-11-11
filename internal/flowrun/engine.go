@@ -87,6 +87,10 @@ type engine struct {
 	resumes map[string]int // resumes of each agent run, this pass
 	final   Story
 	sent    []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
+	// accepted is each story's gate steps the manager accepted failing, by
+	// step line, with the gate run they were accepted at. A replay rebuilds
+	// it from the recalled gate results and answers (thread 20).
+	accepted map[string]map[string]string
 }
 
 // Run drives st until it parks or ends, saving it after every step. It
@@ -94,7 +98,7 @@ type engine struct {
 // could not get past (a lost daemon, a file it can't write), with st left
 // running for `loom flow run resume`.
 func Run(st *State, fx Effects) error {
-	e := &engine{st: st, fx: fx, head: st.Base, seq: map[string]int{}, resumes: map[string]int{}, final: Story{ID: finalStory}}
+	e := &engine{st: st, fx: fx, head: st.Base, seq: map[string]int{}, resumes: map[string]int{}, final: Story{ID: finalStory}, accepted: map[string]map[string]string{}}
 	st.Status, st.Question, st.Why = Running, nil, ""
 	st.Phase, st.Notes, st.Kept = "", nil, nil
 	for i := range st.Stories {
@@ -520,8 +524,15 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 		}
 		failures++
 		decision := ""
-		if res.Ended == "infra" || failures > 1 {
-			a, err := e.ask(Question{Key: "gates:" + name, Kind: KindGateFailure, Text: name + " failed:\n" + res.Table, Paths: logsOf(res)})
+		// A failure only on steps the manager accepted is asked about, not
+		// fixed: a fixer can't fix what the plan accepts (thread 20).
+		at := e.acceptedAt(s, res)
+		if res.Ended == "infra" || failures > 1 || at != nil {
+			text := name + " failed:\n" + res.Table
+			if at != nil {
+				text = name + " failed only on steps the manager accepted at " + strings.Join(at, ", ") + ":\n" + res.Table
+			}
+			a, err := e.ask(Question{Key: "gates:" + name, Kind: KindGateFailure, Text: text, Paths: logsOf(res)})
 			if err != nil {
 				return err
 			}
@@ -530,6 +541,7 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 				return errStopped
 			case WordAccept:
 				e.note("%s: the manager accepted the failing gates of %s", storyName(s), name)
+				e.accept(s, name, res)
 				return nil
 			case WordRetry:
 				continue
@@ -540,6 +552,38 @@ func (e *engine) gateLoop(s *Story, prefix, base string) error {
 			return err
 		}
 	}
+}
+
+// accept records res's failing steps as accepted for s at gate run name.
+func (e *engine) accept(s *Story, name string, res GateResult) {
+	steps := e.accepted[s.ID]
+	if steps == nil {
+		steps = map[string]string{}
+		e.accepted[s.ID] = steps
+	}
+	for _, f := range res.Failing {
+		steps[f.Line] = name
+	}
+}
+
+// acceptedAt is the gate runs at which the manager accepted every step res
+// fails on, in the order res lists them, or nil when res fails on a step
+// not accepted for s (or on none, as a service's infra failure does).
+func (e *engine) acceptedAt(s *Story, res GateResult) []string {
+	if len(res.Failing) == 0 {
+		return nil
+	}
+	var at []string
+	for _, f := range res.Failing {
+		name, ok := e.accepted[s.ID][f.Line]
+		if !ok {
+			return nil
+		}
+		if !slices.Contains(at, name) {
+			at = append(at, name)
+		}
+	}
+	return at
 }
 
 // premises sends the plan's flagged premises to premise-check and settles
