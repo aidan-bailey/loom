@@ -28,7 +28,7 @@ own story is your choice.
 - **A question round:** the drafting job's brief plus "Question round:
   write only `D/questions/S<first id>.md`, then report". Read what your
   entries need, as for drafting, and grep the tree for each name your
-  stories share, then write the file, four lists under these headings, each
+  stories share, then write the file, five lists under these headings, each
   `none` when empty:
 
       ## Names used
@@ -39,6 +39,8 @@ own story is your choice.
       - `<the contract line's name>` (Story <id> proposes): `<its exact form>`
       ## Entry lines
       - Story <id> **<line>:**: <the line it needs>; <why>
+      ## Size
+      - Story <id>: <n> subtasks: <one line on what they are>; split: <the two entries, when over 7>
 
   Names used are those your stories take from another story that the
   contract doesn't give exactly or that can't work against the code (a clash
@@ -48,8 +50,12 @@ own story is your choice.
   that the contract doesn't give exactly. Proposed are the contract lines
   marked `(Story <one of your ids> proposes)`. Entry lines are the lines of
   your entries that can't hold: a file the story must also touch, a
-  **Developer** that doesn't fit, a **Verify** that misses its tests. Write
-  no draft. Your hand-back is at most 5 lines: the file's path and each
+  **Developer** that doesn't fit, a **Verify** that misses its tests. Size
+  gives, for each of your stories, the subtasks (`### Task` sections) it
+  will need and what they are; a story over 7 subtasks gets a proposed
+  split: two entries, `<id>` and `<id>b`, each with its **Files**,
+  **Interfaces**, **Verify** and **Review** lines and the contract names it
+  owns. Write no draft. Your hand-back is at most 5 lines: the file's path and each
   list's count. The manager settles every file at once, then resumes you
   with "The contract is settled" and the lines that changed: re-read
   `## Names contract` and your entries, and draft.

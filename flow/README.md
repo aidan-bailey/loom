@@ -31,12 +31,12 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | Tool | Runs |
 |---|---|
 | `conf` | `flowconf.py`: key, status, show, state, drafts, vacuous, roster, gates, docs-check, doctor |
-| `check-plan` | `check_plan.py`; `--skeleton PLAN` checks a skeleton's names contract and story list (`plan_skeleton.py`) |
+| `check-plan` | `check_plan.py`; `--skeleton PLAN` checks a skeleton's names contract, story list, an epic's Part line and the story budget (`plan_skeleton.py`) |
 | `packet` | `plan_packet.py` |
 | `join` | `plan_join.py`: the stories from the drafts, each story's opening lines from its skeleton entry |
 | `premises` | `plan_premises.py` |
 | `conformance` | `plan_conformance.py` |
-| `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit) |
+| `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit; for a later part of an epic, without earlier parts' sessions), `epic SPEC` (an epic's parts: design, drafting and run cost each) |
 | `doctor` | `flowconf.py doctor` |
 | `check-agents` | `lib/check-agents.sh` |
 | `wait start NAME -- CMD`, `wait wait (NAME \| --job N) [SECONDS]` | Go: a step as a job in loom's queue, and a bounded wait for it |

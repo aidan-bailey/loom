@@ -37,7 +37,9 @@ roster has its own retro. Find the repo's own retro command under its
 3. Read each record's header, story table and notes. Group the runs by the
    roster hash on their `- Definitions:` lines: runs with the same hash ran the
    same roster. A run marked `+dirty`, or one whose line has a `→`, is a roster
-   of its own. Never pool across rosters without saying so.
+   of its own. Never pool across rosters without saying so. Records whose
+   `- Part:` lines name one spec are the parts of one epic: compare them part
+   by part, and total them with `loom flow costs epic <spec>`.
 4. Total the covered records the same way, as a baseline. Show it beside the
    new runs, never pooled with them.
 

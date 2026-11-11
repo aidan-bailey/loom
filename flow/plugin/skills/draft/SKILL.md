@@ -95,23 +95,32 @@ resumes it.
    pinned high, a story whose shape only the block's notes describe included.
    - **2a. Questions.** The brief adds: "Question round: write only
      `D/questions/S<first id>.md`, then report." The drafter reads what its
-     entries need and writes the file's four lists (its definition gives
+     entries need and writes the file's five lists (its definition gives
      them); its hand-back is the path and each list's count. A questions file
-     that isn't the four lists goes to a fresh drafter with the same brief;
+     that isn't the five lists goes to a fresh drafter with the same brief;
      don't guess its content. A drafter that drafts in the round keeps its
      `D/S<id>.md`: its 2b message adds "finish `D/S<id>.md` against the
      settled contract".
    - **The wait.** Wait until every drafter of the batch has reported, and
      settle everything in one pass: read the questions files; write each
      decision into the names contract, choosing where a user's proposal and a
-     definer's differ; amend the entries; take to the owner only what the
-     spec doesn't settle (see the intro); then run
+     definer's differ; amend the entries; settle each proposed split, by
+     replacing the entry with its two halves and moving each contract owner
+     (`Story <id>`) to the half that defines the name, or by rejecting it
+     with its reason in the story's row of `STATE.md`; take to the owner
+     only what the spec doesn't settle (see the intro); then run
      `loom flow check-plan --skeleton $ARGUMENTS` until it passes. Record in
-     each story's row of `STATE.md` what was settled for it.
+     each story's row of `STATE.md` what was settled for it. When accepted
+     splits put the plan over its story budget, the check fails: take it to
+     the owner, who gives a `**Size:**` reason or stops `/flow:draft` to cut
+     the spec into an epic in a design session; never cut one yourself.
    - **2b. Drafting.** Resume every drafter of the batch with SendMessage to
      the id on its report: "The contract is settled. Re-read `## Names
      contract` and your entries, and draft.", then the contract lines that
-     changed among those its questions file raised or its stories own.
+     changed among those its questions file raised or its stories own. A
+     drafter whose split was accepted drafts both halves; if it already held
+     two stories, dispatch a fresh drafter with step 2's drafting brief for
+     the new half.
    - After the round, a drafter that finds a gap in the contract stops and
      reports NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
      `## Stories`), run the skeleton check again, then answer it with

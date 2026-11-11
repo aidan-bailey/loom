@@ -83,7 +83,8 @@ skeleton, and the owner clears twice: once before `/flow:draft`, once before
    stories' code. A plan is drafted from its spec, never generated from a
    prototype of the code. It runs `loom flow check-plan --skeleton <plan>`
    until it passes: the names contract's rules and the story list
-   ([the skeleton](#the-skeleton)).
+   ([the skeleton](#the-skeleton)). When the spec splits into an epic, it
+   writes only the next part's skeleton ([epics](#epics)).
 3. Commits the spec and the skeleton by pathspec and hands over: the owner
    types `/clear`, then `/flow:draft <plan>`. The design session doesn't
    draft, check or review.
@@ -144,7 +145,9 @@ and none of the stories' code. It holds, in order:
 
 - the header: writing-plans' title, Goal, Architecture and Tech Stack, the
   `**Spec:**` line, and, when stories may overlap under `/flow:run`, a
-  `**Parallel:**` line ([parallel pairs](#parallel-pairs));
+  `**Parallel:**` line ([parallel pairs](#parallel-pairs)); for a part of an
+  epic, a `**Part:** N of M` line ([epics](#epics)); for a plan over the
+  story budget, a `**Size:**` line with its reason;
 - the file structure;
 - the names contract: every name, type and signature one story defines for
   another, such as functions and their signatures, types and their fields,
@@ -174,7 +177,12 @@ The contract's rules are what lets every drafter write against it at once:
 `**Spec:**` line, the headings, the marker) and each entry's lines, and prints
 one FAIL line a problem. Its rules are heuristics over backticked spans: a
 contract written as an expression draws a false flag, and the cure is to type
-it.
+it. It also fails a skeleton listing more stories than the profile's
+`[size] plan` (15 when unset) unless a `**Size:**` line says why it stays one
+plan, and a `**Part:**` line that disagrees with the spec's `## Delivery`
+list, or is missing when the spec has one. Story count predicts a plan's size
+well (r = 0.82 over 51 past plans), and plans over 15 stories mostly ran at
+$9 to $10 a story against $3 to $4 for the three parts of a split spec.
 
 Each list entry gives the story's id, a paragraph and its five opening lines
 (**Developer**, **Files**, **Interfaces**, **Verify**, **Review**), which the
@@ -239,7 +247,9 @@ its entries need and writes only `D/questions/S<first id>.md`: the names its
 stories use from others and those they define for others that the contract
 doesn't give exactly (each with its proposed form, a clash with the tree's
 names included), its `(Story N proposes)` lines with their forms, and the
-entry lines that can't hold. The manager waits for every drafter, settles
+entry lines that can't hold, and each story's size: the subtasks it will
+need, with a proposed split for a story over 7 (the p90 of 526 past stories),
+which the manager accepts or rejects in its settlement. The manager waits for every drafter, settles
 everything in one pass (contract, entries, the owner's answers in the spec),
 runs the skeleton check, then resumes every drafter with the lines that
 changed. Every drafter waits, one that asked nothing included: a name it
@@ -348,6 +358,42 @@ which `flow:premise-check` settled, or review code. Its report goes to
 No `**Plan review:**` line is written, so `loom flow check-plan` marks every story
 `review: full`, and the run reviews each story in full.
 
+
+### Epics
+
+A spec too big for one plan is an epic: a `## Delivery` section names its
+parts, each a plan merged to main before the next part is designed, so each
+later part is designed and drafted against the code as it landed.
+
+    ## Delivery
+
+    An epic of 3 parts, each a plan merged to main before the next part is designed.
+
+    1. **Part 1: kernel and ops.** Stages 0 and 1: …
+    2. **Part 2: markets, trading and ledger.** Stages 2 to 4: …
+
+Each item is `N. **Part N: <title>.** <scope>`, numbered 1 to M in merge
+order. The first design session writes the spec with this section and only
+part 1's skeleton, with `**Part:** 1 of M` beside its `**Spec:**` line. When a
+run ends on part N of M with N below M, the owner merges it and starts part
+N+1's design session, on a branch cut from main, which:
+
+1. reads the spec, its Delivery section and the settlements so far;
+2. runs a fresh recon at the new main, scoped to part N+1 and to what earlier
+   parts landed: the names, files and seams it builds on, and what came out
+   other than the spec said;
+3. appends `### Part N+1 settlements (YYYY-MM-DD)` under `## Delivery`: the
+   recon's findings and the decisions made with the owner, which hold where
+   they disagree with earlier sections, and any re-cut of the parts not yet
+   started (a merged part stays as it landed);
+4. writes the skeleton with `**Part:** N+1 of M`, runs
+   `loom flow check-plan --skeleton <plan>` until it passes, and commits the
+   spec and the skeleton by pathspec.
+
+A run's record copies the Part line, `loom flow costs design` prices a later
+part's design session without earlier parts' sessions, and
+`loom flow costs epic <spec>` gives each part's design, drafting and run
+cost.
 ## The repo's profile
 
 Each repo the flow runs in has a profile: `.claude/flow.toml` in the repo,

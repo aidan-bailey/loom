@@ -40,7 +40,10 @@ A record has four parts.
      `**Design stage:**` line, when the plan has one: `/flow:draft` writes it
      as it commits the plan, with its sessions, their window, their logged
      cost and the plan's length. A plan written without `/flow:draft` has
-     none, and its record leaves the line out.
+     none, and its record leaves the line out;
+   - `- Part:` `N of M of <spec path>`, when the plan has a `**Part:**`
+     line: the run is one part of an epic, and `loom flow costs epic <spec>`
+     totals its parts.
 
    - `- Ended:` and `- Engine:`, in a record loom's run engine wrote
      (`/flow:run`): how the run ended (`done`, `stopped` or `cancelled`), and

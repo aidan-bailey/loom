@@ -55,4 +55,7 @@ short.
    pathspec. Record the run's outcome in your memory, when you keep one (what
    was built, its commits, what is still open), and nothing the repo's docs
    can hold: the doc passes put the run's lessons in the repo. Then tell the
-   owner what was built, what failed, and what needs them.
+   owner what was built, what failed, and what needs them. When the plan has
+   a `**Part:** N of M` line with N below M, end with what comes next: merge
+   this part to main, then start a design session for part N+1 from the
+   spec's `## Delivery` section (the dispatch guide's Epics section).
