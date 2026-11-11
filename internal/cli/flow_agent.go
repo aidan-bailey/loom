@@ -260,6 +260,14 @@ func (d *client) settleAgent(dir, id string, v core.JobView, known bool) (*agent
 			run.Status, run.Why = agentFailed, fmt.Sprintf("%v (%s)", err, line)
 			break
 		}
+		if res.Status == flowrun.AgentUsageLimit {
+			l := *res.Limit
+			if l.At = v.Ended; l.At.IsZero() {
+				l.At = time.Now()
+			}
+			run.Status, run.Limit, run.Why = res.Status, &l, limitWhy(&l)
+			break
+		}
 		run.Status, run.Report, run.Question = res.Status, res.Report, res.Question
 		if err := config.AtomicWriteFile(filepath.Join(dir, id, "report.md"), []byte(strings.TrimRight(res.Report, "\n")+"\n"), 0o600); err != nil {
 			run.Why = "report.md: " + err.Error()
@@ -274,7 +282,7 @@ func (d *client) settleAgent(dir, id string, v core.JobView, known bool) (*agent
 // printAgentEnd prints an ended run's line and exits as it ended.
 func printAgentEnd(out io.Writer, dir string, run *agentRun) error {
 	switch run.Status {
-	case agentFailed:
+	case agentFailed, flowrun.AgentUsageLimit:
 		fmt.Fprintf(out, "failed %s: %s\n", run.ID, run.Why)
 		return &ExitError{Code: 1}
 	case agentCancelled:
@@ -292,7 +300,7 @@ func printAgentEnd(out io.Writer, dir string, run *agentRun) error {
 func newFlowAgentAnswerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "answer ID < ANSWER",
-		Short: "Resume an agent run at NEEDS_CONTEXT, BLOCKED or TURN_CAP with an answer on stdin",
+		Short: "Resume an agent run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT with an answer on stdin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -323,6 +331,30 @@ func newFlowAgentAnswerCmd() *cobra.Command {
 	}
 }
 
+// resumable reports whether a run at status takes an answer.
+func resumable(status string) bool {
+	return status == "NEEDS_CONTEXT" || status == "BLOCKED" || status == agentTurnCap || status == flowrun.AgentUsageLimit
+}
+
+// answerArgv is the command that resumes run's session with answer. A run a
+// usage limit stopped before it had a session starts again from its brief
+// (usage-limit hold spec §3): there is nothing to resume.
+func answerArgv(run *agentRun, root, answer string) ([]string, error) {
+	if run.Status == flowrun.AgentUsageLimit && run.Session == "" {
+		brief, err := os.ReadFile(run.Brief)
+		if err != nil {
+			return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %s has no session to resume, and its brief can't be read: %v", run.ID, err)}
+		}
+		return agentArgv(root, run.Role, run.Effort, run.Cwd, brief)
+	}
+	settings, err := runSettings(run.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	definition, _ := agentDefinition(root, run.Role)
+	return agentCommand(agentProgram(), run.Role, run.Effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session), nil
+}
+
 // answerAgent queues a job resuming run id's session with answer.
 func (d *client) answerAgent(out io.Writer, dir, id, root, answer string) error {
 	unlock, err := lockAgents(dir)
@@ -334,21 +366,19 @@ func (d *client) answerAgent(out io.Writer, dir, id, root, answer string) error 
 	if err != nil {
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
-	if run.Status != "NEEDS_CONTEXT" && run.Status != "BLOCKED" && run.Status != agentTurnCap {
-		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT, BLOCKED or TURN_CAP takes an answer", id, run.Status)}
+	if !resumable(run.Status) {
+		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT takes an answer", id, run.Status)}
 	}
-	settings, err := runSettings(run.Cwd)
+	argv, err := answerArgv(run, root, answer)
 	if err != nil {
 		return err
 	}
-	definition, _ := agentDefinition(root, run.Role)
-	argv := agentCommand(agentProgram(), run.Role, run.Effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session)
 	jobID, err := d.queueAgent(run, argv)
 	if err != nil {
 		return err
 	}
 	run.Jobs = append(run.Jobs, agentJob{ID: jobID, Answer: answer})
-	run.Status, run.Question, run.Report = agentRunning, "", ""
+	run.Status, run.Question, run.Report, run.Limit = agentRunning, "", "", nil
 	if err := saveAgentRun(dir, run); err != nil {
 		_ = d.cancelJobs([]sched.JobID{jobID})
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the record: %v, so job %d was cancelled", err, jobID)}

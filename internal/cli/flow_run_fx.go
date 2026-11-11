@@ -153,7 +153,7 @@ func (fx *runFX) follow(name string) (flowrun.Report, error) {
 		return flowrun.Report{}, err
 	}
 	fx.logf("end %s: %s %s", name, run.Status, run.Why)
-	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question, Path: read, Why: run.Why}, nil
+	return flowrun.Report{Status: run.Status, Text: run.Report, Question: run.Question, Path: read, Why: run.Why, Limit: run.Limit}, nil
 }
 
 func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {
@@ -162,8 +162,8 @@ func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {
 		return flowrun.Report{}, err
 	}
 	if run.Current().Answer != text {
-		if run.Status != "NEEDS_CONTEXT" && run.Status != "BLOCKED" && run.Status != agentTurnCap {
-			return flowrun.Report{}, fmt.Errorf("agent run %s is %s, and only a run at NEEDS_CONTEXT, BLOCKED or TURN_CAP is resumed", name, run.Status)
+		if !resumable(run.Status) {
+			return flowrun.Report{}, fmt.Errorf("agent run %s is %s, and only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT is resumed", name, run.Status)
 		}
 		fx.logf("resume %s", name)
 		err := fx.daemon(func(d *client) error {

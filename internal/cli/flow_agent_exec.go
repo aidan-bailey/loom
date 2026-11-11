@@ -16,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/flow"
 	"github.com/aidan-bailey/loom/internal/flowrun"
+	"github.com/aidan-bailey/loom/sched"
 )
 
 // headlessPreamble goes before every agent run's first prompt (flow in loom
@@ -378,6 +379,7 @@ type agentResult struct {
 	Question string
 	CostUSD  float64
 	Turns    int
+	Limit    *flowrun.Limit // at flowrun.AgentUsageLimit; At is the caller's
 }
 
 // readResult reads an ended agent job's stream-json log: the session from
@@ -435,6 +437,12 @@ func readResult(log []byte) (agentResult, error) {
 		return res, nil
 	}
 	if result.IsError {
+		// A usage limit is no broken agent: it resumes once the limit resets
+		// (usage-limit hold spec §3), read as the daemon reads it.
+		if l, ok := sched.UsageLimitOf(log); ok {
+			res.Status, res.Limit = flowrun.AgentUsageLimit, &flowrun.Limit{Window: l.Window, Resets: l.Resets}
+			return res, nil
+		}
 		return res, errorResult(result.Result, result.APIStatus, result.APIError)
 	}
 	status, question := statusLines(result.Result)
@@ -448,6 +456,12 @@ func readResult(log []byte) (agentResult, error) {
 	}
 	res.Status, res.Report, res.Question = status, result.Result, question
 	return res, nil
+}
+
+// limitWhy is why a run stopped on l: "it stopped on the account's usage
+// limit (5-hour, resets 16:30)".
+func limitWhy(l *flowrun.Limit) string {
+	return fmt.Sprintf("it stopped on the account's usage limit (%s, resets %s)", sched.WindowLabel(l.Window), sched.ResetText(l.Resets, l.At))
 }
 
 // errorResult says what an error result says: its text, and its API
