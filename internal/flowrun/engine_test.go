@@ -47,15 +47,32 @@ type fakeFX struct {
 	saves      int
 	failAt     int
 	saved      *State
-	dirs       map[string]string // each agent run's working dir
+	dirs       map[string]string    // each agent run's working dir
+	lanes      map[string]*fakeLane // by dir
+	conflicts  int                  // picks that conflict, from the next one on
+	picked     map[string][]string  // each pick's commits, by onto, for a pick asked again
+	planOnly   map[string]bool      // OnlyPlanCommits' answer, by head
+	dropErr    error
+	dirtyAfter map[string]bool          // an agent run that leaves its lane dirty
+	hold       map[string]chan struct{} // an Agent call waits on it before it returns
+	entered    map[string]chan struct{} // closed when that Agent call begins
 	mu         sync.Mutex
+}
+
+// fakeLane is a lane the fake made: its base, its developer's commits, and
+// whether it is dirty.
+type fakeLane struct {
+	base  string
+	n     int
+	dirty bool
 }
 
 func newFake() *fakeFX {
 	return &fakeFX{reports: map[string]Report{}, resumes: map[string][]Report{}, gates: map[string]GateResult{},
 		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{},
 		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}, commitsOn: map[string]bool{},
-		dirs: map[string]string{}}
+		dirs: map[string]string{}, lanes: map[string]*fakeLane{}, picked: map[string][]string{}, planOnly: map[string]bool{},
+		dirtyAfter: map[string]bool{}, hold: map[string]chan struct{}{}, entered: map[string]chan struct{}{}}
 }
 
 func isDev(role string) bool {
@@ -94,6 +111,10 @@ func (f *fakeFX) AgentStarted(name string) (bool, error) {
 func (f *fakeFX) Agent(dir, name, role, effort, brief string) (Report, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if ch := f.entered[name]; ch != nil {
+		close(ch)
+		delete(f.entered, name)
+	}
 	r := f.report(name, role)
 	if f.started[name] {
 		f.calls = append(f.calls, "follow "+name)
@@ -102,7 +123,17 @@ func (f *fakeFX) Agent(dir, name, role, effort, brief string) (Report, error) {
 	f.started[name], f.roles[name], f.briefs[name], f.dirs[name] = true, role, brief, dir
 	f.calls = append(f.calls, strings.TrimSpace(fmt.Sprintf("agent %s %s %s", name, role, effort)))
 	if commits(role) && (r.done() || f.commitsOn[name]) && !f.noCommit[name] {
-		f.head++
+		if l := f.lanes[dir]; l != nil {
+			l.n++
+			l.dirty = f.dirtyAfter[name]
+		} else {
+			f.head++
+		}
+	}
+	if ch := f.hold[name]; ch != nil {
+		f.mu.Unlock()
+		<-ch
+		f.mu.Lock()
 	}
 	return r, nil
 }
@@ -125,7 +156,11 @@ func (f *fakeFX) Resume(name, text string) (Report, error) {
 		r.Path = "/reports/" + name
 	}
 	if commits(f.roles[name]) && r.done() {
-		f.head++
+		if l := f.lanes[f.dirs[name]]; l != nil {
+			l.n++
+		} else {
+			f.head++
+		}
 	}
 	f.answered[name], f.answerRep[name] = text, r
 	return r, nil
@@ -159,21 +194,38 @@ func (f *fakeFX) Gates(name string, _ []string) (GateResult, error) {
 	return GateResult{Ended: "passed"}, nil
 }
 
-func (f *fakeFX) Head(string) (string, error) {
+func (f *fakeFX) Head(dir string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if l := f.lanes[dir]; l != nil {
+		if l.n == 0 {
+			return l.base, nil // a new lane's HEAD is its base, as git's is
+		}
+		return fmt.Sprintf("%s+%d", l.base, l.n), nil
+	}
 	return "h" + strconv.Itoa(f.head), nil
 }
 
-func (f *fakeFX) Clean(string) (bool, error) {
+func (f *fakeFX) Clean(dir string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if l := f.lanes[dir]; l != nil {
+		return !l.dirty, nil
+	}
 	return !f.dirty, nil
 }
 
 func (f *fakeFX) Commits(base, head string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if lb, n, ok := strings.Cut(head, "+"); ok {
+		k, _ := strconv.Atoi(n)
+		var cs []string
+		for i := 1; i <= k; i++ {
+			cs = append(cs, fmt.Sprintf("%s+c%d", lb, i))
+		}
+		return cs, nil
+	}
 	b, _ := strconv.Atoi(strings.TrimPrefix(base, "h"))
 	h, _ := strconv.Atoi(strings.TrimPrefix(head, "h"))
 	var cs []string
@@ -200,6 +252,59 @@ func (f *fakeFX) DocsCheck(base, head string) ([]string, error) {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "docs-check "+base+".."+head)
 	return f.strays[head], nil
+}
+
+func (f *fakeFX) Lane(name, base string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dir := "/lanes/" + name
+	f.calls = append(f.calls, "lane "+name+" "+base)
+	if f.lanes[dir] == nil {
+		f.lanes[dir] = &fakeLane{base: base}
+	}
+	return dir, nil
+}
+
+func (f *fakeFX) Pick(commits []string, onto string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if done, ok := f.picked[onto]; ok {
+		return done, nil // a pick asked again after a crash
+	}
+	if onto != "h"+strconv.Itoa(f.head) {
+		return nil, fmt.Errorf("HEAD is h%d, not %s", f.head, onto)
+	}
+	f.calls = append(f.calls, fmt.Sprintf("pick %d onto %s", len(commits), onto))
+	if f.conflicts > 0 {
+		f.conflicts--
+		return nil, &PickConflict{Commit: commits[0], Files: []string{"a.go"}}
+	}
+	var out []string
+	for range commits {
+		f.head++
+		out = append(out, "h"+strconv.Itoa(f.head))
+	}
+	f.picked[onto] = out
+	return out, nil
+}
+
+func (f *fakeFX) DropLane(dir string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "drop "+dir)
+	return f.dropErr
+}
+
+func (f *fakeFX) OnlyPlanCommits(_, head string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.planOnly[head], nil
+}
+
+// laned is s marked as a laned story.
+func laned(s Story) Story {
+	s.Lane = true
+	return s
 }
 
 func (f *fakeFX) Save(st *State) error {
@@ -1226,6 +1331,200 @@ func TestRun_AUsageLimitReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) 
 			require.Equal(t, Done, st.Status)
 			assert.Equal(t, want, slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1")), "nothing submitted or resumed twice")
 			assert.Equal(t, notes, st.Notes)
+		})
+	}
+}
+
+// A laned story's developer runs in its lane at its partner's base, and its
+// commits are picked onto the head its partner left (parallel pairs spec §5.5).
+func TestRun_ALaneRunsBesideItsPartnerAndIsPicked(t *testing.T) {
+	f := newFake()
+	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, f.calls, "lane r-s2 h0")
+	assert.Equal(t, "/lanes/r-s2", f.dirs["r-s2-dev1"])
+	assert.Equal(t, "", f.dirs["r-s1-dev1"])
+	assert.Contains(t, f.briefs["r-s2-dev1"], "You work in a lane: a worktree of its own at /lanes/r-s2")
+	assert.Contains(t, f.calls, "pick 1 onto h1")
+	assert.Contains(t, f.calls, "drop /lanes/r-s2")
+	row := st.Stories[1].Row
+	assert.Equal(t, "h1", row.Base, "its base is the head before the pick")
+	assert.Equal(t, 1, row.Commits, "its commits are exactly the picked one")
+	assert.Equal(t, "/lanes/r-s2", row.Lane)
+	assert.Contains(t, st.Notes, "Story 2: its developer ran in a lane beside Story 1; 1 commit was picked onto h1")
+	assert.Contains(t, Record(st, RecordInputs{}), "| 2 | intermediate-dev (lane) |")
+}
+
+// A lane's question parks the run while its partner's reviewer is still at
+// work, with the main track's head; the restarted engine follows that
+// reviewer (spec §5.4).
+func TestRun_ALaneQuestionParksWhileItsPartnerWorks(t *testing.T) {
+	f := newFake()
+	f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which table?"}
+	mainIn, laneGo, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	f.entered["r-s1-review1"], f.hold["r-s2-dev1"], f.hold["r-s1-review1"] = mainIn, laneGo, release
+	go func() { <-mainIn; close(laneGo) }()
+	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	e := newEngine(st, f)
+	require.NoError(t, e.start())
+	require.Equal(t, Parked, st.Status)
+	assert.Equal(t, "2", st.Question.Story)
+	assert.Equal(t, "h1", st.Question.At, "the main track's head, which answer compares HEAD with, not the lane's h0")
+	close(release)
+	e.wg.Wait()
+	require.NoError(t, st.Answer("the users table", "m", FromSpec, ""))
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, f.calls, "follow r-s1-review1")
+	assert.Contains(t, f.calls, "resume r-s2-dev1 the users table")
+	assert.Equal(t, 1, strings.Count(strings.Join(f.submits(), "\n"), "agent r-s1-review1 "))
+}
+
+// A run that closes before its lane's goroutine gets the lock makes no lane
+// and touches nothing (spec §5.4).
+func TestRun_ARunClosedBeforeItsLaneStartsMakesNoLane(t *testing.T) {
+	f := newFake()
+	f.head = 3 // a code commit: the first dispatch parks as tree-moved
+	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	require.NoError(t, runSettled(st, f))
+	require.Equal(t, Parked, st.Status)
+	assert.Equal(t, KindTreeMoved, st.Question.Kind)
+	assert.NotContains(t, strings.Join(f.calls, "\n"), "lane r-s2")
+	assert.Empty(t, st.Stories[1].Row.Lane)
+}
+
+// The main track's question parks the run while the lane's developer is at
+// work; the restarted engine follows it.
+func TestRun_AMainQuestionParksWhileTheLaneWorks(t *testing.T) {
+	f := newFake()
+	f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which colour?"}
+	laneIn, mainGo, laneGo := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	f.entered["r-s2-dev1"], f.hold["r-s1-dev1"], f.hold["r-s2-dev1"] = laneIn, mainGo, laneGo
+	go func() { <-laneIn; close(mainGo) }()
+	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	e := newEngine(st, f)
+	require.NoError(t, e.start())
+	require.Equal(t, Parked, st.Status)
+	assert.Equal(t, "1", st.Question.Story)
+	close(laneGo)
+	e.wg.Wait()
+	require.NoError(t, st.Answer("blue", "m", FromSpec, ""))
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, f.calls, "follow r-s2-dev1")
+}
+
+// A dirty lane or a conflicting pick asks `lane` (spec §5.6).
+func TestRun_ALaneThatDoesNotLand(t *testing.T) {
+	setup := func(t *testing.T, conflict bool) (*State, *fakeFX) {
+		f := newFake()
+		if conflict {
+			f.conflicts = 1
+		} else {
+			f.dirtyAfter["r-s2-dev1"] = true
+		}
+		st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		require.Equal(t, KindLane, st.Question.Kind)
+		assert.Equal(t, "2", st.Question.Story)
+		return st, f
+	}
+	t.Run("dirty, then retry", func(t *testing.T) {
+		st, f := setup(t, false)
+		assert.Contains(t, st.Question.Text, "has uncommitted changes")
+		f.lanes["/lanes/r-s2"].dirty = false // the manager cleaned it
+		require.NoError(t, st.Answer("retry", "m", FromSpec, ""))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.Contains(t, f.calls, "pick 1 onto h1")
+	})
+	t.Run("a conflict, then retry", func(t *testing.T) {
+		st, f := setup(t, true)
+		assert.Contains(t, st.Question.Text, "didn't apply: the lane commit h0+c1 conflicts on a.go")
+		require.NoError(t, st.Answer("retry", "m", FromSpec, ""))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.Equal(t, 2, strings.Count(strings.Join(f.calls, "\n"), "pick 1 onto h1"))
+	})
+	t.Run("redo", func(t *testing.T) {
+		st, f := setup(t, true)
+		require.NoError(t, st.Answer("redo", "m", FromSpec, ""))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.Equal(t, "", f.dirs["r-s2-dev2"], "the redo runs in the session's worktree")
+		assert.Contains(t, f.briefs["r-s2-dev2"], "An earlier attempt ran in the lane /lanes/r-s2")
+		assert.NotContains(t, f.calls, "drop /lanes/r-s2", "the lane is kept")
+		assert.Equal(t, "h1", st.Stories[1].Row.Base)
+	})
+	t.Run("stop", func(t *testing.T) {
+		st, f := setup(t, false)
+		require.NoError(t, st.Answer("stop", "m", FromSpec, ""))
+		drive(t, st, f, nil)
+		assert.Equal(t, Stopped, st.Status)
+		assert.NotContains(t, f.calls, "drop /lanes/r-s2")
+	})
+}
+
+// In a chain, the next lane starts from the head after the pick (spec §5.5).
+func TestRun_AChainOfLanes(t *testing.T) {
+	f := newFake()
+	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")), laned(story("3", "intermediate-dev", "vouched")))
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, f.calls, "lane r-s2 h0")
+	assert.Contains(t, f.calls, "lane r-s3 h2")
+	assert.Contains(t, f.calls, "pick 1 onto h2")
+}
+
+// A HEAD moved only by spec and plan commits is taken, not asked about;
+// any other move still parks as tree-moved (spec §5.7, TestRun_TreeMoved).
+func TestRun_SpecAndPlanCommitsAreTaken(t *testing.T) {
+	f := newFake()
+	f.head, f.planOnly["h2"] = 2, true
+	st := newState(story("1", "intermediate-dev", "vouched"))
+	drive(t, st, f, nil) // a tree-moved question fails the test
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, st.Notes, "took the spec and plan commits up to h2 before r-s1-dev1")
+}
+
+// A pair replays the same way after a crash at every save of either track.
+func TestRun_APairRestartedAtEverySaveSubmitsNothingTwice(t *testing.T) {
+	script := func() (*State, *fakeFX, map[string]string) {
+		f := newFake()
+		f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which table?"}
+		st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")), story("3", "junior-dev", "vouched"))
+		return st, f, map[string]string{"ctx:r-s2-dev1:1": "users"}
+	}
+	st, f, answers := script()
+	drive(t, st, f, answers)
+	require.Equal(t, Done, st.Status)
+	want := f.submits()
+	slices.Sort(want)
+	wantHead := f.head
+	for k := 1; k <= f.saves; k++ {
+		t.Run(fmt.Sprintf("a crash at save %d", k), func(t *testing.T) {
+			st, f, answers := script()
+			f.failAt = k
+			err := runSettled(st, f)
+			for err != nil || st.Status == Parked {
+				if err != nil {
+					require.ErrorIs(t, err, errCrash)
+					st = clone(f.saved)
+					if f.saved == nil {
+						st, _, _ = script()
+					}
+				} else {
+					require.NoError(t, st.Answer(answers[st.Question.Key], "m", FromSpec, ""))
+				}
+				err = runSettled(st, f)
+			}
+			require.Equal(t, Done, st.Status)
+			got := f.submits()
+			slices.Sort(got)
+			assert.Equal(t, want, got)
+			assert.Equal(t, wantHead, f.head, "every commit picked once")
 		})
 	}
 }

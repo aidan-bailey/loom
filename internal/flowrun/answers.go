@@ -21,6 +21,9 @@ const (
 	// than LimitWaitWithin away, or at a time it didn't say (usage-limit
 	// hold spec §3).
 	KindUsageLimit = "usage-limit"
+	// KindLane is a laned story's lane left dirty, or a pick of its commits
+	// that conflicted (parallel pairs spec §5.6).
+	KindLane = "lane"
 )
 
 // The answer words.
@@ -32,9 +35,12 @@ const (
 	// WordWait resubmits a step a usage limit stopped; the queue holds it
 	// until the limit resets.
 	WordWait = "wait"
+	// WordRedo runs a laned story's developer again in the session's
+	// worktree (parallel pairs spec §5.6).
+	WordRedo = "redo"
 )
 
-var allWords = []string{WordStop, WordAccept, WordRetry, WordContinue, WordWait}
+var allWords = []string{WordStop, WordAccept, WordRetry, WordContinue, WordWait, WordRedo}
 
 // takes is each kind's words, and whether it takes text (a decision).
 var takes = map[string]struct {
@@ -51,6 +57,7 @@ var takes = map[string]struct {
 	KindTreeMoved:     {[]string{WordContinue, WordStop}, false},
 	KindDocsStrayed:   {[]string{WordAccept, WordStop}, true},
 	KindUsageLimit:    {[]string{WordWait, WordStop}, false},
+	KindLane:          {[]string{WordRetry, WordRedo, WordStop}, false},
 }
 
 // CheckAnswer checks answer against kind: the word it is, or "" for a text

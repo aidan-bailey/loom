@@ -43,6 +43,18 @@ func DeveloperBrief(st *State, s *Story) string {
 	return b.String()
 }
 
+// LaneNote tells a laned story's developer where it works (parallel pairs
+// spec §5.3).
+func LaneNote(dir, base string) string {
+	return fmt.Sprintf("\nYou work in a lane: a worktree of its own at %s, detached at %s, beside the story before yours, which runs in the session's worktree. Commit there as the plan says; the run picks your commits onto its branch once that story is done.\n", dir, short(base))
+}
+
+// RedoDecision is the decision a laned story's developer runs with when its
+// lane didn't land and it builds the story again in the session's worktree.
+func RedoDecision(dir string) string {
+	return fmt.Sprintf("An earlier attempt ran in the lane %s, and its commits are not on this branch: they didn't apply, or the lane was left dirty. Build the story here, from this branch's HEAD; `git -C %s log` shows what that attempt did.", dir, dir)
+}
+
 // withEarlier is brief with the reports of the developers before and the
 // manager's decision, for an escalated or decided developer.
 func withEarlier(brief string, earlier []string, decision string) string {

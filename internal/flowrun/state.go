@@ -90,7 +90,10 @@ type Story struct {
 	// Restory has moved Line and End: premise flags are numbered by it.
 	BaseLine int `json:"base_line,omitempty"`
 	BaseEnd  int `json:"base_end,omitempty"`
-	Row      Row `json:"row"`
+	// Lane is true for a laned story: its developer runs in a lane beside
+	// the story before it (parallel pairs spec §5.1).
+	Lane bool `json:"lane,omitempty"`
+	Row  Row  `json:"row"`
 }
 
 // baseRange is s's range in the plan at the base.
@@ -116,6 +119,7 @@ type Row struct {
 	Corrections []string `json:"corrections,omitempty"`
 	Docs        int      `json:"docs,omitempty"`    // its doc pass's DOC lines
 	Lessons     int      `json:"lessons,omitempty"` // and LESSON lines
+	Lane        string   `json:"lane,omitempty"`    // a laned story's lane path
 }
 
 // Question is a parked run's open question (spec §5.4).
@@ -258,8 +262,19 @@ func (st *State) Restory(fresh []Story) (kept []string, err error) {
 			kept = append(kept, fmt.Sprintf("Story %s's developer, tier and review stay %s, %s and %s (the plan now says %s, %s and %s)",
 				s.ID, s.Developer, s.Tier, s.Review, f.Developer, f.Tier, f.Review))
 		}
+		if f.Lane != s.Lane {
+			kept = append(kept, fmt.Sprintf("Story %s %s, as the run started (the plan now says it %s)", s.ID, laneWords(s.Lane), laneWords(f.Lane)))
+		}
 	}
 	return kept, nil
+}
+
+// laneWords is how a story runs, for Restory's kept lines.
+func laneWords(lane bool) string {
+	if lane {
+		return "runs its developer in a lane"
+	}
+	return "runs in order"
 }
 
 // unmarshal reports whether raw decodes into v.

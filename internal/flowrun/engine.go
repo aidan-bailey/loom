@@ -73,7 +73,36 @@ type Effects interface {
 	// DocsCheck is the paths base..head changed that aren't doc paths
 	// (loom flow conf docs-check): none when it changed only docs.
 	DocsCheck(base, head string) ([]string, error)
+	// Lane is the lane a laned story's developer runs in (parallel pairs
+	// spec §5.3): a worktree of the repository named name, detached at
+	// base, made, or reused when it is already one.
+	Lane(name, base string) (string, error)
+	// Pick cherry-picks commits in order onto the session's worktree, whose
+	// HEAD is onto, or onto with a prefix of commits already picked (a crash
+	// mid-pick), and is the commits it made. A conflict aborts the pick as a
+	// *PickConflict.
+	Pick(commits []string, onto string) ([]string, error)
+	// DropLane removes the lane at dir, refusing one that isn't clean.
+	DropLane(dir string) error
+	// OnlyPlanCommits reports whether head descends from base and every
+	// commit in base..head touches only the run's spec and plan (spec §5.7).
+	OnlyPlanCommits(base, head string) (bool, error)
 	Save(st *State) error
+}
+
+// PickConflict is a pick that didn't apply: the lane commit it stopped at
+// and the files it conflicted on. Pick has aborted it.
+type PickConflict struct {
+	Commit string
+	Files  []string
+}
+
+func (c *PickConflict) Error() string {
+	files := strings.Join(c.Files, ", ")
+	if files == "" {
+		files = "no file (the pick came out empty)"
+	}
+	return fmt.Sprintf("the lane commit %s conflicts on %s", short(c.Commit), files)
 }
 
 // LimitWaitWithin is how far off a usage limit's reset may be, from when
@@ -130,6 +159,32 @@ type track struct {
 	cur  string        // the story in hand, "" outside one
 	sent []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
 	dir  string        // the lane's path; "" for the session's worktree
+	lane *laneRun      // the lane it runs, for a lane track; nil for the main track
+}
+
+// laneRun is a laned story's developer phase in its lane (spec §5.3).
+type laneRun struct {
+	s, partner *Story
+	t          *track        // the lane track
+	base       string        // the lane's base: its partner's base
+	done       chan struct{} // closed once the developer phase has ended
+	dev        Report        // its developer's report, when it ended without error
+	notes      []string      // the lane track's notes, which the join appends
+}
+
+// laneCheck is the join's look at a lane, memoized (spec §5.5).
+type laneCheck struct {
+	Head    string   `json:"head"`
+	Clean   bool     `json:"clean"`
+	Commits []string `json:"commits,omitempty"` // base..head, when clean
+}
+
+// pickResult is a pick's end, memoized: the head it picked onto and the
+// commits it made, or the conflict it stopped at.
+type pickResult struct {
+	Onto     string   `json:"onto"`
+	Picked   []string `json:"picked,omitempty"`
+	Conflict string   `json:"conflict,omitempty"`
 }
 
 // Run drives st until it parks or ends, saving it after every step. It
@@ -210,16 +265,37 @@ func (e *track) run() error {
 	if err := e.premises(); err != nil {
 		return err
 	}
+	var lane *laneRun
 	for i := range e.st.Stories {
-		if err := e.story(&e.st.Stories[i]); err != nil {
+		s := &e.st.Stories[i]
+		base, dev, joined := e.head, Report{}, lane != nil
+		if joined {
+			var err error
+			if base, dev, err = e.join(lane); err != nil {
+				return err
+			}
+		}
+		lane = nil
+		if i+1 < len(e.st.Stories) && e.st.Stories[i+1].Lane {
+			lane = e.startLane(&e.st.Stories[i+1], s)
+		}
+		if err := e.story(s, base, dev, joined); err != nil {
 			return err
 		}
 	}
 	return e.finalRound()
 }
 
+// note adds a line to the run's notes; a lane track's go to its lane, for
+// the join to append, so their order doesn't depend on which track woke
+// first.
 func (e *track) note(format string, args ...any) {
-	e.st.Notes = append(e.st.Notes, fmt.Sprintf(format, args...))
+	n := fmt.Sprintf(format, args...)
+	if e.lane != nil {
+		e.lane.notes = append(e.lane.notes, n)
+		return
+	}
+	e.st.Notes = append(e.st.Notes, n)
 }
 
 // recall unmarshals key's memoized result into v.
@@ -288,12 +364,15 @@ func (e *track) ask(q Question) (string, error) {
 	var a string
 	if e.recall("q:"+q.Key, &a) {
 		var head string
-		if e.recall("took:"+q.Key, &head) {
+		if e.lane == nil && e.recall("took:"+q.Key, &head) {
 			e.head = head // the manager's own commits, taken with its answer
 		}
 		return a, nil
 	}
 	q.At = e.head
+	if e.lane != nil {
+		q.At = e.main.head // answer compares it with HEAD in the session's worktree (spec §5.4)
+	}
 	e.st.Question, e.st.Status = &q, Parked
 	if err := e.fx.Save(e.st); err != nil {
 		return "", err
@@ -324,6 +403,16 @@ func (e *track) checkTree(name string) error {
 	if head == e.head && clean {
 		return nil
 	}
+	if clean {
+		only, err := e.fx.OnlyPlanCommits(e.head, head)
+		if err != nil {
+			return err
+		}
+		if only {
+			_, err := e.headAt("adopt:" + name)
+			return err
+		}
+	}
 	why := fmt.Sprintf("HEAD is %s, and the engine last recorded %s", head, e.head)
 	if !clean {
 		why = "the tree has uncommitted changes; " + why
@@ -337,6 +426,20 @@ func (e *track) checkTree(name string) error {
 	}
 	_, err = e.headAt("tree:" + name)
 	return err
+}
+
+// retake is the head the tree check before step name took, when it took
+// one (a continue, or spec and plan commits it adopted), set again on a
+// replay that skips the check, and the note an adoption leaves (spec §5.7).
+func (e *track) retake(name string) {
+	var h string
+	if e.recall("head:tree:"+name, &h) {
+		e.head = h
+	}
+	if e.recall("head:adopt:"+name, &h) {
+		e.head = h
+		e.note("took the spec and plan commits up to %s before %s", short(h), name)
+	}
 }
 
 // agent is agent run name's report: memoized, followed when it exists, else
@@ -355,6 +458,7 @@ func (e *track) agent(name, role, effort, brief string) (Report, error) {
 			return r, err
 		}
 	}
+	e.retake(name)
 	if !slices.Contains(e.st.Agents, name) {
 		e.st.Agents = append(e.st.Agents, name)
 		if err := e.fx.Save(e.st); err != nil {
@@ -836,19 +940,22 @@ func (e *track) conformance(key string, s *Story, base, head string) (Conformanc
 	return c, e.remember("conformance:"+key, c)
 }
 
-// story runs one story: developer, gates, review, findings, doc pass (spec §5.3).
-func (e *track) story(s *Story) error {
+// story runs one story: developer, gates, review, findings, doc pass (spec
+// §5.3). Its base is the head the engine last recorded, never a fresh read:
+// a commit made outside the run is the tree check's to catch, not the
+// story's to absorb. A joined story's developer ran in its lane (parallel
+// pairs spec §5.5): dev is its report, and base the head before its pick.
+func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	e.cur, e.st.Phase, e.sent = s.ID, "story "+s.ID, nil
 	defer func() { e.cur = "" }()
 	p := storyPrefix(s.ID)
-	// The story's base is the head the engine last recorded, never a fresh
-	// read: a commit made outside the run is the tree check's to catch, not
-	// the story's to absorb.
-	base := e.head
-	s.Row.Base, s.Row.Status = base, "developing"
-	dev, err := e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false)
-	if err != nil {
-		return err
+	s.Row.Base = base
+	if !joined {
+		s.Row.Status = "developing"
+		var err error
+		if dev, err = e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false); err != nil {
+			return err
+		}
 	}
 	if err := e.gateLoop(s, p, base); err != nil {
 		return err
@@ -886,6 +993,171 @@ func (e *track) story(s *Story) error {
 		return err
 	}
 	s.Row.Head, s.Row.Commits, s.Row.Status = e.head, len(commits), "done"
+	return nil
+}
+
+// startLane starts s's developer phase in a lane at the main track's head,
+// beside partner, on a goroutine of its own (parallel pairs spec §5.3).
+func (e *track) startLane(s, partner *Story) *laneRun {
+	l := &laneRun{s: s, partner: partner, base: e.head, done: make(chan struct{})}
+	l.t = &track{engine: e.engine, head: e.head, cur: s.ID, lane: l}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		defer close(l.done)
+		if e.closed {
+			return
+		}
+		dev, err := l.t.laneDev()
+		if err != nil {
+			e.finish(err)
+			return
+		}
+		l.dev = dev
+	}()
+	return l
+}
+
+// laneDev is a lane track's work: its lane, then its story's developer in it.
+func (e *track) laneDev() (Report, error) {
+	s := e.lane.s
+	var dir string
+	if !e.recall("lane:"+s.ID, &dir) {
+		name := e.st.ID + "-" + storyPrefix(s.ID)
+		if err := e.wait(func() (err error) { dir, err = e.fx.Lane(name, e.lane.base); return err }); err != nil {
+			return Report{}, err
+		}
+		if err := e.remember("lane:"+s.ID, dir); err != nil {
+			return Report{}, err
+		}
+	}
+	e.dir = dir
+	s.Row.Status, s.Row.Lane = "developing", dir
+	return e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, DeveloperBrief(e.st, s)+LaneNote(dir, e.lane.base), false)
+}
+
+// join waits for l's developer phase, then picks its lane's commits onto the
+// session's worktree (parallel pairs spec §5.5). It is the laned story's
+// base (the head before the pick) and its developer's report.
+func (e *track) join(l *laneRun) (string, Report, error) {
+	s := l.s
+	e.cur, e.st.Phase = s.ID, "story "+s.ID
+	if err := e.wait(func() error { <-l.done; return nil }); err != nil {
+		return "", Report{}, err // a lane that failed has closed the run
+	}
+	e.st.Notes = append(e.st.Notes, l.notes...)
+	for attempt := 1; ; attempt++ {
+		key := fmt.Sprintf("%s:%d", s.ID, attempt)
+		var c laneCheck
+		if !e.recall("lane-check:"+key, &c) {
+			var err error
+			if c.Head, err = e.fx.Head(l.t.dir); err != nil {
+				return "", Report{}, err
+			}
+			if c.Clean, err = e.fx.Clean(l.t.dir); err != nil {
+				return "", Report{}, err
+			}
+			if c.Clean {
+				if c.Commits, err = e.fx.Commits(l.base, c.Head); err != nil {
+					return "", Report{}, err
+				}
+			}
+			if err := e.remember("lane-check:"+key, c); err != nil {
+				return "", Report{}, err
+			}
+		}
+		problem := "has uncommitted changes"
+		if c.Clean {
+			r, err := e.pick(s, attempt, c.Commits)
+			if err != nil {
+				return "", Report{}, err
+			}
+			if r.Conflict == "" {
+				return r.Onto, l.dev, e.landed(l, key, r)
+			}
+			problem = "didn't apply: " + r.Conflict
+		}
+		a, err := e.ask(Question{Key: "lane:" + key, Kind: KindLane,
+			Text: fmt.Sprintf("The lane of %s at %s (head %s) %s", storyName(s), l.t.dir, short(c.Head), problem)})
+		if err != nil {
+			return "", Report{}, err
+		}
+		switch a {
+		case WordStop:
+			return "", Report{}, errStopped
+		case WordRedo:
+			e.note("%s: its lane at %s didn't land, and is kept; its developer runs again here", storyName(s), l.t.dir)
+			base := e.head
+			s.Row.Base, s.Row.Status = base, "developing"
+			dev, err := e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, withEarlier(DeveloperBrief(e.st, s), paths(l.dev.Path), RedoDecision(l.t.dir)), false)
+			return base, dev, err
+		}
+		// retry: the manager fixed the lane by hand; look at it again.
+	}
+}
+
+// pick picks commits onto the session's worktree after its tree check, as
+// the join's attempt for s: memoized, and marked before it starts, so a
+// crash mid-pick resumes it rather than reading its commits as the tree
+// moving.
+func (e *track) pick(s *Story, attempt int, commits []string) (pickResult, error) {
+	key := fmt.Sprintf("%s:%d", s.ID, attempt)
+	name := fmt.Sprintf("%s-%s-pick%d", e.st.ID, storyPrefix(s.ID), attempt)
+	var r pickResult
+	if e.recall("pick:"+key, &r) {
+		e.retake(name)
+		return r, nil
+	}
+	if e.recall("picking:"+key, &r.Onto) {
+		e.retake(name)
+	} else {
+		if err := e.checkTree(name); err != nil {
+			return r, err
+		}
+		e.retake(name)
+		r.Onto = e.head
+		if err := e.remember("picking:"+key, r.Onto); err != nil {
+			return r, err
+		}
+	}
+	picked, err := e.fx.Pick(commits, r.Onto)
+	var conflict *PickConflict
+	switch {
+	case errors.As(err, &conflict):
+		r.Conflict = conflict.Error()
+	case err != nil:
+		return r, err
+	default:
+		r.Picked = picked
+	}
+	return r, e.remember("pick:"+key, r)
+}
+
+// landed records a pick that applied (spec §5.5): the head after it, the
+// lane removed, and the notes.
+func (e *track) landed(l *laneRun, key string, r pickResult) error {
+	if _, err := e.headAt("picked:" + key); err != nil {
+		return err
+	}
+	var why string
+	if !e.recall("dropped:"+l.s.ID, &why) {
+		if err := e.fx.DropLane(l.t.dir); err != nil {
+			why = err.Error()
+		}
+		if err := e.remember("dropped:"+l.s.ID, why); err != nil {
+			return err
+		}
+	}
+	commits := fmt.Sprintf("%d commits were", len(r.Picked))
+	if len(r.Picked) == 1 {
+		commits = "1 commit was"
+	}
+	e.note("%s: its developer ran in a lane beside %s; %s picked onto %s", storyName(l.s), storyName(l.partner), commits, short(r.Onto))
+	if why != "" {
+		e.note("%s: its lane at %s is left: %s", storyName(l.s), l.t.dir, why)
+	}
 	return nil
 }
 
