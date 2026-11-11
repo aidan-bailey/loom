@@ -36,8 +36,14 @@ SKELETON = textwrap.dedent(
 
     - **Story 1** — Prices.
       - **Developer:** junior-dev
+      - **Files:** `src/rows.rs`, `src/short.rs`, `src/new.rs`
+      - **Interfaces:** exposes `lookup_price`
+      - **Verify:** `cargo test`
     - **Story 2** — Screen.
       - **Developer:** junior-dev
+      - **Files:** `src/short.rs`
+      - **Interfaces:** uses `lookup_price` from Story 1
+      - **Verify:** `cargo test`
 
     {plan_join.MARKER}
     """
@@ -46,11 +52,6 @@ SKELETON = textwrap.dedent(
 DRAFT_1 = textwrap.dedent(
     f"""\
     ## Story 1: Prices
-
-    - **Developer:** junior-dev
-    - **Files:** `src/rows.rs`, `src/short.rs`, `src/new.rs`
-    - **Interfaces:** exposes `lookup_price`
-    - **Verify:** `cargo test`
 
     ### Task 1.1: Prices
 
@@ -98,11 +99,6 @@ DRAFT_1 = textwrap.dedent(
 DRAFT_2 = textwrap.dedent(
     f"""\
     ## Story 2: Screen
-
-    - **Developer:** junior-dev
-    - **Files:** `src/short.rs`
-    - **Interfaces:** uses `lookup_price` from Story 1
-    - **Verify:** `cargo test`
 
     ### Task 2.1: Screen
 
@@ -370,12 +366,12 @@ REV_PLAN = textwrap.dedent(
 
 
 def build(skeleton, drafts):
-    """(the joined plan, {id: (start, lines)}) as plan_join gives them for a skeleton and its drafts."""
+    """(the joined plan, {id: Span}) as plan_join gives them for a skeleton and its drafts."""
     with tempfile.TemporaryDirectory() as tmp:
         for sid, body in drafts.items():
             (Path(tmp) / f"S{sid}.md").write_text(body, encoding="utf-8")
-        text, story_map = plan_join.join(skeleton, Path(tmp))
-    return text, {sid: (start, lines) for sid, (start, lines) in story_map.items()}
+        text, story_map, _ = plan_join.join(skeleton, Path(tmp))
+    return text, story_map
 
 
 PLAN, JOIN_MAP = build(SKELETON, {"1": DRAFT_1, "2": DRAFT_2})
@@ -452,18 +448,24 @@ class UnitPlanCase(RepoCase):
 
 
 class CiteTest(unittest.TestCase):
-    MAP = {"1": (10, 5), "2": (20, 3)}
+    # Story 1: heading 5, entry 7-8, draft lines 2-5 at 9-12. Story 2: heading 14, entry 16-17, draft lines 2-3 at 18-19.
+    MAP = {"1": plan_join.Span(8, 5, (7, 8)), "2": plan_join.Span(17, 3, (16, 17))}
 
     def test_a_plan_line_inside_a_draft_cites_the_draft_line(self):
-        self.assertEqual(plan_packet.cite(10, self.MAP), "S1.md:1")
-        self.assertEqual(plan_packet.cite(14, self.MAP), "S1.md:5")
-        self.assertEqual(plan_packet.cite(22, self.MAP), "S2.md:3")
+        self.assertEqual(plan_packet.cite(9, self.MAP), "S1.md:2")
+        self.assertEqual(plan_packet.cite(12, self.MAP), "S1.md:5")
+        self.assertEqual(plan_packet.cite(19, self.MAP), "S2.md:3")
+
+    def test_a_line_the_join_wrote_from_an_entry_cites_the_entry(self):
+        self.assertEqual(plan_packet.cite(7, self.MAP), "the Story 1 entry (plan:7)")
+        # Plan line 8 is also `start`: the entry wins, as no draft line sits there.
+        self.assertEqual(plan_packet.cite(8, self.MAP), "the Story 1 entry (plan:8)")
+        self.assertEqual(plan_packet.cite(16, self.MAP), "the Story 2 entry (plan:16)")
 
     def test_a_plan_line_outside_every_draft_cites_the_plan(self):
-        for line in (9, 15, 19, 23):
+        for line in (4, 5, 6, 13, 14, 15, 20):
             self.assertEqual(plan_packet.cite(line, self.MAP), f"plan:{line}")
         self.assertEqual(plan_packet.cite(7, {}), "plan:7")
-
 
 class DefinitionLinesTest(unittest.TestCase):
     def test_a_wrapped_signature_runs_to_the_line_that_opens_the_body(self):
@@ -624,8 +626,8 @@ class SeamsTest(RepoCase):
 
     def test_a_shared_name_is_listed_with_its_definition_and_use(self):
         text = self.seams()
-        k = line_of(PLAN, "pub fn lookup_price(id: u32) -> Option<u32> {") - JOIN_MAP["1"][0] + 1
-        j = line_of(PLAN, "lookup_price(7)") - JOIN_MAP["2"][0] + 1
+        k = line_of(PLAN, "pub fn lookup_price(id: u32) -> Option<u32> {") - JOIN_MAP["1"].start + 1
+        j = line_of(PLAN, "lookup_price(7)") - JOIN_MAP["2"].start + 1
         # `private_helper` is defined in Story 1 and named in Story 2 only after a dot and in a
         # command; `show` is defined and used nowhere else.
         self.assertEqual(seam_rows(text), [f"lookup_price | defined S1.md:{k} | used S2.md:{j}"])

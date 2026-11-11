@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_plan import FENCE_RE, declared_pairs, repo_root  # noqa: E402
 from flowconf import FlowError  # noqa: E402
 from langs import DEF_RES  # noqa: E402
-from plan_join import JoinError, describe, drafts_dir, join, load_map  # noqa: E402
+from plan_join import JoinError, Span, describe, drafts_dir, join, load_map  # noqa: E402
 from plan_premises import Plan, Tree, Walker, defined_names, find_block, gather, intro_path  # noqa: E402
 
 SEAMS_READING_RULES = (
@@ -64,11 +64,15 @@ DOCSTRING_RE = re.compile(r'^[rRuUbB]?("""|\'\'\')')
 PLACEHOLDER = "@@LENGTH@@"
 
 
-def cite(plan_line: int, story_map: dict[str, tuple[int, int]]) -> str:
-    """`S<id>.md:<k>` for the draft holding a plan line, else `plan:<n>`."""
-    for sid, (start, lines) in story_map.items():
-        if start <= plan_line < start + lines:
-            return f"S{sid}.md:{plan_line - start + 1}"
+def cite(plan_line: int, story_map: dict[str, Span]) -> str:
+    """`S<id>.md:<k>` for the draft line a plan line holds, the story's entry for an opening line the
+    join wrote from it, else `plan:<n>`."""
+    for sid, span in story_map.items():
+        first, last = span.entry
+        if first <= plan_line <= last:
+            return f"the Story {sid} entry (plan:{plan_line})"
+        if last < plan_line < span.start + span.lines:
+            return f"S{sid}.md:{plan_line - span.start + 1}"
     return f"plan:{plan_line}"
 
 
@@ -306,7 +310,7 @@ def finish(out: list[str]) -> str:
     return text.replace(PLACEHOLDER, f"Packet length: {len(text.splitlines())} lines", 1)
 
 
-def checked_map(text: str, drafts: Path) -> dict[str, tuple[int, int]]:
+def checked_map(text: str, drafts: Path) -> dict[str, Span]:
     """The join map of the drafts, once the plan is shown to be their join; `{}` when there is none.
 
     A plan edited, or drafts changed, since the join leaves the map pointing at the wrong lines, and every
@@ -314,9 +318,9 @@ def checked_map(text: str, drafts: Path) -> dict[str, tuple[int, int]]:
     """
     story_map = load_map(drafts)
     if story_map:
-        joined, fresh = join(text, drafts)
+        joined, fresh, _ = join(text, drafts)
         # An edit above the marker leaves the joined text as it was and moves every start line.
-        if joined != text or {sid: tuple(span) for sid, span in fresh.items()} != story_map:
+        if joined != text or fresh != story_map:
             raise JoinError("the plan is out of date with its drafts; re-run loom flow join")
     return story_map
 
