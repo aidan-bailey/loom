@@ -122,8 +122,14 @@ A draft is exactly the story's plan text:
   outside a fence: the join fails on one, so a draft that quotes it quotes
   it inside a fenced block.
 - **Tests can fail, and reach the failure paths** the spec names (errors,
-  limits, refusals), not only the happy path. No assertion over a fixture
-  that makes it vacuous.
+  limits, refusals), not only the happy path. After a step's test code,
+  plan text outside the fence says what makes each test red, one line a
+  test: `Fails without: <test name>: <the code in this story, removed or
+  inverted>`. Put the lines below the step's last code block, never
+  directly above a fence: the plan checks read the line above a fence as
+  that block's file. If you can't name the code, the test is vacuous:
+  change its inputs until you can. No assertion over a fixture that makes
+  it vacuous.
 - **Every task leaves the tree green:** the profile block's story gates pass
   after it. A temporary stub says so and names the task that replaces it.
 - **Commands carry the profile block's prefix**, and a task's own test
