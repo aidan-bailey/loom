@@ -167,17 +167,30 @@ func scrubbedVar(name string) bool {
 	return false
 }
 
+// envCache5m makes a Claude session write its prompt cache at five minutes
+// where it would write at one hour.
+const envCache5m = "FORCE_PROMPT_CACHING_5M"
+
 // agentEnv is an agent job's environment: env without the scrubbed
-// variables, with LOOM_FLOW_AGENT set to role.
-func agentEnv(env []string, role string) []string {
-	out := make([]string, 0, len(env)+1)
+// variables, with LOOM_FLOW_AGENT set to role and, for a definition that
+// pins `cacheTtl: 5m`, the five-minute switch on. `--agent`'s main thread
+// writes at the session's lifetime, one hour on a subscription, whatever
+// the definition pins (the 2026-11-11 probe); any other ttl leaves the
+// submitter's choice as it is.
+func agentEnv(env []string, role, ttl string) []string {
+	out := make([]string, 0, len(env)+2)
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if !scrubbedVar(name) && name != envAgentRole {
-			out = append(out, kv)
+		if scrubbedVar(name) || name == envAgentRole || (ttl == "5m" && name == envCache5m) {
+			continue
 		}
+		out = append(out, kv)
 	}
-	return append(out, envAgentRole+"="+role)
+	out = append(out, envAgentRole+"="+role)
+	if ttl == "5m" {
+		out = append(out, envCache5m+"=1")
+	}
+	return out
 }
 
 // agentProgram is the Claude CLI agent jobs run: the first word of the
@@ -293,6 +306,72 @@ func frontmatterMaxTurns(definition []byte) int {
 	return 0
 }
 
+// frontmatterEffort is a definition's `effort:` value, "" when it has none.
+func frontmatterEffort(definition []byte) string {
+	front, ok := frontmatter(definition)
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(front, "\n") {
+		if v, ok := strings.CutPrefix(line, "effort:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// agentEffort is the effort an agent job runs at: the run's own when it
+// names one, else its definition's pin. `--agent`'s main thread takes the
+// account's effort, and medium on Haiku, whatever the definition pins
+// (the 2026-11-11 probe), so every job carries it.
+func agentEffort(effort string, definition []byte) string {
+	if effort != "" {
+		return effort
+	}
+	return frontmatterEffort(definition)
+}
+
+// frontmatterCacheTTL is a definition's `experimental.cacheTtl` ("5m" or
+// "1h", the two Claude Code takes), in block or flow form; "" when it pins
+// neither.
+func frontmatterCacheTTL(definition []byte) string {
+	front, ok := frontmatter(definition)
+	if !ok {
+		return ""
+	}
+	ttl, block := "", false
+	for _, line := range strings.Split(front, "\n") {
+		if v, ok := strings.CutPrefix(line, "experimental:"); ok {
+			v = strings.TrimSpace(v)
+			block = v == ""
+			if inner, ok := strings.CutPrefix(v, "{"); ok {
+				ttl = cacheTTLValue(strings.TrimSuffix(strings.TrimSpace(inner), "}"))
+			}
+			continue
+		}
+		if block && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			if v := cacheTTLValue(line); v != "" {
+				ttl = v
+			}
+			continue
+		}
+		block = false
+	}
+	return ttl
+}
+
+// cacheTTLValue is the "5m" or "1h" of a `cacheTtl: …` entry, else "".
+func cacheTTLValue(entry string) string {
+	v, ok := strings.CutPrefix(strings.TrimSpace(entry), "cacheTtl:")
+	if !ok {
+		return ""
+	}
+	if v = strings.TrimSpace(v); v == "5m" || v == "1h" {
+		return v
+	}
+	return ""
+}
+
 // agentArgv is the argv of a first agent job of role with brief, run in cwd
 // from the flow root root (spec §5.4), or an *ExitError saying why not: an
 // unknown role, an empty or oversized brief, a preloaded skill or the
@@ -316,7 +395,7 @@ func agentArgv(root, role, effort, cwd string, brief []byte) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return agentCommand(agentProgram(), role, effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings,
+	return agentCommand(agentProgram(), role, agentEffort(effort, definition), frontmatterMaxTurns(definition), agentPermissionMode(), root, settings,
 		rolePreamble(role)+"\n\n"+skills+string(brief), ""), nil
 }
 

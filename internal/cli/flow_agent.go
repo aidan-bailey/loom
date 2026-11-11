@@ -97,7 +97,7 @@ func newFlowAgentRunCmd() *cobra.Command {
 			}
 			defer cleanup()
 			return flowDaemon(c, func(d *client) error {
-				return d.startAgent(c.OutOrStdout(), dir, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd}, argv, brief)
+				return d.startAgent(c.OutOrStdout(), dir, root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd}, argv, brief)
 			})
 		},
 	}
@@ -107,8 +107,9 @@ func newFlowAgentRunCmd() *cobra.Command {
 }
 
 // startAgent names run, refuses a name whose run hasn't ended, writes the
-// brief, queues the first agent job and saves the record.
-func (d *client) startAgent(out io.Writer, dir string, run *agentRun, argv []string, brief []byte) error {
+// brief, queues the first agent job (its role's definition under the flow
+// root root) and saves the record.
+func (d *client) startAgent(out io.Writer, dir, root string, run *agentRun, argv []string, brief []byte) error {
 	unlock, err := lockAgents(dir)
 	if err != nil {
 		return err
@@ -135,7 +136,7 @@ func (d *client) startAgent(out io.Writer, dir string, run *agentRun, argv []str
 	if err := config.AtomicWriteFile(run.Brief, brief, 0o600); err != nil {
 		return &ExitError{Code: exitNotRun, Msg: "loom flow agent: the brief: " + err.Error()}
 	}
-	id, err := d.queueAgent(run, argv)
+	id, err := d.queueAgent(root, run, argv)
 	if err != nil {
 		return err
 	}
@@ -148,10 +149,12 @@ func (d *client) startAgent(out io.Writer, dir string, run *agentRun, argv []str
 	return nil
 }
 
-// queueAgent submits argv as run's agent job in run's directory.
-func (d *client) queueAgent(run *agentRun, argv []string) (sched.JobID, error) {
+// queueAgent submits argv as run's agent job in run's directory, with the
+// cache lifetime its role's definition, under the flow root root, pins.
+func (d *client) queueAgent(root string, run *agentRun, argv []string) (sched.JobID, error) {
+	definition, _ := agentDefinition(root, run.Role)
 	sub := flowJob(argv, fmt.Sprintf("agent %s: flow:%s", run.ID, run.Role), run.Cwd, 0)
-	sub.Env, sub.Kind = agentEnv(sub.Env, run.Role), sched.KindAgent
+	sub.Env, sub.Kind = agentEnv(sub.Env, run.Role, frontmatterCacheTTL(definition)), sched.KindAgent
 	id, err := submitFlowJob(d, sub)
 	if err != nil {
 		return 0, &ExitError{Code: exitNotRun, Msg: "loom flow agent: nothing was queued: " + err.Error()}
@@ -342,8 +345,8 @@ func (d *client) answerAgent(out io.Writer, dir, id, root, answer string) error 
 		return err
 	}
 	definition, _ := agentDefinition(root, run.Role)
-	argv := agentCommand(agentProgram(), run.Role, run.Effort, frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session)
-	jobID, err := d.queueAgent(run, argv)
+	argv := agentCommand(agentProgram(), run.Role, agentEffort(run.Effort, definition), frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session)
+	jobID, err := d.queueAgent(root, run, argv)
 	if err != nil {
 		return err
 	}

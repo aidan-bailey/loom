@@ -90,7 +90,7 @@ func (fx *runFX) Agent(name, role, effort, brief string) (flowrun.Report, error)
 			if ok, err := fx.AgentStarted(name); err != nil || ok {
 				return err // a start the lost daemon took after all
 			}
-			return d.startAgent(io.Discard, fx.agents, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: fx.cwd}, argv, []byte(brief))
+			return d.startAgent(io.Discard, fx.agents, fx.root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: fx.cwd}, argv, []byte(brief))
 		})
 		if msg, ok := refused(err); ok {
 			return flowrun.Report{Status: agentFailed, Why: msg}, nil

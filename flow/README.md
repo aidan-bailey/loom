@@ -40,7 +40,7 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | `doctor` | `flowconf.py doctor` |
 | `check-agents` | `lib/check-agents.sh` |
 | `wait start NAME -- CMD`, `wait wait (NAME \| --job N) [SECONDS]` | Go: a step as a job in loom's queue, and a bounded wait for it |
-| `agent run ROLE < BRIEF`, `agent wait\|answer\|show\|list\|cancel` | Go: a flow agent run headless as an agent job in loom's queue, its report, and an answer that resumes it |
+| `agent run ROLE < BRIEF`, `agent wait\|answer\|show\|list\|cancel` | Go: a flow agent run headless as an agent job in loom's queue (at its definition's pinned effort unless `--effort` names another, and with a five-minute prompt cache when it pins `cacheTtl: 5m`), its report, and an answer that resumes it |
 | `gates start (--story COMMIT… \| --final)`, `gates wait [RUN] [SECONDS]`, `gates cancel [RUN]` | Go: the gates as a chain of jobs, each step's verdict, and the resubmission after a final FAIL |
 | `guard` | Go: the PreToolUse hook |
 | `path FILE` | Go: the absolute path of a file in this session's plugin (inside a session only) |

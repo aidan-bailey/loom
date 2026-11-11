@@ -225,6 +225,111 @@ func TestFlowAgent_ANameWhoseRunHasntEndedIsRefusedAndCancelEndsIt(t *testing.T)
 	require.NoError(t, err, "a cancelled run's name is free again")
 }
 
+// A headless agent is a main session, which writes its prompt cache at one
+// hour whatever its definition pins (the 2026-11-11 probe): the job carries
+// the switch that makes a `5m` pin hold.
+func TestFlowAgent_AFiveMinutePinReachesTheJob(t *testing.T) {
+	_, _, logDir := agentFixture(t, "intermediate-dev", "junior-dev")
+	root := os.Getenv(flow.EnvRoot)
+	pin := func(role, ttl string) {
+		p := filepath.Join(root, "plugin", "agents", role+".md")
+		require.NoError(t, os.WriteFile(p, []byte("---\nname: "+role+"\nmodel: sonnet\nexperimental:\n  cacheTtl: "+ttl+"\n---\n\nYou build.\n"), 0o600))
+	}
+	pin("intermediate-dev", "5m")
+	pin("junior-dev", "1h")
+	// The switch's value in the job's environment, "" when it has none. The
+	// assertions compare that value alone: a failed Contains over the whole
+	// environment would print every variable the test ran with.
+	switchOf := func(role, log string) string {
+		_, _, err := runAgent(t, "Build it.", "run", role)
+		require.NoError(t, err)
+		_, _, err = runAgent(t, "", "wait", "60")
+		require.NoError(t, err)
+		env, err := os.ReadFile(filepath.Join(logDir, log))
+		require.NoError(t, err)
+		for _, line := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(line, "FORCE_PROMPT_CACHING_5M="); ok {
+				return "set to " + v
+			}
+		}
+		return ""
+	}
+	assert.Equal(t, "set to 1", switchOf("intermediate-dev", "0.env"))
+	assert.Equal(t, "", switchOf("junior-dev", "1.env"), "a one-hour pin is the session's default")
+}
+
+// `--agent` runs a headless agent at the account's effort, medium for Haiku,
+// whatever its definition pins (the 2026-11-11 probe): every job carries
+// the pin, and `--effort` still overrides it.
+func TestFlowAgent_ThePinnedEffortReachesEveryJob(t *testing.T) {
+	_, _, logDir := agentFixture(t, "junior-dev")
+	p := filepath.Join(os.Getenv(flow.EnvRoot), "plugin", "agents", "junior-dev.md")
+	require.NoError(t, os.WriteFile(p, []byte("---\nname: junior-dev\nmodel: haiku\neffort: xhigh\n---\n\nYou build.\n"), 0o600))
+	// A run that asks, then its answer: the two jobs' arguments.
+	asked := func(name, first, resumed string, flags ...string) (string, string) {
+		_, _, err := runAgent(t, "ASK me", append([]string{"run", "junior-dev", "--name", name}, flags...)...)
+		require.NoError(t, err)
+		_, _, err = runAgent(t, "", "wait", name, "60")
+		require.NoError(t, err)
+		_, _, err = runAgent(t, "Blue.", "answer", name)
+		require.NoError(t, err)
+		_, _, err = runAgent(t, "", "wait", name, "60")
+		require.NoError(t, err)
+		a, err := os.ReadFile(filepath.Join(logDir, first))
+		require.NoError(t, err)
+		b, err := os.ReadFile(filepath.Join(logDir, resumed))
+		require.NoError(t, err)
+		return string(a), string(b)
+	}
+	first, resumed := asked("pinned", "0.args", "1.args")
+	assert.Contains(t, first, "--effort\nxhigh\n")
+	assert.Contains(t, resumed, "--effort\nxhigh\n", "a resume runs at the pin too")
+	first, resumed = asked("flagged", "2.args", "3.args", "--effort", "low")
+	assert.Contains(t, first, "--effort\nlow\n")
+	assert.NotContains(t, first, "xhigh")
+	assert.Contains(t, resumed, "--effort\nlow\n", "a resume keeps the run's own effort")
+	assert.NotContains(t, resumed, "xhigh")
+}
+
+func TestFrontmatterEffort(t *testing.T) {
+	for front, want := range map[string]string{
+		"model: haiku\neffort: xhigh\n":          "xhigh",
+		"effort:   high  \nmodel: opus\n":        "high",
+		"model: sonnet\n":                        "",
+		"experimental:\n  effort: low\n":         "",
+		"description: effort: high in a brief\n": "",
+	} {
+		assert.Equal(t, want, frontmatterEffort([]byte("---\nname: x\n"+front+"---\n\neffort: max\n")), front)
+	}
+	assert.Equal(t, "", frontmatterEffort([]byte("effort: high")))
+}
+
+func TestFrontmatterCacheTTL(t *testing.T) {
+	for _, c := range []struct{ front, want string }{
+		{"model: sonnet\nexperimental:\n  cacheTtl: 5m\n", "5m"},
+		{"experimental:\n  cacheTtl: 1h\nmodel: haiku\n", "1h"},
+		{"experimental: {cacheTtl: 5m}\n", "5m"},
+		{"experimental: { cacheTtl: 1h }\n", "1h"},
+		{"model: sonnet\n", ""},
+		// Only the experimental block's key counts.
+		{"cacheTtl: 5m\n", ""},
+		{"experimental:\n  other: x\nmodel: sonnet\ncacheTtl: 5m\n", ""},
+		// Claude Code takes only 5m or 1h.
+		{"experimental:\n  cacheTtl: 10m\n", ""},
+	} {
+		assert.Equal(t, c.want, frontmatterCacheTTL([]byte("---\nname: x\n"+c.front+"---\n\nBody.\n")), c.front)
+	}
+	assert.Equal(t, "", frontmatterCacheTTL([]byte("no front matter")))
+}
+
+func TestAgentEnv_AFiveMinutePinSetsTheSwitchOnce(t *testing.T) {
+	env := []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=old", "CLAUDECODE=1"}
+	assert.Equal(t, []string{"PATH=/bin", "LOOM_FLOW_AGENT=recon", "FORCE_PROMPT_CACHING_5M=1"}, agentEnv(env, "recon", "5m"))
+	// Any other pin, or none, leaves the submitter's choice as it is.
+	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=verifier"}, agentEnv(env, "verifier", "1h"))
+	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=x"}, agentEnv(env, "x", ""))
+}
+
 func TestScrubbedVar(t *testing.T) {
 	for _, name := range []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_TOKEN", "LOOM_MOD_SOCKET", "CLAUDE_EFFORT"} {
 		assert.True(t, scrubbedVar(name), name)
