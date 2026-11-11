@@ -81,10 +81,12 @@
             nativeBuildInputs = [ pkgs.makeWrapper ];
             # tmux is needed by the real-tmux scroll-history test in
             # session/tmux (TestCaptureHistoryRealTmux); without it that test
-            # skips. git is needed by the worktree-backed tests.
+            # skips. git is needed by the worktree-backed tests, python3 by
+            # the flow tests that run flow's Python tools (internal/cli).
             nativeCheckInputs = [
               pkgs.gh
               pkgs.git
+              pkgs.python3
               pkgs.tmux
             ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
               # ps, for the work queue's usage sampler (sched.Sample)

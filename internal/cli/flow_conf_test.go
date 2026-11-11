@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -117,6 +118,9 @@ func TestFlowDaemon_ADaemonItCantReachExits125(t *testing.T) {
 // no paths is an error, never a pass that changed only docs (the doc pass's
 // spec, §5.4).
 func TestScriptTools_DocsCheck(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, flow.RosterFile), []byte("loom flow roster 0123456789ab\n"), 0o600))
