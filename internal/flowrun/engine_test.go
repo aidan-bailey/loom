@@ -1081,7 +1081,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 	t.Run("a limit on a resume, twice, retries each time", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
-		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour), limitAt("five_hour", time.Hour)}
+		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour), limitAt("five_hour", 5*time.Hour)}
 		st := newState(story("1", "intermediate-dev", "vouched"))
 		drive(t, st, f, map[string]string{"ctx:r-s1-dev1:1": "That one."})
 		assert.Equal(t, Done, st.Status)
