@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,8 +22,9 @@ var loomContextFragments = []string{"../../session/loom_context_shared.md", "../
 var codeSpan = regexp.MustCompile("`([^`]+)`")
 
 // Every `loom session <sub> …`, `loom job <sub> …`, `loom feedback <sub> …` or `loom flow <sub> …`
-// span in the loom-context fragments names a real subcommand and flags it has,
-// and every span that is a bare flag one some subcommand of them has. An agent following
+// span in the loom-context fragments names a real subcommand and flags it has
+// (for a flow tool, which hands its flags to its script, flags the script's
+// source names), and every span that is a bare flag one some subcommand of them has. An agent following
 // a stale line fails on an unknown command or flag, and nothing else would
 // notice.
 func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
@@ -45,8 +47,16 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 			if !assert.NotNil(t, sub, "`%s`: loom %s has no subcommand %q", span, words[1], words[2]) {
 				continue
 			}
+			script := flowToolScript(words[1], words[2])
 			for _, w := range words[3:] {
-				if f, ok := parseFlag(w); ok {
+				f, ok := parseFlag(w)
+				switch {
+				case !ok:
+				case script != "":
+					src, err := os.ReadFile(filepath.Join("../../flow/lib", script))
+					require.NoError(t, err)
+					assert.Contains(t, string(src), `"`+f.word()+`"`, "`%s`: %s never reads the flag %s", span, script, w)
+				default:
 					assert.True(t, f.on(sub), "`%s`: loom %s %s has no flag %s", span, words[1], words[2], w)
 				}
 			}
@@ -58,6 +68,21 @@ func TestLoomContext_NamesRealSessionFlags(t *testing.T) {
 	}
 	assert.Positive(t, commands, "no `loom session <subcommand>` or `loom job <subcommand>` span in %s", loomContextFragments)
 	assert.Positive(t, bare, "no bare flag span in %s", loomContextFragments)
+}
+
+// flowToolScript is the script a `loom flow <name>` tool runs, or "" for
+// another command: a tool parses no flags, so its script's are the ones
+// a span may name.
+func flowToolScript(root, name string) string {
+	if root != "flow" {
+		return ""
+	}
+	for _, tool := range flowTools {
+		if tool.name == name {
+			return tool.script
+		}
+	}
+	return ""
 }
 
 // subcommandNamed is root's subcommand called name, or nil.
@@ -89,6 +114,14 @@ func parseFlag(word string) (flagRef, bool) {
 		return flagRef{name: word[1:], short: true}, true
 	}
 	return flagRef{}, false
+}
+
+// word is f as a command line writes it: "--name" or "-n".
+func (f flagRef) word() string {
+	if f.short {
+		return "-" + f.name
+	}
+	return "--" + f.name
 }
 
 // on reports whether cmd has f, as its own flag or one it inherits (the
