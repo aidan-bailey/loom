@@ -31,9 +31,9 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | Tool | Runs |
 |---|---|
 | `conf` | `flowconf.py`: key, status, show, state, drafts, vacuous, roster, gates, docs-check, doctor |
-| `check-plan` | `check_plan.py` |
+| `check-plan` | `check_plan.py`; `--skeleton PLAN` checks a skeleton's names contract and story list (`plan_skeleton.py`) |
 | `packet` | `plan_packet.py` |
-| `join` | `plan_join.py` |
+| `join` | `plan_join.py`: the stories from the drafts, each story's opening lines from its skeleton entry |
 | `premises` | `plan_premises.py` |
 | `conformance` | `plan_conformance.py` |
 | `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit) |
