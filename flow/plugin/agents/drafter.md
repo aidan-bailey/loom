@@ -147,6 +147,10 @@ later request.
   **Reading** lines name and what those lack, never a whole file by default.
 - Read only the code your stories touch, by line range. Grep for a
   signature before opening a file, and don't re-read what you have read.
+- Read in batches. One turn can carry several Reads and greps, and every
+  turn re-reads your whole context: ask in one turn for everything you
+  already know you need (the files on your stories' **Files** lines, the
+  ranges your **Reading** line names), never a file a turn.
 - Search the repo and its dependency sources, never `/` or `~`. For Cargo,
   `cargo metadata --format-version 1 --offline`, run with the profile
   block's prefix, gives each dependency's `manifest_path`.
