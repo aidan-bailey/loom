@@ -243,7 +243,7 @@ func newFlowRunStartCmd() *cobra.Command {
 			st := &flowrun.State{
 				Schema: flowrun.Schema, Status: flowrun.Running, Plan: plan, Spec: checked.Spec, Base: base,
 				Start:   time.Now().UTC().Format(time.RFC3339),
-				Roster:  "loom flow roster " + strings.TrimSpace(string(roster)),
+				Roster:  strings.TrimSpace(string(roster)), // the file holds the whole line (flow.RosterID)
 				Profile: blockLine(blocks["supervisor"], "Profile: "), DesignStage: designStage(string(text)),
 				RecordCopy: strings.TrimSuffix(blockLine(blocks["supervisor"], "Record copy in the repo: "), "none"),
 				Blocks: flowrun.Blocks{Developer: blocks["developer"], Verifier: blocks["verifier"], Reviewer: blocks["reviewer"],
@@ -451,7 +451,7 @@ func (fx *runFX) record(st *flowrun.State) error {
 	}
 	in := flowrun.RecordInputs{Cost: cost, Models: managerModels(cost)}
 	if b, err := os.ReadFile(filepath.Join(fx.root, flow.RosterFile)); err == nil {
-		in.RosterEnd = "loom flow roster " + strings.TrimSpace(string(b))
+		in.RosterEnd = strings.TrimSpace(string(b))
 	}
 	if in.Head, err = fx.Head(); err != nil {
 		return err

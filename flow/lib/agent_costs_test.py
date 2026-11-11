@@ -460,6 +460,31 @@ class ThinkingReportTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_the_agent_table_shows_the_effort_each_transcript_logs(self):
+        def at(msg_id, when, effort=None):
+            line = json.loads(record(msg_id, "claude-sonnet-5-5", when, input_tokens=10, output_tokens=10))
+            if effort is not None:
+                line["effort"] = effort
+            return json.dumps(line)
+
+        path = self.root / "effort.jsonl"
+        path.write_text("\n".join([
+            at("e0", "2026-10-13T08:00:00Z", "low"),  # before the window
+            at("e1", "2026-10-13T10:00:00Z", "medium"),
+            at("e2", "2026-10-13T10:01:00Z", "xhigh"),
+            at("e3", "2026-10-13T10:02:00Z", "medium"),
+        ]) + "\n")
+        code, out, err = run("session", str(path), "--since", "2026-10-13T09:00:00Z")
+        self.assertEqual(code, 0, err)
+        self.assertIn("| Agent | Type | Model | Effort | Requests |", out)
+        self.assertRegex(out, r"\| main \| claude-sonnet-5-5 \| medium, xhigh \| 3 \|")
+        # A transcript that logs none (an older Claude Code) shows a dash, not a guess.
+        bare = self.root / "bare.jsonl"
+        bare.write_text(at("b1", "2026-10-13T10:00:00Z") + "\n")
+        code, out, err = run("session", str(bare))
+        self.assertEqual(code, 0, err)
+        self.assertRegex(out, r"\| main \| claude-sonnet-5-5 \| — \| 1 \|")
+
     def test_the_report_shows_both_columns_and_labels_the_estimate(self):
         path = self.root / "think.jsonl"
         thinking_transcript(path)

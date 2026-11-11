@@ -25,5 +25,5 @@ The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-
    4. A fix round and re-review for blocking findings. A re-review that still blocks asks, listing its Critical and Important findings, with its report to read.
    5. One question for any PLAN lines, with the reports they came from, saying how many Minors the story's reviews kept for the final round.
    6. The doc pass, when the run has it (`State.Docs`): a doc writer over the story as it landed; when it committed, `docs-check`, where a stray asks (`docs-strayed`), and the story's gates again. Its findings join the kept Minors.
-3. The final gates, the anti-seam review, the final fix round grouped by file, and its re-review.
-4. `Record` writes the run's record from the state and the cost section.
+3. The final gates, the anti-seam review, the final fix round (`fixBatches`: whole files to a developer, up to `finalFixBatch` findings each), and its re-review.
+4. `Record` writes the run's record from the state and the cost section. A `Gates` line for a run that did not pass names each failing step with its verdict (`failingSteps`), and a `Disk` line gives the lowest free space the worktree's filesystem had at a gate run's end (`GateResult.Free`).

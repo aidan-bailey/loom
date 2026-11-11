@@ -40,8 +40,9 @@ COST TABLES
 - Gates r-s1-gates1: passed
 - Gates r-s1-gates2: passed
 - Gates r-s1-gates3: passed
-- Gates r-s2-gates1: failed
+- Gates r-s2-gates1: failed (FAIL: go vet; FAIL (killed): bash -c 'go test ./... && xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…)
 - Gates r-s2-gates2: passed
 - Gates r-s2-gates3: passed
 - Gates r-final-gates1: passed
 - Gates r-final-gates2: passed
+- Disk: free space at a gate run's end was lowest at 9.0 GB (r-s2-gates1), and 120 GB at the last.

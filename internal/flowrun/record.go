@@ -94,16 +94,56 @@ func Record(st *State, in RecordInputs) string {
 	for _, n := range st.Notes {
 		fmt.Fprintf(&b, "- %s\n", n)
 	}
+	var low, last uint64
+	lowAt := ""
 	for _, g := range st.Gates {
 		var r GateResult
 		if raw, ok := st.Memo["gates:"+g]; ok && unmarshal(raw, &r) {
-			fmt.Fprintf(&b, "- Gates %s: %s\n", g, r.Ended)
+			fmt.Fprintf(&b, "- Gates %s: %s%s\n", g, r.Ended, failingSteps(r))
+			if r.Free > 0 {
+				if last = r.Free; low == 0 || r.Free < low {
+					low, lowAt = r.Free, g
+				}
+			}
 		}
+	}
+	if low > 0 {
+		fmt.Fprintf(&b, "- Disk: free space at a gate run's end was lowest at %s (%s), and %s at the last.\n", gigabytes(low), lowAt, gigabytes(last))
 	}
 	if st.Why != "" {
 		fmt.Fprintf(&b, "- %s\n", st.Why)
 	}
 	return b.String()
+}
+
+// failingSteps names a gate run's failing steps, each with its verdict, for
+// the record's Gates line: a retro attributes a failed run by them.
+func failingSteps(r GateResult) string {
+	if len(r.Failing) == 0 {
+		return ""
+	}
+	steps := make([]string, 0, len(r.Failing))
+	for _, f := range r.Failing {
+		line := oneLine(f.Line)
+		if runes := []rune(line); len(runes) > gateLineMax {
+			line = string(runes[:gateLineMax]) + "…"
+		}
+		steps = append(steps, f.Verdict+": "+line)
+	}
+	return " (" + strings.Join(steps, "; ") + ")"
+}
+
+// gateLineMax bounds a failing step's command on a Gates line: a gate can
+// be a whole shell script.
+const gateLineMax = 100
+
+// gigabytes is n bytes as whole or tenths of a gigabyte.
+func gigabytes(n uint64) string {
+	gb := float64(n) / (1 << 30)
+	if gb >= 10 {
+		return fmt.Sprintf("%.0f GB", gb)
+	}
+	return fmt.Sprintf("%.1f GB", gb)
 }
 
 func short(sha string) string {

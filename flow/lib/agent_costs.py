@@ -360,6 +360,29 @@ def transcript_usage(path: Path, since: datetime | None, until: datetime | None)
     return total, models, ratio
 
 
+def transcript_effort(path: Path, since: datetime | None, until: datetime | None) -> str:
+    """The effort a transcript's requests ran at, as Claude Code logs it on each assistant record: one level,
+    or several in the order they first appear; "" when the transcript logs none. A retro reads it beside the
+    agent's pin: `--agent` once ran headless agents at the account's effort, whatever their definition said."""
+    seen: list[str] = []
+    for line in path.read_text(errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or not isinstance(record.get("message"), dict):
+            continue
+        message, effort = record["message"], record.get("effort")
+        if message.get("role") != "assistant" or message.get("model") == "<synthetic>" or not isinstance(effort, str):
+            continue
+        when = parse_time(record.get("timestamp"))
+        if when and ((since and when < since) or (until and when > until)):
+            continue
+        if effort not in seen:
+            seen.append(effort)
+    return ", ".join(seen)
+
+
 def visible_chars(content: object) -> int:
     """Characters of text, visible thinking and tool input in one logged content list."""
     if not isinstance(content, list):
@@ -585,27 +608,28 @@ def agents_report(title: str, entries: list[tuple[str, str, Path, bool]], since:
                   until: datetime | None, extra: dict, models_of: dict[str, set[str]] | None = None) -> str:
     """The tables and the agent-costs comment over entries (type, label, transcript, kept when idle); extra
     goes into the comment's data, and models_of, when given, gets each entry's models by label."""
-    agents: list[tuple[str, str, Usage, set[str]]] = []
+    agents: list[tuple[str, str, Usage, set[str], str]] = []
     ratios: dict[str, float] = {}
     for kind, label, path, keep in entries:
         usage, models, ratio = transcript_usage(path, since, until)
         if models_of is not None:
             models_of[label] = models
         if keep or usage.requests:
-            agents.append((kind, label, usage, models))
+            agents.append((kind, label, usage, models, transcript_effort(path, since, until)))
             ratios[label] = ratio
     by_type: dict[str, tuple[int, Usage]] = {}
     total = Usage()
-    for kind, _, usage, _ in agents:
+    for kind, _, usage, _, _ in agents:
         count, summed = by_type.get(kind, (0, Usage()))
         summed.add(usage)
         by_type[kind] = (count + 1, summed)
         total.add(usage)
     lines = [title, "",
-             "### Cost by agent", "", f"| Agent | Type | Model | {USAGE_HEADER} |",
-             "|---|---|---|" + "---:|" * USAGE_COLUMNS]
-    for kind, label, usage, models in agents:
-        lines.append(f"| {label} | {kind} | {', '.join(sorted(models))} | " + " | ".join(usage_cells(usage)) + " |")
+             "### Cost by agent", "", f"| Agent | Type | Model | Effort | {USAGE_HEADER} |",
+             "|---|---|---|---|" + "---:|" * USAGE_COLUMNS]
+    for kind, label, usage, models, effort in agents:
+        lines.append(f"| {label} | {kind} | {', '.join(sorted(models))} | {effort or '—'} | "
+                     + " | ".join(usage_cells(usage)) + " |")
     lines += ["", "### Cost by type", "", f"| Type | Agents | {USAGE_HEADER} |", "|---|---:|" + "---:|" * USAGE_COLUMNS]
     for kind, (count, usage) in sorted(by_type.items(), key=lambda kv: -kv[1][1].usd):
         lines.append(f"| {kind} | {count} | " + " | ".join(usage_cells(usage)) + " |")

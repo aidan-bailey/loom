@@ -742,17 +742,56 @@ func TestRun_AFollowedAgentSkipsTheTreeCheck(t *testing.T) {
 	assert.Zero(t, st.Stories[0].Row.Escalated)
 }
 
-func TestRun_FinalRoundGroupsByFile(t *testing.T) {
+func TestRun_FinalRoundBatchesWholeFiles(t *testing.T) {
 	f := newFake()
-	f.reports["r-final-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:1 one\nFINDING: Minor b.go:2 two\nFINDING: Important a.go:9 three\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	// Ten findings: a.go has two, b.go one, then seven files of one each.
+	text := "FINDING: Important a.go:1 one\nFINDING: Minor b.go:2 two\nFINDING: Important a.go:9 three\n"
+	for i := range 7 {
+		text += fmt.Sprintf("FINDING: Minor f%d.go:1 tidy %d\n", i, i)
+	}
+	f.reports["r-final-review1"] = Report{Status: "DONE", Text: text + "VERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 	st := newState(story("1", "intermediate-dev", "vouched"))
 	drive(t, st, f, nil)
-	assert.Contains(t, f.briefs["r-final-fix1"], "a.go:1 one")
-	assert.Contains(t, f.briefs["r-final-fix1"], "a.go:9 three")
-	assert.NotContains(t, f.briefs["r-final-fix1"], "b.go")
-	assert.Contains(t, f.briefs["r-final-fix2"], "b.go:2 two")
+	first, second := f.briefs["r-final-fix1"], f.briefs["r-final-fix2"]
+	for _, in := range []string{"a.go:1 one", "a.go:9 three", "b.go:2 two", "f0.go:1 tidy 0", "f4.go:1 tidy 4"} {
+		assert.Contains(t, first, in, "one developer takes files until it holds eight findings")
+	}
+	assert.NotContains(t, first, "f5.go")
+	assert.Contains(t, second, "f5.go:1 tidy 5")
+	assert.Contains(t, second, "f6.go:1 tidy 6")
+	assert.NotContains(t, f.calls, "agent r-final-fix3 intermediate-dev", "ten findings are two developers, not nine")
 	assert.Contains(t, f.calls, "gates r-final-gates2", "the round is gated")
 	assert.Contains(t, f.calls, "agent r-final-review2 story-reviewer", "and re-reviewed")
+}
+
+func TestFixBatches(t *testing.T) {
+	at := func(file string, n int) []Finding {
+		out := make([]Finding, n)
+		for i := range out {
+			out[i] = Finding{File: file, Line: i + 1}
+		}
+		return out
+	}
+	files := func(batches [][]Finding) [][]string {
+		var out [][]string
+		for _, b := range batches {
+			var names []string
+			for _, f := range b {
+				names = append(names, f.File)
+			}
+			out = append(out, names)
+		}
+		return out
+	}
+	assert.Empty(t, fixBatches(nil, 3))
+	// A file's findings stay together, in first-appearance order, and a
+	// batch closes before the file that would take it past the limit.
+	mixed := []Finding{{File: "a"}, {File: "b"}, {File: "a"}, {File: "c"}, {File: "c"}, {File: "d"}}
+	assert.Equal(t, [][]string{{"a", "a", "b"}, {"c", "c", "d"}}, files(fixBatches(mixed, 3)))
+	// A file over the limit is a batch of its own, never split.
+	assert.Equal(t, [][]string{{"a"}, {"big", "big", "big", "big"}, {"z"}}, files(fixBatches(slices.Concat(at("a", 1), at("big", 4), at("z", 1)), 3)))
+	// Exactly the limit fits.
+	assert.Len(t, fixBatches(slices.Concat(at("a", 2), at("b", 1)), 3), 1)
 }
 
 func TestRun_StopEndsStopped(t *testing.T) {
@@ -898,7 +937,11 @@ func script() (*State, *fakeFX, map[string]string) {
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nFINDING: Minor a.go:5 tidy\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 	f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\nLESSON: docs/claude/x.md a trap\nFINDING: Important b.go:2 the spec says two\nSTATUS: DONE"}
 	f.reports["r-s2-dev1"] = Report{Status: "BLOCKED"}
-	f.gates["r-s2-gates1"] = GateResult{Ended: "failed", Failing: []GateStep{{Line: "go vet", Verdict: "FAIL"}}}
+	f.gates["r-s2-gates1"] = GateResult{Ended: "failed", Free: 9 << 30, Failing: []GateStep{
+		{Line: "go vet", Verdict: "FAIL"},
+		{Line: "bash -c 'go   test ./... && " + strings.Repeat("x", 120) + "'", Verdict: "FAIL (killed)"},
+	}}
+	f.gates["r-final-gates2"] = GateResult{Ended: "passed", Free: 120 << 30}
 	f.reports["r-s2-review1"] = Report{Status: "failed", Why: "it ended with no result"}
 	f.strays["h6"] = []string{"main.go"}
 	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"))

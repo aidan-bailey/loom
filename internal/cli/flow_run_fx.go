@@ -264,6 +264,7 @@ func (fx *runFX) Gates(name string, commits []string) (flowrun.GateResult, error
 		return flowrun.GateResult{Ended: "infra", Table: msg}, nil
 	}
 	fx.logf("end %s: %s", name, res.Ended)
+	res.Free = freeBytes(fx.cwd)
 	return res, err
 }
 

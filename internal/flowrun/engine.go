@@ -26,6 +26,9 @@ type GateResult struct {
 	Ended   string     `json:"ended"` // passed, failed or infra
 	Failing []GateStep `json:"failing,omitempty"`
 	Table   string     `json:"table,omitempty"`
+	// Free is the free space, in bytes, on the worktree's filesystem when
+	// the run ended; 0 when it couldn't be read. Only the record reads it.
+	Free uint64 `json:"free,omitempty"`
 }
 
 // GateStep is a failing step of a gate run.
@@ -962,7 +965,7 @@ func (e *engine) finalRound() error {
 	}
 	for round := 1; ; round++ {
 		roundBase := e.head
-		for _, group := range byFile(findings) {
+		for _, group := range fixBatches(findings, finalFixBatch) {
 			if _, err := e.build(s, "final-fix", "intermediate-dev", FixFindingsBrief(e.st, s, e.st.Base, e.head, group, nil, decision), true); err != nil {
 				return err
 			}
@@ -1001,6 +1004,30 @@ func listed(text string, fs []Finding) string {
 		fmt.Fprintf(&b, "\n- %s", f)
 	}
 	return b.String()
+}
+
+// finalFixBatch is the most findings one final-fix developer takes, unless
+// one file holds more. A developer per file started 115 agents in ten runs,
+// 28 of which changed nothing, and each start pays for its whole prompt (the
+// 2026-11-11 retro).
+const finalFixBatch = 8
+
+// fixBatches groups findings for the final fix round's developers: whole
+// files, in the order each first appears, as many as keep a batch within
+// limit findings. A file with more than limit is a batch of its own.
+func fixBatches(fs []Finding, limit int) [][]Finding {
+	var out [][]Finding
+	var batch []Finding
+	for _, group := range byFile(fs) {
+		if len(batch) > 0 && len(batch)+len(group) > limit {
+			out, batch = append(out, batch), nil
+		}
+		batch = append(batch, group...)
+	}
+	if len(batch) > 0 {
+		out = append(out, batch)
+	}
+	return out
 }
 
 // byFile groups findings by file, in the order each file first appears.

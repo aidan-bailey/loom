@@ -49,6 +49,11 @@ A record has four parts.
      with the count of questions answered from the spec and by the owner
      (`loom flow run answer --from`), then list every question with its
      answer and where it came from.
+     Its Notes end with a `Gates` line for each gate run, which names the
+     failing steps and their verdicts when the run did not pass, and a `Disk`
+     line giving the lowest free space at a gate run's end. The Cost section's
+     agent table has an **Effort** column, read from each transcript: compare
+     it with the agent's pin.
 
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.
