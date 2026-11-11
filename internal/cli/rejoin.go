@@ -50,15 +50,32 @@ func (e *daemonUpgradedError) exit(prefix, carryOn string) *ExitError {
 	return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("%s: %v; carry on with the new loom: %s", prefix, e, carryOn)}
 }
 
+// onUpgrade is what rejoin does when a join is refused because the daemon
+// is a newer build.
+type onUpgrade bool
+
+const (
+	// failOnUpgrade fails fast: the command can't safely start again from
+	// its beginning (flow gates start, whose fresh nonce would queue a
+	// chain partly queued before the refusal again under new keys).
+	failOnUpgrade onUpgrade = false
+	// reexecOnUpgrade replaces the process with the daemon's build
+	// (reexecInto), which runs the whole command again: for a command that
+	// reads its record before acting, so starting again repeats nothing.
+	reexecOnUpgrade onUpgrade = true
+)
+
 // rejoin runs fn on a client (withDaemon), joining again with backoff while
 // the daemon can't be reached or is lost mid-call, as a restart to deploy a
 // build does, and says each loss through say. It stops trying at deadline
 // (zero: none) or once one outage has lasted outage (0: none), with an
-// *outOfReachError; a join refused because the daemon is newer stops it at
-// once, with a *daemonUpgradedError; an interrupt stops it at once. fn must be safe to run
-// again: it reads what it acts on before acting, and writes its answer
-// only at its end.
-func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, say func(string), fn func(d *client) error) error {
+// *outOfReachError; an interrupt stops it at once. A join refused because
+// the daemon is newer stops it at once: with reexecOnUpgrade it first
+// carries on under the daemon's build (reexecInto, carrying deadline), and
+// says why when it can't; returning, it is a *daemonUpgradedError. fn must
+// be safe to run again: it reads what it acts on before acting, and writes
+// its answer only at its end.
+func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, upgrade onUpgrade, say func(string), fn func(d *client) error) error {
 	ctx := c.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -83,6 +100,9 @@ func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, say func
 			return err
 		}
 		if lost == nil && errors.Is(cause, rpc.ErrDaemonNewer) {
+			if upgrade == reexecOnUpgrade {
+				carryOn(cause, deadline, say)
+			}
 			return &daemonUpgradedError{err: cause}
 		}
 		now := time.Now()
@@ -110,6 +130,21 @@ func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, say func
 			return ctx.Err()
 		}
 		wait = min(wait*2, rejoinMax)
+	}
+}
+
+// carryOn replaces this process with the build of the newer daemon that
+// refused it (refusal, a NewerDaemon), carrying deadline (reexecInto). It
+// returns only when it didn't, having said why through say.
+func carryOn(refusal error, deadline time.Time, say func(string)) {
+	var newer NewerDaemon
+	if !errors.As(refusal, &newer) {
+		say("can't carry on under the upgraded daemon: the refusal names no build")
+		return
+	}
+	peer, name := newer.NewerDaemon()
+	if err := reexecInto(peer, name, deadline, say); err != nil {
+		say(fmt.Sprintf("can't carry on under the upgraded daemon: %v", err))
 	}
 }
 

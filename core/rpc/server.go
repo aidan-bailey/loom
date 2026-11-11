@@ -182,9 +182,11 @@ func (s *Server) SetTmux(path string) {
 	s.tmux = path
 }
 
-// hello is the hello the server sends: its build and tmux server.
+// hello is the hello the server sends: its build, its executable's path
+// and its tmux server.
 func (s *Server) hello() *Hello {
 	h := Self()
+	h.ExePath = exePath()
 	s.mu.Lock()
 	h.Tmux = s.tmux
 	s.mu.Unlock()

@@ -18,6 +18,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/cli"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -426,6 +427,14 @@ func TestJoin_ANewerDaemonIsNewerDaemonError(t *testing.T) {
 	var nd *newerDaemonError
 	require.ErrorAs(t, err, &nd)
 	assert.Equal(t, newer, nd.peer)
+
+	t.Run("a subcommand reads the daemon's build from it", func(t *testing.T) {
+		var refusal cli.NewerDaemon
+		require.ErrorAs(t, err, &refusal, "internal/cli's rejoin re-executes the daemon's build from it")
+		peer, name := refusal.NewerDaemon()
+		assert.Equal(t, newer, peer)
+		assert.Equal(t, "0.14.0 (v0.14.0 123)", name)
+	})
 
 	t.Run("a rejoin passes it on", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{newer}}

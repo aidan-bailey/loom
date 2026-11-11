@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/app"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/cli"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -59,6 +60,15 @@ func (e *newerDaemonError) Error() string {
 // Is matches rpc.ErrDaemonNewer, so the TUI and the flow commands tell this
 // refusal from any other failed rejoin.
 func (e *newerDaemonError) Is(target error) bool { return target == rpc.ErrDaemonNewer }
+
+// NewerDaemon is the daemon's hello and its build's name, as Error names
+// it: a waiting subcommand re-executes that build (cli.NewerDaemon).
+func (e *newerDaemonError) NewerDaemon() (rpc.Hello, string) {
+	peer, _ := describeBuilds(e.peer, e.own)
+	return e.peer, peer
+}
+
+var _ cli.NewerDaemon = (*newerDaemonError)(nil)
 
 // join connects to the daemon, the newer build winning the handshake
 // (rpc.CompareBuilds), and pins this process's tmux server to the

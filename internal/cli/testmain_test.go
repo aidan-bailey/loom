@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -24,6 +25,9 @@ func TestMain(m *testing.M) {
 	// A job's runner here is this test binary (sched.TestRunner): when the
 	// daemon starts it as a shim, hand over to the shim before anything else.
 	sched.MaybeRunTestShim()
+	// No test may replace this binary: a test that reaches the re-exec
+	// without its own fake (fakeExec) is refused.
+	execProcess = func(string, []string, []string) error { return errors.New("no exec in tests") }
 	cleanup := testenv.MustIsolateLoomDirs()
 	sock := fmt.Sprintf("lt-cli-%d", os.Getpid())
 	if err := os.Setenv(tmux.EnvTmuxSocket, sock); err != nil {

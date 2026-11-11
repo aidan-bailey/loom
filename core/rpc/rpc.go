@@ -138,6 +138,12 @@ type Hello struct {
 	// their commit (Time): a rebuild at one commit is newer. One at or
 	// before the epoch's first second (a Nix store's) tells nothing.
 	ExeTime string `json:"exe_time,omitempty"`
+	// ExePath is the absolute path of the server's executable
+	// (os.Executable), which a long-running command of an older build,
+	// refused by this newer server, re-executes to carry on under it once
+	// the file there still hashes to Exe. Servers only; one that sends
+	// none (an older build) is never re-executed.
+	ExePath string `json:"exe_path,omitempty"`
 	// Tmux is the tmux server the server's sessions run on (its socket's
 	// path), which its clients use too (Server.SetTmux). Servers only.
 	Tmux string `json:"tmux,omitempty"`

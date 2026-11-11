@@ -186,4 +186,5 @@ func TestSelf(t *testing.T) {
 	assert.Equal(t, time.UTC, exeTime.Location())
 	assert.False(t, exeTime.After(time.Now()), "the time it was built, before it ran")
 	assert.Empty(t, h.Tmux, "a server names its tmux server itself")
+	assert.Empty(t, h.ExePath, "a server names its executable's path itself")
 }

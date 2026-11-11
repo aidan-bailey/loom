@@ -17,7 +17,7 @@ import (
 // ending in status lines as a headless agent's does (spec §2a, 9): ASK →
 // NEEDS_CONTEXT; CAPPED → the turn cap's error result; BROKEN → no result; FAILING → an error result; BADSTATUS →
 // a status no report has; NOSTATUS → none; MUTE → NEEDS_CONTEXT with no
-// question; anything else, or a resume → DONE.
+// question; SLOW → DONE after 30 s; anything else, or a resume → DONE.
 const fakeAgentClaude = `#!/bin/sh
 n=$(ls "$FAKE_CLAUDE_LOG" | grep -c '\.args$')
 printf '%s\n' "$@" > "$FAKE_CLAUDE_LOG/$n.args"
@@ -39,6 +39,7 @@ case "$prompt" in
   *BADSTATUS*) result false 'x\nSTATUS: MAYBE';;
   *NOSTATUS*) result false 'just words';;
   *MUTE*) result false 'x\nSTATUS: NEEDS_CONTEXT';;
+  *SLOW*) sleep 30; result false 'late\nSTATUS: DONE';;
   *CAPPED*) printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"total_cost_usd":0.1,"session_id":"sess-1"}'; exit 1;;
   *ASK*) result false 'need one\n**STATUS: NEEDS_CONTEXT**\nQUESTION: ` + "`Which colour?`" + `';;
   *) result false 'all done\nSTATUS: DONE';;
