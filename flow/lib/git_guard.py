@@ -14,9 +14,12 @@ one of them:
 - `git commit --amend`, `git commit -a`, or a commit with no `-- <paths>`;
 - `git add -A`/`--all`/`-u`/`.`/`:/`, or `git add` of a directory.
 
-Heredoc bodies (commit messages) are skipped. A command line it can't tokenise
-falls back to a plain search for the blocked subcommands. Anything else, and
-any input it can't read, is allowed through.
+A command behind a wrapper is checked too: `env` and `VAR=value`, `rtk` and the
+rtk subcommands that run a command (`proxy`, `err`, `test`, `summary`, and
+`run`'s string), `direnv exec <dir>`, and a shell's `-c` string. Heredoc
+bodies (commit messages) are skipped. A command line it can't tokenise falls
+back to a plain search for the blocked subcommands. Anything else, and any
+input it can't read, is allowed through.
 
 With `--drafter` it guards the drafter, which writes plan text and never
 changes the tree. Its frontmatter runs the hook on Bash, Write and Edit. Only
@@ -56,6 +59,12 @@ DRAFTER_GIT = {
 }
 PATHSPEC = 'commit by pathspec: `git commit -m "…" -- <your files>`'
 WRAPPERS = {"env", "command", "rtk", "nice", "time"}
+# rtk subcommands that run the rest of the line as a command, raw or filtered (`rtk run` takes one sh -c string).
+RTK_RUNNERS = {"proxy", "err", "test", "summary"}
+# Shells whose `-c <string>` is a command line of its own.
+SHELLS = {"sh", "bash", "zsh", "dash"}
+# How deep a -c string inside a -c string is still read.
+MAX_NESTING = 3
 GIT_OPTIONS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 SHORT_CLUSTER_RE = re.compile(r"-[A-Za-z]+")
@@ -96,11 +105,19 @@ def segments(command: str) -> list[list[str]]:
 
 
 def unwrap(segment: list[str]) -> list[str]:
-    """Skip leading `VAR=value` assignments and wrappers such as `/usr/bin/env` or `rtk`."""
+    """Skip leading `VAR=value` assignments and wrappers such as `/usr/bin/env`, `rtk`, `rtk proxy` or
+    `direnv exec <dir>`; `rtk run <string>` comes back as `sh -c <string>`, which `shell_string` reads."""
     i = 0
     while i < len(segment):
-        token = segment[i]
-        if ASSIGNMENT_RE.match(token) or os.path.basename(token) in WRAPPERS:
+        token, base = segment[i], os.path.basename(segment[i])
+        following = segment[i + 1] if i + 1 < len(segment) else ""
+        if base == "rtk" and following == "run":
+            return ["sh", "-c", *segment[i + 2:]]
+        if base == "rtk" and following in RTK_RUNNERS:
+            i += 2
+        elif base == "direnv" and following == "exec" and i + 2 < len(segment):
+            i += 3
+        elif ASSIGNMENT_RE.match(token) or base in WRAPPERS:
             i += 1
         elif token.startswith("-") and i > 0 and os.path.basename(segment[i - 1]) == "env":
             i += 1
@@ -167,8 +184,28 @@ def git_violation(args: list[str], cwd: str, drafter: bool = False) -> str | Non
     return None
 
 
-def violation(command: str, cwd: str, drafter: bool = False) -> str | None:
-    """The reason to block `command`, or None to let it through."""
+def shell_string(args: list[str]) -> str | None:
+    """The command string of `sh -c <string>` (bash, zsh and dash too; `-c` alone or in a flag group such as
+    `-lc`, after options such as `-o pipefail`), else None."""
+    if not args or os.path.basename(args[0]) not in SHELLS:
+        return None
+    k = 1
+    while k < len(args):
+        token = args[k]
+        if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", token):
+            return args[k + 1] if k + 1 < len(args) else None
+        if token in ("-o", "+o", "-O", "+O"):
+            k += 2
+        elif token.startswith(("-", "+")):
+            k += 1
+        else:
+            return None  # a script file, not a -c string
+    return None
+
+
+def violation(command: str, cwd: str, drafter: bool = False, depth: int = 0) -> str | None:
+    """The reason to block `command`, or None to let it through. A shell's -c string is read as a command line
+    of its own, up to MAX_NESTING deep."""
     text = strip_heredocs(command)
     try:
         parsed = segments(text)
@@ -185,6 +222,12 @@ def violation(command: str, cwd: str, drafter: bool = False) -> str | None:
         return None
     for segment in parsed:
         args = unwrap(segment)
+        inner = shell_string(args)
+        if inner is not None and depth < MAX_NESTING:
+            reason = violation(inner, cwd, drafter, depth + 1)
+            if reason:
+                return reason
+            continue
         if args and os.path.basename(args[0]) == "git":
             reason = git_violation(args[1:], cwd, drafter)
             if reason:

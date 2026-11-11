@@ -85,6 +85,37 @@ class DeveloperGitGuardTest(unittest.TestCase):
         ]:
             self.assertBlocked(command, says=says)
 
+    def test_a_wrapped_command_is_still_checked(self):
+        # rtk's runners run the rest of the line raw (`rtk proxy`, `err`, `test`, `summary`; `run` takes one sh -c
+        # string), `direnv exec <dir>` is the prefix profiles give developers, and a shell's -c string is a command
+        # line of its own. Agents typed `rtk proxy` 274 times in the 2026-11-11 retro's runs; behind any of these a
+        # blocked git command got through.
+        for command, says in [
+            ("rtk proxy git stash", "git stash"),
+            ("rtk err git reset --hard", "git reset"),
+            ("rtk test git checkout main", "git checkout"),
+            ("rtk summary git clean -fd", "git clean"),
+            ("rtk run 'git stash pop'", "git stash"),
+            ("bash -c 'git stash'", "git stash"),
+            ('sh -c "cd x && git reset --hard"', "git reset"),
+            ("bash -lc 'git clean -fd'", "git clean"),
+            ("bash -o pipefail -c 'git restore a.rs'", "git restore"),
+            ("direnv exec . git stash", "git stash"),
+            ("env CARGO_INCREMENTAL=0 direnv exec . bash -c 'cargo test && git add -A'", "git add"),
+            ("bash -c \"bash -c 'git push'\"", "git push"),
+        ]:
+            self.assertBlocked(command, says=says)
+        for command in [
+            "rtk proxy git status --short",
+            "rtk proxy grep -rn needle src",
+            "rtk run 'git log --oneline -3'",
+            "bash -c 'git diff --cached --numstat'",
+            "direnv exec . bash -c 'cargo nextest run -p example-core'",
+            "bash scripts/verify-affected.sh",
+            "bash -c",
+        ]:
+            self.assertAllowed(command)
+
     def test_commits_that_sweep_or_rewrite_are_blocked(self):
         self.assertBlocked('git commit --amend -m "x" -- a.rs', says="--amend")
         self.assertBlocked('git commit -am "x" -- a.rs', says="git commit -am")
@@ -145,6 +176,8 @@ class DrafterGuardTest(unittest.TestCase):
 
     def test_every_git_write_is_blocked(self):
         for command, says in [
+            ("bash -c 'git rm src/a.rs'", "git rm"),
+            ("rtk proxy git add -N src/new.rs", "git add"),
             ("git add -N src/new.rs", "git add"),
             ('git commit -m "x" -- src/a.rs', "git commit"),
             ("git rm src/a.rs", "git rm"),
