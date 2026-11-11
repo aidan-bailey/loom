@@ -62,3 +62,7 @@
 - [ ] Commit both tasks.
 
 ## Execution notes
+- 2026-11-11: both tasks built inline: 0224a37e (deletions, `Agent` refusal with a test pinning the formerly exempt name) and 0b0fc429 (references).
+  - `flow/embed_test.go` named the supervise skill as its sample skill; it now names `run`.
+  - `bash flow/lib/test.sh` OK (12 definitions); `go test ./flow/ ./session/ ./internal/cli/ ./tools/claudemd/ ./internal/flowview/` OK; CLAUDE.md lint OK.
+  - The final grep leaves only history, the own-roster checks, the lint's comment and test, and a transcript fixture that happens to use the name `/flow-supervise`.
