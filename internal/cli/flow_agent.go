@@ -185,7 +185,7 @@ func newFlowAgentWaitCmd() *cobra.Command {
 				return err
 			}
 			deadline := waitDeadline(bound)
-			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
+			err = rejoin(c, deadline, 0, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {
 				fmt.Fprintf(c.OutOrStdout(), "running %s: its job goes on, but %v (loom flow agent wait %s follows it again)\n", name, away, name)

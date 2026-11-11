@@ -172,7 +172,7 @@ func newFlowGatesStartCmd() *cobra.Command {
 			// A daemon lost mid-chain (a restart) is joined again, and the
 			// chain queued again under the same keys, so a gate queued
 			// before the loss is queued once.
-			err = rejoin(c, time.Now().Add(waitCap), 0, sayOnStderr(c), func(d *client) error { return d.startRun(c.OutOrStdout(), dir, run) })
+			err = rejoin(c, time.Now().Add(waitCap), 0, failOnUpgrade, sayOnStderr(c), func(d *client) error { return d.startRun(c.OutOrStdout(), dir, run) })
 			var away *outOfReachError
 			var up *daemonUpgradedError
 			switch {
@@ -221,7 +221,7 @@ func newFlowGatesWaitCmd() *cobra.Command {
 				return err
 			}
 			deadline := waitDeadline(bound)
-			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, deadline) })
+			err = rejoin(c, deadline, 0, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitRun(c.OutOrStdout(), conf, dir, name, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {
 				fmt.Fprintf(c.OutOrStdout(), "%s: the run's jobs go on, but %v (loom flow gates wait %s follows them again)\n", name, away, name)

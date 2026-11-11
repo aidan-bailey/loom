@@ -442,7 +442,7 @@ func TestRejoin_ANewerDaemonIsPermanent(t *testing.T) {
 	var said []string
 	start := time.Now()
 
-	err := rejoin(&cobra.Command{}, time.Time{}, time.Minute, func(s string) { said = append(said, s) }, func(*client) error { return nil })
+	err := rejoin(&cobra.Command{}, time.Time{}, time.Minute, failOnUpgrade, func(s string) { said = append(said, s) }, func(*client) error { return nil })
 
 	assert.Less(t, time.Since(start), 5*time.Second, "it returned at once")
 	assert.Equal(t, 1, *joins, "it joined once")
@@ -463,7 +463,7 @@ func TestRejoin_AnOrdinaryLossStillRejoins(t *testing.T) {
 	rejoinFirst, rejoinMax = 10*time.Millisecond, 40*time.Millisecond
 	t.Cleanup(func() { Join, rejoinFirst, rejoinMax = old, first, most })
 
-	err := rejoin(&cobra.Command{}, time.Time{}, 200*time.Millisecond, func(string) {}, func(*client) error { return nil })
+	err := rejoin(&cobra.Command{}, time.Time{}, 200*time.Millisecond, reexecOnUpgrade, func(string) {}, func(*client) error { return nil })
 
 	var away *outOfReachError
 	require.ErrorAs(t, err, &away)

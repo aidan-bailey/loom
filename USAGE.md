@@ -631,9 +631,13 @@ starts)…`.
   run loom again`. An older loom refuses a newer
   daemon (`the loom daemon is …, newer than this loom (…): upgrade loom,
   or run loom serve stop`); a flow run's engine or a `loom flow … wait`
-  of the old build that meets one stops at once, exit 125, saying the
+  of the old build that meets one carries on under the daemon's own
+  executable (it re-executes it in place, with the same arguments, once
+  that file still hashes to the daemon's build; a bounded wait keeps its
+  deadline), and where it can't, stops at once, exit 125, saying the
   daemon was upgraded and what carries on with the new loom
-  (`loom flow run resume <run>` for a run). Of two builds of one release, the one of the
+  (`loom flow run resume <run>` for a run). `loom flow gates start`
+  always stops. Of two builds of one release, the one of the
   later commit is newer; a build that names no commit (a plain `go build`
   from a source tarball) keeps the daemon that runs, so run
   `loom serve stop` to switch to it. A Nix build of loom names the commit
@@ -1272,7 +1276,7 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 | `flow check-agents` | Lint the flow plugin's agents and skills |
 | `flow wait start <name> -- <cmd>`, `flow wait wait (<name> \| --job <N>) [secs]` | Queue a long step for an agent as a job and print its ID; wait for it inside a turn (75: still running, 70: lost); refuses polls |
 | `flow agent run <role> [--effort E] [--name N] < brief`, `flow agent wait [<id>] [secs]`, `flow agent answer <id> < answer`, `flow agent show\|list\|cancel [<id>]` | Run a flow agent headless as an agent job (inside a session: its account, flow root and permission mode, the git guard, your plugins off), wait for its report inside a turn (0: a report, 1: failed or cancelled, 75: running), and resume it with an answer |
-| `flow run start <plan>`, `flow run wait [<run>]`, `flow run answer <run> --from spec\|owner < answer`, `flow run show\|list\|resume\|cancel [<run>]` | The run engine behind `/flow:run`: start a run (its engine is a `run` job; it refuses unless `claude_permission_mode` is `auto` or `bypassPermissions`, since its agents run headless), wait with no cap until it parks on a question or ends (0: parked or ended, 1: cancelled or the engine lost, with its cause; a restarted daemon is joined again; a newer one ends it at once, exit 125: resume the run with the new loom), answer the question in the form it takes (a decision, or `stop`, `accept`, `retry`, `continue`; an answer that carries an edited plan re-reads its stories' line ranges) and say where the answer came from (`spec`: settled without you; `owner`: you were asked), which the record counts, queue a lost engine again, or cancel the run and write its record |
+| `flow run start <plan>`, `flow run wait [<run>]`, `flow run answer <run> --from spec\|owner < answer`, `flow run show\|list\|resume\|cancel [<run>]` | The run engine behind `/flow:run`: start a run (its engine is a `run` job; it refuses unless `claude_permission_mode` is `auto` or `bypassPermissions`, since its agents run headless), wait with no cap until it parks on a question or ends (0: parked or ended, 1: cancelled or the engine lost, with its cause; a restarted daemon is joined again; a newer one is carried on under by re-executing its build, else ends it at once, exit 125: resume the run with the new loom), answer the question in the form it takes (a decision, or `stop`, `accept`, `retry`, `continue`; an answer that carries an edited plan re-reads its stories' line ranges) and say where the answer came from (`spec`: settled without you; `owner`: you were asked), which the record counts, queue a lost engine again, or cancel the run and write its record |
 | `flow gates start (--story <commits>… \| --final)`, `flow gates wait [<run>] [secs]`, `flow gates cancel [<run>]` | Queue a story's gates or the final gates as a chain of jobs, wait for the run inside a turn and print each step's verdict (0: passed, 1: failed, 75: not ended, or the daemon still away after a restart), or cancel it; a start or wait that loses the daemon mid-submit joins it again and queues no gate twice |
 | `flow guard` | Loom's PreToolUse hook: the git guard for flow's developers and drafter (reads the hook's JSON on stdin) |
 | `flow path <file>` | The absolute path of a file in this session's copy of the plugin (`docs/dispatch.md`, …); inside a session only |

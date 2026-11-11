@@ -543,7 +543,7 @@ func newFlowRunWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = rejoin(c, time.Time{}, rejoinFor, sayOnStderr(c), func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
+			err = rejoin(c, time.Time{}, rejoinFor, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
 			var away *outOfReachError
 			var up *daemonUpgradedError
 			switch {
