@@ -103,6 +103,14 @@ A draft is exactly the story's plan text:
   exact current lines it replaces, copied from the Read tool (Bash output
   here passes through rtk, which can abbreviate identifiers and paths), or
   gives an unambiguous anchor and the full new code.
+- **Edit the smallest span.** When an earlier story's **Files** line names
+  a file you edit (`grep -n '<path>' <plan>` shows it), anchor the lines you
+  change. Never replace a whole function, test module, doc section or file
+  there: a block copied from today's tree puts back what that story changed
+  and drops what it added.
+- **A check can pass.** A grep, sweep or count a step uses as its check
+  holds against your own new text. A pattern your replacement contains, or
+  a count your tasks change, fails on every run.
 - **Names are the contract's.** Use every contract name and signature
   exactly. If one can't work against the real code, stop and report
   NEEDS_CONTEXT: say why, and the amendment you propose.
