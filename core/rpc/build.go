@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -155,6 +156,17 @@ func exeIdentity() (hash, modTime string) {
 		return "", ""
 	}
 	return hex.EncodeToString(sum.Sum(nil)), info.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+// exePath is the running executable's absolute path (os.Executable), ""
+// when it can't be told. The file there may since have been replaced: a
+// client re-executing it checks its hash against Exe first.
+func exePath() string {
+	path, err := os.Executable()
+	if err != nil || !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
 }
 
 // Order is how a client's build compares with a server's (CompareBuilds).

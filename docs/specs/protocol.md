@@ -36,9 +36,10 @@ newer side wins): its release (`version`), its commit's time and whether its tre
 which breaks a tie nothing else decides when both name their commit, unless it is at or before
 1970-01-01T00:00:01Z, where a Nix store dates every file; one nothing tells apart is the same build).
 A server's also names the tmux server its sessions run on (`tmux`, its socket's path),
-which its clients use too.
+which its clients use too, and its executable's absolute path (`exe_path`), which a long-running
+command of an older build re-executes to carry on under it once the file there hashes to `exe`.
 Every field after `build` is optional:
-`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","exe_time":"2026-10-08T18:02:11.52Z","tmux":"/run/user/1000/tmux-1000/default"}}`
+`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","exe_time":"2026-10-08T18:02:11.52Z","exe_path":"/usr/local/bin/loom","tmux":"/run/user/1000/tmux-1000/default"}}`
 
 A client's hello may name its role (`role`): `web` is the daemon's own web layer, `cli` a loom
 subcommand. A client that names none (a TUI), or a role this build does not know, is an ordinary client:
