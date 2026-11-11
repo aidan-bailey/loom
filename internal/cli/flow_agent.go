@@ -184,7 +184,7 @@ func newFlowAgentWaitCmd() *cobra.Command {
 			if name, err = latestAgent(dir, name); err != nil {
 				return err
 			}
-			deadline := time.Now().Add(bound)
+			deadline := waitDeadline(bound)
 			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {

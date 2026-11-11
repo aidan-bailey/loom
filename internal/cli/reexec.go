@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/core/rpc"
 )
@@ -18,6 +20,41 @@ import (
 // refused again by the build it carried on under fails fast rather than
 // execute it in a loop; one refused by a later, different build may.
 const envReexec = "LOOM_REEXEC"
+
+// envReexecDeadline carries a bounded wait's deadline across its re-exec,
+// in Unix nanoseconds, so the new process stops where the old one would
+// have (waitDeadline) and a wait call stays within waitCap.
+const envReexecDeadline = "LOOM_REEXEC_DEADLINE"
+
+// reexecMarker and reexecDeadline are what this process inherited in
+// envReexec and envReexecDeadline (takeReexecEnv), read once at startup.
+var reexecMarker, reexecDeadline = takeReexecEnv()
+
+// takeReexecEnv reads envReexec and envReexecDeadline and removes both from
+// the environment, so nothing this process starts (a job, an agent, whose
+// own loom may be older) inherits them: they describe this process alone.
+// A deadline that is no positive number of nanoseconds is ignored; a past
+// one is kept, and a wait bounded by it ends at once.
+func takeReexecEnv() (marker string, deadline time.Time) {
+	marker = os.Getenv(envReexec)
+	raw := os.Getenv(envReexecDeadline)
+	_ = os.Unsetenv(envReexec)
+	_ = os.Unsetenv(envReexecDeadline)
+	if nanos, err := strconv.ParseInt(raw, 10, 64); err == nil && nanos > 0 {
+		deadline = time.Unix(0, nanos)
+	}
+	return marker, deadline
+}
+
+// waitDeadline is a bounded wait's deadline: now plus bound, or the
+// deadline it inherited across a re-exec when that comes first, even past.
+func waitDeadline(bound time.Duration) time.Time {
+	deadline := time.Now().Add(bound)
+	if !reexecDeadline.IsZero() && reexecDeadline.Before(deadline) {
+		return reexecDeadline
+	}
+	return deadline
+}
 
 // NewerDaemon is the join's refusal of a daemon newer than this loom
 // (main's newerDaemonError), which rejoin reads with errors.As: the
@@ -37,7 +74,8 @@ var execProcess = execSelf
 var reexecPlatform = reexecSupported
 
 // reexecInto replaces this process with the newer daemon's executable,
-// with this process's arguments and envReexec naming the build, after
+// with this process's arguments, envReexec naming the build and
+// envReexecDeadline carrying deadline (none when zero), after
 // saying so through say: a long-running command then carries on under
 // the daemon that refused it, keeping its PID (a job's shim waits on it),
 // its log and its cgroup. It does so only when the daemon names an
@@ -47,14 +85,14 @@ var reexecPlatform = reexecSupported
 // not already carried on under that build (envReexec), and when the
 // platform can. Otherwise it returns why not, and executes nothing. A
 // successful exec does not return; one that fails returns its error.
-func reexecInto(peer rpc.Hello, name string, say func(string)) error {
+func reexecInto(peer rpc.Hello, name string, deadline time.Time, say func(string)) error {
 	path := peer.ExePath
 	switch {
 	case path == "":
 		return errors.New("the daemon names no executable (a build from before exe_path)")
 	case !filepath.IsAbs(path):
 		return fmt.Errorf("the daemon's executable %q is not absolute", path)
-	case peer.Exe != "" && os.Getenv(envReexec) == peer.Exe:
+	case peer.Exe != "" && reexecMarker == peer.Exe:
 		return fmt.Errorf("this process already carried on under this build (%s=%s) and was refused again", envReexec, peer.Exe)
 	case !reexecPlatform:
 		return errors.New("loom can't re-execute on this platform")
@@ -78,7 +116,11 @@ func reexecInto(peer rpc.Hello, name string, say func(string)) error {
 	}
 	say(fmt.Sprintf("the loom daemon was upgraded to %s; carrying on under it (%s)", name, path))
 	argv := append([]string{path}, os.Args[1:]...)
-	return execProcess(path, argv, withEnv(os.Environ(), envReexec, peer.Exe))
+	env := withEnv(os.Environ(), envReexec, peer.Exe)
+	if !deadline.IsZero() {
+		env = withEnv(env, envReexecDeadline, strconv.FormatInt(deadline.UnixNano(), 10))
+	}
+	return execProcess(path, argv, env)
 }
 
 // withEnv is env with key set to value, replacing any entry it had.

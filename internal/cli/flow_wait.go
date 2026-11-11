@@ -149,7 +149,7 @@ func newFlowWaitWaitCmd() *cobra.Command {
 				}
 			}
 			logPath := filepath.Join(dir, name+".log")
-			deadline := time.Now().Add(bound)
+			deadline := waitDeadline(bound)
 			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitStep(c.OutOrStdout(), name, id, logPath, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {
