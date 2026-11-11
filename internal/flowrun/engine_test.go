@@ -461,6 +461,46 @@ func TestRun_GateFailures(t *testing.T) {
 	})
 }
 
+// TestRun_AnAcceptedGateFailure pins thread 20: once the manager accepts a
+// story's failing steps, a later gate run of the story that fails only on
+// them asks again rather than dispatching a fixer, and one failing on any
+// other step still gets a fixer. Each question ends a Run, so the next Run
+// knows the accepted steps only by replaying the earlier gate run.
+func TestRun_AnAcceptedGateFailure(t *testing.T) {
+	step := func(line string) GateStep { return GateStep{Line: line, Verdict: "FAIL", Log: "/logs/" + line} }
+	accepted := GateResult{Ended: "failed", Failing: []GateStep{step("npm test"), step("npm run lint")}, Table: "FAIL npm test\nFAIL npm run lint"}
+	// gates1 and gates2 fail, the manager accepts at gates2; the review's fix
+	// round (r-s1-fix2) then gates again at gates3.
+	setup := func(gates3 GateResult) (*State, *fakeFX) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.gates["r-s1-gates2"], f.gates["r-s1-gates3"] = accepted, accepted, gates3
+		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+		return newState(story("1", "intermediate-dev", "vouched")), f
+	}
+	t.Run("failing only on accepted steps asks", func(t *testing.T) {
+		st, f := setup(GateResult{Ended: "failed", Failing: []GateStep{step("npm run lint")}, Table: "FAIL npm run lint"})
+		require.NoError(t, Run(st, f))
+		require.Equal(t, "gates:r-s1-gates2", st.Question.Key)
+		require.NoError(t, st.Answer("accept", "m", FromSpec, ""))
+		require.NoError(t, Run(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "gates:r-s1-gates3", st.Question.Key, "no fixer before the question")
+		assert.Equal(t, KindGateFailure, st.Question.Kind)
+		assert.Contains(t, st.Question.Text, "accepted at r-s1-gates2")
+		assert.Equal(t, []string{"/logs/npm run lint"}, st.Question.Paths)
+		assert.NotContains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
+		drive(t, st, f, map[string]string{"gates:r-s1-gates3": "accept"})
+		assert.Equal(t, Done, st.Status)
+		assert.NotContains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
+	})
+	t.Run("failing on a step not accepted gets a fixer", func(t *testing.T) {
+		st, f := setup(GateResult{Ended: "failed", Failing: []GateStep{step("npm run lint"), step("go test ./...")}, Table: "FAIL npm run lint\nFAIL go test"})
+		drive(t, st, f, map[string]string{"gates:r-s1-gates2": "accept"}) // gates3 asking fails the test
+		assert.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "agent r-s1-fix3 intermediate-dev")
+	})
+}
+
 func TestRun_ReviewerChoice(t *testing.T) {
 	for _, c := range []struct {
 		name, review, devStatus string

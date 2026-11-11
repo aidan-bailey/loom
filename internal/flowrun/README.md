@@ -20,7 +20,7 @@ The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-
 1. The premises: flagged lines go to `premise-check`; COSMETIC verdicts become corrections, DESIGN and UNSURE ones a question.
 2. Each story in plan order:
    1. The developer, escalated as the spec's §5.3 says.
-   2. The gates, with a fix after a failure.
+   2. The gates, with a fix after a failure; a second failure, or an infra one, asks (`gate-failure`). Steps the manager accepted failing stay accepted for the story (`engine.accepted`, rebuilt by the replay): a later gate run of it that fails only on them asks, naming the gate run that accepted them, instead of sending a fixer; one failing on any other step gets a fixer.
    3. The review, by its column.
    4. A fix round and re-review for blocking findings. A re-review that still blocks asks, listing its Critical and Important findings, with its report to read.
    5. One question for any PLAN lines, with the reports they came from, saying how many Minors the story's reviews kept for the final round.
