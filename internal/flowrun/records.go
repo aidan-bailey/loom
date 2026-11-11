@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/sched"
@@ -27,6 +28,10 @@ const (
 	AgentRunning   = "running"
 	AgentFailed    = "failed"
 	AgentCancelled = "cancelled"
+	// AgentUsageLimit is a run whose job stopped on the account's usage
+	// limit (usage-limit hold spec §3): resumable, like TURN_CAP, once it
+	// resets; AgentRecord.Limit says which and when.
+	AgentUsageLimit = "USAGE_LIMIT"
 )
 
 // AgentRecord is one `loom flow agent run` and every job after it on its
@@ -46,6 +51,17 @@ type AgentRecord struct {
 	CostUSD  float64          `json:"cost_usd,omitempty"`
 	Turns    int              `json:"turns,omitempty"`
 	Why      string           `json:"why,omitempty"`
+	Limit    *Limit           `json:"limit,omitempty"` // set at AgentUsageLimit
+}
+
+// Limit is the usage limit an agent run stopped on (usage-limit hold spec
+// §3): its window ("five_hour", "seven_day", …; "" unknown), when it resets
+// (zero unknown), and when the run ended on it, which the engine measures
+// the wait from, so a replay decides as the first pass did.
+type Limit struct {
+	Window string    `json:"window,omitempty"`
+	Resets time.Time `json:"resets,omitzero"`
+	At     time.Time `json:"at"`
 }
 
 // AgentRecordJob is one job of a run: its start, or an answer resuming it.

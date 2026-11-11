@@ -75,14 +75,14 @@ func StepOf(run, name string, stories []Story) (Step, bool) {
 
 // QuestionStep is the step a parked run's question is about, for the
 // board's amber cell: a key that names an attempt (tree:, ctx:, failed:,
-// blocked:, gates:, strays:) is that attempt; a review's question (design:,
+// blocked:, gates:, strays:, limit:) is that attempt; a review's question (design:,
 // unresolved:, plan:) is its story's review, or the final round's; the
 // premises' question is the premise row's. ok is false for a key this
 // build doesn't know.
 func QuestionStep(run string, q Question, stories []Story) (Step, bool) {
 	head, rest, _ := strings.Cut(q.Key, ":")
 	switch head {
-	case "tree", "ctx", "failed", "blocked", "gates", "strays":
+	case "tree", "ctx", "failed", "blocked", "gates", "strays", "limit":
 		name, _, _ := strings.Cut(rest, ":")
 		return StepOf(run, name, stories)
 	case "design", "unresolved", "plan":

@@ -28,8 +28,11 @@ short.
    says it takes (a decision as text, or one of its words): the record counts
    them, to show how many questions a judge could have answered. A failed
    agent takes a decision too: it is retried with your decision in its
-   brief. When it left no report, the path to read is its job's
-   `output.log` (stream JSON; a `result` event, when there is one, holds
+   brief. An agent stopped on a usage limit that resets within six hours is
+   retried by the engine itself; one further off, or with no reset known,
+   asks `usage-limit`, which takes `wait` (the queue holds the retry until
+   the reset) or `stop`. When it left no report, the path to read is its
+   job's `output.log` (stream JSON; a `result` event, when there is one, holds
    its final message). When you edit the plan, `answer` re-reads its
    stories' line ranges for the later briefs, and refuses a plan check-plan
    fails or one that adds, removes or reorders stories. Then start the

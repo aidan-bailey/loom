@@ -117,6 +117,7 @@ func TestQuestionStep(t *testing.T) {
 		{Question{Key: "unresolved:final:2"}, Step{Final: true, Kind: KindReview}, true},
 		{Question{Key: "premise-design"}, Step{Kind: KindPremise}, true},
 		{Question{Key: "strays:r-s1-docs2", Story: "1"}, Step{Story: "1", Kind: KindDocs, K: 2}, true},
+		{Question{Key: "limit:r-s3-review2:1", Story: "3"}, Step{Story: "3", Kind: KindReview, K: 2}, true},
 		{Question{Key: "plan:3"}, Step{}, false},
 		{Question{Key: "something-new"}, Step{}, false},
 	} {
