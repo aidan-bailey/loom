@@ -594,3 +594,60 @@ class ParallelLineTest(unittest.TestCase):
         code, out = run(GOOD.replace("### Task 3.1: Route", "**Parallel:** 1+3\n\n### Task 3.1: Route"))
         self.assertEqual(code, 0, out)
         self.assertIn("runs in a lane): none", out)
+
+
+SKELETON_TEXT = textwrap.dedent(
+    """\
+    # Plan
+
+    **Spec:** `docs/spec.md`
+
+    ## Names contract
+
+    - `pub fn get(id: u32) -> Row` (Story 1).
+
+    ## Stories
+
+    - **Story 1** — store.
+      - **Developer:** junior-dev
+      - **Files:** `a/store.rs`
+      - **Interfaces:** exposes `get`
+      - **Verify:** `cargo nextest run -p a store`
+      - **Reading:** spec §1
+
+    <!-- plan_join: the stories below are generated from the drafts; edit the drafts, then re-join -->
+    """
+)
+
+
+def run_skeleton(text: str, *extra: str) -> tuple[int, str, str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["git", "-C", tmp, "init", "-q"], check=True, capture_output=True, env=CLEAN_ENV)
+        Path(tmp, "docs").mkdir()
+        Path(tmp, "docs", "spec.md").write_text("# Spec\n")
+        plan = Path(tmp, "plan.md")
+        plan.write_text(text)
+        env = {**CLEAN_ENV, "FLOW_HOME": str(Path(tmp, "flow-home"))}
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--skeleton", str(plan), *extra], capture_output=True, text=True, env=env, cwd=tmp
+        )
+        return result.returncode, result.stdout.replace(str(plan), "PLAN"), result.stderr
+
+
+class SkeletonCliTest(unittest.TestCase):
+    def test_a_good_skeleton_passes_without_a_profile(self):
+        code, out, _ = run_skeleton(SKELETON_TEXT)
+        self.assertEqual((code, out), (0, "OK: PLAN: skeleton; 1 stories; contract 1 lines\n"))
+
+    def test_each_problem_is_one_fail_line(self):
+        code, out, _ = run_skeleton(SKELETON_TEXT.replace("get(id: u32)", "get(id)").replace("  - **Reading:** spec §1\n", ""))
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines(), [
+            "FAIL [skeleton] PLAN: Story 1 entry (line 11): no **Reading:** line: the drafter reads what it names",
+            "FAIL [skeleton] PLAN: line 7: `pub fn get(id) -> Row` gives its parameter `id` no type",
+        ])
+
+    def test_skeleton_takes_one_plan(self):
+        code, _, err = run_skeleton(SKELETON_TEXT, "other.md")
+        self.assertEqual(code, 2)
+        self.assertIn("usage", err)

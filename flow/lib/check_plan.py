@@ -35,8 +35,13 @@ a lane beside the first under loom flow run: `**Parallel:** 3+4, 7+8`. Each pair
 right after it, with disjoint Files and at most one exclusive build; a pair that isn't fails the check,
 as does a second Parallel line. --json marks each pair's second story `"lane": true`.
 
+check_plan.py --skeleton PLAN.md checks a skeleton before /flow:draft drafts it instead: its head, its
+names contract's rules and its story list (plan_skeleton.py says which). It needs no profile, prints
+one FAIL line a problem, and on a pass `OK: <plan>: skeleton; <n> stories; contract <m> lines`.
+
 Usage: check_plan.py PLAN.md [PLAN.md ...]
        check_plan.py --json PLAN.md
+       check_plan.py --skeleton PLAN.md
 
 The markers and the exclusive builds come from the profile of the repo holding each plan
 (flowconf.py); a plan whose repo has no usable profile fails. For a plan that passes it prints the
@@ -393,12 +398,56 @@ def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str], lan
     return out
 
 
+USAGE = "usage: check_plan.py [--json PLAN.md | --skeleton PLAN.md | PLAN.md [PLAN.md ...]]"
+
+
+def repo_problem(plan: Path) -> str | None:
+    """The FAIL line for a plan outside the repo this session runs in, or for a repo flowconf can't place."""
+    try:
+        plan_main, cwd_main = flowconf.main_checkout(repo_root(plan)), flowconf.main_checkout(Path.cwd())
+    except FlowError as err:
+        return f"FAIL [repo] {plan}: {err}"
+    if plan_main != cwd_main:
+        # Every flowconf command reads the profile of the repo the session runs in, so a plan elsewhere would be checked against another profile.
+        return f"FAIL [repo] {plan}: the plan is in {plan_main} but this session is in {cwd_main}; keep the plan in the repo it changes"
+    return None
+
+
+def skeleton_main(arg: str) -> int:
+    """`--skeleton PLAN`: plan_skeleton's problems, one FAIL line each, or the OK line."""
+    # Imported here: plan_skeleton imports plan_join, which imports this module.
+    from plan_skeleton import lint
+
+    plan = Path(arg)
+    try:
+        text = plan.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        print(f"FAIL [skeleton] {arg}: {getattr(err, 'strerror', None) or err}")
+        return 1
+    problem = repo_problem(plan)
+    if problem:
+        print(problem)
+        return 1
+    problems, stories, contract = lint(text, plan)
+    for problem in problems:
+        print(f"FAIL [skeleton] {arg}: {problem}")
+    if problems:
+        return 1
+    print(f"OK: {arg}: skeleton; {stories} stories; contract {contract} lines")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv and argv[0] == "--skeleton":
+        if len(argv) != 2:
+            print(USAGE, file=sys.stderr)
+            return 2
+        return skeleton_main(argv[1])
     as_json = bool(argv) and argv[0] == "--json"
     if as_json:
         argv = argv[1:]
     if not argv or (as_json and len(argv) != 1):
-        print("usage: check_plan.py [--json PLAN.md | PLAN.md [PLAN.md ...]]", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     failed = False
     for arg in argv:
@@ -408,18 +457,12 @@ def main(argv: list[str]) -> int:
             print(f"FAIL [plan] {arg}: {err.strerror}")
             failed = True
             continue
-        try:
-            plan_repo = repo_root(Path(arg))
-            plan_main, cwd_main = flowconf.main_checkout(plan_repo), flowconf.main_checkout(Path.cwd())
-        except FlowError as err:
-            print(f"FAIL [repo] {arg}: {err}")
+        problem = repo_problem(Path(arg))
+        if problem:
+            print(problem)
             failed = True
             continue
-        if plan_main != cwd_main:
-            # Every flowconf command reads the profile of the repo the session runs in, so a plan elsewhere would be checked against another profile.
-            print(f"FAIL [repo] {arg}: the plan is in {plan_main} but this session is in {cwd_main}; keep the plan in the repo it changes")
-            failed = True
-            continue
+        plan_repo = repo_root(Path(arg))
         try:
             profile = load_profile(plan_repo)
         except FlowError as err:
