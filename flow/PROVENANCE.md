@@ -49,6 +49,8 @@ Pin changes from the move into loom on, 2026-11-05. Each entry goes under its ag
 
 ## plan-execution-supervisor
 
+- 2026-11-11, removed with `/flow:supervise` (owner, 2026-11-11). `/flow:run`'s engine runs every plan: six engine runs came to $2.17 per 1,000 plan lines, against $4.38 for 18 supervised runs, and parallel pairs moved to the engine first (`docs/superpowers/specs/2026-11-11-flow-run-parallel-pairs-design.md`).
+
 ## premise-check
 
 ## recon

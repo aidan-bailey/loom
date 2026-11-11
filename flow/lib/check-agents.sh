@@ -48,13 +48,13 @@ GUARDED="lib/guarded-agents.txt"
 DESCRIPTION_CAP=400
 
 # ToolSearch-verified against this harness (last checked 2026-08-05). Agent
-# joined on 2026-10-13 for plan-execution-supervisor: a subagent that lists it
-# can spawn subagents, up to three layers below the main session.
+# is a real tool, kept here so a definition listing it gets the refusal
+# below rather than the phantom-name one.
 VALID_TOOLS=(Agent Bash Read Write Edit SendMessage ToolSearch)
-# The only definitions that may list Agent. A subagent definition ignores an
-# Agent(type, …) list, so any agent holding Agent could spawn developers, or a
-# general-purpose agent at the session's model, from inside a plan run.
-SPAWNING_AGENTS=(plan-execution-supervisor)
+# No flow agent may list Agent (since /flow:supervise's removal, 2026-11-11):
+# a subagent definition ignores an Agent(type, …) list, so one holding Agent
+# could spawn developers, or a general-purpose agent at the session's model,
+# from inside a plan run.
 VALID_MODELS=(haiku sonnet opus fable)
 VALID_EFFORTS=(low medium high xhigh max)
 
@@ -227,8 +227,8 @@ for file in ${AGENT_FILES[@]+"${AGENT_FILES[@]}"}; do
     if ! in_list "$t" "${VALID_TOOLS[@]}"; then
       fail tools "$file: tool '$t' is not in the verified allowlist {${VALID_TOOLS[*]}} — phantom names are dropped SILENTLY at dispatch; verify with ToolSearch select:$t, then add it to VALID_TOOLS"
     fi
-    if [[ "$t" == "Agent" ]] && ! in_list "$base" "${SPAWNING_AGENTS[@]}"; then
-      fail tools "$file: lists Agent, but only {${SPAWNING_AGENTS[*]}} may spawn agents — Agent(type) lists are ignored in subagent definitions, so this agent could spawn any type"
+    if [[ "$t" == "Agent" ]]; then
+      fail tools "$file: lists Agent, and no flow agent may spawn agents — Agent(type) lists are ignored in subagent definitions, so it could spawn any type"
     fi
     if [[ "$t" == "SendMessage" ]]; then
       has_sendmessage=1

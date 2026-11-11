@@ -131,6 +131,15 @@ class CheckAgentsTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("preloads 'habits'", out)
 
+    def test_no_agent_may_list_agent(self):
+        # The supervisor, the one agent once allowed to, was removed with /flow:supervise (2026-11-11).
+        supervisor = AGENT.replace("name: dev", "name: plan-execution-supervisor").replace(
+            "tools: Bash, Read, Write, Edit, SendMessage", "tools: Agent, Bash, Read, SendMessage")
+        (self.root / "plugin" / "agents" / "plan-execution-supervisor.md").write_text(supervisor)
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("plan-execution-supervisor.md: lists Agent, and no flow agent may spawn agents", out)
+
     def test_a_retired_tools_name_fails(self):
         (self.root / "plugin" / "agents" / "dev.md").write_text(AGENT.replace("what the brief says", "what lib/agent-wait.sh prints"))
         code, out = self.lint()
