@@ -76,7 +76,9 @@ A record has four parts.
    **Tier** is the story's `deep` or `light` and **Review** its `vouched` or
    `full`, as `loom flow check-plan` printed them and the supervisor's state file
    carries them. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
-   of the story's doc pass, `—` for a run without one.
+   of the story's doc pass, `—` for a run without one. Under `/flow:run`, a
+   laned story's **Developer** ends `(lane)`, and the notes say how many of
+   its commits were picked onto which head, and name any lane left.
 4. **Notes**: facts worth keeping, such as answers the manager or owner gave
    and anything that surprised. No conclusions; those belong to a retro.
 

@@ -156,8 +156,9 @@ dispatched it, so the successor dispatches its own.
 The design session writes the skeleton beside the spec: what takes judgment,
 and none of the stories' code. It holds, in order:
 
-- the header: writing-plans' title, Goal, Architecture and Tech Stack, and the
-  `**Spec:**` line;
+- the header: writing-plans' title, Goal, Architecture and Tech Stack, the
+  `**Spec:**` line, and, when stories may overlap under `/flow:run`, a
+  `**Parallel:**` line ([parallel pairs](#parallel-pairs));
 - the file structure;
 - the names contract: every name, type and signature one story defines for
   another, such as functions and their signatures, types and their fields,
@@ -270,11 +271,14 @@ then every story's **Files** line. It refuses a plan that isn't the join of
 its drafts ("the plan is out of date with its drafts; re-run loom flow join"),
 so `/flow:draft` joins after every change before it writes the packet.
 
-The recon reads the packet and the names contract, and answers two questions.
+The recon reads the packet and the names contract, and answers two questions,
+and a third when the plan declares pairs.
 Do the contracts between stories match: is every name a story uses from
 another defined there, with the same type, signature and visibility? Which
 files outside every story's **Files** line list or count what the plan adds or
-changes? It starts from the profile's `design.registries`, the places in the
+changes? Does each declared pair's second story use anything its first
+creates? The packet's Declared pairs section lists the names; files, flags and
+behaviour no name shows are the recon's to find. It starts from the profile's `design.registries`, the places in the
 repo that list or count what stories add: a generated region and the command
 that regenerates it, a route or command table, a test that counts registered
 items, a document that states a count. It doesn't re-check quotes of the tree,
@@ -735,9 +739,33 @@ reorder its stories. `start` refuses a `claude_permission_mode` other than
 The engine replays. Each step has a fixed name (`<run>-s3-dev2`) and a
 memoized result in `<state>/runs/<run>.json`, so an engine lost mid-run
 carries on, through `loom flow run resume`, without submitting a step twice.
-Stories run one at a time. Pausing the manager's session spares the run's
-jobs; killing it ends the run. Agents run with `--max-turns` from their
+Stories run in plan order; a declared pair's second story develops in a
+lane beside its first ([parallel pairs](#parallel-pairs)), and a question
+from either parks the run while the other's agent works on. The tree check
+takes commits that touch only the spec and the plan, as `answer` does.
+Pausing the manager's session spares the run's jobs; killing it ends the run. Agents run with `--max-turns` from their
 definitions, since `--agent` ignores `maxTurns`.
+
+### Parallel pairs
+
+A plan may let `/flow:run` overlap two stories: `**Parallel:** 3+4, 7+8`,
+one line before the first story. In each pair the second story's developer
+runs in a lane, a worktree the engine makes at the first story's base under
+`<global dir>/flow/lanes/`, while the first story runs whole in the session's
+worktree. When the first is done, the engine picks the lane's commits onto
+HEAD and runs the second from its gates on, as any story. Pairs may chain
+(`3+4, 4+5`); one lane runs at a time.
+
+The design session declares a pair only when the second story uses nothing
+the first creates (no type, function, file or flag the first story's
+**Interfaces** exposes) and builds from a fresh checkout: a lane has no
+untracked files. `loom flow check-plan` fails a pair that isn't adjacent,
+shares a file or holds an exclusive build in both stories, and the seams
+check lists what the first story defines that the second uses. A lane left
+dirty, or whose commits don't apply, asks the manager `lane`: `retry`
+after fixing it by hand, `redo` to build the story again in the session's
+worktree, or `stop`. A lane is removed only once its commits are on the
+branch.
 
 ## The developers' git guard and turn caps
 

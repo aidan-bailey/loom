@@ -114,7 +114,9 @@ to it, and that resumes it.
    or keep it light with a reason in its Review line that names the marker,
    and record which in `STATE.md`. Change the story's entry under
    `## Stories`, and have the draft's fix job copy the new line. Give each
-   draft one fix job for everything this step found in it.
+   draft one fix job for everything this step found in it. A `**Parallel:**`
+   failure is yours, not a drafter's: drop the pair from the skeleton's line
+   (its stories then run in order), and name it in the hand-over.
 
    After these fix jobs, run this step once more: the join, `loom flow check-plan`,
    `loom flow premises`, and a `flow:premise-check` on any new flags. Step 5 bundles
@@ -131,6 +133,9 @@ to it, and that resumes it.
      visibility.
    - Which files outside every story's **Files** line list or count what the
      plan adds or changes? Start from the design registries.
+   - When the skeleton has a `**Parallel:**` line: does each declared pair's
+     second story use anything its first creates? The packet's Declared pairs
+     section lists the names; check files, flags and behaviour too.
 
    It doesn't re-check quotes of the tree (premise-check settled those) or
    review code. Write its report on arrival to `D/findings/seams.md`.
@@ -154,6 +159,8 @@ to it, and that resumes it.
    - Then run step 3 again, and step 4 too when a fix changed the contract.
    - A finding still open after its fix round goes to the owner: there is no
      second automatic round.
+   - Drop from the `**Parallel:**` line a pair the seams findings refute, and
+     name it in the hand-over.
 6. **Commit and hand over.**
    - Price the stage, unless `STATE.md`'s **Design stage** slot is already
      filled (a session died before the commit): then reuse that line and

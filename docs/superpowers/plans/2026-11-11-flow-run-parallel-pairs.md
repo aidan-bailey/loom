@@ -1900,4 +1900,12 @@ git commit -m "docs(flow): parallel pairs in the run engine" -- flow/plugin/docs
 
 ## Execution notes
 
-(Filled in during execution.)
+
+
+- **Task 1 (2026-11-11):** probe passed in a scratch clone with a detached lane.
+  - `loom flow conf key` from the lane printed the repo's key.
+  - `conf state` printed the lane's own `<common>/worktrees/lane/flow`.
+  - `doctor`: 0 FAIL. `check-plan` OK.
+  - `loom job run` from the lane: job 3675 exited 0.
+  - `loom flow guard` as `flow:intermediate-dev`: `git stash` exit 2, `git commit -m x -- a.go` exit 0.
+  - Planning amendment 1: the spec's §8 opt-in real-tmux probe test became this manual spike, since a lane agent's environment differs from the session's only in its cwd, and each cwd-dependent tool was checked here.
