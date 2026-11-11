@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters write the stories, it joins and checks them, one recon checks the seams, fresh drafters fix what the checks find, and it commits the plan for /flow:supervise.
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters write the stories, it joins and checks them, one recon checks the seams, fresh drafters fix what the checks find, and it commits the plan for /flow:run.
 argument-hint: <plan path>
 disable-model-invocation: true
 ---
@@ -180,14 +180,14 @@ to it, and that resumes it.
      output and stop.
    - Set the **Phase** to committed. Tell the owner what was drafted, what
      the checks and the seams recon found, and anything still open, and end
-     with: run `/clear`, then `/flow:supervise <plan>`.
+     with: run `/clear`, then `/flow:run <plan>`.
 
 The Design stage line is one physical line:
 
 `**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines.`
 
 It leaves out the design session's own cost, which the owner measures by
-hand. `/flow:supervise` copies it into the run's record.
+hand. `/flow:run`'s engine copies it into the run's record.
 
 Write each findings file with the Write or Edit tool, or with a quoted heredoc
 (`<<'EOF'`): the reports are full of backticks, which an unquoted heredoc runs

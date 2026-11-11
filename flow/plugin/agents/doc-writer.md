@@ -1,6 +1,6 @@
 ---
 name: doc-writer
-description: Brings the docs into line with one story as it landed, after its review and fix rounds, for the run engine or the supervisor. It fixes what the change made false, adds what the docs would expect, and records a lesson a fixed finding exposed; it never touches code. Pins set by the owner; change only on their instruction.
+description: Brings the docs into line with one story as it landed, after its review and fix rounds, for the run engine. It fixes what the change made false, adds what the docs would expect, and records a lesson a fixed finding exposed; it never touches code. Pins set by the owner; change only on their instruction.
 model: sonnet
 effort: high
 maxTurns: 100

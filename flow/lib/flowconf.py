@@ -11,6 +11,8 @@ refused by name, so a typo can't silently drop a landmine.
     flowconf.py key                the repo key
     flowconf.py status             the key and the profile it would use, or "none"
     flowconf.py show --for ROLE    one role's values for its briefs; supervisor
+                                   (the run's own block, named for the controller
+                                   that first read it; loom flow run reads it)
                                    prints its own and every other role's block
                                    but the drafter's, which is /flow:draft's
     flowconf.py services           the profile's services, one per line, as written
@@ -69,10 +71,10 @@ if sys.version_info < (3, 11):
 import tomllib  # noqa: E402
 
 SCHEMA = 1
-# The doc pass's agent (the doc pass's spec, 2026-11-10): the supervisor pastes its block into its briefs.
+# The doc pass's agent (the doc pass's spec, 2026-11-10): the run engine pastes its block into its briefs.
 DOC_WRITER = "doc-writer"
 ROLES = ("supervisor", "developer", "verifier", "reviewer", DOC_WRITER)
-# /flow:draft's role, not the supervisor's: `show --for supervisor` prints every role in ROLES and leaves it out.
+# /flow:draft's role, not the run's: `show --for supervisor` prints every role in ROLES and leaves it out.
 DRAFTER = "drafter"
 # Every key a schema-1 profile may hold, by table ("" is the top level), with its type.
 # A list holds strings only. TEXT is a string, or a list of strings read as one line each. GATES is a list
@@ -401,7 +403,7 @@ def _indented(text: str) -> list[str]:
 
 
 def role_block(profile: Profile, role: str, top: Path) -> list[str]:
-    """One role's lines: what the supervisor, or /flow:draft for the drafter, pastes into that role's briefs."""
+    """One role's lines: what the run engine, or /flow:draft for the drafter, pastes into that role's briefs."""
     prefix = f"`{profile.prefix}`" if profile.prefix else "none"
     if role == DRAFTER:
         packages = [
@@ -463,7 +465,7 @@ def role_block(profile: Profile, role: str, top: Path) -> list[str]:
 
 
 def show(profile: Profile, role: str, top: Path) -> str:
-    """`role`'s block; the supervisor's is followed by every other role's."""
+    """`role`'s block; the `supervisor` (run) block is followed by every other role's."""
     roles = ROLES if role == "supervisor" else (role,)
     return "\n\n".join(f"[{name}]\n" + "\n".join(role_block(profile, name, top)) for name in roles)
 

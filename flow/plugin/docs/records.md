@@ -1,13 +1,14 @@
 # Run records
 
-One file per supervised plan run, written by the manager when the run ends
-(under `/flow:run`, by loom's run engine itself, whatever the run's end), at
+One file per supervised plan run, written by loom's run engine (`/flow:run`)
+when the run ends, whatever its end (a record from before 2026-11-11 may be a
+`/flow:supervise` manager's, written by hand), at
 `~/.loom/flow/records/<key>/<YYYY-MM-DD>-<plan stem without its leading date>.md`,
 where `<key>` is what `loom flow conf key` prints for the repo (plan file names are
 dated already, so the date is not written twice). That directory is no
 repository, so nothing commits it there. When the repo's profile sets
-`paths.records`, `/flow:supervise` also writes a copy there and commits that in
-the repo. Records hold facts. Judging them is a
+`paths.records`, the engine also writes a copy there, which the manager
+commits in the repo. Records hold facts. Judging them is a
 retro's job: the owner starts one with `/flow:retro`, and it lands at
 `records/retros/retro-<YYYY-MM-DD>.md` (when that file exists, `-2`, `-3`, … is
 added after the date).
@@ -57,7 +58,7 @@ A record has four parts.
 
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.
-2. **Cost**: the output of
+2. **Cost**: in a record a manager wrote, the output of
    `loom flow costs session --since <start> --until <end>`,
    pasted whole, including its closing `<!-- agent-costs … -->` comment, which
    `loom flow costs records` reads for retros. A run that spanned more than one
@@ -68,14 +69,13 @@ A record has four parts.
    phone prices a run as it goes with `loom flow costs run <run> --json` (the same
    figures, as one object) and the design session with
    `loom flow costs design <spec> --plan <plan>`; neither writes a record.
-3. **Stories**: one row per story, copied from the supervisor's state file:
+3. **Stories**: one row per story, from the run's state:
 
    | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
    |---|---|---|---|---|---|---|---|---|---|---|---|---|
 
    **Tier** is the story's `deep` or `light` and **Review** its `vouched` or
-   `full`, as `loom flow check-plan` printed them and the supervisor's state file
-   carries them. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
+   `full`, as `loom flow check-plan` printed them. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
    of the story's doc pass, `—` for a run without one. Under `/flow:run`, a
    laned story's **Developer** ends `(lane)`, and the notes say how many of
    its commits were picked onto which head, and name any lane left.

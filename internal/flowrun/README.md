@@ -1,6 +1,6 @@
 # internal/flowrun
 
-The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-flow-in-loom-run-engine-design.md`). It replaces the Opus `plan-execution-supervisor` subagent's mechanical work with Go, and sends every judgement to the manager as a question.
+The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-flow-in-loom-run-engine-design.md`). It runs every plan `/flow:run` is given, its mechanical work in Go, and sends every judgement to the manager as a question.
 
 ## The model
 

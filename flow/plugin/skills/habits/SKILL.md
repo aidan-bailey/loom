@@ -128,7 +128,7 @@ which decisions are yours to make.
   `loom flow wait wait --job <N>`. Never start a poll, a loop around
   `sleep`: `start` refuses one, and what it would watch is a job to wait on.
   Never use `run_in_background` and never end your turn to wait: Claude Code
-  counts an agent waiting that way as not running, and a supervisor whose
+  counts an agent waiting that way as not running, and a dispatcher whose
   agents are all not running is made to hand back mid-run. Don't report while
   anything you started is still running, and never wait with `sleep`.
 - Commits follow the repo's convention; its CLAUDE.md says which. End each
@@ -142,5 +142,5 @@ which decisions are yours to make.
   one.
 - Your report goes back to whoever dispatched you through the hand-back
   Claude Code gives you when you stop. Don't also send it with SendMessage:
-  that delivers it twice, and when a supervisor dispatched you, a message to
+  that delivers it twice, and when another agent dispatched you, a message to
   `main` skips it.

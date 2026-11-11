@@ -52,7 +52,7 @@ so walk from `/`: at each level, take the directory entry whose `-`-encoded
 name continues the key, and go into it. When the walk fails (the repo moved or
 was deleted), show the raw key.
 
-- **Cost share**: developers, reviews, the doc writer, supervisor and manager. A review on
+- **Cost share**: developers, reviews, the doc writer, the supervisor (in records from before 2026-11-11) and the manager. A review on
   Opus can outweigh the story it checks, and the manager's own turns
   often outweigh every subagent together.
 - **Rework by developer tier**: deviations, BLOCKED stories moved up a tier,

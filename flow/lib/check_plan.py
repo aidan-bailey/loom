@@ -4,7 +4,7 @@
 A supervised plan names its spec before the first story, in a `**Spec:**` (or
 `**Design:**`) line holding the spec's repo-relative path in backticks, and
 groups its tasks into stories. Each story opens with four required lines (and an optional Review
-line, below) the plan-execution-supervisor routes, parallelises and reviews from:
+line, below) loom flow run's engine routes and reviews from:
 
     ## Story 2: Wire the ledger route
 
@@ -17,7 +17,7 @@ line, below) the plan-execution-supervisor routes, parallelises and reviews from
 
 A plan whose code was reviewed before it was committed (the dispatch guide's
 plan review) records it in a `**Plan review:**` line before the first story.
-The supervisor reads it: a story the plan review vouches for (below) gets the narrow
+The run engine reads it: a story the plan review vouches for (below) gets the narrow
 story-reviewer, which reads only what the plan doesn't vouch for; any other
 gets the full code-quality review.
 
@@ -65,7 +65,7 @@ import flowconf  # noqa: E402
 from flowconf import FlowError, load_profile  # noqa: E402
 
 DEVELOPERS = ("junior-dev", "intermediate-dev", "senior-dev")
-# Opus writes code only as a last resort (owner, 2026-10-13): the supervisor dispatches
+# Opus writes code only as a last resort (owner, 2026-10-13): the run engine dispatches
 # senior-dev after an intermediate-dev fails a slice twice, so a plan shouldn't assign it.
 LAST_RESORT = {"senior-dev"}
 FIELDS = ("Developer", "Files", "Interfaces", "Verify")
@@ -304,7 +304,7 @@ def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], l
     """Parse a plan and list everything that keeps it from a supervised run."""
     stories, problems, spec = parse(text)
     if spec is None:
-        problems.append("no **Spec:** line before the first story: the supervisor and a fresh manager find the spec through it")
+        problems.append("no **Spec:** line before the first story: the run engine and a fresh manager find the spec through it")
     elif not spec:
         problems.append("the **Spec:** line names no `backticked` path")
     elif not (repo_root(plan) / spec).is_file():

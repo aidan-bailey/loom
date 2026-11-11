@@ -1,6 +1,6 @@
 ---
 name: senior-dev
-description: The developer of last resort, dispatched only when an intermediate-dev has failed the same slice twice with the supervisor's decision in its brief, or when the manager asks for it. Opus designs and reviews, and writes code only here. Pins set by the owner; change only on their instruction.
+description: The developer of last resort, dispatched only when an intermediate-dev has failed the same slice twice with the manager's decision in its brief, or when the manager asks for it. Opus designs and reviews, and writes code only here. Pins set by the owner; change only on their instruction.
 model: opus
 effort: high
 maxTurns: 400

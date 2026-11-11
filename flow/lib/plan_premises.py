@@ -30,7 +30,7 @@ source, a file the app writes at run time).
 
 Usage: plan_premises.py PLAN.md [--stories 1-4,7] [--rev REV] [--verbose]
 
---rev reads the tree at a commit (the supervisor passes its base commit)
+--rev reads the tree at a commit (the run engine passes its base commit)
 instead of the working tree. Exit 0 when nothing is flagged, 1 when something
 is, 2 on a usage error.
 """

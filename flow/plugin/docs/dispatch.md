@@ -3,7 +3,7 @@
 The definitions in the flow plugin's `agents/` (loom's `flow/plugin/agents/`)
 encode what an *agent* must do.
 This guide covers the other half: what the **controller** (the main session,
-or the supervisor it dispatches) must do. Nothing enforces any of it; every
+or loom's run engine) must do. Nothing enforces any of it; every
 failure below is silent. The history and measurements behind these rules are
 in claude-flow's archived `docs/evidence.md`, which no agent loads.
 
@@ -16,11 +16,11 @@ supervised option of its own, it asks for the execution option before it
 writes the plan, and offers a third (loom's context says so in every session):
 
 **3. Supervised.** A skeleton now; `/clear`, then `/flow:draft <plan>`;
-`/clear`, then `/flow:supervise <plan>`. `flow:drafter`s write the stories from the
-skeleton ([the skeleton](#the-skeleton)), then a `flow:plan-execution-supervisor`
-runs the plan story by story. It dispatches a developer per story, answers
-their questions, escalates the rest to you, and reviews each story and the
-whole.
+`/clear`, then `/flow:run <plan>`. `flow:drafter`s write the stories from the
+skeleton ([the skeleton](#the-skeleton)), then loom's run engine runs the plan
+story by story ([the run engine](#the-run-engine-flowrun)). It dispatches a
+developer per story, reviews each story and the whole, and asks you what the
+spec doesn't settle.
 
 A plan for it names its spec in a `**Spec:**` (or `**Design:**`) line before
 the first story, and groups its tasks into `## Story` sections. Each story
@@ -55,23 +55,22 @@ to the per-story and final reviews. For the developer tiers, see [Picking a
 developer](#picking-a-developer).
 
 The tiers spend each model where it pays. The manager holds the judgment and
-talks to the owner, but sits idle while the plan runs. The supervisor (Opus)
-routes work and answers from the spec and plan. The developers (Haiku or
-Sonnet, by story) spend most of the tokens, and `flow:verifier` (Haiku) keeps build
-logs out of every Opus context. Questions climb the same ladder — developer,
-supervisor, manager, owner — and each rung costs more than the one below,
-which is why the supervisor checks the plan's code against the tree before
-the first story.
+talks to the owner, but sits idle while the plan runs. Loom's run engine, a
+Go process, routes the work and spends no tokens. The developers (Haiku or
+Sonnet, by story) spend most of the tokens, and the reviewers (Opus) judge.
+Questions climb a ladder — developer, manager, owner — and each rung costs
+more than the one below, which is why the engine has `loom flow premises`
+check the plan's code against the tree before the first story.
 
 **The design stage and the run each start from a fresh session.** Every
 manager turn re-reads the whole conversation. The drafting manager's turns are
-its agents' reports, and the run manager's are the supervisor's questions and
-reports, so a design conversation carried into either is paid for again on
+its agents' reports, and the run manager's are the engine's questions, so a
+design conversation carried into either is paid for again on
 each of them. A quiet spell longer than the cache lifetime (one hour on a
 subscription, five minutes on usage credits) makes the next turn write that
 whole context again. The design session therefore ends at a committed spec and
 skeleton, and the owner clears twice: once before `/flow:draft`, once before
-`/flow:supervise`. When the option is chosen, the design session:
+`/flow:run`. When the option is chosen, the design session:
 
 1. Moves every decision the conversation made into the spec, since after the
    clear the spec is the only record of the design. That includes the limits
@@ -93,7 +92,7 @@ joins and checks the drafts, has one `flow:recon` check the seams between the
 stories ([the seams check](#the-seams-check)), has fresh drafters fix what the
 checks found ([fixing the plan](#fixing-the-plan)), writes the
 `**Design stage:**` line, commits the plan by pathspec, and ends with "run
-`/clear`, then `/flow:supervise <plan>`". It asks the owner only what the spec
+`/clear`, then `/flow:run <plan>`". It asks the owner only what the spec
 and the names contract don't settle, writes each answer into the spec and
 commits it at once, and reads the agents' reports, never the drafts.
 
@@ -123,33 +122,15 @@ prints the last hand-back in a transcript, or says there is none:
 python3 -c 'import json,sys; m=[b["input"]["message"] for l in open(sys.argv[1]) for b in (json.loads(l).get("message") or {}).get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "SubagentHandback"]; print(m[-1] if m else "no hand-back: the agent had not finished")' <transcript>
 ```
 
-`/flow:supervise` also runs a plan written by hand, as every plan was before
-`/flow:draft`, once `loom flow check-plan` passes it.
-
-`/flow:supervise` then runs the plan. It checks the repo with
-`loom flow conf doctor` and the plan with `loom flow check-plan`; records `BASE_SHA`, the
-start time, the roster ID (from `loom flow conf roster`)
-and the profile; and dispatches one
-`flow:plan-execution-supervisor` without a name
-([why](#a-named-agent-is-a-teammate)). It answers the supervisor's questions
-from the spec, asking the owner and writing the answer into the spec when the
-spec doesn't settle one. It stages nothing and starts no other developer or
-`flow:verifier` while the run goes on
-([the git index is shared](#the-git-index-is-shared)). It ends by writing the
-run's record to `~/.loom/flow/records/` ([`records.md`](records.md) gives the format),
-with a copy in the repo when the profile asks for one. The record's header
-copies the plan's `**Design stage:**` line, when it has one, so `/flow:retro`
-reads the design stage and its run together. Facts only: the owner starts
-retros with `/flow:retro`.
-
-**The supervisor hands over every third story.** Its context grows with every
-report it reads, and each wake re-reads all of it. After every third story it
-completes, at the next wake with none of its agents running, it writes what
-only its context holds into the state file and hands back `REFRESH`. The
-manager dispatches a fresh supervisor, which resumes from the state file. The
-fresh start caches the state file, the spec and the story list again, and
-earns that back within a few wakes. A resumed agent reports to whoever
-dispatched it, so the successor dispatches its own.
+`/flow:run` also runs a plan written by hand, as every plan was before
+`/flow:draft`, once `loom flow check-plan` passes it. `loom flow run start`
+checks the repo with `loom flow conf doctor` and the plan with
+`loom flow check-plan`, and the engine ([the run engine](#the-run-engine-flowrun))
+writes the run's record to `~/.loom/flow/records/` ([`records.md`](records.md)
+gives the format), with a copy in the repo when the profile asks for one. The
+record's header copies the plan's `**Design stage:**` line, when it has one,
+so `/flow:retro` reads the design stage and its run together. Facts only: the
+owner starts retros with `/flow:retro`.
 
 ### The skeleton
 
@@ -338,19 +319,20 @@ registries: the places outside a story's own files that list or count what
 stories add, which the drafters and the seams check read. Repo rules stay in
 the repo's CLAUDE.md, which every subagent loads.
 
-No agent reads the profile. The supervisor runs
-`loom flow conf show --for supervisor` once and pastes each role's block into
+No agent reads the profile. `loom flow run start` runs
+`loom flow conf show --for supervisor` once (the role keeps the name of the
+controller that first read it), and the engine pastes each role's block into
 that role's briefs: a developer gets the prefix, the services (to start, as
 written, before the tests that need them) and, on a deep story, the landmine
-notes; the verifier gets the services and the vacuous patterns; and a
-reviewer gets the prefix (it runs its check-only commands, such as the
-formatter check, inside it), the notes and the idioms. Per story it hands the
-verifier the story's commits, and the verifier's
-`loom flow gates start --story <the story's commits>` expands `{packages}` to
-the Cargo packages the story changed and the packages that depend on them;
-after the last story the verifier runs `loom flow gates start --final`.
+notes; and a reviewer gets the prefix (it runs its check-only commands, such
+as the formatter check, inside it), the notes and the idioms. The engine runs
+the gates itself: per story `loom flow gates start --story <the story's
+commits>`, which expands `{packages}` to the Cargo packages the story changed
+and the packages that depend on them, and after the last story
+`loom flow gates start --final`. A controller that dispatches `flow:verifier`
+gives it the `[verifier]` block: the services and the vacuous patterns.
 `/flow:draft` runs `loom flow conf show --for drafter`
-once, which the supervisor's block leaves out, and pastes it into each
+once, which the `supervisor` block leaves out, and pastes it into each
 drafter's brief: the prefix, the story gates, the generated globs, the
 landmine markers and notes, the idioms and the design registries.
 
@@ -360,12 +342,12 @@ landmine markers and notes, the idioms and the design registries.
 |------------|-----------|
 | The plan gives the task's code in full and it lands in one or two files with no wiring between them; or a fully specified procedure | `flow:junior-dev` (Haiku @ xhigh) |
 | The plan gives the code, and fitting it into the codebase spans several files — the usual output of brainstorming then writing-plans | `flow:intermediate-dev` (Sonnet @ high) |
-| The last resort: a slice an `flow:intermediate-dev` failed twice, the second time with Opus's decision in its brief, or one the manager asks for | `flow:senior-dev` (Opus @ high) |
+| The last resort: a slice an `flow:intermediate-dev` failed twice, the second time with the manager's decision in its brief, or one the manager asks for | `flow:senior-dev` (Opus @ high) |
 
 **Opus writes code only as a last resort.** Sonnet writes every story that
 needs fitting, Haiku the fully specified small ones, and Opus designs and
 reviews. What a story leaves to judgment is decided before a developer writes
-it: in the plan, or by the supervisor or the manager when a developer reports
+it: in the plan, or by the manager when a developer reports
 `BLOCKED` or NEEDS_CONTEXT. A reviewer that isn't the writer's model doesn't
 share its blind spots. `flow:senior-dev` stays for the rare case Sonnet can't
 handle, so a plan shouldn't assign it: `loom flow check-plan` warns when one does.
@@ -373,8 +355,8 @@ handle, so a plan shouldn't assign it: `loom flow check-plan` warns when one doe
 All three preload [one skill](#the-developers-share-one-preloaded-skill): the
 plan's code is the spec, every deviation is listed, and a decision outside the
 developer's lane goes back as a question to whoever dispatched it. A junior's
-`BLOCKED` moves the slice to `flow:intermediate-dev`; an intermediate's goes back
-to Opus for a decision, then to a fresh `flow:intermediate-dev`, and only if that
+`BLOCKED` moves the slice to `flow:intermediate-dev`; an intermediate's goes to
+the manager for a decision, then to a fresh `flow:intermediate-dev`, and only if that
 fails as well to `flow:senior-dev`. Outside a plan, dispatch a developer with a
 complete brief; the brief takes the plan's place. The plan's code doubles as
 the reviewer's yardstick, which is why cheaper models are safe writing it.
@@ -388,10 +370,11 @@ carries the decided fixes, and `flow:story-reviewer` re-reviews it (the owner,
 DONE_WITH_CONCERNS, also bring in the combined `flow:code-quality-reviewer` pass
 (see [Review sequence](#review-sequence)). A seam
 between packages whose design the plan leaves open is no developer's call at
-any effort: settle it first. The Agent tool sets a per-call effort only when
-written instructions name a level, and the supervisor's step 1 under "Each
-story" is that instruction. Per-call `effort` needs Claude Code 2.1.292 or later, and
-`CLAUDE_CODE_EFFORT_LEVEL` overrides it.
+any effort: settle it first. The engine starts such a story's developer job
+with `--effort xhigh`. A session dispatching through the Agent tool sets a
+per-call effort only when written instructions name a level; per-call
+`effort` needs Claude Code 2.1.292 or later, and `CLAUDE_CODE_EFFORT_LEVEL`
+overrides it.
 
 ## Route to pinned agents, not built-ins
 
@@ -409,7 +392,6 @@ divert that spend:
 | One story that `loom flow check-plan` marks `review: vouched`, and every re-review under `supervised` | `flow:story-reviewer` |
 | Running the profile's gates (check-only, in the background) | `flow:verifier` |
 | Plan-task implementation | a developer: `flow:junior-dev` or `flow:intermediate-dev`; `flow:senior-dev` only as a last resort |
-| A whole plan, under the `supervised` option | `flow:plan-execution-supervisor` |
 | Review outside the `supervised` option | `flow:spec-reviewer`, then `flow:code-quality-reviewer` |
 | A story's docs, after its review and fix rounds | `flow:doc-writer` |
 | Design, planning, prod ops, anything judgment-maximal | stays in the main session |
@@ -456,7 +438,7 @@ Safe to reach for mid-design:
   mistake.
 - `flow:verifier` — executing gate commands doesn't depend on the conversation.
 
-**Do not dispatch a developer or the supervisor during a brainstorm.** The
+**Do not dispatch a developer during a brainstorm.** The
 developers assume a plan task and are told to commit (format, follow the
 commit convention, stage what they touched), and they share the controller's
 git index, so an exploratory "could this even work?" spike can land a commit
@@ -527,8 +509,7 @@ Consequences:
 When a subagent finishes, Claude Code delivers its final report to whoever
 dispatched it through a hand-back call the harness requires
 (`SubagentHandback`). Long reports arrive whole that way, so they come back
-inline, and `SendMessage` is for answers and for the supervisor's questions to
-the manager. A report sent with `SendMessage` as well arrives twice, in the
+inline, and `SendMessage` is for answers. A report sent with `SendMessage` as well arrives twice, in the
 dispatcher's context, the most expensive one.
 
 Questions travel the same way. A subagent that ends its turn without handing
@@ -536,8 +517,8 @@ back is told at once to hand back, and the call ends its run. So an agent
 never asks and waits. It stops and reports NEEDS_CONTEXT with the question,
 and the answer, sent with `SendMessage` to the id on its report, resumes it
 with its context; its next report goes to the same dispatcher. An agent with a
-child still running is not told to hand back, which is how the supervisor
-waits for its developers. A child's completion notice can still wake a
+child still running is not told to hand back, which is how a dispatcher
+waits for its own agents. A child's completion notice can still wake a
 dispatcher that has already handed back; it must then stop without reporting
 again.
 
@@ -546,8 +527,8 @@ again.
 Dispatched with a `name`, an agent joins the session as a teammate, not a
 subagent, and its own dispatches can't hand back to it: their reports fail
 with "the agent that spawned you is no longer running". Dispatched without a
-name, a supervisor's agents report back to it. So `/flow:supervise` dispatches
-the supervisor without a name and messages it by the agent id the launch
+name, an agent's own dispatches report back to it. So dispatch an agent that
+dispatches others without a name, and message it by the agent id the launch
 returns. A teammate can't name its own dispatches either.
 
 If a dispatch goes quiet, suspect the agent before the channel: check `ps`
@@ -579,14 +560,14 @@ and any word from `lib/banned-tokens.txt`. The `flow:drafter`, whose guard runs
 with `--drafter` and which never commits, needs no shared-index rules, but its
 guard must run on a `Bash|Write|Edit` matcher. Adding a genuinely new
 tool means verifying it with `ToolSearch select:` and then extending
-`VALID_TOOLS` in that script: a deliberate, reviewable act. Only
-`flow:plan-execution-supervisor` may list `Agent`, since a subagent that lists it
-can spawn subagents of its own, and a subagent definition ignores an
-`Agent(type)` list, so any agent holding `Agent` could spawn any type.
+`VALID_TOOLS` in that script: a deliberate, reviewable act. No agent may list
+`Agent`: a subagent that lists it can spawn subagents of its own, and a
+subagent definition ignores an `Agent(type)` list, so any agent holding
+`Agent` could spawn any type.
 
 ## Review sequence
 
-Under the `supervised` option the supervisor runs the reviews: one per story,
+Under the `supervised` option the run engine runs the reviews: one per story,
 then one whole-implementation anti-seam pass by `flow:code-quality-reviewer` after
 the last. `loom flow conformance` first maps the story's diff onto the plan:
 which blocks landed as written, which didn't, and which changed lines no block
@@ -707,13 +688,13 @@ story abandons.
 
 ## The run engine (`/flow:run`)
 
-`/flow:run <plan>` runs a plan drafted for `/flow:supervise` without the Opus
-supervisor. `loom flow run start` queues an engine, a Go process running as a
-`run` job, that takes the supervisor's mechanical steps itself:
+`/flow:run <plan>` runs a drafted plan, or one written by hand that
+`loom flow check-plan` passes. `loom flow run start` queues an engine, a Go
+process running as a `run` job, that takes every mechanical step itself:
 
 - it dispatches each developer, fixer, reviewer, doc writer and
-  premise-check as a headless agent job (`loom flow agent`), with the briefs
-  the supervisor wrote;
+  premise-check as a headless agent job (`loom flow agent`), with briefs it
+  writes from the plan and the profile's blocks;
 - it routes a story by its tier, its review column and the conformance
   markers;
 - it runs the profile's services and the gates itself, so no
@@ -795,8 +776,8 @@ not.
 
 `maxTurns` caps each developer: 120 for `flow:junior-dev`, 250 for
 `flow:intermediate-dev`, 400 for `flow:senior-dev`. These are first guesses. At the cap
-Claude Code hands back the work so far marked partial, and the supervisor
-resumes the agent, or moves a junior story to `flow:intermediate-dev`.
+the agent stops with `TURN_CAP`, and the engine resumes an intermediate once,
+or moves a junior story to `flow:intermediate-dev`.
 `flow/lib/check-agents.sh` fails a definition that edits files without a cap,
 or that `lib/guarded-agents.txt` doesn't list.
 
@@ -834,15 +815,15 @@ relaunches it.
 
 Claude Code gives a subagent's requests a five-minute prompt cache, even on a
 subscription; only the main conversation gets an hour by default. When an
-agent pauses longer than that — the supervisor waiting on a story, or
-`flow:verifier` sitting through a gate — its next request processes its whole
+agent pauses longer than that — `flow:verifier` sitting through a gate, or
+an agent waiting on the owner's answer — its next request processes its whole
 context again at the full input price. Every definition therefore chooses
 `experimental.cacheTtl`, and `flow/lib/check-agents.sh` fails one that sets
 nothing, so the choice stays explicit. The hour has a price: a one-hour cache
 write costs twice the base input rate, against 1.25 times for five minutes, so
 an agent that never pauses for five minutes pays more for nothing. `flow:glance`,
 `flow:recon`, `flow:premise-check`, `flow:story-reviewer`, `flow:code-quality-reviewer`,
-`flow:intermediate-dev`, `flow:spec-reviewer`, `flow:drafter` and `flow:doc-writer` set `5m`; the supervisor,
+`flow:intermediate-dev`, `flow:spec-reviewer`, `flow:drafter` and `flow:doc-writer` set `5m`;
 `flow:senior-dev`, `flow:verifier` and `flow:junior-dev` set `1h`. The cost of `5m` is a cold
 resume: an agent resumed after five minutes idle writes its whole context
 again, which a `flow:drafter` seldom pays, since every fix job goes to a fresh
@@ -872,7 +853,7 @@ running.
 Claude Code makes an agent hand back when its turn ends with none of its own
 agents running and no background command of its own ("[handback-send-enforce]
 Your report has not been delivered"), and an agent that has ended its turn to
-wait for a background command counts as not running. A supervisor whose only
+wait for a background command counts as not running. A dispatcher whose only
 agent out is a verifier waiting that way is made to hand back mid-run.
 
 So the verifier and the developers wait in bounded foreground calls: the
@@ -890,9 +871,7 @@ ceiling. The wait stays under three minutes because Claude Code 2.1.316 moves
 a background subagent's foreground Bash call to the background once it has
 run 180 seconds, a cap set on Anthropic's side: in the 2026-11-03 retro's runs
 it moved 717 waits of 540 seconds, and each moved wait left a process that
-later woke its agent with a notification. If a supervisor is made to hand back
-anyway, it names its agents still out in the state file and in its `REFRESH`
-report, and the manager forwards their late reports to the successor.
+later woke its agent with a notification.
 
 Every step is a job, never a process beside the queue: on 2026-11-05, 103 of
 one repo's 169 steps ran detached on cores and memory the queue counted as
