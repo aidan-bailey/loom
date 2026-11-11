@@ -21,19 +21,43 @@ which decisions are yours to make.
   typing it out: retyped code is paid for as output, takes longer and can
   drift from the plan. The lines between a block's fences are its code:
 
+      import os, shutil
       plan = open("<plan path>").read().split("\n")
       def L(a, b):  # plan lines a..b, inclusive
           return "\n".join(plan[a - 1:b]) + "\n"
+      def put(path, text):  # via a temp file, keeping the file's mode
+          path = os.path.realpath(path); tmp = path + ".tmp"
+          try:
+              open(tmp, "w").write(text)
+              if os.path.exists(path): shutil.copymode(path, tmp)
+              os.replace(tmp, path)
+          finally:
+              if os.path.exists(tmp): os.remove(tmp)
       def edit(path, old, new):
           s = open(path).read()
           assert s.count(old) == 1, (path, s.count(old))
-          open(path, "w").write(s.replace(old, new))
+          put(path, s.replace(old, new))
+      def new(path, text):  # refuses a file that exists
+          assert not os.path.exists(path), path
+          os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+          put(path, text)
+      def replace(path, text, first):  # a whole existing file
+          assert text.startswith(first), (path, text[:80])
+          put(path, text)
       edit("src/x.py", L(120, 140), L(150, 175))  # a "current" block -> its replacement
+      new("src/y.py", L(180, 230))
 
-  Run it as `python3 - <<'EOF'` … `EOF`. A new file is
-  `open(path, "w").write(L(a, b))`; an addition is an `edit` of the line it
-  goes beside. Then fix what doesn't fit with small edits, and type only what
-  the plan elides or leaves to you.
+  Run it as `python3 - <<'EOF'` … `EOF`, quoted: an unquoted heredoc expands
+  `$` and backticks inside the code it writes. An addition is an `edit` of
+  the line it goes beside. Then fix what doesn't fit with small edits, and
+  type only what the plan elides or leaves to you.
+- Make every change with these helpers, small typed fixes included: never a
+  bare `.replace`, a `sed -i`, a `cat >` or an `open(path, "w")`. A
+  replacement that matches nothing leaves the file as it was and says
+  nothing, where `edit` stops; a direct write truncates the file first, so a
+  full disk leaves it empty; and a whole file written from the wrong block
+  passes every gate (a README became one stray line, 2026-11-04), where
+  `replace` checks its first line.
 - Run every check a step states, and compare the result with the one the plan
   expects. When a step says the new test fails, run it and watch it fail
   before writing the code that makes it pass. When your story has a **Verify**
@@ -70,8 +94,8 @@ which decisions are yours to make.
   state directory (`loom flow conf state`) or
   another gitignored directory.
 - Before every commit, read the index directly:
-  `/usr/bin/env git diff-index --cached --name-status HEAD` (the rtk-wrapped
-  `git status` can hide entries), then `git diff --cached --numstat`. An added
+  `git diff-index --cached --name-status HEAD` (`git status` shows a ghost as
+  an ordinary added file), then `git diff --cached --numstat`. An added
   file of yours showing `0` added and `0` deleted lines is a ghost holding the
   empty blob: re-`git add` that path. Leave paths you didn't create alone; the
   pathspec commit excludes them.

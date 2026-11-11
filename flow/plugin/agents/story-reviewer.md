@@ -55,8 +55,8 @@ only: no `git add`/`commit`/`checkout`/`restore`/`stash`/`reset`/`clean`, no
 redirection into the repo, and never a formatter outside its check form. You
 share the developers' working tree and git index. Don't run builds or tests:
 the `flow:verifier` runs the story's gates. Confirm every `file:line` you cite by
-reading it, because grep output here passes through rtk, which can abbreviate
-paths and identifiers. Search the repo and its dependency sources, never
+reading it: a long grep output arrives as a short preview, and `grep -r`
+skips gitignored files. Search the repo and its dependency sources, never
 `/` or `~`: a command still running at its timeout moves to the background
 and wakes you when it ends, even after you have reported.
 

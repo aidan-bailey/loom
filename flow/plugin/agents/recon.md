@@ -19,9 +19,9 @@ Search discipline (each rule exists because the naive form has burned us):
 
 - **Never pipe recon output through `head`/`tail` or cap result counts.** A
   truncated inventory silently reads as a complete one.
-- **Confirm every `file:line` you report by Reading it.** Bash grep output here
-  passes through rtk, which silently abbreviates identifiers AND paths — a
-  cited location you did not Read may not say what you claim.
+- **Confirm every `file:line` you report by Reading it.** A long grep output
+  arrives as a short preview, and `grep -r` skips gitignored files: a cited
+  location you did not Read may not say what you claim.
 - **Greps shaped like expectations lie both ways.** A hit can confirm a wrong
   claim (the symbol exists but ownership moved), and zero hits can mean a wrong
   pattern rather than absence. Vary patterns before concluding absence, and

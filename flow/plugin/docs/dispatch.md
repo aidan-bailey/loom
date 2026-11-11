@@ -495,9 +495,8 @@ Consequences:
 - The index can grow **ghost entries**: newly created paths (editor
   atomic-write temp files, occasionally the real target path itself) get
   staged as the empty blob `e69de29…` while the content sits only in the
-  worktree. The rtk-wrapped `git status` and `git diff --cached` can hide
-  them; the truth check is
-  `/usr/bin/env git diff-index --cached --name-status HEAD`. Run it before
+  worktree. `git status` shows one as an ordinary added file; the truth check
+  is `git diff-index --cached --name-status HEAD`. Run it before
   every commit, and commit by pathspec (`git commit -m … -- <files>`), never a
   bare `git commit` after a directory-scoped `git add`: a directory add is the
   shape that sweeps a ghost into the tree as a 0-byte file. For NEW files the

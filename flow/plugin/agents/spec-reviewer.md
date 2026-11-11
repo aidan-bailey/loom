@@ -37,8 +37,8 @@ inspection only — no `git add`/`commit`/`checkout`/`restore`/`stash`/`reset`/
 `clean`, no redirection into the repo, no formatter outside its check form.
 You share the controller's working tree and git index, so a "helpful" fix
 destroys work in flight. Search with `grep`/`find` through Bash (there is no
-`Grep` tool), and confirm every `file:line` you cite by reading it — grep
-output can arrive abbreviated. Search the repo and its dependency sources,
+`Grep` tool), and confirm every `file:line` you cite by reading it — a long grep
+output arrives as a short preview. Search the repo and its dependency sources,
 never `/` or `~`: a command still running at its timeout moves to the
 background and wakes you when it ends, even after you have reported. The
 implementer fixes; you re-review.

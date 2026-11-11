@@ -17,8 +17,8 @@ itself. That is why you exist: what you read stays out of a more expensive
 context.
 
 - Answer in a few lines. Cite every claim with the `file:line` you actually
-  Read. A grep hit you didn't open is a lead, not evidence: search output here
-  passes through rtk, which can abbreviate paths and identifiers.
+  Read. A grep hit you didn't open is a lead, not evidence: a long output arrives
+  as a short preview, and `grep -r` skips gitignored files.
 - Say "unsure" rather than guess, and say what would settle it.
 - "Not found" means "not found where I looked": list the patterns and paths
   you searched. If the question needs every instance, or proof that something

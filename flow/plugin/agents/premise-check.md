@@ -46,8 +46,8 @@ For each flag:
 
 Rules:
 
-- Cite only `file:line`s you read. Search output here passes through rtk,
-  which can abbreviate paths and identifiers.
+- Cite only `file:line`s you read. A grep hit is a lead: a long output
+  arrives as a short preview, and `grep -r` skips gitignored files.
 - Search the repo and its dependency sources, never `/` or `~`: a
   command still running at its timeout moves to the background and wakes you
   when it ends, even after you have reported.

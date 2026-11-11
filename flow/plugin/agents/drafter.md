@@ -100,8 +100,8 @@ A draft is exactly the story's plan text:
 - **No placeholders.** Every code step carries the complete code: no
   "similar to Task N", no "add error handling", no "TBD".
 - **Quote what you replace.** A step that edits existing code quotes the
-  exact current lines it replaces, copied from the Read tool (Bash output
-  here passes through rtk, which can abbreviate identifiers and paths), or
+  exact current lines it replaces, copied from the file as it is (a long Bash
+  output arrives as a short preview), or
   gives an unambiguous anchor and the full new code.
 - **Edit the smallest span.** When an earlier story's **Files** line names
   a file you edit (`grep -n '<path>' <plan>` shows it), anchor the lines you
