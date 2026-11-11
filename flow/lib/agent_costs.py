@@ -28,7 +28,8 @@ comment carrying the same totals as JSON. SESSION is a session id, a session
 transcript (.jsonl) or its directory; without one, the newest session of the
 current worktree. `records` reads those comments from run records and totals
 them across runs, for a retro: without FILEs, every record in the home store
-($FLOW_DATA/records/<key>/*.md). Records from more than one repo directory get
+($FLOW_DATA/records/<key>/*.md). A FILE is a path, or a record's name in that
+store (<key>/<file>.md), and one beginning with '-' is still a file. Records from more than one repo directory get
 a table each, then a pooled one. A run that spanned several manager sessions
 carries one comment per session, and its sessions are summed into one run. `run` prices a loom flow
 run (flow in loom part 3b): its manager sessions as `main` and each headless agent run by its role,
@@ -704,7 +705,20 @@ def home_records() -> list[str]:
     return sorted(str(path) for path in root.glob("*/*.md") if path.parent.name != "retros")
 
 
+def record_path(arg: str) -> str:
+    """arg when it names a file from here, else the record of that name in $FLOW_DATA/records, which is how
+    the retro lists them (<key>/<file>.md)."""
+    if Path(arg).exists():
+        return arg
+    stored = flow_data() / "records" / arg
+    return str(stored) if stored.exists() else arg
+
+
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["records"] and "--" not in argv[1:] and not {"-h", "--help"} & set(argv[1:]):
+        # A record's key is a path with its slashes as dashes, so every name begins with '-', which argparse
+        # reads as an option; records takes none, so every argument is a file (feedback thread 21).
+        argv = ["records", "--", *argv[1:]]
     parser = argparse.ArgumentParser(description="Token usage and API-price cost of a session's agents.")
     sub = parser.add_subparsers(dest="command", required=True)
     session = sub.add_parser("session", help="price one session's agents")
@@ -746,7 +760,7 @@ def main(argv: list[str]) -> int:
             print(f"design {args.spec}: {len(data['sessions'])} sessions, ${data['total']['usd']:.2f} logged, "
                   f"${data['total']['usd_incl_est']:.2f} with estimated thinking")
         return 0
-    text, code = records_report(args.files or home_records())
+    text, code = records_report([record_path(arg) for arg in args.files] or home_records())
     print(text, file=sys.stderr if code else sys.stdout)
     return code
 

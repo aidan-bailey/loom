@@ -639,6 +639,25 @@ class PricesAndHomeStoreTest(unittest.TestCase):
         self.assertIn("Across 1 run\n", result.stdout)
         self.assertNotIn("retro", result.stderr)
 
+    def test_records_named_from_the_records_dir_are_files_not_options(self):
+        # The retro lists records as <key>/<file>.md, and every key starts with '-' (feedback thread 21).
+        self.write_record("-repo-a", "2026-10-16-one", 1.0)
+        self.write_record("-repo-a", "2026-10-16-two", 2.0)
+        names = ["-repo-a/2026-10-16-one.md", "-repo-a/2026-10-16-two.md"]
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        for cwd in (self.root / "records", elsewhere):
+            with self.subTest(cwd=cwd.name):
+                result = subprocess.run([sys.executable, str(SCRIPT), "records", *names], capture_output=True,
+                                        text=True, cwd=cwd, env={**os.environ, "FLOW_DATA": str(self.root)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Across 2 runs\n", result.stdout)
+
+    def test_records_still_answers_help(self):
+        code, out, _ = run("records", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("usage:", out)
+
 
 if __name__ == "__main__":
     unittest.main()
