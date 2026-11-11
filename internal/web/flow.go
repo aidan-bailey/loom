@@ -98,6 +98,9 @@ type flowStepJSON struct {
 	Started    string         `json:"started"`
 	Ended      string         `json:"ended"`
 	Unreadable string         `json:"unreadable"`
+	// Waiting is why the step's latest job waits to start ("" once it
+	// runs): an account's usage limit, an agent slot.
+	Waiting string `json:"waiting"`
 }
 
 // flowStoryJSON is a row of the board: a story, or the premise (P) or final
@@ -234,8 +237,12 @@ func storyOf(s flowview.StoryView, times map[sched.JobID]core.JobTimes) flowStor
 				ended = t.Ended
 			}
 		}
-		if len(st.Jobs) > 0 && times[st.Jobs[len(st.Jobs)-1]].Ended.IsZero() {
-			ended = time.Time{} // its latest job runs
+		if len(st.Jobs) > 0 {
+			latest := times[st.Jobs[len(st.Jobs)-1]]
+			if latest.Ended.IsZero() {
+				ended = time.Time{} // its latest job runs
+			}
+			step.Waiting = latest.Waiting
 		}
 		step.Started, step.Ended = stamp(started), stamp(ended)
 		out.Steps = append(out.Steps, step)

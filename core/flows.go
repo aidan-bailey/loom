@@ -241,7 +241,7 @@ func (m *Model) engineLost(s flowview.Summary) bool {
 }
 
 // flowJobFacts is what ReadFlow's job takes of the queue: each of the
-// session's jobs' times, and each running agent job's log.
+// session's jobs' times and wait, and each running agent job's log.
 func (m *Model) flowJobFacts(id InstanceID) (map[sched.JobID]JobTimes, map[sched.JobID]string) {
 	times, logs := map[sched.JobID]JobTimes{}, map[sched.JobID]string{}
 	q := m.queue
@@ -252,7 +252,7 @@ func (m *Model) flowJobFacts(id InstanceID) (map[sched.JobID]JobTimes, map[sched
 		if InstanceID(rec.Owner) != id {
 			continue
 		}
-		times[rec.ID] = JobTimes{Started: rec.Started, Ended: rec.Ended}
+		times[rec.ID] = JobTimes{Started: rec.Started, Ended: rec.Ended, Waiting: q.waitingOf(rec)}
 		if rec.Kind == sched.KindAgent && rec.State == sched.Running {
 			logs[rec.ID] = filepath.Join(q.jobDir(rec.ID), sched.LogFile)
 		}

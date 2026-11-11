@@ -359,6 +359,7 @@ export function FlowStory({ snap, route }) {
               ? html`<a class="sc-tl-head" href=${flowHref(s.id, plan, "doc/" + encodeURIComponent("report:" + st.name))}>${head}</a>`
               : html`<div class="sc-tl-head">${head}</div>`}
             ${st.unreadable ? html`<div class="sc-err-text sc-small">${st.unreadable}</div>` : null}
+            ${st.waiting ? html`<div class="sc-dim sc-small">${st.waiting}</div>` : null}
             ${(st.gates || []).map(
               (g, i) => html`<a key=${i} class="sc-tl-gate" href=${g.job ? "#s/" + s.id + "/job/" + g.job : undefined}>
                 <span class=${"sc-verdict" + (g.verdict && g.verdict !== "PASS" ? " sc-err-text" : g.verdict ? " sc-ok-text" : " sc-dim")}>${g.verdict || "…"}</span> ${g.text}

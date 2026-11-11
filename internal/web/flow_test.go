@@ -76,12 +76,14 @@ func TestFlowOf_TheBoardAsJSON(t *testing.T) {
 				Steps: []flowview.StepView{
 					{Name: "r-s1-dev1", Kind: "dev", K: 1, Role: "intermediate-dev", Status: "DONE", Jobs: []sched.JobID{3}, Report: true},
 					{Name: "r-s1-gates1", Kind: "gates", K: 1, Status: "running", Jobs: []sched.JobID{4}, Gates: []flowview.GateLine{{Text: "go test ./...", Job: 4}}},
+					{Name: "r-s1-review1", Kind: "review", K: 1, Role: "code-quality-reviewer", Status: "running", Jobs: []sched.JobID{5}},
 				}}},
 			Question: &flowrun.Question{Key: "blocked:r-s2-dev1", Kind: flowrun.KindBlocked, Story: "2", Text: "BLOCKED"},
 			Kept:     []flowrun.Finding{{Severity: "Minor", File: "a.go", Line: 3, Fix: "tidy it"}},
 		},
 		Costs: flowview.Costs{Spent: spent, ByStory: map[string]float64{"1": 1.41}, Projection: &projected},
-		Times: map[sched.JobID]core.JobTimes{3: {Started: t0, Ended: t0.Add(14 * time.Minute)}, 4: {Started: t0.Add(15 * time.Minute)}},
+		Times: map[sched.JobID]core.JobTimes{3: {Started: t0, Ended: t0.Add(14 * time.Minute)}, 4: {Started: t0.Add(15 * time.Minute)},
+			5: {Waiting: "waits for the account's usage limit (5-hour, resets 16:30)"}},
 	}
 	raw, err := json.Marshal(flowOf(view, false))
 	require.NoError(t, err)
@@ -100,6 +102,9 @@ func TestFlowOf_TheBoardAsJSON(t *testing.T) {
 	gate := steps[1].(map[string]any)
 	assert.Equal(t, "", gate["ended"], "a step whose latest job runs has no end")
 	assert.Equal(t, []any{map[string]any{"text": "go test ./...", "verdict": "", "job": float64(4)}}, gate["gates"])
+	assert.Equal(t, "", gate["waiting"], "a step whose job runs waits for nothing")
+	review := steps[2].(map[string]any)
+	assert.Equal(t, "waits for the account's usage limit (5-hour, resets 16:30)", review["waiting"], "a waiting step says why")
 	assert.Equal(t, []any{"Minor a.go:3 tidy it"}, got["kept"])
 	assert.Equal(t, "blocked:r-s2-dev1", got["question"].(map[string]any)["key"])
 	costs := got["costs"].(map[string]any)
