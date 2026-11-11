@@ -80,10 +80,10 @@ to it, and that resumes it.
 2. **Draft.** One `flow:drafter` per one or two stories, all in one parallel
    batch. Give each the plan's path, the spec's path, D, its story ids and
    their files `D/S<id>.md`, and the drafter's profile block. Dispatch with
-   `effort: xhigh` a drafter whose story's entry names a landmine shape (one
-   of the block's landmine markers, or a shape its notes describe); this
-   sentence is the instruction the Agent tool needs to set a per-call effort.
-   Every other drafter runs at its pinned high.
+   `effort: xhigh` a drafter whose story's entry names one of the block's
+   landmine markers; this sentence is the instruction the Agent tool needs
+   to set a per-call effort. Every other drafter runs at its pinned high, a
+   story whose shape only the block's notes describe included.
    - A drafter that finds a gap in the contract stops and reports
      NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
      `## Stories`), then answer it with SendMessage to the id on its report.

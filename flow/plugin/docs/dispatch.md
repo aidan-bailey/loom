@@ -210,9 +210,11 @@ text.
 parallel batch and without a name. Drafters are fresh agents, never forks: a
 fork re-reads its parent's whole context on every request, while a fresh agent
 starts small. A drafter runs on Sonnet at high, and `/flow:draft` dispatches
-it with `effort: xhigh` for a story whose entry names a landmine shape, one of
-the profile's `landmines.markers` or a shape its notes describe; a fix job
-runs at high whatever the shape. The Agent
+it with `effort: xhigh` for a story whose entry names one of the profile's
+`landmines.markers`, as a developer is; a shape only its notes describe, and a
+fix job, run at high. Notes sent drafters to xhigh until the 2026-11-11 retro:
+those stories cost three times as much to draft and drew more review findings
+than their stage mates. The Agent
 tool sets a per-call effort only when written instructions name a level, and
 the skill is that instruction for drafters.
 
