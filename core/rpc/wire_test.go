@@ -103,11 +103,12 @@ func TestProtocolReference(t *testing.T) {
 	p("which breaks a tie nothing else decides when both name their commit, unless it is at or before\n")
 	p("1970-01-01T00:00:01Z, where a Nix store dates every file; one nothing tells apart is the same build).\n")
 	p("A server's also names the tmux server its sessions run on (`tmux`, its socket's path),\n")
-	p("which its clients use too.\n")
+	p("which its clients use too, and its executable's absolute path (`exe_path`), which a long-running\n")
+	p("command of an older build re-executes to carry on under it once the file there hashes to `exe`.\n")
 	p("Every field after `build` is optional:\n")
 	p("`%s`\n\n", compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "v0.13.1 ad199a3…", Version: "0.13.0",
 		Time: "2026-10-08T17:54:55Z", Exe: "e3b0c442…", ExeTime: "2026-10-08T18:02:11.52Z",
-		Tmux: "/run/user/1000/tmux-1000/default"}}))
+		ExePath: "/usr/local/bin/loom", Tmux: "/run/user/1000/tmux-1000/default"}}))
 
 	p("A client's hello may name its role (`role`): `%s` is the daemon's own web layer, `%s` a loom\n", RoleWeb, RoleCLI)
 	p("subcommand. A client that names none (a TUI), or a role this build does not know, is an ordinary client:\n")

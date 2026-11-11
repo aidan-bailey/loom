@@ -4,14 +4,22 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrDaemonNewer is matched by a join's error when the daemon is a newer
+// build than this loom (CompareBuilds: ServerNewer), which only a newer loom
+// can join: the TUI exits on it, and a flow command stops rejoining. It
+// lives here, below both app and internal/cli, so each can match it.
+var ErrDaemonNewer = errors.New("the loom daemon is newer than this loom")
 
 // Build names this binary: its module version, VCS revision and whether
 // the tree was modified. A daemon records it in its lock.
@@ -155,6 +163,17 @@ func exeIdentity() (hash, modTime string) {
 		return "", ""
 	}
 	return hex.EncodeToString(sum.Sum(nil)), info.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+// exePath is the running executable's absolute path (os.Executable), ""
+// when it can't be told. The file there may since have been replaced: a
+// client re-executing it checks its hash against Exe first.
+func exePath() string {
+	path, err := os.Executable()
+	if err != nil || !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
 }
 
 // Order is how a client's build compares with a server's (CompareBuilds).

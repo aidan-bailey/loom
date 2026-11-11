@@ -24,7 +24,7 @@
 - **Write sweeps as bash scripts in the scratchpad**, run with `bash`. zsh doesn't word-split an unquoted `$var`, so `for f in $files` loops once, and `$rev:app/…` triggers zsh's `:a` modifier (write `${rev}:path`).
 - **A hook compresses git and grep output** in this environment (`rtk`): a diff can look empty or a match list short. Prefix raw commands with `rtk proxy` (`rtk proxy git show …`, `rtk proxy grep …`).
 - **Batch large outputs:** write them to a file in the scratchpad and read slices, rather than printing thousands of lines into the session.
-- **Keep the scratchpad outside the worktree**: loom intent-to-adds every file there ([`testing-pitfalls.md`](testing-pitfalls.md)).
+- **Keep the scratchpad outside the worktree**: the session's diff shows every file there, and a broad add commits it ([`testing-pitfalls.md`](testing-pitfalls.md)).
 - **The symbol report skips short and spaced tokens** (under four characters, or holding whitespace or most punctuation), and a test family written with ASCII dots (`TestX_...`) is never checked; `tools/CLAUDE.md` lists the lint's blind spots.
 
 ## When

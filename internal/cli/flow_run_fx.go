@@ -48,7 +48,7 @@ func (fx *runFX) logf(format string, args ...any) {
 // (rejoin). fn must be safe to run again: each effect reads its record
 // before acting.
 func (fx *runFX) daemon(fn func(d *client) error) error {
-	return rejoin(fx.c, time.Time{}, rejoinFor, func(line string) { fx.logf("%s", line) }, fn)
+	return rejoin(fx.c, time.Time{}, rejoinFor, reexecOnUpgrade, func(line string) { fx.logf("%s", line) }, fn)
 }
 
 func (fx *runFX) AgentStarted(name string) (bool, error) {

@@ -13,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -414,4 +415,100 @@ func TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice(t *testing.T) {
 	assert.Len(t, d.jobs(), 2, "no gate was queued twice")
 	run := readTestRun(t, conf, "final")
 	assert.Equal(t, *queued, d.job(run.Steps[1].Job()).After)
+}
+
+// refuseAsNewer makes every join fail as daemon_client.go's
+// newerDaemonError does (it matches rpc.ErrDaemonNewer), counting the
+// joins, with rejoin's backoff cut to milliseconds and its outage bound to
+// seconds, so a rejoin that keeps trying fails rather than hangs.
+func refuseAsNewer(t *testing.T) *int {
+	t.Helper()
+	joins := 0
+	old, first, most, bound := Join, rejoinFirst, rejoinMax, rejoinFor
+	Join = func() (*rpc.Client, error) {
+		joins++
+		return nil, fmt.Errorf("the loom daemon is v2, newer than this loom (v1): upgrade loom: %w", rpc.ErrDaemonNewer)
+	}
+	rejoinFirst, rejoinMax, rejoinFor = 10*time.Millisecond, 40*time.Millisecond, 2*time.Second
+	t.Cleanup(func() { Join, rejoinFirst, rejoinMax, rejoinFor = old, first, most, bound })
+	return &joins
+}
+
+// TestRejoin_ANewerDaemonIsPermanent pins thread 16: a join refused because
+// the daemon is newer can never succeed for this build, so rejoin returns
+// at once rather than trying for its outage bound.
+func TestRejoin_ANewerDaemonIsPermanent(t *testing.T) {
+	joins := refuseAsNewer(t)
+	var said []string
+	start := time.Now()
+
+	err := rejoin(&cobra.Command{}, time.Time{}, time.Minute, failOnUpgrade, func(s string) { said = append(said, s) }, func(*client) error { return nil })
+
+	assert.Less(t, time.Since(start), 5*time.Second, "it returned at once")
+	assert.Equal(t, 1, *joins, "it joined once")
+	assert.Empty(t, said, "and never said it would join again")
+	var up *daemonUpgradedError
+	require.ErrorAs(t, err, &up)
+	assert.ErrorIs(t, err, rpc.ErrDaemonNewer)
+	assert.ErrorContains(t, err, "the loom daemon was upgraded")
+	assert.ErrorContains(t, err, "newer than this loom (v1)")
+}
+
+// TestRejoin_AnOrdinaryLossStillRejoins is the other side: a daemon that
+// can't be reached is joined again until the outage bound.
+func TestRejoin_AnOrdinaryLossStillRejoins(t *testing.T) {
+	joins := 0
+	old, first, most := Join, rejoinFirst, rejoinMax
+	Join = func() (*rpc.Client, error) { joins++; return nil, errors.New("dial: no loom daemon listens") }
+	rejoinFirst, rejoinMax = 10*time.Millisecond, 40*time.Millisecond
+	t.Cleanup(func() { Join, rejoinFirst, rejoinMax = old, first, most })
+
+	err := rejoin(&cobra.Command{}, time.Time{}, 200*time.Millisecond, reexecOnUpgrade, func(string) {}, func(*client) error { return nil })
+
+	var away *outOfReachError
+	require.ErrorAs(t, err, &away)
+	assert.Greater(t, joins, 1, "it joined again")
+}
+
+func TestFlowRunWait_ANewerDaemonSaysResumeWithTheNewLoom(t *testing.T) {
+	d, _, _ := runFixture(t, runStory("1", "intermediate-dev"))
+	engineArgv = func(string) ([]string, error) { return []string{"sh", "-c", "echo up; sleep 30"}, nil }
+	_, _, err := runRun(t, "", "start", "docs/plan.md")
+	require.NoError(t, err)
+	d.waitLog(t, 1, "up")
+	refuseAsNewer(t)
+
+	out, _, err := runRun(t, "", "wait", "plan")
+
+	assert.Equal(t, exitNotRun, flowExit(err), out)
+	assert.ErrorContains(t, err, "the loom daemon was upgraded")
+	assert.ErrorContains(t, err, "with the new loom: loom flow run resume plan")
+}
+
+func TestFlowRunEngine_ANewerDaemonSaysResumeWithTheNewLoom(t *testing.T) {
+	runFixture(t, runStory("1", "intermediate-dev"))
+	_, _, err := runRun(t, "", "start", "docs/plan.md")
+	require.NoError(t, err)
+	refuseAsNewer(t)
+
+	out, _, err := runRun(t, "", "engine", "plan")
+
+	assert.Equal(t, exitNotRun, flowExit(err), out)
+	assert.ErrorContains(t, err, "the loom daemon was upgraded")
+	assert.ErrorContains(t, err, "with the new loom: loom flow run resume plan")
+}
+
+func TestFlowGatesWait_ANewerDaemonCantBeFollowed(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	conf.gates = []string{"RUN echo up; sleep 30"}
+	_, _, err := runFlow(t, "gates", "start", "--story", "abc")
+	require.NoError(t, err)
+	d.waitLog(t, 1, "up")
+	refuseAsNewer(t)
+
+	out, _, err := runFlow(t, "gates", "wait", "60")
+
+	assert.Equal(t, exitNotRun, flowExit(err), "125, not 1, which says a gate failed: %s", out)
+	assert.ErrorContains(t, err, "the loom daemon was upgraded")
+	assert.ErrorContains(t, err, "with the new loom: loom flow gates wait story-abc")
 }

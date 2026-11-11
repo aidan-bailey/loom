@@ -27,7 +27,7 @@ const scriptShutdownTimeout = 1500 * time.Millisecond
 // running is a newer build than this loom (a newer loom replaced it): the
 // TUI exits, and Run returns that error, for main to say so once the
 // terminal is restored.
-var ErrDaemonNewer = errors.New("the loom daemon is newer than this loom")
+var ErrDaemonNewer = rpc.ErrDaemonNewer
 
 // ErrDaemonDidNotStart is matched by a rejoin's error when the daemon it
 // started exited before it served: after maxSpawnFails of them in a row

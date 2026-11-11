@@ -40,7 +40,8 @@ Run them like this:
   when any failed, and 125 when it can't follow the run: report that as FAIL
   (infra) with its message. A daemon restart mid-call is not a failure: the
   call joins again (a `loom: lost the loom daemon` line on stderr), and exits
-  75 if the daemon is still away when it ends, so run it again as above.
+  75 if the daemon is still away when it ends, so run it again as above;
+  a daemon replaced by a newer loom is the 125 above, at once.
   Never use `run_in_background` and never end your
   turn to wait: Claude Code counts an agent waiting that way as not running,
   and a supervisor whose agents are all not running is made to hand back

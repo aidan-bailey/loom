@@ -184,12 +184,15 @@ func newFlowAgentWaitCmd() *cobra.Command {
 			if name, err = latestAgent(dir, name); err != nil {
 				return err
 			}
-			deadline := time.Now().Add(bound)
-			err = rejoin(c, deadline, 0, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
+			deadline := waitDeadline(bound)
+			err = rejoin(c, deadline, 0, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitAgent(c.OutOrStdout(), dir, name, deadline) })
 			var away *outOfReachError
 			if errors.As(err, &away) {
 				fmt.Fprintf(c.OutOrStdout(), "running %s: its job goes on, but %v (loom flow agent wait %s follows it again)\n", name, away, name)
 				return &ExitError{Code: exitStillRunning}
+			}
+			if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+				return up.exit("loom flow agent", "loom flow agent wait "+name)
 			}
 			return err
 		},

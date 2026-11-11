@@ -421,6 +421,9 @@ func newFlowRunEngineCmd() *cobra.Command {
 			fx.logf("engine for %s", id)
 			if err := flowrun.Run(st, fx); err != nil {
 				fx.logf("the engine stopped: %v", err)
+				if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+					return up.exit("loom flow run: the engine stopped", "loom flow run resume "+id)
+				}
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow run: the engine stopped: %v (loom flow run resume %s carries on)", err, id)}
 			}
 			if flowrun.Ended(st.Status) {
@@ -540,10 +543,14 @@ func newFlowRunWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = rejoin(c, time.Time{}, rejoinFor, sayOnStderr(c), func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
+			err = rejoin(c, time.Time{}, rejoinFor, reexecOnUpgrade, sayOnStderr(c), func(d *client) error { return d.waitFlowRun(c.OutOrStdout(), dirs.runs, id) })
 			var away *outOfReachError
-			if errors.As(err, &away) {
+			var up *daemonUpgradedError
+			switch {
+			case errors.As(err, &away):
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow run: the run goes on, but %v (loom flow run wait %s follows it again)", away, id)}
+			case errors.As(err, &up):
+				return up.exit("loom flow run", "loom flow run resume "+id)
 			}
 			return err
 		},
