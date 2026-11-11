@@ -81,13 +81,16 @@ skeleton, and the owner clears twice: once before `/flow:draft`, once before
 2. Writes the plan skeleton ([the skeleton](#the-skeleton)): the header, the
    file structure, the names contract and the story list, and none of the
    stories' code. A plan is drafted from its spec, never generated from a
-   prototype of the code.
+   prototype of the code. It runs `loom flow check-plan --skeleton <plan>`
+   until it passes: the names contract's rules and the story list
+   ([the skeleton](#the-skeleton)).
 3. Commits the spec and the skeleton by pathspec and hands over: the owner
    types `/clear`, then `/flow:draft <plan>`. The design session doesn't
    draft, check or review.
 
 `/flow:draft` runs the rest of the design stage from a fresh session. It
-dispatches the `flow:drafter`s ([drafting the stories](#drafting-the-stories)),
+checks the skeleton, settles the names contract with the `flow:drafter`s in a
+question round and has them draft ([drafting the stories](#drafting-the-stories)),
 joins and checks the drafts, has one `flow:recon` check the seams between the
 stories ([the seams check](#the-seams-check)), has fresh drafters fix what the
 checks found ([fixing the plan](#fixing-the-plan)), writes the
@@ -97,7 +100,7 @@ and the names contract don't settle, writes each answer into the spec and
 commits it at once, and reads the agents' reports, never the drafts.
 
 `STATE.md`, in the plan's drafts directory, is its memory: a **Phase** line
-(drafting, checking, seams, fixing or committed) saying what is done and what
+(questions, drafting, checking, seams, fixing or committed) saying what is done and what
 comes next; a line with the start time, `REV` and the session ids; the **Design
 stage** slot, filled when the line is written; one row per story (tier, effort,
 drafter, deviations settled, findings, fixer); the findings files; the open
@@ -111,7 +114,9 @@ report back through a `SubagentHandback` call, and the call's input stays in
 `~/.claude/projects/<project>/<old session id>/subagents/agent-<id>.jsonl`
 (`ls -d ~/.claude/projects/*/<old session id>` finds the project), so the
 resume reads it there instead of paying for the job again; only an agent with
-no hand-back is dispatched again. A drafter on a drafting job is dispatched
+no hand-back is dispatched again. A drafter of the question round has reported
+when its questions file exists, and only one without a file is dispatched
+again; drafting that starts after a `/clear` dispatches its drafters fresh. A drafter on a drafting job is dispatched
 again, fresh, to finish its draft; one on a fix job
 gets its fix-job brief again, with the findings and "some of these may already
 be fixed; fix what remains". A `flow:recon` or
@@ -145,15 +150,36 @@ and none of the stories' code. It holds, in order:
   another, such as functions and their signatures, types and their fields,
   file paths, CLI flags, configuration keys and the messages tests match.
   The design session writes it, and after that only `/flow:draft`'s manager
-  edits it;
+  edits it. It sits under the exact heading `## Names contract`, above
+  `## Stories`;
 - the story list, under the exact heading `## Stories`;
 - the marker line, which ends it:
   `<!-- plan_join: the stories below are generated from the drafts; edit the drafts, then re-join -->`
 
+The contract's rules are what lets every drafter write against it at once:
+
+1. **Every shared name is written in full.** A function or method gives
+   every parameter's name and type and its return type. A type lists its
+   fields with their types, inline (`{ a: T, b: U }`, or a tuple's
+   `(T, U)`) or in bullets nested under it, or says `(opaque)` when no other
+   story reads its fields. No `..`, `...` or `…` stands for parameters or
+   fields.
+2. **Every line that defines a name names its owning story:** `Story <id>`
+   on the line, on a bullet it is nested under, or on the unindented line
+   that introduces its list (`**crate-a** (Story 1)`).
+3. **A line may hand its exact form on:** `(Story N proposes)` waives rule 1
+   on that line, and the question round asks Story N's drafter for the form.
+
+`loom flow check-plan --skeleton <plan>` checks them, with the head (the
+`**Spec:**` line, the headings, the marker) and each entry's lines, and prints
+one FAIL line a problem. Its rules are heuristics over backticked spans: a
+contract written as an expression draws a false flag, and the cure is to type
+it.
+
 Each list entry gives the story's id, a paragraph and its five opening lines
-(**Developer**, **Files**, **Interfaces**, **Verify**, **Review**), which its
-drafter copies into the story verbatim, then a **Reading** line, which it
-doesn't copy: the spec sections the story needs, by § number or heading,
+(**Developer**, **Files**, **Interfaces**, **Verify**, **Review**), which the
+join writes into the story (a draft holds none of them), then a **Reading**
+line, which only the drafter reads: the spec sections the story needs, by § number or heading,
 never by line number (the spec's lines move while `/flow:draft` writes answers
 into it), and the file and recon line ranges it needs. The drafter reads the
 skeleton above `## Stories`, its entry and what that line names, and reads
@@ -206,13 +232,24 @@ block (`loom flow conf show --for drafter`: the prefix, the story gates, the
 generated globs, the landmine markers and notes, the idioms and the design
 registries). It writes each task's commands from those values and never runs
 them, checks its own quotes of the tree with `loom flow premises`, and reports
-in at most 15 lines. A drafter that needs a name another story shares, which
-the contract doesn't give, stops and reports NEEDS_CONTEXT, and never invents
-one: the manager amends the contract and answers, and the answer resumes that
-drafter. Once the drafters whose stories use an amended name have reported, a
-fresh drafter per affected story fixes its draft. The manager never sends a
-running drafter new work by message: a parent's message arrives framed as
-another agent's request.
+in at most 15 lines.
+
+The batch drafts in two phases. In the question round, each drafter reads what
+its entries need and writes only `D/questions/S<first id>.md`: the names its
+stories use from others and those they define for others that the contract
+doesn't give exactly (each with its proposed form, a clash with the tree's
+names included), its `(Story N proposes)` lines with their forms, and the
+entry lines that can't hold. The manager waits for every drafter, settles
+everything in one pass (contract, entries, the owner's answers in the spec),
+runs the skeleton check, then resumes every drafter with the lines that
+changed. Every drafter waits, one that asked nothing included: a name it
+defines may change in the settlement. A gap that shows only while drafting
+takes the old path: the drafter stops and reports NEEDS_CONTEXT, the manager
+amends the contract and answers, and once the drafters whose stories use an
+amended name have reported, a fresh drafter per affected story fixes its
+draft. An amended entry costs nothing: the join writes it. The manager never
+sends a running drafter new work by message: a parent's message arrives framed
+as another agent's request.
 
 D is `<drafts>/<plan stem>/` under the worktree's top level, where `<drafts>`
 is the profile's `paths.drafts`, `.flow/drafts` by default: inside the
@@ -229,14 +266,18 @@ directory the repo already ignores.
 The drafts are the plan's source until the commit. Every change, a fix
 included, is made in a draft, and
 `loom flow join <plan>` regenerates everything
-after the skeleton's marker line from the drafts, in story-list order, and
-writes `D/join.json`: each story's first plan line and length. Joining twice
+after the skeleton's marker line, in story-list order: each story is its
+draft's heading, its entry's opening lines, and the rest of its draft (a block
+of opening lines a draft copied is dropped, with a note). It writes
+`D/join.json`: each story's `start`, `lines`, and `entry`, the plan lines of
+its opening lines. Joining twice
 gives the same file. The join reads the story list only from above the marker,
 doesn't take `STATE.md` for a draft, and fails on a missing or unlisted draft
 and on a draft that holds the marker line outside a fence (a draft quotes it
 inside one). Nothing edits a joined story in the plan file. The checks cite
 plan lines and a fixer works in its draft, so `/flow:draft` converts: draft
-line = plan line − the story's `start` in `join.json` + 1.
+line = plan line − the story's `start` in `join.json` + 1. A finding inside a
+story's `entry` lines is the entry's, which the manager amends.
 
 ### The seams check
 
@@ -281,7 +322,9 @@ which `flow:premise-check` settled, or review code. Its report goes to
    its story's findings, as the path of its findings file (the recon's seam
    findings go to the stories they name), the story's `start` from
    `D/join.json`, the contract, the spec and the drafter's profile block. A
-   finding that states its fix goes to the drafter as it stands. A fix job
+   finding that states its fix goes to the drafter as it stands. A finding on
+   a story's opening lines goes to its entry, which the manager amends; no
+   fixer copies it. A fix job
    runs at the drafter's pinned high, whatever the story's shape: its fixes
    are decided before it starts, and the run's full review checks the story
    again (the owner, 2026-10-31; claude-flow's archived `PROVENANCE.md` has the evidence). A

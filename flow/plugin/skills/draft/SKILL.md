@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters write the stories, it joins and checks them, one recon checks the seams, fresh drafters fix what the checks find, and it commits the plan for /flow:run.
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories; it joins and checks them, one recon checks the seams, fresh drafters fix what the checks find, and it commits the plan for /flow:run.
 argument-hint: <plan path>
 disable-model-invocation: true
 ---
@@ -11,7 +11,7 @@ the names contract, the `## Stories` list and the marker line, and no
 `## Story` heading. You are the manager: you decide, and agents write and
 read. Start from a fresh session (`/clear` first): every turn you take re-reads
 this conversation, so keep each turn short, and work from the agents' reports,
-never from the drafts. You write only the names contract, the plan's header,
+never from the drafts. You write only the names contract, the story entries, the plan's header,
 `STATE.md`, the per-story findings files and the spec's answers, and never a
 story's code. Ask the owner only what the spec and the contract don't settle,
 and write each answer into the spec, committed by pathspec as soon as it is
@@ -31,8 +31,9 @@ drafter's pinned high, whatever the story's shape: its fixes are decided
 before it starts, and the run's full review checks the story again. Steps 2,
 3 and 5 name only the findings. Never
 send a running drafter new work by message: it arrives framed as another
-agent's request. Only your answer to a drafter's own NEEDS_CONTEXT report goes
-to it, and that resumes it.
+agent's request. Only your answer to a drafter's own NEEDS_CONTEXT report, and
+step 2's message that ends the question round, go to a drafter, and each
+resumes it.
 
 1. **Start or resume.**
    - If `.claude/agents/plan-execution-supervisor.md` exists at the top level
@@ -42,6 +43,9 @@ to it, and that resumes it.
      the plan belongs to another worktree or repo.
    - Run `loom flow conf doctor`. On any FAIL, show the FAIL lines
      and stop.
+   - Run `loom flow check-plan --skeleton $ARGUMENTS`. On any FAIL, show the
+     FAIL lines and stop: the owner fixes the skeleton in a design session,
+     or marks the line `(Story N proposes)`.
    - Make D: `loom flow conf drafts <plan file stem>` makes it,
      keeps it out of git and prints its path.
    - Check the tree is clean (`/usr/bin/env git status --short`). A resumed
@@ -56,7 +60,12 @@ to it, and that resumes it.
      `~/.claude/projects/<project>/<old session id>/subagents/agent-<id>.jsonl`.
      Read it there, with the command in `${CLAUDE_SKILL_DIR}/../../docs/dispatch.md`'s
      resume rules, and dispatch again only an agent that has no hand-back.
-     Go by the job its **In flight** line names. A drafter on a drafting job
+     Go by the job its **In flight** line names. A drafter on a questions job
+     has reported when its `D/questions/S<first id>.md` exists, its hand-back
+     aside: dispatch again, fresh, only a drafter without one, with step 2a's
+     brief. When drafting starts in a session other than the one that
+     dispatched the round (after a `/clear`), its drafters can't be resumed:
+     dispatch each fresh with step 2b's drafting brief. A drafter on a drafting job
      is dispatched again, fresh, with step 2's drafting brief plus "finish
      `D/S<id>.md` without redoing what is there". A drafter on a fix job (step
      2's amendment fixes, step 3's fix jobs, step 5's fixers) is dispatched
@@ -77,31 +86,56 @@ to it, and that resumes it.
    - Read the spec (the plan's `**Spec:**` line) and the skeleton, and run
      `loom flow conf show --for drafter` once: its output is the
      drafter's profile block.
-2. **Draft.** One `flow:drafter` per one or two stories, all in one parallel
-   batch. Give each the plan's path, the spec's path, D, its story ids and
-   their files `D/S<id>.md`, and the drafter's profile block. Dispatch with
-   `effort: xhigh` a drafter whose story's entry names one of the block's
-   landmine markers; this sentence is the instruction the Agent tool needs
-   to set a per-call effort. Every other drafter runs at its pinned high, a
-   story whose shape only the block's notes describe included.
-   - A drafter that finds a gap in the contract stops and reports
-     NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
-     `## Stories`), then answer it with SendMessage to the id on its report.
+2. **Questions, then drafting.** One `flow:drafter` per one or two stories,
+   all in one parallel batch. Give each the plan's path, the spec's path, D,
+   its story ids and their files `D/S<id>.md`, and the drafter's profile
+   block. Dispatch with `effort: xhigh` a drafter whose story's entry names
+   one of the block's landmine markers; this sentence is the instruction the
+   Agent tool needs to set a per-call effort. Every other drafter runs at its
+   pinned high, a story whose shape only the block's notes describe included.
+   - **2a. Questions.** The brief adds: "Question round: write only
+     `D/questions/S<first id>.md`, then report." The drafter reads what its
+     entries need and writes the file's four lists (its definition gives
+     them); its hand-back is the path and each list's count. A questions file
+     that isn't the four lists goes to a fresh drafter with the same brief;
+     don't guess its content. A drafter that drafts in the round keeps its
+     `D/S<id>.md`: its 2b message adds "finish `D/S<id>.md` against the
+     settled contract".
+   - **The wait.** Wait until every drafter of the batch has reported, and
+     settle everything in one pass: read the questions files; write each
+     decision into the names contract, choosing where a user's proposal and a
+     definer's differ; amend the entries; take to the owner only what the
+     spec doesn't settle (see the intro); then run
+     `loom flow check-plan --skeleton $ARGUMENTS` until it passes. Record in
+     each story's row of `STATE.md` what was settled for it.
+   - **2b. Drafting.** Resume every drafter of the batch with SendMessage to
+     the id on its report: "The contract is settled. Re-read `## Names
+     contract` and your entries, and draft.", then the contract lines that
+     changed among those its questions file raised or its stories own.
+   - After the round, a drafter that finds a gap in the contract stops and
+     reports NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
+     `## Stories`), run the skeleton check again, then answer it with
+     SendMessage to the id on its report.
    - When an amendment changes a name that other drafts use, wait until their
      drafters have reported, then give each affected draft a fix job whose
-     findings are the amendment.
+     findings are the amendment. An amended entry needs no fix job: the join
+     writes each story's opening lines from its entry.
 3. **Join and check.** Run, in order:
    - `loom flow join $ARGUMENTS`, which writes the plan from the
-     skeleton's head and `D/S*.md` (never `STATE.md`) and writes
+     skeleton's head, each story's opening lines from its entry, and
+     `D/S*.md` (never `STATE.md`) and writes
      `D/join.json`. It fails on a missing or unlisted draft, and on a draft
      that holds the marker line outside a fence;
    - `loom flow check-plan $ARGUMENTS`;
    - `loom flow premises $ARGUMENTS --rev <REV>`.
 
    A join or `loom flow check-plan` failure goes to a fresh drafter as a fix job,
-   its findings the failure text. The checks cite plan lines (`line <n>`,
+   its findings the failure text, unless it names an entry: fix that in the
+   skeleton. The checks cite plan lines (`line <n>`,
    `plan:<n>`), and a fixer works in its draft: give it draft line
-   k = n − start + 1, with `start` the story's `start` in `D/join.json`.
+   k = n − start + 1, with `start` the story's `start` in `D/join.json`. A
+   finding on a line inside a story's `entry` in `D/join.json` is the
+   entry's: amend the entry, never a draft.
    Send what `loom flow premises` flags to one `flow:premise-check` per batch of
    flags, one per few stories when there are many, each with the plan's path,
    `<REV>` and its flagged lines, and append each report on arrival to
@@ -113,7 +147,7 @@ to it, and that resumes it.
    the story deep,
    or keep it light with a reason in its Review line that names the marker,
    and record which in `STATE.md`. Change the story's entry under
-   `## Stories`, and have the draft's fix job copy the new line. Give each
+   `## Stories`; the next join writes it into the story. Give each
    draft one fix job for everything this step found in it. A `**Parallel:**`
    failure is yours, not a drafter's: drop the pair from the skeleton's line
    (its stories then run in order), and name it in the hand-over.
@@ -144,6 +178,8 @@ to it, and that resumes it.
      question the spec doesn't settle goes to the owner: write the answer into
      the spec and commit the spec by pathspec at once, so a resumed run finds
      a clean tree.
+   - A finding that names a story's entry (the seams packet cites one as
+     `the Story <id> entry`) is yours: amend the entry, and join again.
    - Name in the contract each text a later story quotes from an earlier one
      (its "current" block). Every fixer leaves a named text unchanged, so
      parallel fixers can't break a later story's quote.
@@ -195,7 +231,8 @@ as commands. They live in `D/findings/`, a subdirectory, because a top-level
 `S<id>-x.md` would match the join's draft pattern.
 
 When a drafter goes quiet, check its draft file and `ps`, then dispatch a fresh
-drafter with step 2's drafting brief plus "finish `D/S<id>.md` without redoing
+drafter with the brief of the job it was on: step 2a's in the question round,
+else step 2's drafting brief plus "finish `D/S<id>.md` without redoing
 what is there"; never message the quiet one. A premise only a live check can
 settle goes to a `flow:recon`, with read-only requests (GET only).
 
@@ -206,7 +243,7 @@ quoted heredoc (`cat > D/STATE.md <<'EOF'`). The heredoc's text and its closing
 set it off here; indented, the heredoc never terminates):
 
     # Draft state: <plan file stem>
-    **Phase:** <drafting | checking | seams | fixing | committed>. Done: <what>. Next: <what>.
+    **Phase:** <questions | drafting | checking | seams | fixing | committed>. Done: <what>. Next: <what>.
     **Started:** <start time>. **REV:** <sha>. **Sessions:** <session id of each /flow:draft session>.
     **Design stage:** <the line step 6 writes; none until then>
 
@@ -220,5 +257,5 @@ set it off here; indented, the heredoc never terminates):
     - <question, or none>
 
     ## In flight
-    - <agent id>: <job>
+    - <agent id>: <questions | drafting | fix> <story ids>
     EOF
