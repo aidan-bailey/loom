@@ -1,6 +1,6 @@
 # Flow: a names contract settled before drafting
 
-Status: design approved section by section 2026-11-11; awaiting review of this file.
+Status: design approved section by section 2026-11-11; this file approved by the owner 2026-11-11.
 
 `/flow:draft` dispatches every drafter at once against the skeleton's names contract, and a drafter that needs a shared name the contract lacks stops with NEEDS_CONTEXT. Only the drafters that *use* a shared name stop. The drafters that *define* one write their own, so the amendments the manager makes for the askers contradict drafts already written, and each of those drafts takes a fix job. This spec makes the contract complete in form before drafting (a skeleton lint), settles every cross-story name in one question round before any drafter writes, and has the join write each story's opening lines from the skeleton, so an amended entry never needs a fix job.
 
@@ -31,7 +31,7 @@ The design session's five recon agents ($8.30) checked facts about the tree, not
 
 In: the skeleton's contract rules and entry checks (`check_plan.py --skeleton`); the join's opening lines and `join.json`'s `entry`; the question round in `/flow:draft` (step 1's lint, step 2's two phases, the `questions` phase of `STATE.md`, the resume rule); the drafter's question-round job and its no-copy rule; the dispatch guide's skeleton, drafting and fixing sections; one sentence in `session/loom_context_flow.md`; `flow/README.md`; a `flow/PROVENANCE.md` entry; tests.
 
-Out: a check of contract names against the tree (the question round's drafters grep for clashes); a seams check of drafts against the contract (the seams recon already compares the stories with each other); a second question round; changes to the run (`/flow:run`, `/flow:supervise`), whose joined plan looks as it does today.
+Out: a check of contract names against the tree (the question round's drafters grep for clashes); a seams check of drafts against the contract (the seams recon already compares the stories with each other); a second question round; changes to the run (`/flow:run`), whose joined plan looks as it does today; the `**Parallel:**` line, which the full `check-plan` checks after the join as today.
 
 ## 4. Behaviour
 
@@ -40,27 +40,27 @@ Out: a check of contract names against the tree (the question round's drafters g
 The skeleton's names contract sits under the exact heading `## Names contract`, above `## Stories`. In it:
 
 1. **Every shared name is written in full.** A function or method gives every parameter's name and type and its return type. A type lists its fields with their types, inline (`{ a: T, b: U }`, or a tuple's `(T, U)`) or in the bullets nested under it, or says `(opaque)` when no other story reads its fields. No `..`, `...` or `…` stands for parameters or fields.
-2. **Every line that defines a name names its owning story**: `Story <id>` on the line or on a bullet it is nested under, with `<id>` a story in the list.
+2. **Every line that defines a name names its owning story**: `Story <id>` on the line, on a bullet it is nested under, or on the line that introduces its list (the unindented line directly above the list, such as `**crate-a** (Story 1)`), with `<id>` a story in the list. (The introducing line was added while writing the plan: the client skeleton names owners on such lines, and without them rule 2 flagged 52 of its 87 defining lines.)
 3. **A line may hand its exact form on**: `(Story N proposes)`, with N in the list, waives rule 1 on that line and names its owner.
 
 ### 4.2 `loom flow check-plan --skeleton <plan>`
 
 It reads the plan above the marker line and fails, one `FAIL` line each, on:
 
-- **The heading.** No `## Names contract`, or no marker line.
+- **The head.** No `## Names contract` above `## Stories`; no marker line, or more than one; no `**Spec:**` line naming a file that exists; a `## Story` or `###` heading above the marker.
 - **Rule 1**, over every backticked span in the contract section:
   - a `..`, `...` or `…` inside a span's parentheses or braces (not a range such as `0..5` or `..=`);
   - a parameter of a span shaped `name(args)` that is a lone identifier starting in lower case (`scope_key`, `onEvent`), unless it is a primitive type (`bool`, `f64`, `u32`, `usize`, `string`, `number`, `int`, `float64`, …) or a receiver (`self`, `&self`, `&mut self`, `this`);
   - a declared `struct`, `class`, `interface` or `enum` with no `{` in its span, no tuple form, no `(opaque)` on its line and no bullet nested under it.
 
   Not checked as signatures: attributes and decorators (a span starting `#[` or `@`); a span holding a placeholder in angle brackets (`<name>`), which states a pattern; a visibility such as `pub(crate)`; a call, known by a string or number literal among its arguments or by the name `Some`, `Ok` or `Err`.
-- **Rule 2**: a line with a signature or type declaration whose line and enclosing bullets name no listed story.
+- **Rule 2**: a line with a signature or type declaration that names no listed story on itself, its enclosing bullets or its list's introducing line.
 - **Rule 3**: a `(Story N proposes)` whose N isn't listed.
 - **The entries**: each `## Stories` entry has its **Developer**, a **Files** line naming a backticked path, an **Interfaces** line, a **Verify** line naming a backticked command, a **Review** line (when present) of deep or light with an optional reason, and a **Reading** line; the entry grammar the join reads (`- **Story <id>**` at column 0).
 
 It passes with `OK: <plan>: skeleton; <n> stories; contract <m> lines`. Exit codes are `check-plan`'s.
 
-Measured on the client run's committed skeleton with a prototype of these rules: 24 flags on 12 of the contract's 219 lines, of which 23 are real (every shortened signature a drafter later asked about, and a store type that needs `(opaque)`) and one is not (`SessionAnchor::research(id)`, an expression; typing it costs one edit). Without the exemptions above the prototype flagged 36, 12 of them false.
+Measured on the client run's committed skeleton with a prototype of these rules: 24 flags on 12 of the contract's 219 lines, of which 23 are real (every shortened signature a drafter later asked about, and a store type that needs `(opaque)`) and one is not (`SessionAnchor::research(id)`, an expression; typing it costs one edit). Without the exemptions above the prototype flagged 36, 12 of them false. Rule 2 on the same skeleton flags 1 of its 87 defining lines (a convention for every story, which names none).
 
 The design session runs it until it passes before it commits the skeleton (the dispatch guide's design-session steps, and one sentence in `session/loom_context_flow.md`). `/flow:draft` runs it in step 1, beside `loom flow conf doctor`, and stops on a failure; it runs it again after each amendment of the contract or the entries.
 
@@ -114,23 +114,24 @@ The drafter's rule "copy each story's opening lines verbatim" becomes "report an
 
 | File | Change |
 |---|---|
-| `flow/lib/check_plan.py` | `--skeleton`: the contract rules (§4.2) and the entry checks |
-| `flow/lib/plan_join.py` | opening lines from the entries, the dropped-copies note, `entry` in `join.json`, `load_map` reading it |
+| `flow/lib/plan_skeleton.py` (new) | the contract rules (§4.2) and the entry checks, as `lint` |
+| `flow/lib/check_plan.py` | `--skeleton PLAN` runs `plan_skeleton.lint` (imported in the function: `plan_skeleton` imports `plan_join`, which imports `check_plan`) |
+| `flow/lib/plan_join.py` | `entries` (each entry's opening lines, shared with the lint), opening lines from the entries, the dropped-copies note, `entry` in `join.json`, `load_map` reading it |
 | `flow/lib/plan_packet.py` | the map check and citations with `entry` |
 | `flow/plugin/skills/draft/SKILL.md` | step 1's lint; step 2's question round and resume; the `questions` phase; the copy-line text goes |
 | `flow/plugin/agents/drafter.md` | the question-round job; no copied opening lines; its description names the round |
 | `flow/plugin/docs/dispatch.md` | the skeleton's contract rules and its lint in the design-session steps; drafting with the question round; the join and `join.json`; fixing without copy-line jobs |
 | `session/loom_context_flow.md` | the design session runs `loom flow check-plan --skeleton <plan>` until it passes before committing |
 | `flow/README.md` | `check-plan --skeleton` and the join's opening lines |
-| `flow/PROVENANCE.md` | an "All agents" entry: the drafter's question round and no-copy rule, no pin changed, on the owner's instruction, with §1's evidence |
+| `flow/PROVENANCE.md` | a drafter entry: the question round and no-copy rule, no pin changed, on the owner's instruction, with §1's evidence |
 
-`internal/cli`'s `loom flow check-plan` passes its arguments to `check_plan.py`, so `--skeleton` needs no Go change. A concurrent branch removes `/flow:supervise` and edits `session/loom_context_flow.md` and the dispatch guide; whichever merges second resolves the overlap.
+`internal/cli`'s `loom flow check-plan` passes its arguments to `check_plan.py`, so `--skeleton` needs no Go change. The `/flow:supervise` removal and parallel pairs, merged from main before the plan was written, already edited `session/loom_context_flow.md`, the dispatch guide and `check_plan.py`; this work builds on them.
 
 ## 7. Testing
 
 `bash flow/lib/test.sh` runs them, with the agent lint.
 
-- `check_plan_test.py`, both sides of every rule: `..` in a signature fails, a range passes; a bare parameter fails, `f64`, `&self` and `this` pass, camelCase fails; a fieldless struct fails, `(opaque)`, inline fields, a tuple struct and nested field bullets pass; an attribute, a `<name>` pattern, `pub(crate)` and a call with a literal pass; a defining line with no owner fails, an owner on an enclosing bullet passes; `(Story N proposes)` waives its line, `(Story 99 proposes)` with no Story 99 fails; a missing heading or marker fails; each entry check, red and green.
+- `plan_skeleton_test.py`, both sides of every rule, and `check_plan_test.py` for the `--skeleton` command line: `..` in a signature fails, a range passes; a bare parameter fails, `f64`, `&self` and `this` pass, camelCase fails; a fieldless struct fails, `(opaque)`, inline fields, a tuple struct and nested field bullets pass; an attribute, a `<name>` pattern, `pub(crate)` and a call with a literal pass; a defining line with no owner fails, an owner on an enclosing bullet passes; `(Story N proposes)` waives its line, `(Story 99 proposes)` with no Story 99 fails; a missing heading or marker fails; each entry check, red and green.
 - A fixture modelled on the client run's contract lines, anonymised (no client names: `lib/check-agents.sh` checks the banned tokens), holding the lines the lint must flag and the lines it must pass, with its expected flags.
 - `plan_join_test.py`: the opening lines come from the entry; copied lines are dropped and reported; an entry without its fields fails; `start` converts body lines and `entry` brackets the inserted block; joining twice gives the same file.
 - `plan_packet_test.py`: a citation inside the inserted block names the entry; the map check passes on a fresh join.
@@ -142,6 +143,6 @@ Afterwards the first plan drafted on the new flow is compared with §1's run: fi
 
 - The lint checks form, not truth: an omission (a writer nobody named) and a clash with the tree pass it, and the question round is what catches them.
 - The parameter rule is a heuristic over backticked spans. A contract written as an expression rather than a signature can draw a false flag; the cure is to type it.
-- Rule 2 accepts any `Story <id>` on the line or an enclosing bullet, including one that names a later replacer rather than the owner.
+- Rule 2 accepts any `Story <id>` on the line, an enclosing bullet or the list's introducing line, including one that names a later replacer rather than the owner. A blank line ends the walk up to the introducing line, so a loose list's items need their owner on themselves.
 - Drafting starts after the slowest drafter's questions, about 10 minutes in §1's run.
 - The saving is unmeasured until the comparison in §7.
