@@ -44,6 +44,14 @@ func TestRestory(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, [][2]int{{100, 199}, {200, 299}, {300, 399}}, baseRanges(st), "a second edit keeps the base's ranges")
 	})
+	t.Run("a plan that pairs differently keeps the run's lanes", func(t *testing.T) {
+		st := parked()
+		fresh := []Story{story("1", "intermediate-dev", "vouched"), laned(story("2", "junior-dev", "full")), story("3", "intermediate-dev", "vouched")}
+		kept, err := st.Restory(fresh)
+		require.NoError(t, err)
+		assert.False(t, st.Stories[1].Lane)
+		assert.Equal(t, []string{"Story 2 runs in order, as the run started (the plan now says it runs its developer in a lane)"}, kept)
+	})
 	for name, fresh := range map[string][]Story{
 		"a story removed":   {story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full")},
 		"a story added":     {story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"), story("3", "intermediate-dev", "vouched"), story("4", "junior-dev", "full")},

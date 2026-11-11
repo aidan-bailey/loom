@@ -4,7 +4,7 @@
 A supervised plan names its spec before the first story, in a `**Spec:**` (or
 `**Design:**`) line holding the spec's repo-relative path in backticks, and
 groups its tasks into stories. Each story opens with four required lines (and an optional Review
-line, below) the plan-execution-supervisor routes, parallelises and reviews from:
+line, below) loom flow run's engine routes and reviews from:
 
     ## Story 2: Wire the ledger route
 
@@ -17,7 +17,7 @@ line, below) the plan-execution-supervisor routes, parallelises and reviews from
 
 A plan whose code was reviewed before it was committed (the dispatch guide's
 plan review) records it in a `**Plan review:**` line before the first story.
-The supervisor reads it: a story the plan review vouches for (below) gets the narrow
+The run engine reads it: a story the plan review vouches for (below) gets the narrow
 story-reviewer, which reads only what the plan doesn't vouch for; any other
 gets the full code-quality review.
 
@@ -29,6 +29,11 @@ wrong tier, or not at all, fails the check, as does a token under either list th
 (ids are listed one at a time, on one physical line), and so does a light story under a line that
 lists no tiers at all. The output says per story whether the plan review vouches for it (a deep story
 the line lists, or a deep story of a line written before tiers).
+
+A plan may declare, before its first story, the pairs of stories whose second story's developer runs in
+a lane beside the first under loom flow run: `**Parallel:** 3+4, 7+8`. Each pair is a story and the one
+right after it, with disjoint Files and at most one exclusive build; a pair that isn't fails the check,
+as does a second Parallel line. --json marks each pair's second story `"lane": true`.
 
 Usage: check_plan.py PLAN.md [PLAN.md ...]
        check_plan.py --json PLAN.md
@@ -60,7 +65,7 @@ import flowconf  # noqa: E402
 from flowconf import FlowError, load_profile  # noqa: E402
 
 DEVELOPERS = ("junior-dev", "intermediate-dev", "senior-dev")
-# Opus writes code only as a last resort (owner, 2026-10-13): the supervisor dispatches
+# Opus writes code only as a last resort (owner, 2026-10-13): the run engine dispatches
 # senior-dev after an intermediate-dev fails a slice twice, so a plan shouldn't assign it.
 LAST_RESORT = {"senior-dev"}
 FIELDS = ("Developer", "Files", "Interfaces", "Verify")
@@ -74,6 +79,8 @@ FIELD_RE = re.compile(
 )
 SPEC_RE = re.compile(r"^\*\*(?:Spec|Design):\*\*\s*(.*)$")
 REVIEW_RE = re.compile(r"^\*\*Plan review:\*\*\s*(.*)$")
+PARALLEL_RE = re.compile(r"^\*\*Parallel:\*\*\s*(.*)$")
+PAIR_RE = re.compile(r"^([^\s+,]+)\s*\+\s*([^\s+,]+)$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 CODE_RE = re.compile(r"`([^`]+)`")
 
@@ -180,6 +187,36 @@ def plan_review(text: str) -> str | None:
     return None
 
 
+def declared_pairs(text: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """The pairs the plan's `**Parallel:**` line declares before its first story, and what keeps the line from parsing."""
+    pairs: list[tuple[str, str]] = []
+    problems: list[str] = []
+    seen = False
+    fenced = False
+    for n, line in enumerate(text.splitlines(), 1):
+        if FENCE_RE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if STORY_RE.match(line):
+            break
+        declared = PARALLEL_RE.match(line)
+        if not declared:
+            continue
+        if seen:
+            problems.append(f"line {n}: a second **Parallel:** line: declare every pair on one line")
+            continue
+        seen = True
+        for entry in (e.strip() for e in declared.group(1).strip().removesuffix(".").split(",")):
+            pair = PAIR_RE.match(entry)
+            if pair:
+                pairs.append((pair.group(1), pair.group(2)))
+            else:
+                problems.append(f"line {n}: the **Parallel:** entry '{entry}' is not two story ids joined by +, as in 3+4")
+    return pairs, problems
+
+
 def markers_in(story: Story, markers: Sequence[str]) -> list[tuple[str, int]]:
     """Each marker found in the story's fenced code, with the first plan line holding it, in `markers` order."""
     found: list[tuple[str, int]] = []
@@ -267,7 +304,7 @@ def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], l
     """Parse a plan and list everything that keeps it from a supervised run."""
     stories, problems, spec = parse(text)
     if spec is None:
-        problems.append("no **Spec:** line before the first story: the supervisor and a fresh manager find the spec through it")
+        problems.append("no **Spec:** line before the first story: the run engine and a fresh manager find the spec through it")
     elif not spec:
         problems.append("the **Spec:** line names no `backticked` path")
     elif not (repo_root(plan) / spec).is_file():
@@ -316,15 +353,44 @@ def parallel_safe(stories: list[Story], exclusive: Sequence[str]) -> list[tuple[
     ]
 
 
-def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str]) -> dict:
-    """A story as `--json` gives it, for loom flow run (flow in loom part 3b)."""
-    return {
+def pair_problems(stories: list[Story], pairs: list[tuple[str, str]], exclusive: Sequence[str]) -> list[str]:
+    """What keeps each declared pair's second story from running its developer in a lane beside its first."""
+    index = {story.sid: i for i, story in enumerate(stories)}
+    problems: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for a, b in pairs:
+        name = f"the **Parallel:** pair {a}+{b}"
+        if (a, b) in seen:
+            problems.append(f"{name} is declared twice")
+            continue
+        seen.add((a, b))
+        missing = [sid for sid in (a, b) if sid not in index]
+        if missing:
+            problems.append(f"{name} names {', '.join('Story ' + sid for sid in missing)}, which the plan doesn't have")
+            continue
+        first, second = stories[index[a]], stories[index[b]]
+        if index[b] != index[a] + 1:
+            problems.append(f"{name}: Story {b} must be the story right after Story {a}")
+        shared = sorted(first.files & second.files)
+        if shared:
+            problems.append(f"{name}: both stories' **Files** name {', '.join(shared)}")
+        if first.builds(exclusive) and second.builds(exclusive):
+            problems.append(f"{name}: both stories' **Verify** run an exclusive build")
+    return problems
+
+
+def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str], lane: bool = False) -> dict:
+    """A story as `--json` gives it, for loom flow run (flow in loom part 3b); a laned story carries `"lane": true`."""
+    out = {
         "id": story.sid, "line": story.line, "end": story.end,
         "developer": story.fields["Developer"].strip("` ").removeprefix("flow:"),
         "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full",
         "landmines": [marker for marker, _ in markers_in(story, markers)],
         "interfaces": story.fields.get("Interfaces", ""), "verify": story.fields.get("Verify", ""),
     }
+    if lane:
+        out["lane"] = True
+    return out
 
 
 def main(argv: list[str]) -> int:
@@ -361,6 +427,8 @@ def main(argv: list[str]) -> int:
             failed = True
             continue
         stories, problems, spec = check(text, Path(arg), profile.markers)
+        pairs, pair_errors = declared_pairs(text)
+        problems += pair_errors + pair_problems(stories, pairs, profile.exclusive)
         if problems:
             failed = True
             for problem in problems:
@@ -369,8 +437,9 @@ def main(argv: list[str]) -> int:
         review = plan_review(text)
         if as_json:
             vouch = vouched(review, stories)
+            laned = {b for _, b in pairs}
             print(json.dumps({"spec": spec, "plan_review": review,
-                              "stories": [story_json(s, vouch, profile.markers) for s in stories]}))
+                              "stories": [story_json(s, vouch, profile.markers, s.sid in laned) for s in stories]}))
             continue
         print(f"OK: {arg}: {len(stories)} stories; spec {spec}")
         print(f"  Plan review: {review}" if review else "  Plan review: none recorded, so every story gets the full code-quality review")
@@ -385,9 +454,11 @@ def main(argv: list[str]) -> int:
             found = ", ".join(marker for marker, _ in markers_in(story, profile.markers))
             landmines = f"  landmines: {found}" if found else ""
             print(f"  Story {story.sid:<4} {developer:<17} {len(story.files):>3} files  {build:<8}  {story.tier:<5}  {review_col}{landmines}")
-        pairs = parallel_safe(stories, profile.exclusive)
-        listed = ", ".join(f"{a}+{b}" for a, b in pairs) if pairs else "none"
+        safe = parallel_safe(stories, profile.exclusive)
+        listed = ", ".join(f"{a}+{b}" for a, b in safe) if safe else "none"
         print(f"  Parallel-safe pairs (disjoint files, at most one exclusive build): {listed}")
+        declared = ", ".join(f"{a}+{b}" for a, b in pairs) if pairs else "none, so every story runs in order"
+        print(f"  Declared pairs (the second story's developer runs in a lane): {declared}")
     return 1 if failed else 0
 
 

@@ -44,7 +44,7 @@ Review in this order:
 
 Out of scope: plan code that landed as written, and the plan's design. If you
 notice a serious problem in the plan's own code anyway, report it under
-**Plan**, one line each, for the supervisor to take to the manager.
+**Plan**, one line each, for the manager.
 
 On a re-review the dispatch gives the fix's range and the earlier findings.
 Confirm each finding is fixed, and review the fix's own changed lines the same

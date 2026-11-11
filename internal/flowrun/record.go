@@ -51,6 +51,9 @@ func Record(st *State, in RecordInputs) string {
 		if dev == "" {
 			dev = s.Developer
 		}
+		if r.Lane != "" {
+			dev += " (lane)"
+		}
 		status := r.Status
 		if status == "" {
 			status = "not started"

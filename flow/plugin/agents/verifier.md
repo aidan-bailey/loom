@@ -44,7 +44,7 @@ Run them like this:
   a daemon replaced by a newer loom is the 125 above, at once.
   Never use `run_in_background` and never end your
   turn to wait: Claude Code counts an agent waiting that way as not running,
-  and a supervisor whose agents are all not running is made to hand back
+  and a dispatcher whose agents are all not running is made to hand back
   mid-run. Never wait with `sleep`, and never report while the run hasn't
   ended.
 - **The verdicts are the tool's.** It judges each step from its job's own

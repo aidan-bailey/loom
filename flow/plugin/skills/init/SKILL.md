@@ -5,7 +5,7 @@ disable-model-invocation: true
 ---
 
 Draft a flow profile for the repository the session is in, so that
-`/flow:supervise` can run plans here with the flow roster.
+`/flow:run` can run plans here with the flow roster.
 
 1. Run `git rev-parse --show-toplevel`. Outside a git repo, stop. If
    `.claude/agents/plan-execution-supervisor.md` exists at the top level, the

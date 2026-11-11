@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aidan-bailey/loom/sched"
@@ -52,7 +53,9 @@ type Conformance struct {
 // follow, has ended.
 type Effects interface {
 	AgentStarted(name string) (bool, error)
-	Agent(name, role, effort, brief string) (Report, error)
+	// Agent starts agent run name in dir ("" for the session's worktree;
+	// parallel pairs spec §5.3), or follows it.
+	Agent(dir, name, role, effort, brief string) (Report, error)
 	// Resume answers the ended agent run name with text, or follows the
 	// answer already queued with that text.
 	Resume(name, text string) (Report, error)
@@ -61,8 +64,8 @@ type Effects interface {
 	// Gates runs a story's gates over commits, or the final gates when
 	// commits is nil.
 	Gates(name string, commits []string) (GateResult, error)
-	Head() (string, error)
-	Clean() (bool, error)
+	Head(dir string) (string, error)
+	Clean(dir string) (bool, error)
 	Commits(base, head string) ([]string, error)
 	Conformance(story, base, head string) (Conformance, error)
 	// Premises is plan_premises.py's output when it flagged anything, else "".
@@ -70,7 +73,36 @@ type Effects interface {
 	// DocsCheck is the paths base..head changed that aren't doc paths
 	// (loom flow conf docs-check): none when it changed only docs.
 	DocsCheck(base, head string) ([]string, error)
+	// Lane is the lane a laned story's developer runs in (parallel pairs
+	// spec §5.3): a worktree of the repository named name, detached at
+	// base, made, or reused when it is already one.
+	Lane(name, base string) (string, error)
+	// Pick cherry-picks commits in order onto the session's worktree, whose
+	// HEAD is onto, or onto with a prefix of commits already picked (a crash
+	// mid-pick), and is the commits it made. A conflict aborts the pick as a
+	// *PickConflict.
+	Pick(commits []string, onto string) ([]string, error)
+	// DropLane removes the lane at dir, refusing one that isn't clean.
+	DropLane(dir string) error
+	// OnlyPlanCommits reports whether head descends from base and every
+	// commit in base..head touches only the run's spec and plan (spec §5.7).
+	OnlyPlanCommits(base, head string) (bool, error)
 	Save(st *State) error
+}
+
+// PickConflict is a pick that didn't apply: the lane commit it stopped at
+// and the files it conflicted on. Pick has aborted it.
+type PickConflict struct {
+	Commit string
+	Files  []string
+}
+
+func (c *PickConflict) Error() string {
+	files := strings.Join(c.Files, ", ")
+	if files == "" {
+		files = "no file (the pick came out empty)"
+	}
+	return fmt.Sprintf("the lane commit %s conflicts on %s", short(c.Commit), files)
 }
 
 // LimitWaitWithin is how far off a usage limit's reset may be, from when
@@ -90,11 +122,11 @@ const finalStory = "final"
 
 var notName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
+var errClosed = errors.New("the run closed while this track waited")
+
 type engine struct {
 	st      *State
 	fx      Effects
-	head    string         // the head last recorded
-	cur     string         // the story in hand, "" outside one
 	seq     map[string]int // attempts at each name prefix, this pass
 	resumes map[string]int // resumes of each agent run, this pass
 	limits  map[string]int // usage limits each agent run stopped on, this pass
@@ -102,26 +134,93 @@ type engine struct {
 	// on, this pass.
 	lastReset map[string]time.Time
 	final     Story
-	sent      []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
 	// accepted is each story's gate steps the manager accepted failing, by
 	// step line, with the gate run they were accepted at. A replay rebuilds
 	// it from the recalled gate results and answers (thread 20).
 	accepted map[string]map[string]string
+
+	// mu is held by whichever track runs engine code. A track lets go of it
+	// only while it waits (wait), so another track can run meanwhile
+	// (parallel pairs spec §5.3).
+	mu      sync.Mutex
+	closed  bool  // the run parked, stopped, ended or failed: no track touches the state again
+	outcome error // what closed it: nil when the main track ended
+	over    chan struct{}
+	wg      sync.WaitGroup // the tracks' goroutines, which tests wait for
+	main    *track
+}
+
+// track is one line of the engine's work (parallel pairs spec §5.3): the
+// main track in the session's worktree, or a lane track running a laned
+// story's developer in its lane.
+type track struct {
+	*engine
+	head string        // the head last recorded
+	cur  string        // the story in hand, "" outside one
+	sent []SentFinding // the story in hand's findings sent to a fix round, for its doc pass
+	dir  string        // the lane's path; "" for the session's worktree
+	lane *laneRun      // the lane it runs, for a lane track; nil for the main track
+}
+
+// laneRun is a laned story's developer phase in its lane (spec §5.3).
+type laneRun struct {
+	s, partner *Story
+	t          *track        // the lane track
+	base       string        // the lane's base: its partner's base
+	done       chan struct{} // closed once the developer phase has ended
+	dev        Report        // its developer's report, when it ended without error
+	notes      []string      // the lane track's notes, which the join appends
+}
+
+// laneCheck is the join's look at a lane, memoized (spec §5.5).
+type laneCheck struct {
+	Head    string   `json:"head"`
+	Clean   bool     `json:"clean"`
+	Commits []string `json:"commits,omitempty"` // base..head, when clean
+}
+
+// pickResult is a pick's end, memoized: the head it picked onto and the
+// commits it made, or the conflict it stopped at.
+type pickResult struct {
+	Onto     string   `json:"onto"`
+	Picked   []string `json:"picked,omitempty"`
+	Conflict string   `json:"conflict,omitempty"`
 }
 
 // Run drives st until it parks or ends, saving it after every step. It
 // returns nil when st has parked or ended, and otherwise the error it
 // could not get past (a lost daemon, a file it can't write), with st left
-// running for `loom flow run resume`.
-func Run(st *State, fx Effects) error {
-	e := &engine{st: st, fx: fx, head: st.Base, seq: map[string]int{}, resumes: map[string]int{}, limits: map[string]int{}, lastReset: map[string]time.Time{}, final: Story{ID: finalStory}, accepted: map[string]map[string]string{}}
+// running for `loom flow run resume`. It returns at the run's first
+// outcome: a track still waiting on a job finds the run closed when it
+// wakes, and touches nothing.
+func Run(st *State, fx Effects) error { return newEngine(st, fx).start() }
+
+func newEngine(st *State, fx Effects) *engine {
+	e := &engine{st: st, fx: fx, seq: map[string]int{}, resumes: map[string]int{}, limits: map[string]int{},
+		lastReset: map[string]time.Time{}, final: Story{ID: finalStory}, accepted: map[string]map[string]string{},
+		over: make(chan struct{})}
+	e.main = &track{engine: e, head: st.Base}
+	return e
+}
+
+func (e *engine) start() error {
+	st := e.st
 	st.Status, st.Question, st.Why = Running, nil, ""
 	st.Phase, st.Notes, st.Kept = "", nil, nil
 	for i := range st.Stories {
 		st.Stories[i].Row = Row{}
 	}
-	err := e.run()
-	switch {
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.finish(e.main.run())
+	}()
+	<-e.over
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch err := e.outcome; {
 	case errors.Is(err, errParked):
 		return nil
 	case errors.Is(err, errStopped):
@@ -132,6 +231,29 @@ func Run(st *State, fx Effects) error {
 	return e.end(Done)
 }
 
+// finish closes the run with err, its first outcome (nil: the main track
+// ended); a later outcome changes nothing.
+func (e *engine) finish(err error) {
+	if e.closed {
+		return
+	}
+	e.closed, e.outcome = true, err
+	close(e.over)
+}
+
+// wait runs fn, which waits on a job or a track, without the engine's lock.
+// It is errClosed when the run closed meanwhile; the caller then returns
+// at once, touching nothing.
+func (e *engine) wait(fn func() error) error {
+	e.mu.Unlock()
+	err := fn()
+	e.mu.Lock()
+	if e.closed {
+		return errClosed
+	}
+	return err
+}
+
 func (e *engine) end(status string) error {
 	e.st.Status, e.st.Question = status, nil
 	e.st.End = time.Now().UTC().Format(time.RFC3339)
@@ -139,20 +261,41 @@ func (e *engine) end(status string) error {
 	return e.fx.Save(e.st)
 }
 
-func (e *engine) run() error {
+func (e *track) run() error {
 	if err := e.premises(); err != nil {
 		return err
 	}
+	var lane *laneRun
 	for i := range e.st.Stories {
-		if err := e.story(&e.st.Stories[i]); err != nil {
+		s := &e.st.Stories[i]
+		base, dev, joined := e.head, Report{}, lane != nil
+		if joined {
+			var err error
+			if base, dev, err = e.join(lane); err != nil {
+				return err
+			}
+		}
+		lane = nil
+		if i+1 < len(e.st.Stories) && e.st.Stories[i+1].Lane {
+			lane = e.startLane(&e.st.Stories[i+1], s)
+		}
+		if err := e.story(s, base, dev, joined); err != nil {
 			return err
 		}
 	}
 	return e.finalRound()
 }
 
-func (e *engine) note(format string, args ...any) {
-	e.st.Notes = append(e.st.Notes, fmt.Sprintf(format, args...))
+// note adds a line to the run's notes; a lane track's go to its lane, for
+// the join to append, so their order doesn't depend on which track woke
+// first.
+func (e *track) note(format string, args ...any) {
+	n := fmt.Sprintf(format, args...)
+	if e.lane != nil {
+		e.lane.notes = append(e.lane.notes, n)
+		return
+	}
+	e.st.Notes = append(e.st.Notes, n)
 }
 
 // recall unmarshals key's memoized result into v.
@@ -184,11 +327,11 @@ func (e *engine) next(prefix string) string {
 func storyPrefix(id string) string { return "s" + notName.ReplaceAllString(id, "-") }
 
 // headAt is HEAD memoized under key, which becomes the head last recorded.
-func (e *engine) headAt(key string) (string, error) {
+func (e *track) headAt(key string) (string, error) {
 	var h string
 	if !e.recall("head:"+key, &h) {
 		var err error
-		if h, err = e.fx.Head(); err != nil {
+		if h, err = e.fx.Head(e.dir); err != nil {
 			return "", err
 		}
 		if err := e.remember("head:"+key, h); err != nil {
@@ -200,7 +343,7 @@ func (e *engine) headAt(key string) (string, error) {
 }
 
 // commitsAt is base..HEAD's commits memoized under key.
-func (e *engine) commitsAt(key, base string) ([]string, error) {
+func (e *track) commitsAt(key, base string) ([]string, error) {
 	var cs []string
 	if e.recall("commits:"+key, &cs) {
 		return cs, nil
@@ -213,7 +356,7 @@ func (e *engine) commitsAt(key, base string) ([]string, error) {
 }
 
 // ask is the answer to q, or parks the run on it.
-func (e *engine) ask(q Question) (string, error) {
+func (e *track) ask(q Question) (string, error) {
 	q.Story = e.cur
 	if s := e.storyOf(e.cur); s != nil {
 		s.Row.Escalated++
@@ -221,12 +364,15 @@ func (e *engine) ask(q Question) (string, error) {
 	var a string
 	if e.recall("q:"+q.Key, &a) {
 		var head string
-		if e.recall("took:"+q.Key, &head) {
+		if e.lane == nil && e.recall("took:"+q.Key, &head) {
 			e.head = head // the manager's own commits, taken with its answer
 		}
 		return a, nil
 	}
 	q.At = e.head
+	if e.lane != nil {
+		q.At = e.main.head // answer compares it with HEAD in the session's worktree (spec §5.4)
+	}
 	e.st.Question, e.st.Status = &q, Parked
 	if err := e.fx.Save(e.st); err != nil {
 		return "", err
@@ -245,17 +391,27 @@ func (e *engine) storyOf(id string) *Story {
 
 // checkTree parks as tree-moved when HEAD or the tree isn't what the
 // engine recorded, before a fresh dispatch of name (planning amendment 12).
-func (e *engine) checkTree(name string) error {
-	head, err := e.fx.Head()
+func (e *track) checkTree(name string) error {
+	head, err := e.fx.Head(e.dir)
 	if err != nil {
 		return err
 	}
-	clean, err := e.fx.Clean()
+	clean, err := e.fx.Clean(e.dir)
 	if err != nil {
 		return err
 	}
 	if head == e.head && clean {
 		return nil
+	}
+	if clean {
+		only, err := e.fx.OnlyPlanCommits(e.head, head)
+		if err != nil {
+			return err
+		}
+		if only {
+			_, err := e.headAt("adopt:" + name)
+			return err
+		}
 	}
 	why := fmt.Sprintf("HEAD is %s, and the engine last recorded %s", head, e.head)
 	if !clean {
@@ -272,9 +428,23 @@ func (e *engine) checkTree(name string) error {
 	return err
 }
 
+// retake is the head the tree check before step name took, when it took
+// one (a continue, or spec and plan commits it adopted), set again on a
+// replay that skips the check, and the note an adoption leaves (spec §5.7).
+func (e *track) retake(name string) {
+	var h string
+	if e.recall("head:tree:"+name, &h) {
+		e.head = h
+	}
+	if e.recall("head:adopt:"+name, &h) {
+		e.head = h
+		e.note("took the spec and plan commits up to %s before %s", short(h), name)
+	}
+}
+
 // agent is agent run name's report: memoized, followed when it exists, else
 // started after the tree check.
-func (e *engine) agent(name, role, effort, brief string) (Report, error) {
+func (e *track) agent(name, role, effort, brief string) (Report, error) {
 	var r Report
 	if e.recall("agent:"+name, &r) {
 		return e.outlast(name, r)
@@ -288,13 +458,14 @@ func (e *engine) agent(name, role, effort, brief string) (Report, error) {
 			return r, err
 		}
 	}
+	e.retake(name)
 	if !slices.Contains(e.st.Agents, name) {
 		e.st.Agents = append(e.st.Agents, name)
 		if err := e.fx.Save(e.st); err != nil {
 			return r, err
 		}
 	}
-	if r, err = e.fx.Agent(name, role, effort, brief); err != nil {
+	if err := e.wait(func() (err error) { r, err = e.fx.Agent(e.dir, name, role, effort, brief); return err }); err != nil {
 		return r, err
 	}
 	if err := e.remember("agent:"+name, r); err != nil {
@@ -305,7 +476,7 @@ func (e *engine) agent(name, role, effort, brief string) (Report, error) {
 
 // resume is the report of name resumed with text (planning amendment 13),
 // past any usage limit it stops on (outlast).
-func (e *engine) resume(name, text string) (Report, error) {
+func (e *track) resume(name, text string) (Report, error) {
 	r, err := e.resumeOnce(name, text)
 	if err != nil {
 		return r, err
@@ -323,7 +494,7 @@ func (e *engine) resume(name, text string) (Report, error) {
 // starts the run again from its brief when it has none), with a text of
 // its own for each limit, so a follow after a restart never takes one
 // retry for another.
-func (e *engine) outlast(name string, r Report) (Report, error) {
+func (e *track) outlast(name string, r Report) (Report, error) {
 	for r.Status == AgentUsageLimit {
 		e.limits[name]++
 		n := e.limits[name]
@@ -363,22 +534,21 @@ func (e *engine) outlast(name string, r Report) (Report, error) {
 }
 
 // resumeOnce is the report of name resumed with text, memoized.
-func (e *engine) resumeOnce(name, text string) (Report, error) {
+func (e *track) resumeOnce(name, text string) (Report, error) {
 	e.resumes[name]++
 	key := fmt.Sprintf("resume:%s:%d", name, e.resumes[name])
 	var r Report
 	if e.recall(key, &r) {
 		return r, nil
 	}
-	r, err := e.fx.Resume(name, text)
-	if err != nil {
+	if err := e.wait(func() (err error) { r, err = e.fx.Resume(name, text); return err }); err != nil {
 		return r, err
 	}
 	return r, e.remember(key, r)
 }
 
 // settle answers name's NEEDS_CONTEXT questions until it reports otherwise.
-func (e *engine) settle(name string, r Report) (Report, error) {
+func (e *track) settle(name string, r Report) (Report, error) {
 	for n := 1; r.Status == "NEEDS_CONTEXT"; n++ {
 		a, err := e.ask(Question{Key: fmt.Sprintf("ctx:%s:%d", name, n), Kind: KindNeedsContext, Text: r.Question, Paths: paths(r.Path)})
 		if err != nil {
@@ -404,7 +574,7 @@ func paths(p ...string) []string {
 // failed asks the manager about name's failure, and is the decision the
 // retry takes: "" for a plain retry, else the manager's text, for the next
 // attempt's brief (feedback thread 12).
-func (e *engine) failed(name string, r Report) (string, error) {
+func (e *track) failed(name string, r Report) (string, error) {
 	why := r.Why
 	if why == "" {
 		why = "it reported " + r.Status
@@ -422,7 +592,7 @@ func (e *engine) failed(name string, r Report) (string, error) {
 }
 
 // review runs a reviewer at prefix until its report reads (spec §5.6).
-func (e *engine) review(prefix, role, brief string) (Review, Report, error) {
+func (e *track) review(prefix, role, brief string) (Review, Report, error) {
 	next := brief
 	for {
 		name := e.next(prefix)
@@ -460,7 +630,7 @@ func developerEffort(s *Story, role string) string {
 // build runs developers at prefix until one reports done with commits,
 // escalating as spec §5.3 step 2 says. fix is true for a fix round, whose
 // developers stay at their pinned effort.
-func (e *engine) build(s *Story, prefix, role, brief string, fix bool) (Report, error) {
+func (e *track) build(s *Story, prefix, role, brief string, fix bool) (Report, error) {
 	before := e.head
 	var earlier []string
 	decision := ""
@@ -546,7 +716,7 @@ func (e *engine) build(s *Story, prefix, role, brief string, fix bool) (Report, 
 
 // gates is gate run name's result: memoized, followed when it exists, else
 // started after the profile's services.
-func (e *engine) gates(name string, commits []string) (GateResult, error) {
+func (e *track) gates(name string, commits []string) (GateResult, error) {
 	var r GateResult
 	if e.recall("gates:"+name, &r) {
 		return r, nil
@@ -559,12 +729,16 @@ func (e *engine) gates(name string, commits []string) (GateResult, error) {
 		e.st.Gates = append(e.st.Gates, name)
 	}
 	if !started {
-		if err := e.fx.Services(e.st.Blocks.Services); err != nil {
-			r = GateResult{Ended: "infra", Table: "FAIL (infra): a service failed: " + err.Error()}
+		var serr error
+		if err := e.wait(func() error { serr = e.fx.Services(e.st.Blocks.Services); return nil }); err != nil {
+			return r, err
+		}
+		if serr != nil {
+			r = GateResult{Ended: "infra", Table: "FAIL (infra): a service failed: " + serr.Error()}
 			return r, e.remember("gates:"+name, r)
 		}
 	}
-	if r, err = e.fx.Gates(name, commits); err != nil {
+	if err := e.wait(func() (err error) { r, err = e.fx.Gates(name, commits); return err }); err != nil {
 		return r, err
 	}
 	return r, e.remember("gates:"+name, r)
@@ -580,7 +754,7 @@ func logsOf(r GateResult) []string {
 
 // gateLoop runs s's gates (final ones when s is the final pseudo-story)
 // until they pass or the manager accepts them, with a fix after a failure.
-func (e *engine) gateLoop(s *Story, prefix, base string) error {
+func (e *track) gateLoop(s *Story, prefix, base string) error {
 	s.Row.Status = "gating"
 	final := s.ID == finalStory
 	for failures := 0; ; {
@@ -666,7 +840,7 @@ func (e *engine) acceptedAt(s *Story, res GateResult) []string {
 
 // premises sends the plan's flagged premises to premise-check and settles
 // their verdicts (spec §5.3, before the first story).
-func (e *engine) premises() error {
+func (e *track) premises() error {
 	e.st.Phase = "premises"
 	var flagged string
 	if !e.recall("premises", &flagged) {
@@ -722,7 +896,7 @@ func (e *engine) premises() error {
 
 // dispatchReport runs a non-developer agent at prefix until it reports
 // done; a BLOCKED is a failure (spec §5.3).
-func (e *engine) dispatchReport(prefix, role, brief string) (Report, error) {
+func (e *track) dispatchReport(prefix, role, brief string) (Report, error) {
 	next := brief
 	for {
 		name := e.next(prefix)
@@ -754,7 +928,7 @@ func (e *engine) storyAtLine(line int) *Story {
 }
 
 // conformance is story s's conformance output, memoized under key.
-func (e *engine) conformance(key string, s *Story, base, head string) (Conformance, error) {
+func (e *track) conformance(key string, s *Story, base, head string) (Conformance, error) {
 	var c Conformance
 	if e.recall("conformance:"+key, &c) {
 		return c, nil
@@ -766,19 +940,22 @@ func (e *engine) conformance(key string, s *Story, base, head string) (Conforman
 	return c, e.remember("conformance:"+key, c)
 }
 
-// story runs one story: developer, gates, review, findings, doc pass (spec §5.3).
-func (e *engine) story(s *Story) error {
+// story runs one story: developer, gates, review, findings, doc pass (spec
+// §5.3). Its base is the head the engine last recorded, never a fresh read:
+// a commit made outside the run is the tree check's to catch, not the
+// story's to absorb. A joined story's developer ran in its lane (parallel
+// pairs spec §5.5): dev is its report, and base the head before its pick.
+func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	e.cur, e.st.Phase, e.sent = s.ID, "story "+s.ID, nil
 	defer func() { e.cur = "" }()
 	p := storyPrefix(s.ID)
-	// The story's base is the head the engine last recorded, never a fresh
-	// read: a commit made outside the run is the tree check's to catch, not
-	// the story's to absorb.
-	base := e.head
-	s.Row.Base, s.Row.Status = base, "developing"
-	dev, err := e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false)
-	if err != nil {
-		return err
+	s.Row.Base = base
+	if !joined {
+		s.Row.Status = "developing"
+		var err error
+		if dev, err = e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false); err != nil {
+			return err
+		}
 	}
 	if err := e.gateLoop(s, p, base); err != nil {
 		return err
@@ -819,6 +996,171 @@ func (e *engine) story(s *Story) error {
 	return nil
 }
 
+// startLane starts s's developer phase in a lane at the main track's head,
+// beside partner, on a goroutine of its own (parallel pairs spec §5.3).
+func (e *track) startLane(s, partner *Story) *laneRun {
+	l := &laneRun{s: s, partner: partner, base: e.head, done: make(chan struct{})}
+	l.t = &track{engine: e.engine, head: e.head, cur: s.ID, lane: l}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		defer close(l.done)
+		if e.closed {
+			return
+		}
+		dev, err := l.t.laneDev()
+		if err != nil {
+			e.finish(err)
+			return
+		}
+		l.dev = dev
+	}()
+	return l
+}
+
+// laneDev is a lane track's work: its lane, then its story's developer in it.
+func (e *track) laneDev() (Report, error) {
+	s := e.lane.s
+	var dir string
+	if !e.recall("lane:"+s.ID, &dir) {
+		name := e.st.ID + "-" + storyPrefix(s.ID)
+		if err := e.wait(func() (err error) { dir, err = e.fx.Lane(name, e.lane.base); return err }); err != nil {
+			return Report{}, err
+		}
+		if err := e.remember("lane:"+s.ID, dir); err != nil {
+			return Report{}, err
+		}
+	}
+	e.dir = dir
+	s.Row.Status, s.Row.Lane = "developing", dir
+	return e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, DeveloperBrief(e.st, s)+LaneNote(dir, e.lane.base), false)
+}
+
+// join waits for l's developer phase, then picks its lane's commits onto the
+// session's worktree (parallel pairs spec §5.5). It is the laned story's
+// base (the head before the pick) and its developer's report.
+func (e *track) join(l *laneRun) (string, Report, error) {
+	s := l.s
+	e.cur, e.st.Phase = s.ID, "story "+s.ID
+	if err := e.wait(func() error { <-l.done; return nil }); err != nil {
+		return "", Report{}, err // a lane that failed has closed the run
+	}
+	e.st.Notes = append(e.st.Notes, l.notes...)
+	for attempt := 1; ; attempt++ {
+		key := fmt.Sprintf("%s:%d", s.ID, attempt)
+		var c laneCheck
+		if !e.recall("lane-check:"+key, &c) {
+			var err error
+			if c.Head, err = e.fx.Head(l.t.dir); err != nil {
+				return "", Report{}, err
+			}
+			if c.Clean, err = e.fx.Clean(l.t.dir); err != nil {
+				return "", Report{}, err
+			}
+			if c.Clean {
+				if c.Commits, err = e.fx.Commits(l.base, c.Head); err != nil {
+					return "", Report{}, err
+				}
+			}
+			if err := e.remember("lane-check:"+key, c); err != nil {
+				return "", Report{}, err
+			}
+		}
+		problem := "has uncommitted changes"
+		if c.Clean {
+			r, err := e.pick(s, attempt, c.Commits)
+			if err != nil {
+				return "", Report{}, err
+			}
+			if r.Conflict == "" {
+				return r.Onto, l.dev, e.landed(l, key, r)
+			}
+			problem = "didn't apply: " + r.Conflict
+		}
+		a, err := e.ask(Question{Key: "lane:" + key, Kind: KindLane,
+			Text: fmt.Sprintf("The lane of %s at %s (head %s) %s", storyName(s), l.t.dir, short(c.Head), problem)})
+		if err != nil {
+			return "", Report{}, err
+		}
+		switch a {
+		case WordStop:
+			return "", Report{}, errStopped
+		case WordRedo:
+			e.note("%s: its lane at %s didn't land, and is kept; its developer runs again here", storyName(s), l.t.dir)
+			base := e.head
+			s.Row.Base, s.Row.Status = base, "developing"
+			dev, err := e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, withEarlier(DeveloperBrief(e.st, s), paths(l.dev.Path), RedoDecision(l.t.dir)), false)
+			return base, dev, err
+		}
+		// retry: the manager fixed the lane by hand; look at it again.
+	}
+}
+
+// pick picks commits onto the session's worktree after its tree check, as
+// the join's attempt for s: memoized, and marked before it starts, so a
+// crash mid-pick resumes it rather than reading its commits as the tree
+// moving.
+func (e *track) pick(s *Story, attempt int, commits []string) (pickResult, error) {
+	key := fmt.Sprintf("%s:%d", s.ID, attempt)
+	name := fmt.Sprintf("%s-%s-pick%d", e.st.ID, storyPrefix(s.ID), attempt)
+	var r pickResult
+	if e.recall("pick:"+key, &r) {
+		e.retake(name)
+		return r, nil
+	}
+	if e.recall("picking:"+key, &r.Onto) {
+		e.retake(name)
+	} else {
+		if err := e.checkTree(name); err != nil {
+			return r, err
+		}
+		e.retake(name)
+		r.Onto = e.head
+		if err := e.remember("picking:"+key, r.Onto); err != nil {
+			return r, err
+		}
+	}
+	picked, err := e.fx.Pick(commits, r.Onto)
+	var conflict *PickConflict
+	switch {
+	case errors.As(err, &conflict):
+		r.Conflict = conflict.Error()
+	case err != nil:
+		return r, err
+	default:
+		r.Picked = picked
+	}
+	return r, e.remember("pick:"+key, r)
+}
+
+// landed records a pick that applied (spec §5.5): the head after it, the
+// lane removed, and the notes.
+func (e *track) landed(l *laneRun, key string, r pickResult) error {
+	if _, err := e.headAt("picked:" + key); err != nil {
+		return err
+	}
+	var why string
+	if !e.recall("dropped:"+l.s.ID, &why) {
+		if err := e.fx.DropLane(l.t.dir); err != nil {
+			why = err.Error()
+		}
+		if err := e.remember("dropped:"+l.s.ID, why); err != nil {
+			return err
+		}
+	}
+	commits := fmt.Sprintf("%d commits were", len(r.Picked))
+	if len(r.Picked) == 1 {
+		commits = "1 commit was"
+	}
+	e.note("%s: its developer ran in a lane beside %s; %s picked onto %s", storyName(l.s), storyName(l.partner), commits, short(r.Onto))
+	if why != "" {
+		e.note("%s: its lane at %s is left: %s", storyName(l.s), l.t.dir, why)
+	}
+	return nil
+}
+
 // planNotes is the PLAN lines a story's reviews found, and the reports of
 // the reviews that found them, which the plan question names.
 type planNotes struct {
@@ -834,7 +1176,7 @@ func (n *planNotes) add(rev Review, rep Report) {
 
 // findings routes a review's findings: Minors kept, a blocking review
 // fixed and re-reviewed until clean or the manager decides (spec §5.3, 5).
-func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan *planNotes) error {
+func (e *track) findings(s *Story, p, base string, rev Review, rep Report, plan *planNotes) error {
 	if !rev.Blocking() {
 		e.st.Kept = append(e.st.Kept, rev.Minors()...)
 		return nil
@@ -860,7 +1202,7 @@ func (e *engine) findings(s *Story, p, base string, rev Review, rep Report, plan
 
 // fixRound fixes findings and re-reviews them until the re-review is clean
 // or the manager accepts what it found.
-func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix []string, decision string, plan *planNotes) error {
+func (e *track) fixRound(s *Story, p, base string, findings []Finding, planFix []string, decision string, plan *planNotes) error {
 	for round := 1; ; round++ {
 		s.Row.Status = "fixing"
 		fixBase := e.head
@@ -898,7 +1240,7 @@ func (e *engine) fixRound(s *Story, p, base string, findings []Finding, planFix 
 // planLines asks the manager once about a story's PLAN lines (planning
 // amendment 15), naming the reports they came from and the Minors the
 // story's reviews kept, which the final round fixes.
-func (e *engine) planLines(s *Story, p, base string, notes planNotes, kept int) error {
+func (e *track) planLines(s *Story, p, base string, notes planNotes, kept int) error {
 	plan := notes.lines
 	if len(plan) == 0 {
 		return nil
@@ -933,7 +1275,7 @@ func (e *engine) planLines(s *Story, p, base string, notes planNotes, kept int) 
 
 // sendFindings keeps rev's Critical and Important findings, which go to a
 // fix round, for the story's doc pass.
-func (e *engine) sendFindings(rev Review, rep Report) {
+func (e *track) sendFindings(rev Review, rep Report) {
 	for _, f := range blocking(rev.Findings) {
 		e.sent = append(e.sent, SentFinding{Finding: f, Report: rep.Path})
 	}
@@ -942,7 +1284,7 @@ func (e *engine) sendFindings(rev Review, rep Report) {
 // docs runs story s's doc pass (the doc pass's spec, §5.3): a doc writer
 // over the story as it landed, then docs-check and the story's gates when
 // it committed. Its findings join the kept ones, for the final round.
-func (e *engine) docs(s *Story, p, base, devReport string) error {
+func (e *track) docs(s *Story, p, base, devReport string) error {
 	s.Row.Status = "documenting"
 	before := e.head
 	brief := DocsBrief(e.st, s, base, before, devReport, e.sent)
@@ -1022,7 +1364,7 @@ func (e *engine) docs(s *Story, p, base, devReport string) error {
 // docPass is doc writer run name's report and its lines, or a nil DocPass
 // when the run failed: it didn't report done, or its lines don't parse,
 // which r.Why then says.
-func (e *engine) docPass(name, brief string) (Report, *DocPass, error) {
+func (e *track) docPass(name, brief string) (Report, *DocPass, error) {
 	r, err := e.agent(name, "doc-writer", "", brief)
 	if err == nil {
 		r, err = e.settle(name, r)
@@ -1039,7 +1381,7 @@ func (e *engine) docPass(name, brief string) (Report, *DocPass, error) {
 }
 
 // docsCheck is DocsCheck over base..head, memoized under name.
-func (e *engine) docsCheck(name, base, head string) ([]string, error) {
+func (e *track) docsCheck(name, base, head string) ([]string, error) {
 	var strays []string
 	if e.recall("docs:"+name, &strays) {
 		return strays, nil
@@ -1053,7 +1395,7 @@ func (e *engine) docsCheck(name, base, head string) ([]string, error) {
 
 // finalRound runs the final gates, the anti-seam review and the final fix
 // round (spec §5.3, after the last story).
-func (e *engine) finalRound() error {
+func (e *track) finalRound() error {
 	e.st.Phase = "final"
 	s := &e.final
 	if err := e.gateLoop(s, "final", e.st.Base); err != nil {

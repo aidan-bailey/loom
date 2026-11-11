@@ -600,6 +600,16 @@ class UseAndDefinitionRulesTest(UnitPlanCase):
             f"formatPrice | defined plan:{line_of(TS_PLAN, 'export function formatPrice(cents: number): string {')} | used plan:{use}",
         ])
 
+    def test_seams_list_what_a_declared_pairs_first_story_gives_its_second(self):
+        plan = self.write_plan("ts-paired", "**Parallel:** 1+2\n\n" + TS_PLAN)
+        packet = plan_packet.seams_packet(plan, "HEAD", self.root / "no-drafts")
+        self.assertIn("## Declared pairs", packet)
+        self.assertIn("- 1+2: names Story 1 defines that Story 2 uses: PriceRow, formatPrice", packet)
+
+    def test_seams_have_no_pairs_section_without_the_line(self):
+        packet = plan_packet.seams_packet(self.write_plan("ts-unpaired", TS_PLAN), "HEAD", self.root / "no-drafts")
+        self.assertNotIn("## Declared pairs", packet)
+
     def test_seams_cross_python_stories(self):
         use = line_of(PY_PLAN, "from app.rows import RowError, load_rows")
         self.assertEqual(self.rows("py", PY_PLAN), [

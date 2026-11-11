@@ -86,11 +86,10 @@ A draft is exactly the story's plan text:
 - **Developer** is the entry's, copied. It is `flow:junior-dev` when every task's
   code is complete and lands in one or two files with no wiring between
   them, otherwise `flow:intermediate-dev` (never `flow:senior-dev`: it is the
-  supervisor's last resort, not a plan's choice). If your code doesn't fit
+  run's last resort, not a plan's choice). If your code doesn't fit
   the entry's choice, say so in your report; don't change the line.
 - When a story's code holds one of the profile block's landmine markers,
-  its paragraph says so, and that the supervisor should dispatch its
-  developer with `effort: xhigh`.
+  its paragraph says so, and that its developer runs at `effort: xhigh`.
 - Commit messages follow the repo's convention, which its CLAUDE.md gives,
   else what its git log shows. They carry no `Co-Authored-By` or
   `Claude-Session` line: the developer who commits adds its own.

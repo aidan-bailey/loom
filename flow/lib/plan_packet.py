@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_plan import FENCE_RE, repo_root  # noqa: E402
+from check_plan import FENCE_RE, declared_pairs, repo_root  # noqa: E402
 from flowconf import FlowError  # noqa: E402
 from langs import DEF_RES  # noqa: E402
 from plan_join import JoinError, describe, drafts_dir, join, load_map  # noqa: E402
@@ -36,6 +36,10 @@ SEAMS_READING_RULES = (
     "Reading rules: read this packet whole first, then the plan's names contract, in reads of up to 2,000 lines. "
     "Search outside them only for the draft lines a row cites, several searches to one Bash call. "
     "Never re-read what you have read."
+)
+PAIRS_RULE = (
+    "Each pair's second story runs its developer in a lane at the first story's base, without the first's code: "
+    "a name it uses from the first breaks it, and so does a file, flag or behaviour it needs that no name shows."
 )
 
 DOC_LINES_MAX = 10
@@ -340,6 +344,12 @@ def seams_packet(plan: Path, rev: str, drafts: Path) -> str:
     out = [f"# Seams packet for {plan.name}", PLACEHOLDER, "", f"Written against the tree at {rev}.", "", SEAMS_READING_RULES, ""]
     out += ["## Names one story defines and another uses", ""]
     out += fenced(rows, "text") if rows else ["(none)"]
+    pairs, _ = declared_pairs(text)
+    if pairs:
+        out += ["", "## Declared pairs", "", PAIRS_RULE, ""]
+        for a, b in pairs:
+            names = sorted(name for name in defs.get(a, {}) if name in used.get(b, {}) and name not in own.get(b, {}))
+            out.append(f"- {a}+{b}: names Story {a} defines that Story {b} uses: {', '.join(names) if names else '(none found)'}")
     out += ["", "## Files line of every story", ""]
     for story in order:
         out.append(f"- Story {story}: {field_text(parsed, story, 'Files') or '(none stated)'}")

@@ -33,7 +33,11 @@ short.
    asks `usage-limit`, which takes `wait` (the queue holds the retry until
    the reset) or `stop`. When it left no report, the path to read is its
    job's `output.log` (stream JSON; a `result` event, when there is one, holds
-   its final message). When you edit the plan, `answer` re-reads its
+   its final message). A plan's laned story asks `lane` when its lane is
+   left dirty or its commits don't apply: `retry` once you have fixed the
+   lane by hand (its path is in the question), `redo` to build the story
+   again in this worktree, or `stop`. With a lane, an agent may still be
+   working in this worktree while you answer: commit only by pathspec. When you edit the plan, `answer` re-reads its
    stories' line ranges for the later briefs, and refuses a plan check-plan
    fails or one that adds, removes or reorders stories. Then start the
    background `wait` again. Stage nothing else, and start no developer

@@ -1037,11 +1037,10 @@ Loom ships the agent flow: a pinned roster of subagents that runs an implementat
 
 - `/flow:init` drafts the repo's profile, `.claude/flow.toml` (gates, landmines, review idioms), for you to commit;
 - `/flow:draft <plan>` has drafters write a plan's stories from its spec and skeleton;
-- `/flow:supervise <plan>` runs them: a supervisor dispatches a developer per story, a verifier for the gates and reviewers for each story and the whole, and asks you what the spec doesn't settle;
-- `/flow:run <plan>` runs them with loom's run engine instead: a `run` job that dispatches each step as a headless agent job, runs the gates itself, parks on every question for the session to answer from the spec or ask you, and writes the run's record. Pausing the session spares the run; killing it ends the run;
+- `/flow:run <plan>` runs them with loom's run engine: a `run` job that dispatches a developer per story and reviewers for each story and the whole, each as a headless agent job, runs the gates itself, parks on every question for the session to answer from the spec or ask you, and writes the run's record. A plan's `**Parallel:**` line lets a story's developer work in a lane beside the story before it. Pausing the session spares the run; killing it ends the run;
 - `/flow:retro` reads the run records and proposes changes to the roster or a profile.
 
-The five are yours to type; agents never start them. The agents are `flow:<name>` (`flow:verifier`, `flow:intermediate-dev`, …). A PreToolUse hook loom adds to each session, `loom flow guard`, blocks the git commands that would sweep or rewrite the shared worktree for the developers and the drafter. Each launch gets its own copy of the plugin and its tools in its hooks folder, so a session keeps the version it launched with. Run records and retros live in `~/.loom/flow/records/`. The tools the agents call are `loom flow <tool>` (see [Flow Subcommands](#flow-subcommands)); they need `python3` 3.11 or later on `PATH`.
+The four are yours to type; agents never start them. The agents are `flow:<name>` (`flow:verifier`, `flow:intermediate-dev`, …). A PreToolUse hook loom adds to each session, `loom flow guard`, blocks the git commands that would sweep or rewrite the shared worktree for the developers and the drafter. Each launch gets its own copy of the plugin and its tools in its hooks folder, so a session keeps the version it launched with. Run records and retros live in `~/.loom/flow/records/`. The tools the agents call are `loom flow <tool>` (see [Flow Subcommands](#flow-subcommands)); they need `python3` 3.11 or later on `PATH`.
 
 Coming from the standalone flow (`~/.claude/flow`, linked by its `install.sh`)? Once no supervised run uses the old copy, run its `install.sh --uninstall` (and again with `CLAUDE_CONFIG_DIR` set to each loom account's config dir), then `loom flow import ~/.claude/flow`: it copies the run records and prints where each repo's profile belongs.
 
@@ -1270,7 +1269,7 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 |---------|-------------|
 | `flow conf <key\|status\|show --for ROLE\|state\|drafts STEM\|vacuous FILE\|roster\|gates …\|docs-check --base B --head H\|doctor>` | The repo's flow key, profile and role blocks, its state and drafts directories, the gates to run, the roster ID, and the paths a doc pass changed that aren't docs |
 | `flow check-plan <plan>` | Check that a plan is ready for the supervised option |
-| `flow packet`, `flow join`, `flow premises`, `flow conformance` | The drafting and review tools `/flow:draft` and the supervisor run |
+| `flow packet`, `flow join`, `flow premises`, `flow conformance` | The drafting and review tools `/flow:draft` and the run engine run |
 | `flow costs session [<id>] [--since T] [--until T]`, `flow costs records [FILE …]`, `flow costs run <run>` | Token usage and API-price cost of a session's agents, totals over run records, or a `/flow:run` run's manager sessions and headless agent runs |
 | `flow doctor` | Check that a supervised run can start here (`flow conf doctor`) |
 | `flow check-agents` | Lint the flow plugin's agents and skills |

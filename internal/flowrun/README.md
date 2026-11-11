@@ -1,6 +1,6 @@
 # internal/flowrun
 
-The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-flow-in-loom-run-engine-design.md`). It replaces the Opus `plan-execution-supervisor` subagent's mechanical work with Go, and sends every judgement to the manager as a question.
+The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-flow-in-loom-run-engine-design.md`). It runs every plan `/flow:run` is given, its mechanical work in Go, and sends every judgement to the manager as a question.
 
 ## The model
 
@@ -14,13 +14,14 @@ The run engine of flow in loom part 3b (spec `docs/superpowers/specs/2026-11-06-
 - **Records and names.** `records.go` holds the agent and gate run records (`AgentRecord`, `GateRecord`, with `LoadAgent`, `LoadGate`, `SaveAgent`, `SaveGate`), which `internal/cli` writes and `internal/flowview` reads. `steps.go` parses the step names `next` makes back into their story, kind and attempt (`StepOf`), and a question's key into the step it is about (`QuestionStep`); `TestStepOf_ParsesEveryNameTheEngineSubmits` drives the engine and parses every name it recorded.
 - **Report lines.** `TagLine` reads a tagged line (`FINDING:`, `PLAN:`, `VERDICT:`, `DEVIATION:`, `DOC:`, `LESSON:` here; `STATUS:` and `QUESTION:` in `internal/cli`'s `statusLines`). It takes off a markdown wrapper (`**PLAN:** …`, `` `PLAN: …` ``, a pair around the whole value) but never a code span of the value.
 - **Usage limits** ([spec](../../docs/superpowers/specs/2026-11-11-usage-limit-hold-design.md)). An agent run that stopped on the account's usage limit reports `USAGE_LIMIT` (`AgentUsageLimit`) with its `Limit` (window, reset, and when it stopped), never `failed`. `outlast`, which `agent` and `resume` run every report through, retries it: a reset within `LimitWaitWithin` (6 hours) of the stop is waited out with a note (`<step>: usage limit (<window>), waiting for the reset at <time>`), anything else, or the same reset its last limit named (a retry the queue didn't hold), asks `usage-limit` (`limit:<name>:<n>`), which takes `wait` or `stop`. The retry resumes the run (the CLI starts it again from its brief when it has no session) with a text that names the retry, so a follow after a restart never takes one retry for another; the daemon's queue holds the job until the reset.
+- **Tracks** ([spec](../../docs/superpowers/specs/2026-11-11-flow-run-parallel-pairs-design.md)). The engine's work runs as tracks (`track`) under one lock (`engine.mu`): the main track runs the procedure in the session's worktree, and for a laned story (`Story.Lane`, from a plan's `**Parallel:**` line) a lane track (`startLane`, `laneDev`) runs its developer in a lane, a worktree `Effects.Lane` makes at its partner's base, while the partner runs. A track lets go of the lock only while it waits on a job or a track (`wait`); `Run` returns at the first outcome (`finish`), and a track still waiting finds the run closed (`errClosed`) and touches nothing. A lane track's question carries the main track's head (`At`) and its notes wait for the join. After the partner, `join` checks the lane (`laneCheck`), picks its commits onto HEAD (`pick`, marked `picking:` before it starts so a crash resumes it), removes the lane (`landed`) and runs the laned story from its gates on; a dirty lane or a conflict asks `lane` (`retry`, `redo`, `stop`). `retake` sets again, on a replay that skips a tree check, the head the check took, including spec and plan commits it adopted (`OnlyPlanCommits`, `adopt:`).
 - **Effects.** `Effects` covers agent runs (3a's `loom flow agent`), gate runs (part 2's `loom flow gates`), the profile's services, git and flow's scripts (`docs-check` among them). `Agent`, `Resume` and `Gates` return once the run they start or follow has ended.
 
 ## The procedure
 
 1. The premises: flagged lines go to `premise-check`; COSMETIC verdicts become corrections, DESIGN and UNSURE ones a question.
 2. Each story in plan order:
-   1. The developer, escalated as the spec's §5.3 says.
+   1. The developer, escalated as the spec's §5.3 says; for a laned story, the join of its lane instead.
    2. The gates, with a fix after a failure; a second failure, or an infra one, asks (`gate-failure`). Steps the manager accepted failing stay accepted for the story (`engine.accepted`, rebuilt by the replay): a later gate run of it that fails only on them asks, naming the gate run that accepted them, instead of sending a fixer; one failing on any other step gets a fixer.
    3. The review, by its column.
    4. A fix round and re-review for blocking findings. A re-review that still blocks asks, listing its Critical and Important findings, with its report to read.

@@ -540,3 +540,57 @@ class PlanReviewTierTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def paired(line: str) -> str:
+    """GOOD with `line` below its Spec line."""
+    return GOOD.replace("**Spec:** `docs/spec.md`, approved.\n", f"**Spec:** `docs/spec.md`, approved.\n\n{line}\n")
+
+
+class ParallelLineTest(unittest.TestCase):
+    """The `**Parallel:**` line (parallel pairs spec §5.1)."""
+
+    def test_a_declared_adjacent_safe_pair_passes(self):
+        code, out = run(paired("**Parallel:** 1+2, 2+3"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("Declared pairs (the second story's developer runs in a lane): 1+2, 2+3", out)
+
+    def test_without_the_line_every_story_runs_in_order(self):
+        code, out = run(GOOD)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Declared pairs (the second story's developer runs in a lane): none, so every story runs in order", out)
+
+    def test_json_marks_each_laned_story(self):
+        code, out = run(paired("**Parallel:** 2+3."), as_json=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([s.get("lane", False) for s in json.loads(out)["stories"]], [False, False, True])
+
+    def test_each_failing_entry(self):
+        cases = {
+            "**Parallel:** 1+3": "Story 3 must be the story right after Story 1",
+            "**Parallel:** 2+9": "names Story 9, which the plan doesn't have",
+            "**Parallel:** 1-2": "the **Parallel:** entry '1-2' is not two story ids joined by +",
+            "**Parallel:** 1+2, 1+2": "the **Parallel:** pair 1+2 is declared twice",
+            "**Parallel:** 1+2\n**Parallel:** 2+3": "a second **Parallel:** line",
+        }
+        for line, want in cases.items():
+            with self.subTest(line=line):
+                code, out = run(paired(line))
+                self.assertEqual(code, 1, out)
+                self.assertIn(want, out)
+
+    def test_a_pair_sharing_a_file_fails(self):
+        text = paired("**Parallel:** 2+3").replace("- **Files:** `ui/panel.ts`", "- **Files:** `ui/panel.ts`, `a/route.rs`")
+        code, out = run(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the **Parallel:** pair 2+3: both stories' **Files** name a/route.rs", out)
+
+    def test_a_pair_that_both_run_an_exclusive_build_fails(self):
+        code, out = run(paired("**Parallel:** 2+3").replace("`pnpm test panel`", "`cargo test -p ui`"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("the **Parallel:** pair 2+3: both stories' **Verify** run an exclusive build", out)
+
+    def test_a_line_below_the_first_story_is_not_read(self):
+        code, out = run(GOOD.replace("### Task 3.1: Route", "**Parallel:** 1+3\n\n### Task 3.1: Route"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("runs in a lane): none", out)

@@ -19,7 +19,7 @@ func TestWrite_WritesThePluginAndToolsButNoTests(t *testing.T) {
 	assert.True(t, IsRoot(dir))
 	assert.FileExists(t, filepath.Join(dir, "plugin", ".claude-plugin", "plugin.json"), "all: keeps the dot-directory")
 	assert.FileExists(t, filepath.Join(dir, "plugin", "agents", "verifier.md"))
-	assert.FileExists(t, filepath.Join(dir, "plugin", "skills", "supervise", "SKILL.md"))
+	assert.FileExists(t, filepath.Join(dir, "plugin", "skills", "run", "SKILL.md"))
 	assert.FileExists(t, filepath.Join(dir, "lib", "flowconf.py"))
 	assert.FileExists(t, filepath.Join(dir, "lib", "guarded-agents.txt"))
 	assert.NoFileExists(t, filepath.Join(dir, "lib", "flowconf_test.py"))
