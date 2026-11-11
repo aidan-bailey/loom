@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/spf13/cobra"
 )
 
@@ -32,11 +33,29 @@ func (e *outOfReachError) Error() string {
 
 func (e *outOfReachError) Unwrap() error { return e.err }
 
+// daemonUpgradedError is rejoin's error when a join was refused because the
+// daemon is a newer build (rpc.ErrDaemonNewer): only a newer loom can join
+// it, so trying again for rejoinFor would only delay the end (thread 16).
+type daemonUpgradedError struct{ err error }
+
+func (e *daemonUpgradedError) Error() string {
+	return fmt.Sprintf("the loom daemon was upgraded, and only the new loom can join it: %v", e.err)
+}
+
+func (e *daemonUpgradedError) Unwrap() error { return e.err }
+
+// exit is the command's end on e: 125 (it can't follow), its line led by
+// prefix and ending with what carries on with the new loom.
+func (e *daemonUpgradedError) exit(prefix, carryOn string) *ExitError {
+	return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("%s: %v; carry on with the new loom: %s", prefix, e, carryOn)}
+}
+
 // rejoin runs fn on a client (withDaemon), joining again with backoff while
 // the daemon can't be reached or is lost mid-call, as a restart to deploy a
 // build does, and says each loss through say. It stops trying at deadline
 // (zero: none) or once one outage has lasted outage (0: none), with an
-// *outOfReachError; an interrupt stops it at once. fn must be safe to run
+// *outOfReachError; a join refused because the daemon is newer stops it at
+// once, with a *daemonUpgradedError; an interrupt stops it at once. fn must be safe to run
 // again: it reads what it acts on before acting, and writes its answer
 // only at its end.
 func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, say func(string), fn func(d *client) error) error {
@@ -62,6 +81,9 @@ func rejoin(c *cobra.Command, deadline time.Time, outage time.Duration, say func
 		}
 		if cause == nil {
 			return err
+		}
+		if lost == nil && errors.Is(cause, rpc.ErrDaemonNewer) {
+			return &daemonUpgradedError{err: cause}
 		}
 		now := time.Now()
 		if since.IsZero() || lost != nil { // a loss after a join begins an outage

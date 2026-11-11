@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"runtime/debug"
@@ -12,6 +13,12 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrDaemonNewer is matched by a join's error when the daemon is a newer
+// build than this loom (CompareBuilds: ServerNewer), which only a newer loom
+// can join: the TUI exits on it, and a flow command stops rejoining. It
+// lives here, below both app and internal/cli, so each can match it.
+var ErrDaemonNewer = errors.New("the loom daemon is newer than this loom")
 
 // Build names this binary: its module version, VCS revision and whether
 // the tree was modified. A daemon records it in its lock.
