@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
@@ -35,11 +36,14 @@ type runFX struct {
 	statePath string
 	cwd       string
 	plan      string
-	out       io.Writer // the engine job's output.log
+	out       io.Writer  // the engine job's output.log
+	mu        sync.Mutex // logf's: the engine's tracks log at once (parallel pairs spec §5.3)
 }
 
 // logf writes one line to the engine's log.
 func (fx *runFX) logf(format string, args ...any) {
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
 	fmt.Fprintf(fx.out, "%s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
@@ -72,13 +76,14 @@ func refused(err error) (string, bool) {
 	return "", false
 }
 
-func (fx *runFX) Agent(name, role, effort, brief string) (flowrun.Report, error) {
+func (fx *runFX) Agent(dir, name, role, effort, brief string) (flowrun.Report, error) {
+	cwd := fx.dirOf(dir)
 	started, err := fx.AgentStarted(name)
 	if err != nil {
 		return flowrun.Report{}, err
 	}
 	if !started {
-		argv, err := agentArgv(fx.root, role, effort, fx.cwd, []byte(brief))
+		argv, err := agentArgv(fx.root, role, effort, cwd, []byte(brief))
 		if msg, ok := refused(err); ok {
 			return flowrun.Report{Status: agentFailed, Why: msg}, nil
 		}
@@ -90,7 +95,7 @@ func (fx *runFX) Agent(name, role, effort, brief string) (flowrun.Report, error)
 			if ok, err := fx.AgentStarted(name); err != nil || ok {
 				return err // a start the lost daemon took after all
 			}
-			return d.startAgent(io.Discard, fx.agents, fx.root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: fx.cwd}, argv, []byte(brief))
+			return d.startAgent(io.Discard, fx.agents, fx.root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd}, argv, []byte(brief))
 		})
 		if msg, ok := refused(err); ok {
 			return flowrun.Report{Status: agentFailed, Why: msg}, nil
@@ -287,10 +292,18 @@ func gateResult(q core.QueueView, run *gateRun) flowrun.GateResult {
 	return res
 }
 
-// git runs git args in the worktree.
-func (fx *runFX) git(args ...string) (string, error) {
+// dirOf is dir, or the run's worktree for "".
+func (fx *runFX) dirOf(dir string) string {
+	if dir == "" {
+		return fx.cwd
+	}
+	return dir
+}
+
+// gitIn runs git args in dir.
+func (fx *runFX) gitIn(dir string, args ...string) (string, error) {
 	var out, errOut bytes.Buffer
-	cmd := internalexec.GitCommand(context.Background(), fx.cwd, args...)
+	cmd := internalexec.GitCommand(context.Background(), dir, args...)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errOut.String()))
@@ -298,10 +311,15 @@ func (fx *runFX) git(args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
-func (fx *runFX) Head() (string, error) { return fx.git("rev-parse", "HEAD") }
+// git runs git args in the run's worktree.
+func (fx *runFX) git(args ...string) (string, error) { return fx.gitIn(fx.cwd, args...) }
 
-func (fx *runFX) Clean() (bool, error) {
-	out, err := fx.git("status", "--porcelain")
+func (fx *runFX) Head(dir string) (string, error) {
+	return fx.gitIn(fx.dirOf(dir), "rev-parse", "HEAD")
+}
+
+func (fx *runFX) Clean(dir string) (bool, error) {
+	out, err := fx.gitIn(fx.dirOf(dir), "status", "--porcelain")
 	return out == "", err
 }
 

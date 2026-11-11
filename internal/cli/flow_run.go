@@ -231,7 +231,7 @@ func newFlowRunStartCmd() *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: "loom flow run: the roster: " + err.Error()}
 			}
-			base, err := git.Head()
+			base, err := git.Head("")
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: "loom flow run: " + err.Error()}
 			}
@@ -456,7 +456,7 @@ func (fx *runFX) record(st *flowrun.State) error {
 	if b, err := os.ReadFile(filepath.Join(fx.root, flow.RosterFile)); err == nil {
 		in.RosterEnd = strings.TrimSpace(string(b))
 	}
-	if in.Head, err = fx.Head(); err != nil {
+	if in.Head, err = fx.Head(""); err != nil {
 		return err
 	}
 	commits, err := fx.Commits(st.Base, in.Head)
