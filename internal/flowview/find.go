@@ -38,7 +38,7 @@ type Summary struct {
 	Total      int       // stories in the plan (the run's, once one exists)
 	Drafted    int       // stories drafted, while drafting
 	Asks       string    // the open question's kind, "" for none
-	Phase      string    // the run's Phase, or a supervised run's or a draft's **Phase** line
+	Phase      string    // the run's Phase with its story's step (runPhase), or a supervised run's or a draft's **Phase** line
 	Updated    time.Time // the newest of the flow's files
 	Unreadable string    // why a file of the flow can't be read, "" when every one can
 }
@@ -125,7 +125,7 @@ func summaryOf(f *flow, stages []Stage) Summary {
 	}
 	s.Total = len(f.header.storyIDs())
 	if r := f.run(); r != nil && r.st != nil {
-		s.Run, s.Engine, s.Phase, s.Total = r.st.ID, r.st.Engine, r.st.Phase, len(r.st.Stories)
+		s.Run, s.Engine, s.Phase, s.Total = r.st.ID, r.st.Engine, runPhase(r.st), len(r.st.Stories)
 		for _, st := range r.st.Stories {
 			if st.Row.Status == "done" {
 				s.Done++
@@ -141,6 +141,18 @@ func summaryOf(f *flow, stages []Stage) Summary {
 	}
 	s.Unreadable = f.unreadable()
 	return s
+}
+
+// runPhase is st's Phase with its story's step while the run is on one
+// ("story 2 documenting"), as a supervisor's **Phase** line says it: the
+// engine's own phase names only the story.
+func runPhase(st *flowrun.State) string {
+	for _, story := range st.Stories {
+		if st.Phase == "story "+story.ID && story.Row.Status != "" && story.Row.Status != "done" {
+			return st.Phase + " " + story.Row.Status
+		}
+	}
+	return st.Phase
 }
 
 // unreadable is the first reason one of f's files can't be read.

@@ -23,6 +23,7 @@
   --add: #333a2b;
   --del: #3d2f2b;
   --workspace: #c98aa3;
+  --docs: #9e86c8;
   --selection: #5a647e;
   --code: #3a3a3a;
   --mono: ui-monospace, Menlo, monospace;
@@ -821,6 +822,7 @@ a.sc-tile { color: var(--fg); }
 .sc-seg { display: block; height: 100%; }
 .sc-seg-dev, .sc-key-dev { background: var(--accent); color: var(--accent); }
 .sc-seg-review, .sc-key-review { background: var(--ok); color: var(--ok); }
+.sc-seg-docs, .sc-key-docs { background: var(--docs); color: var(--docs); }
 .sc-seg-manager, .sc-key-manager { background: var(--workspace); color: var(--workspace); }
 .sc-seg-other, .sc-key-other { background: var(--dim); color: var(--dim); }
 .sc-legend-row { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 11px; }

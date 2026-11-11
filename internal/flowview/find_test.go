@@ -108,7 +108,37 @@ func TestFind_ARunStateNamesItsPlanEvenOutsideTheDiff(t *testing.T) {
 	assert.Equal(t, int64(41), s.Engine)
 	assert.Equal(t, 1, s.Done)
 	assert.Equal(t, 2, s.Total)
-	assert.Equal(t, "story 2", s.Phase)
+	assert.Equal(t, "story 2 developing", s.Phase)
+}
+
+// The run's phase names its story's step, as a supervisor's **Phase** line
+// does, so the fleet chip says the doc pass runs; a story that is done, or
+// a phase that names no story, stays as the engine wrote it.
+func TestFind_TheRunsPhaseNamesItsStorysStep(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase, status, want string
+	}{
+		{"documenting", "story 2", "documenting", "story 2 documenting"},
+		{"reviewing", "story 2", "reviewing", "story 2 reviewing"},
+		{"a story done", "story 2", "done", "story 2"},
+		{"a story not begun", "story 2", "", "story 2"},
+		{"no story", "final", "documenting", "final"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := gitRepo(t)
+			commitFile(t, repo, specP, "# P design\n")
+			commitFile(t, repo, planP, joined(specP, "", "1", "2"))
+			base := head(t, repo)
+			st := runState("r", flowrun.Running, flowrun.Story{ID: "1", Row: flowrun.Row{Status: "documenting"}}, flowrun.Story{ID: "2", Row: flowrun.Row{Status: tc.status}})
+			st.Phase = tc.phase
+			writeRun(t, flowStateDir(t, repo), st)
+
+			got, err := Find(repo, base, t.TempDir())
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.want, got[0].Phase)
+		})
+	}
 }
 
 // stageStates is a summary's flow's stage states, by name, from Detail.
