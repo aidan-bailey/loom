@@ -437,6 +437,8 @@ def role_block(profile: Profile, role: str, top: Path) -> list[str]:
         return [
             f"Prefix for every build and test command: {prefix}",
             f"Services (start each, as written, before the tests that need them): {_listed(profile.services)}",
+            "Generated files (never edit one by hand; when your change alters what one holds, regenerate it "
+            f"with the command that writes it and commit it with your change): {_listed(profile.generated)}",
             "Landmine notes (deep stories only):",
             *_indented(profile.notes),
         ]
@@ -468,6 +470,8 @@ def role_block(profile: Profile, role: str, top: Path) -> list[str]:
         f"Prefix: {prefix}",
         f"Exclusive builds (two stories whose Verify holds one never run at once): {_listed(profile.exclusive)}",
         f"Landmine markers: {_listed(profile.markers)}",
+        # loom flow run reads this line: it commits these files when a gate run leaves only them changed.
+        f"Generated files: {_listed(profile.generated)}",
         f"State directory: {state_dir(top, profile)}",
         f"Record copy in the repo: {profile.records or 'none'}",
         f"Gates: {len(profile.story_gates)} per story, {len(profile.final_gates)} final; `flowconf.py gates` expands them",

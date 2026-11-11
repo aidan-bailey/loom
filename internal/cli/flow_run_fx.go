@@ -302,15 +302,21 @@ func (fx *runFX) dirOf(dir string) string {
 	return dir
 }
 
-// gitIn runs git args in dir.
+// gitIn runs git args in dir, and is its output trimmed.
 func (fx *runFX) gitIn(dir string, args ...string) (string, error) {
+	out, err := fx.gitRawIn(dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitRawIn runs git args in dir, and is its output as git wrote it.
+func (fx *runFX) gitRawIn(dir string, args ...string) (string, error) {
 	var out, errOut bytes.Buffer
 	cmd := internalexec.GitCommand(context.Background(), dir, args...)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errOut.String()))
 	}
-	return strings.TrimSpace(out.String()), nil
+	return out.String(), nil
 }
 
 // git runs git args in the run's worktree.

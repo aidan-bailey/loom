@@ -42,6 +42,13 @@ type GateStep struct {
 	Log     string `json:"log,omitempty"`
 }
 
+// Regenerated is the engine's commit of the generated files a gate run
+// left changed: its head and their paths; empty when it made none.
+type Regenerated struct {
+	Head  string   `json:"head,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+}
+
 // Conformance is loom flow conformance's output for a story.
 type Conformance struct {
 	Path    string   `json:"path"`
@@ -64,6 +71,12 @@ type Effects interface {
 	// Gates runs a story's gates over commits, or the final gates when
 	// commits is nil.
 	Gates(name string, commits []string) (GateResult, error)
+	// CommitGenerated commits what gate run name left changed in the
+	// session's worktree when every change is to a file one of globs
+	// matches (flow's glob_match), and is that commit; nothing when the tree
+	// is clean or holds any other change. Its commit at HEAD, found again
+	// after a crash, is given again.
+	CommitGenerated(name string, globs []string) (Regenerated, error)
 	Head(dir string) (string, error)
 	Clean(dir string) (bool, error)
 	Commits(base, head string) ([]string, error)
@@ -744,6 +757,30 @@ func (e *track) gates(name string, commits []string) (GateResult, error) {
 	return r, e.remember("gates:"+name, r)
 }
 
+// regenerated is the engine's commit of the generated files gate run name
+// left changed (CommitGenerated), memoized; its head becomes the head last
+// recorded. A run whose state names no generated globs (a profile without
+// them, or a run an older build started) commits nothing, as before.
+func (e *track) regenerated(name string) (Regenerated, error) {
+	var r Regenerated
+	if len(e.st.Generated) == 0 {
+		return r, nil
+	}
+	if !e.recall("regen:"+name, &r) {
+		var err error
+		if r, err = e.fx.CommitGenerated(name, e.st.Generated); err != nil {
+			return r, err
+		}
+		if err := e.remember("regen:"+name, r); err != nil {
+			return r, err
+		}
+	}
+	if r.Head != "" {
+		e.head = r.Head
+	}
+	return r, nil
+}
+
 func logsOf(r GateResult) []string {
 	var out []string
 	for _, f := range r.Failing {
@@ -757,6 +794,7 @@ func logsOf(r GateResult) []string {
 func (e *track) gateLoop(s *Story, prefix, base string) error {
 	s.Row.Status = "gating"
 	final := s.ID == finalStory
+	retried := false // the run once more after generated files were committed
 	for failures := 0; ; {
 		name := e.next(prefix + "-gates")
 		var commits []string
@@ -771,8 +809,27 @@ func (e *track) gateLoop(s *Story, prefix, base string) error {
 		if err != nil {
 			return err
 		}
+		regen, err := e.regenerated(name)
+		if err != nil {
+			return err
+		}
+		// A failed gate that rewrote only generated files may have failed on
+		// their stale copies alone (feedback thread 22): it runs once more,
+		// with them committed, before a fixer.
+		again := regen.Head != "" && res.Ended == "failed" && !retried
+		if regen.Head != "" {
+			n := fmt.Sprintf("%s: %s left %s changed, which the engine committed as %s", storyName(s), name, strings.Join(regen.Paths, ", "), short(regen.Head))
+			if again {
+				n += " and gated again"
+			}
+			e.note("%s", n)
+		}
 		if res.Ended == "passed" {
 			return nil
+		}
+		if again {
+			retried = true
+			continue
 		}
 		failures++
 		decision := ""

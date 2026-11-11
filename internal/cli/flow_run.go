@@ -252,6 +252,9 @@ func newFlowRunStartCmd() *cobra.Command {
 				Docs:    blocks["doc-writer"] != "", // a flow root from before the doc pass prints no [doc-writer] block
 				Stories: checked.Stories, Memo: map[string]json.RawMessage{},
 			}
+			// The engine commits these when a gate run leaves only them changed
+			// (feedback thread 22); an older flow root prints no such line.
+			st.Generated = listedGlobs(blockLine(blocks["supervisor"], "Generated files: "))
 			if s := os.Getenv("CLAUDE_CODE_SESSION_ID"); s != "" {
 				st.Managers = []string{s}
 			}
@@ -350,6 +353,21 @@ func blockLine(block, label string) string {
 		}
 	}
 	return ""
+}
+
+// listedGlobs is a block line's backticked list (flowconf.py's _listed),
+// nil for "none" or no line.
+func listedGlobs(v string) []string {
+	if v == "" || v == "none" {
+		return nil
+	}
+	var out []string
+	for _, item := range strings.Split(v, ", ") {
+		if g := strings.TrimSuffix(strings.TrimPrefix(item, "`"), "`"); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // designStage is the text after the plan's first `**Design stage:**`.

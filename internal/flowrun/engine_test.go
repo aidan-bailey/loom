@@ -54,6 +54,8 @@ type fakeFX struct {
 	planOnly   map[string]bool      // OnlyPlanCommits' answer, by head
 	dropErr    error
 	dirtyAfter map[string]bool          // an agent run that leaves its lane dirty
+	regen      map[string][]string      // a gate run that leaves these generated files changed
+	regenDone  map[string]Regenerated   // the commit CommitGenerated made for a gate run, which it gives again
 	hold       map[string]chan struct{} // an Agent call waits on it before it returns
 	entered    map[string]chan struct{} // closed when that Agent call begins
 	mu         sync.Mutex
@@ -72,7 +74,8 @@ func newFake() *fakeFX {
 		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{},
 		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}, commitsOn: map[string]bool{},
 		dirs: map[string]string{}, lanes: map[string]*fakeLane{}, picked: map[string][]string{}, planOnly: map[string]bool{},
-		dirtyAfter: map[string]bool{}, hold: map[string]chan struct{}{}, entered: map[string]chan struct{}{}}
+		dirtyAfter: map[string]bool{}, regen: map[string][]string{}, regenDone: map[string]Regenerated{},
+		hold: map[string]chan struct{}{}, entered: map[string]chan struct{}{}}
 }
 
 func isDev(role string) bool {
@@ -188,10 +191,33 @@ func (f *fakeFX) Gates(name string, _ []string) (GateResult, error) {
 		f.started["gates "+name] = true
 		f.calls = append(f.calls, "gates "+name)
 	}
+	if _, done := f.regenDone[name]; len(f.regen[name]) > 0 && !done {
+		f.dirty = true
+	}
 	if r, ok := f.gates[name]; ok {
 		return r, nil
 	}
 	return GateResult{Ended: "passed"}, nil
+}
+
+// CommitGenerated commits the files f.regen names for gate run name while
+// the tree is dirty, and gives that commit again when asked once more, as
+// the real one finds its own commit at HEAD after a crash.
+func (f *fakeFX) CommitGenerated(name string, globs []string) (Regenerated, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "commit-generated "+name+" "+strings.Join(globs, ","))
+	if r, ok := f.regenDone[name]; ok {
+		return r, nil
+	}
+	if !f.dirty || len(f.regen[name]) == 0 {
+		return Regenerated{}, nil
+	}
+	f.head++
+	f.dirty = false
+	r := Regenerated{Head: "h" + strconv.Itoa(f.head), Paths: f.regen[name]}
+	f.regenDone[name] = r
+	return r, nil
 }
 
 func (f *fakeFX) Head(dir string) (string, error) {
@@ -898,6 +924,111 @@ func TestRun_TreeMoved(t *testing.T) {
 		require.Equal(t, Parked, st.Status)
 		assert.Contains(t, st.Question.Text, "uncommitted changes")
 	})
+}
+
+// A gate run that leaves only the profile's generated files changed (a
+// test that rewrites a stale bindings file) gets them committed by the
+// engine, and a failed one runs once more before a fixer, so the next
+// dispatch doesn't park as tree-moved (feedback thread 22).
+func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
+	failed := GateResult{Ended: "failed", Failing: []GateStep{{Line: "go test ./...", Verdict: "FAIL", Log: "/logs/1"}}, Table: "1 FAIL go test"}
+	generated := func(stories ...Story) *State {
+		st := newState(stories...)
+		st.Generated = []string{"gen/*.ts", "schema.json"}
+		return st
+	}
+	t.Run("a failed gate runs once more, with them committed, before a fixer", func(t *testing.T) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
+		st := generated(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil) // any question fails the test
+		require.Equal(t, Done, st.Status)
+		assert.Equal(t, []string{"agent r-s1-dev1 intermediate-dev", "gates r-s1-gates1", "gates r-s1-gates2", "agent r-s1-review1 story-reviewer",
+			"gates r-final-gates1", "agent r-final-review1 code-quality-reviewer"}, f.submits(), "no fixer")
+		assert.Contains(t, f.calls, "commit-generated r-s1-gates1 gen/*.ts,schema.json")
+		assert.Contains(t, st.Notes, "Story 1: r-s1-gates1 left gen/api.ts changed, which the engine committed as h2 and gated again")
+		var cs []string
+		require.NoError(t, json.Unmarshal(st.Memo["commits:r-s1-gates2"], &cs))
+		assert.Equal(t, []string{"c1", "c2"}, cs, "the next gate run takes the engine's commit")
+		assert.Equal(t, "h2", st.Stories[0].Row.Head)
+	})
+	t.Run("a passed gate's are committed, and the gates don't run again", func(t *testing.T) {
+		f := newFake()
+		f.regen["r-s1-gates1"] = []string{"schema.json"}
+		st := generated(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.NotContains(t, f.submits(), "gates r-s1-gates2")
+		assert.Contains(t, st.Notes, "Story 1: r-s1-gates1 left schema.json changed, which the engine committed as h2")
+		assert.Contains(t, f.briefs["r-s1-review1"], "h0..h2", "the review reads the engine's commit")
+	})
+	t.Run("a failure after the second run goes to a fixer", func(t *testing.T) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
+		f.gates["r-s1-gates2"], f.regen["r-s1-gates2"] = failed, []string{"gen/api.ts"}
+		st := generated(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil) // a gate-failure question fails the test: this is the first failure counted
+		require.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "agent r-s1-fix1 intermediate-dev")
+		assert.Contains(t, f.submits(), "gates r-s1-gates3")
+		assert.Contains(t, st.Notes, "Story 1: r-s1-gates2 left gen/api.ts changed, which the engine committed as h3")
+	})
+	t.Run("the final gates too", func(t *testing.T) {
+		f := newFake()
+		f.gates["r-final-gates1"], f.regen["r-final-gates1"] = failed, []string{"gen/api.ts"}
+		st := generated(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		require.Equal(t, Done, st.Status)
+		assert.Contains(t, f.submits(), "gates r-final-gates2")
+		assert.NotContains(t, f.submits(), "agent r-final-fix1 intermediate-dev")
+		assert.Contains(t, st.Notes, "the whole implementation: r-final-gates1 left gen/api.ts changed, which the engine committed as h2 and gated again")
+	})
+	t.Run("a run without generated globs leaves them to the tree check", func(t *testing.T) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
+		st := newState(story("1", "intermediate-dev", "vouched")) // an older build's run, or a profile without any
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, KindTreeMoved, st.Question.Kind)
+		assert.Equal(t, "tree:r-s1-fix1", st.Question.Key)
+		assert.False(t, slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "commit-generated ") }))
+	})
+}
+
+// A crash at any save around the engine's commit of generated files
+// commits them once and submits nothing twice.
+func TestRun_ARestartAroundACommitOfGeneratedFilesCommitsOnce(t *testing.T) {
+	failed := GateResult{Ended: "failed", Failing: []GateStep{{Line: "go test ./...", Verdict: "FAIL"}}}
+	scenario := func() (*State, *fakeFX) {
+		f := newFake()
+		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
+		f.regen["r-final-gates1"] = []string{"schema.json"}
+		st := newState(story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"))
+		st.Generated = []string{"gen/*.ts", "schema.json"}
+		return st, f
+	}
+	st, f := scenario()
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	want, head, notes := f.submits(), f.head, st.Notes
+	for k := 1; k <= f.saves; k++ {
+		t.Run(fmt.Sprintf("a crash at save %d", k), func(t *testing.T) {
+			st, f := scenario()
+			f.failAt = k
+			err := runSettled(st, f)
+			for err != nil {
+				require.ErrorIs(t, err, errCrash)
+				if st = clone(f.saved); f.saved == nil {
+					st, _ = scenario()
+				}
+				err = runSettled(st, f)
+			}
+			require.Equal(t, Done, st.Status, "no tree-moved question")
+			assert.Equal(t, want, f.submits())
+			assert.Equal(t, head, f.head, "each commit made once")
+			assert.Equal(t, notes, st.Notes)
+		})
+	}
 }
 
 // An answer can carry the manager's own commits to the spec and plan, so

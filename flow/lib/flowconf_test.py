@@ -208,6 +208,11 @@ class FlowconfTest(unittest.TestCase):
         self.assertNotIn("[verifier]", blocks["developer"])
         self.assertIn(f"sha256:{profile.digest}", blocks["supervisor"])
         self.assertNotIn("[drafter]", blocks["supervisor"])
+        # loom flow run reads the supervisor's line by its label (feedback thread 22), and a developer
+        # regenerates and commits what its change alters.
+        self.assertIn("\nGenerated files: `*.gen.rs`\n", blocks["supervisor"])
+        self.assertIn("regenerate it with the command that writes it and commit it with your change): `*.gen.rs`", blocks["developer"])
+        self.assertNotIn("*.gen.rs", blocks["verifier"] + blocks["reviewer"])
 
     def test_the_drafters_block_holds_what_a_drafter_writes_commands_from(self):
         self.repo_profile(GOOD + '[design]\nregistries = ["a route joins the table in routes.rs"]\n')

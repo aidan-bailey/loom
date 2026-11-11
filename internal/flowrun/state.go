@@ -49,7 +49,8 @@ type State struct {
 	RecordCopy  string                     `json:"record_copy,omitempty"` // the profile's in-repo record dir, "" for none
 	Managers    []string                   `json:"managers"`
 	Blocks      Blocks                     `json:"blocks"`
-	Docs        bool                       `json:"docs,omitempty"` // a doc pass after each story (doc pass spec); start sets it, so an older build's run replays without one
+	Docs        bool                       `json:"docs,omitempty"`      // a doc pass after each story (doc pass spec); start sets it, so an older build's run replays without one
+	Generated   []string                   `json:"generated,omitempty"` // the profile's generated globs, whose files the engine commits when a gate run leaves only them changed (feedback thread 22); start sets them, so an older build's run replays without
 	Stories     []Story                    `json:"stories"`
 	Engine      int64                      `json:"engine,omitempty"` // the latest engine job
 	Agents      []string                   `json:"agents"`           // every agent run, in dispatch order

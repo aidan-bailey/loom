@@ -412,8 +412,9 @@ No agent reads the profile. `loom flow run start` runs
 `loom flow conf show --for supervisor` once (the role keeps the name of the
 controller that first read it), and the engine pastes each role's block into
 that role's briefs: a developer gets the prefix, the services (to start, as
-written, before the tests that need them) and, on a deep story, the landmine
-notes; and a reviewer gets the prefix (it runs its check-only commands, such
+written, before the tests that need them), the generated globs (to
+regenerate and commit what its change alters, never to edit by hand) and,
+on a deep story, the landmine notes; and a reviewer gets the prefix (it runs its check-only commands, such
 as the formatter check, inside it), the notes and the idioms. The engine runs
 the gates itself: per story `loom flow gates start --story <the story's
 commits>`, which expands `{packages}` to the Cargo packages the story changed
@@ -812,7 +813,13 @@ carries on, through `loom flow run resume`, without submitting a step twice.
 Stories run in plan order; a declared pair's second story develops in a
 lane beside its first ([parallel pairs](#parallel-pairs)), and a question
 from either parks the run while the other's agent works on. The tree check
-takes commits that touch only the spec and the plan, as `answer` does.
+takes commits that touch only the spec and the plan, as `answer` does. A
+gate run that leaves only files the profile's `generated` globs match
+changed (a test that rewrites a stale bindings file) gets them committed by
+the engine, hooks skipped, and noted in the record; a failed one then runs
+once more before a fixer, since the stale copy may have been all it failed
+on. Any other change a gate run leaves parks the next step as a tree that
+moved.
 Pausing the manager's session spares the run's jobs; killing it ends the run. Agents run with `--max-turns` from their
 definitions, since `--agent` ignores `maxTurns`.
 

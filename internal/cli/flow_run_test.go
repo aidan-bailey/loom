@@ -58,8 +58,9 @@ esac
 // fakeRunTools is runTools with a fixed plan of stories, whose check-plan
 // fails with fails when it is set.
 type fakeRunTools struct {
-	stories []flowrun.Story
-	fails   string
+	stories   []flowrun.Story
+	fails     string
+	generated string // the supervisor block's Generated line's list, when set
 }
 
 func (f fakeRunTools) Doctor() (string, bool, error) { return "OK: everything", true, nil }
@@ -71,7 +72,11 @@ func (f fakeRunTools) CheckPlan(string) ([]byte, string, error) {
 	return b, "", err
 }
 func (f fakeRunTools) Show() (string, error) {
-	return "[supervisor]\nProfile: /repo/.claude/flow.toml sha256:abcdefabcdef\nRecord copy in the repo: none\n\n" +
+	generated := ""
+	if f.generated != "" {
+		generated = "Generated files: " + f.generated + "\n"
+	}
+	return "[supervisor]\nProfile: /repo/.claude/flow.toml sha256:abcdefabcdef\nRecord copy in the repo: none\n" + generated + "\n" +
 		"[developer]\nPrefix: none\n\n[verifier]\nServices: none\n\n[reviewer]\nPrefix: none\n\n[doc-writer]\nPrefix for every check command: none\n", nil
 }
 func (f fakeRunTools) Services() ([]string, error)             { return nil, nil }
