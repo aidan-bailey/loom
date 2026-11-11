@@ -37,7 +37,7 @@ A rule with no static shape (a `Job` reads no model state; nothing on the loop w
 ## Traps
 
 - **Fixtures exist only at runtime**: source strings in the test, or files under `t.TempDir()`. None of the walkers skip `testdata/`, so a committed fixture holding a violation fails every other enforcer, and tools/claudemd's identifier index reads it too.
-- **Proving it bites against the real tree.** Never plant a violation in a loom worktree: loom runs `git add -N .` there on every diff probe, so even a deleted scratch file leaves an index entry. Copy the working tree, your uncommitted test included, to a scratch dir instead (`rsync -a --exclude .git --exclude .loom ./ "$S/copy/"`; vendor/ is committed, so the copy builds offline), plant the violation there and run the test in the copy.
+- **Proving it bites against the real tree.** Never plant a violation in a loom worktree: the session's diff shows it while it exists, and a broad add or loom's push (`git add .`) commits it. Copy the working tree, your uncommitted test included, to a scratch dir instead (`rsync -a --exclude .git --exclude .loom ./ "$S/copy/"`; vendor/ is committed, so the copy builds offline), plant the violation there and run the test in the copy.
 - **`go test -overlay` is invisible**: the scan reads files from disk.
 - **No type information.** A scan matches names: a same-named function elsewhere is a false positive (tighten the matcher, or exempt it with a reason), and a value routed through a variable or a constant is a false negative.
 
