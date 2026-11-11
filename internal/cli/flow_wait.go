@@ -156,6 +156,9 @@ func newFlowWaitWaitCmd() *cobra.Command {
 				fmt.Fprintf(c.OutOrStdout(), "running %s: job %d goes on, but %v (loom flow wait wait %s follows it again)\n", name, id, away, name)
 				return &ExitError{Code: exitStillRunning}
 			}
+			if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+				return up.exit("loom flow wait", "loom flow wait wait "+name)
+			}
 			return err
 		},
 	}

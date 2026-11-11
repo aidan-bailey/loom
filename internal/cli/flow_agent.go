@@ -191,6 +191,9 @@ func newFlowAgentWaitCmd() *cobra.Command {
 				fmt.Fprintf(c.OutOrStdout(), "running %s: its job goes on, but %v (loom flow agent wait %s follows it again)\n", name, away, name)
 				return &ExitError{Code: exitStillRunning}
 			}
+			if up := (*daemonUpgradedError)(nil); errors.As(err, &up) {
+				return up.exit("loom flow agent", "loom flow agent wait "+name)
+			}
 			return err
 		},
 	}

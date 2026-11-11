@@ -46,9 +46,10 @@ type daemonLink struct {
 }
 
 // newerDaemonError is a join's error when the daemon's build is newer than
-// this loom's: this loom must be upgraded. It matches app.ErrDaemonNewer,
-// which makes a rejoining TUI exit (main then says the daemon was replaced
-// by a newer loom).
+// this loom's: this loom must be upgraded. It matches rpc.ErrDaemonNewer
+// (app.ErrDaemonNewer), which makes a rejoining TUI exit (main then says
+// the daemon was replaced by a newer loom) and a flow command stop
+// rejoining (internal/cli's rejoin).
 type newerDaemonError struct{ peer, own rpc.Hello }
 
 func (e *newerDaemonError) Error() string {
@@ -56,9 +57,9 @@ func (e *newerDaemonError) Error() string {
 	return fmt.Sprintf("the loom daemon is %s, newer than this loom (%s): upgrade loom, or run `loom serve stop`", peer, own)
 }
 
-// Is matches app.ErrDaemonNewer, so the TUI tells this refusal from any
-// other failed rejoin and exits.
-func (e *newerDaemonError) Is(target error) bool { return target == app.ErrDaemonNewer }
+// Is matches rpc.ErrDaemonNewer, so the TUI and the flow commands tell this
+// refusal from any other failed rejoin.
+func (e *newerDaemonError) Is(target error) bool { return target == rpc.ErrDaemonNewer }
 
 // NewerDaemon is the daemon's hello and its build's name, as Error names
 // it: a waiting subcommand re-executes that build (cli.NewerDaemon).
