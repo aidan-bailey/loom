@@ -26,6 +26,7 @@ const ROLE_CLASS = {
   "code-quality-reviewer": "review",
   "story-reviewer": "review",
   "spec-reviewer": "review",
+  "doc-writer": "docs",
   "premise-check": "other",
   manager: "manager",
 };
@@ -198,7 +199,7 @@ export function CostBox({ costs, hasRun }) {
     byClass[c] = (byClass[c] || 0) + v;
   }
   const total = roles.reduce((a, [, v]) => a + v, 0);
-  const segs = ["dev", "review", "manager", "other"].filter((c) => byClass[c] > 0);
+  const segs = ["dev", "review", "docs", "manager", "other"].filter((c) => byClass[c] > 0);
   const flowLine =
     costs.flow_parts > 0 ? "flow " + usd(costs.flow) + (costs.flow_parts < 3 ? " (" + costs.flow_parts + " of 3 parts)" : "") : "";
   return html`<div class="sc-box sc-flow-cost">
