@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -30,6 +31,7 @@ type Summary struct {
 	Plan       string    // the plan's path from the top level; the spec's for a flow in design
 	Spec       string    // the plan's **Spec:** path, "" when it names none
 	Title      string    // the spec's title, else the plan's
+	Part       string    // "part N of M" for a plan of an epic, "epic, M parts" for a spec in design that splits, "" otherwise
 	Stage      string    // the furthest stage begun (StageDesign … StageRecord)
 	Status     string    // the shown run's status, else StatusDesigning … StatusSupervised or flowrun.Done
 	Run        string    // the shown run's id, "" for none
@@ -63,6 +65,7 @@ type flow struct {
 
 	spec, specAbs string
 	specTitle     string
+	specParts     int // the parts the spec's ## Delivery list names (an epic), 0 for none
 	specExists    bool
 	specCommitted bool
 
@@ -123,6 +126,7 @@ func summaryOf(f *flow, stages []Stage) Summary {
 	if s.Title == "" {
 		s.Title = f.header.Title
 	}
+	s.Part = partLabel(f)
 	s.Total = len(f.header.storyIDs())
 	if r := f.run(); r != nil && r.st != nil {
 		s.Run, s.Engine, s.Phase, s.Total = r.st.ID, r.st.Engine, runPhase(r.st), len(r.st.Stories)
@@ -141,6 +145,21 @@ func summaryOf(f *flow, stages []Stage) Summary {
 	}
 	s.Unreadable = f.unreadable()
 	return s
+}
+
+// partLabel is a flow's place in an epic (the spec-splitting spec, §7):
+// a plan's **Part:** line, or the parts a spec in design delivers.
+func partLabel(f *flow) string {
+	if f.design {
+		if f.specParts > 0 {
+			return fmt.Sprintf("epic, %d parts", f.specParts)
+		}
+		return ""
+	}
+	if f.header.Part != "" {
+		return "part " + f.header.Part
+	}
+	return ""
 }
 
 // runPhase is st's Phase with its story's step while the run is on one
@@ -349,7 +368,8 @@ func (f *flow) readSpec(top string, committed map[string]bool) {
 		return
 	}
 	f.specExists = true
-	f.specTitle = parsePlan(text).Title
+	spec := parsePlan(text)
+	f.specTitle, f.specParts = spec.Title, spec.Parts
 }
 
 func (f *flow) readSupervised() {

@@ -41,6 +41,9 @@ func Record(st *State, in RecordInputs) string {
 	if st.DesignStage != "" {
 		fmt.Fprintf(&b, "- Design stage: %s\n", st.DesignStage)
 	}
+	if st.Part != "" {
+		fmt.Fprintf(&b, "- Part: %s of %s\n", st.Part, st.Spec)
+	}
 	fmt.Fprintf(&b, "- Ended: %s\n- Engine: loom flow run (flow in loom part 3b)\n\n", st.Status)
 	fmt.Fprintf(&b, "## Cost\n\n%s\n\n## Stories\n\n", strings.TrimSpace(in.Cost))
 	b.WriteString("| Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |\n")

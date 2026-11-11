@@ -271,7 +271,7 @@ export function Flow({ snap, route, go }) {
   const rows = [...(data.premise ? [data.premise] : []), ...data.stories, ...(data.final ? [data.final] : [])];
   return html`<section class="sc-screen sc-flow-board">
     <${Picker} s=${s} plan=${plan} go=${go} />
-    <p class="sc-flow-title">${sum.title || plan}</p>
+    <p class="sc-flow-title">${sum.title || plan}${sum.part ? html` <span class="sc-dim">${sum.part}</span>` : null}</p>
     ${err ? html`<p class="sc-err-text sc-small">${err}</p>` : null}
     ${sum.unreadable ? html`<p class="sc-err-text sc-small">unreadable: ${sum.unreadable}</p>` : null}
     <${Strip} flow=${data} id=${s.id} plan=${plan} />

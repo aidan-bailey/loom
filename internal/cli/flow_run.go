@@ -245,6 +245,7 @@ func newFlowRunStartCmd() *cobra.Command {
 				Start:   time.Now().UTC().Format(time.RFC3339),
 				Roster:  strings.TrimSpace(string(roster)), // the file holds the whole line (flow.RosterID)
 				Profile: blockLine(blocks["supervisor"], "Profile: "), DesignStage: designStage(string(text)),
+				Part:       partLine(string(text)),
 				RecordCopy: strings.TrimSuffix(blockLine(blocks["supervisor"], "Record copy in the repo: "), "none"),
 				Blocks: flowrun.Blocks{Developer: blocks["developer"], Verifier: blocks["verifier"], Reviewer: blocks["reviewer"],
 					Supervisor: blocks["supervisor"], DocWriter: blocks["doc-writer"], Services: services},
@@ -356,6 +357,20 @@ func designStage(plan string) string {
 	for _, l := range strings.Split(plan, "\n") {
 		if v, ok := strings.CutPrefix(l, "**Design stage:**"); ok {
 			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// partLine is the plan's **Part:** line before its first story ("2 of 3"),
+// "" when it has none: the record copies it (the spec-splitting spec, §7).
+func partLine(plan string) string {
+	for _, l := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(l, "## Story") {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(l, "**Part:**"); ok {
+			return strings.TrimSuffix(strings.TrimSpace(v), ".")
 		}
 	}
 	return ""

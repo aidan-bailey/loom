@@ -327,3 +327,28 @@ func TestFind_LeavesTheWorktreeAsItWas(t *testing.T) {
 	assert.Equal(t, status, status2)
 	assert.Equal(t, files, files2)
 }
+
+func TestFind_APartOfAnEpicAndASpecThatSplitsAreLabelled(t *testing.T) {
+	repo, base, records := branchRepo(t)
+	writeFile(t, repo, specP, "# P design\n\n## Delivery\n\n1. **Part 1: a.** A.\n2. **Part 2: b.** B.\n3. **Part 3: c.** C.\n\n### Part 2 settlements (2026-11-14)\n\n1. **Part 9: no.** No.\n")
+	got, err := Find(repo, base, records)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "epic, 3 parts", got[0].Part, "a spec in design that splits")
+
+	writeFile(t, repo, planP, strings.Replace(skeleton(specP, "1"), "**Spec:**", "**Part:** 2 of 3\n**Spec:**", 1))
+	got, err = Find(repo, base, records)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "part 2 of 3", got[0].Part)
+}
+
+func TestFind_APlanOfNoEpicHasNoPartLabel(t *testing.T) {
+	repo, base, records := branchRepo(t)
+	writeFile(t, repo, specP, "# P design\n")
+	writeFile(t, repo, planP, skeleton(specP, "1"))
+	got, err := Find(repo, base, records)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].Part)
+}

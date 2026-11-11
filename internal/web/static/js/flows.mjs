@@ -78,7 +78,7 @@ export function Flows() {
       ${data.live.length === 0 ? html`<p class="sc-faint">No session's worktree holds a flow.</p>` : null}
       ${data.live.map(
         (l) => html`<a key=${l.session + l.flow.plan} class="sc-flow-row" href=${flowHref(l.session, l.flow.plan)}>
-          <span class="sc-title-text">${l.title}</span>
+          <span class="sc-title-text">${l.title}${l.flow.part ? html` <span class="sc-dim">${l.flow.part}</span>` : null}</span>
           <span class=${"sc-flow-right " + chipClass(l.flow)}>${flowChip(l.flow)}</span>
         </a>`,
       )}

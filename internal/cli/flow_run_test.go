@@ -550,3 +550,10 @@ func TestFlowRun_TheEngineMarksItsJobs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1", jobEnv(t, logDir, "0.env")[envFlowRun], "an agent of the run carries the run's job, which a pause spares")
 }
+
+func TestPartLine(t *testing.T) {
+	assert.Equal(t, "2 of 3", partLine("# P\n\n**Spec:** `s.md`\n**Part:** 2 of 3\n\n## Stories\n"))
+	assert.Equal(t, "2 of 3", partLine("**Part:** 2 of 3.\n"))
+	assert.Empty(t, partLine("# P\n\n**Spec:** `s.md`\n"))
+	assert.Empty(t, partLine("# P\n\n## Story 1: x\n\n**Part:** 2 of 3\n"), "a line inside a story is not the plan's")
+}

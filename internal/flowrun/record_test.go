@@ -11,6 +11,7 @@ func TestRecord(t *testing.T) {
 	st.Managers = []string{"m1", "m"}
 	st.Roster, st.Profile = "loom flow roster 0123456789ab", "/repo/.claude/flow.toml sha256:abcdefabcdef"
 	st.DesignStage = "2 sessions, 40 minutes"
+	st.Part = "2 of 3"
 	st.Answers = append(st.Answers, Answer{Question: Question{Kind: KindBlocked, Story: "2", Text: "Which store?"}, Answer: "The cache.", From: FromOwner})
 	got := Record(st, RecordInputs{
 		Cost:      "COST TABLES\n<!-- agent-costs {} -->",

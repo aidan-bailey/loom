@@ -8,6 +8,7 @@
 - Definitions: loom flow roster 0123456789ab → loom flow roster ba9876543210
 - Profile: /repo/.claude/flow.toml sha256:abcdefabcdef
 - Design stage: 2 sessions, 40 minutes
+- Part: 2 of 3 of s.md
 - Ended: done
 - Engine: loom flow run (flow in loom part 3b)
 

@@ -30,6 +30,7 @@ type flowSummaryJSON struct {
 	Plan       string   `json:"plan"`
 	Spec       string   `json:"spec"`
 	Title      string   `json:"title"`
+	Part       string   `json:"part"`
 	Stage      string   `json:"stage"`
 	Status     string   `json:"status"`
 	Run        string   `json:"run"`
@@ -45,7 +46,7 @@ type flowSummaryJSON struct {
 
 func flowSummaryOf(f core.FlowSummary) flowSummaryJSON {
 	s := flowSummaryJSON{
-		Plan: f.Plan, Spec: f.Spec, Title: f.Title, Stage: f.Stage, Status: f.Status, Run: f.Run,
+		Plan: f.Plan, Spec: f.Spec, Title: f.Title, Part: f.Part, Stage: f.Stage, Status: f.Status, Run: f.Run,
 		Done: f.Done, Total: f.Total, Drafted: f.Drafted, Asks: f.Asks, Phase: f.Phase,
 		Updated: stamp(f.Updated), Unreadable: f.Unreadable,
 	}

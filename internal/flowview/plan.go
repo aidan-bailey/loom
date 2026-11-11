@@ -15,20 +15,25 @@ const joinMarker = "<!-- plan_join: the stories below are generated from the dra
 // storiesHeading opens a skeleton's story list (plan_join.STORIES_HEADING).
 const storiesHeading = "## Stories"
 
+// deliveryHeading opens an epic's list of parts in its spec (plan_skeleton.DELIVERY_HEADING).
+const deliveryHeading = "## Delivery"
+
 // maxPlanBytes bounds what a look reads of one plan or spec.
 const maxPlanBytes = 8 << 20
 
 var (
-	fenceRE   = regexp.MustCompile("^\\s*(```|~~~)")                                // check_plan.FENCE_RE
-	h1RE      = regexp.MustCompile(`^#\s+(.*\S)\s*$`)                               // a document's title
-	h2RE      = regexp.MustCompile(`^##\s`)                                         // check_plan.H2_RE
-	storyRE   = regexp.MustCompile(`^##\s+Story\s+([^\s:.]+)[:.]?\s*(.*)$`)         // check_plan.STORY_RE
-	entryRE   = regexp.MustCompile(`^-\s+\*\*Story\s+([^\s*:.]+)\*\*(?:\s|$)`)      // plan_join.ENTRY_RE
-	specRE    = regexp.MustCompile(`^\*\*(?:Spec|Design):\*\*\s*(.*)$`)             // check_plan.SPEC_RE
-	codeRE    = regexp.MustCompile("`([^`]+)`")                                     // check_plan.CODE_RE
-	stageRE   = regexp.MustCompile(`^\*\*Design stage:\*\*\s*(.*)$`)                // /flow:draft's line
-	readingRE = regexp.MustCompile(`^\s*[-*]?\s*\*\*Reading:\*\*\s*(.*)$`)          // a skeleton entry's Reading line
-	phaseRE   = regexp.MustCompile(`^\s*[-*]?\s*\*\*Phase(?::\*\*|\*\*:)\s*(.*\S)`) // a state file's **Phase** line
+	fenceRE    = regexp.MustCompile("^\\s*(```|~~~)")                                // check_plan.FENCE_RE
+	h1RE       = regexp.MustCompile(`^#\s+(.*\S)\s*$`)                               // a document's title
+	h2RE       = regexp.MustCompile(`^##\s`)                                         // check_plan.H2_RE
+	storyRE    = regexp.MustCompile(`^##\s+Story\s+([^\s:.]+)[:.]?\s*(.*)$`)         // check_plan.STORY_RE
+	entryRE    = regexp.MustCompile(`^-\s+\*\*Story\s+([^\s*:.]+)\*\*(?:\s|$)`)      // plan_join.ENTRY_RE
+	specRE     = regexp.MustCompile(`^\*\*(?:Spec|Design):\*\*\s*(.*)$`)             // check_plan.SPEC_RE
+	codeRE     = regexp.MustCompile("`([^`]+)`")                                     // check_plan.CODE_RE
+	stageRE    = regexp.MustCompile(`^\*\*Design stage:\*\*\s*(.*)$`)                // /flow:draft's line
+	partRE     = regexp.MustCompile(`^\*\*Part:\*\*\s*(\d+ of \d+)\.?\s*$`)          // a part's line (plan_skeleton.PART_RE)
+	deliveryRE = regexp.MustCompile(`^\d+\.\s+\*\*Part\s+\d+:`)                      // a Delivery list's part (plan_skeleton.DELIVERY_ITEM_RE)
+	readingRE  = regexp.MustCompile(`^\s*[-*]?\s*\*\*Reading:\*\*\s*(.*)$`)          // a skeleton entry's Reading line
+	phaseRE    = regexp.MustCompile(`^\s*[-*]?\s*\*\*Phase(?::\*\*|\*\*:)\s*(.*\S)`) // a state file's **Phase** line
 )
 
 // planHeader is what a look reads of a plan.
@@ -41,6 +46,8 @@ type planHeader struct {
 	Entries     []string // the ## Stories section's story ids, in order
 	Stories     []planStory
 	Readings    map[string]string // each entry's **Reading:** line, by story id
+	Part        string            // the **Part:** line's "N of M" before the first story, "" for none
+	Parts       int               // the parts a spec's ## Delivery list names, up to its first ### heading
 }
 
 // planStory is a joined story's heading: its id and its 1-based line.
@@ -78,7 +85,7 @@ func readPlan(path string) (planHeader, error) {
 // parsePlan is readPlan's parse, on text.
 func parsePlan(text string) planHeader {
 	h := planHeader{Readings: map[string]string{}}
-	fenced, inStories := false, false
+	fenced, inStories, inDelivery := false, false, false
 	entry := ""
 	for i, line := range strings.Split(text, "\n") {
 		if fenceRE.MatchString(line) {
@@ -103,6 +110,16 @@ func parsePlan(text string) planHeader {
 			inStories = false
 			continue
 		}
+		if strings.TrimRight(line, " \t\r") == deliveryHeading {
+			inDelivery = true
+			continue
+		}
+		if inDelivery && (h2RE.MatchString(line) || strings.HasPrefix(line, "### ")) {
+			inDelivery = false
+		}
+		if inDelivery && deliveryRE.MatchString(line) {
+			h.Parts++
+		}
 		if strings.TrimRight(line, " \t\r") == storiesHeading {
 			inStories = true
 			continue
@@ -120,6 +137,9 @@ func parsePlan(text string) planHeader {
 			}
 			if m := stageRE.FindStringSubmatch(line); m != nil && h.DesignStage == "" {
 				h.DesignStage = strings.TrimSpace(m[1])
+			}
+			if m := partRE.FindStringSubmatch(line); m != nil && h.Part == "" {
+				h.Part = m[1]
 			}
 		}
 		if inStories {
