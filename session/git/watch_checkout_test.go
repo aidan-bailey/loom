@@ -3,7 +3,9 @@ package git
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +113,140 @@ func TestShowFile_AnUnknownRevisionIsNotAMissingFile(t *testing.T) {
 	_, err = ShowFile(repo, "--all", "README.md", nil)
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrNoSuchPath))
+}
+
+// syncFixture is a clone and the path of a watcher checkout inside it
+// (`<repo>/.loom/watch-checkout`, where the daemon puts one), with the
+// clone's first commit.
+func syncFixture(t *testing.T) (clone, path, first string) {
+	t.Helper()
+	clone = newClone(t, "main")
+	// The checkout's directory is untracked noise to the clone, and a later
+	// `git add .` there would commit it as an embedded repository.
+	exclude := filepath.Join(clone, ".git", "info", "exclude")
+	require.NoError(t, os.MkdirAll(filepath.Dir(exclude), 0o755))
+	require.NoError(t, os.WriteFile(exclude, []byte(".loom/\n"), 0o644))
+	return clone, filepath.Join(clone, ".loom", "watch-checkout"), revParse(t, clone, "HEAD")
+}
+
+// headIsDetached reports whether dir's HEAD names no branch.
+func headIsDetached(dir string) bool {
+	return exec.Command("git", "-C", dir, "symbolic-ref", "-q", "HEAD").Run() != nil
+}
+
+// branchOfTree returns the branch dir has checked out ("" when detached).
+func branchOfTree(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "-q", "--short", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestSyncDetachedWorktree_AddsItWhenAbsent(t *testing.T) {
+	clone, path, first := syncFixture(t)
+
+	require.NoError(t, SyncDetachedWorktree(clone, path, first, nil))
+
+	assert.Equal(t, first, revParse(t, path, "HEAD"))
+	assert.True(t, headIsDetached(path))
+	branches, err := exec.Command("git", "-C", clone, "branch", "--format=%(refname:short)").Output()
+	require.NoError(t, err)
+	assert.Equal(t, "main\n", string(branches), "no branch was created for it")
+}
+
+func TestSyncDetachedWorktree_MovesAnExistingCheckoutAndDiscardsItsEdits(t *testing.T) {
+	clone, path, first := syncFixture(t)
+	require.NoError(t, SyncDetachedWorktree(clone, path, first, nil))
+	commitFile(t, clone, "README.md", "hi2")
+	second := revParse(t, clone, "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(path, "README.md"), []byte("left by a hook"), 0o644))
+
+	require.NoError(t, SyncDetachedWorktree(clone, path, second, nil))
+
+	assert.Equal(t, second, revParse(t, path, "HEAD"))
+	body, err := os.ReadFile(filepath.Join(path, "README.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "hi2", string(body), "the checkout is loom's scratch tree: its edits do not block the move")
+	assert.True(t, headIsDetached(path))
+}
+
+func TestSyncDetachedWorktree_AddsItAgainWhenItsDirectoryIsGone(t *testing.T) {
+	clone, path, first := syncFixture(t)
+	require.NoError(t, SyncDetachedWorktree(clone, path, first, nil))
+	require.NoError(t, os.Rename(path, path+".gone"), "the directory is gone, its registration stays")
+
+	require.NoError(t, SyncDetachedWorktree(clone, path, first, nil))
+
+	assert.Equal(t, first, revParse(t, path, "HEAD"))
+}
+
+func TestSyncDetachedWorktree_LeavesAnUnregisteredDirectoryAlone(t *testing.T) {
+	clone, path, first := syncFixture(t)
+	require.NoError(t, os.MkdirAll(path, 0o755))
+	keep := filepath.Join(path, "keep.txt")
+	require.NoError(t, os.WriteFile(keep, []byte("not ours"), 0o644))
+
+	err := SyncDetachedWorktree(clone, path, first, nil)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "not a detached worktree")
+	assert.FileExists(t, keep)
+}
+
+func TestSyncDetachedWorktree_RefusesTheRepositorysOwnCheckout(t *testing.T) {
+	clone, _, first := syncFixture(t)
+	commitFile(t, clone, "x.txt", "x")
+	second := revParse(t, clone, "HEAD")
+	runGit(t, clone, "checkout", "--detach", second)
+
+	err := SyncDetachedWorktree(clone, clone, first, nil)
+
+	require.Error(t, err)
+	assert.Equal(t, second, revParse(t, clone, "HEAD"), "the user's checkout, detached or not, is never moved")
+	assert.FileExists(t, filepath.Join(clone, "x.txt"))
+}
+
+func TestSyncDetachedWorktree_RefusesASessionsBranchWorktree(t *testing.T) {
+	clone, _, first := syncFixture(t)
+	session := filepath.Join(t.TempDir(), "session-tree")
+	runGit(t, clone, "worktree", "add", "-b", "feat", session)
+	commitFile(t, session, "work.txt", "work")
+	work := revParse(t, session, "HEAD")
+
+	err := SyncDetachedWorktree(clone, session, first, nil)
+
+	require.Error(t, err)
+	assert.Equal(t, "feat", branchOfTree(session), "a worktree on a branch is not the watcher's")
+	assert.Equal(t, work, revParse(t, session, "HEAD"))
+}
+
+func TestSyncDetachedWorktree_RefusesAGuttedCheckoutInsideTheRepository(t *testing.T) {
+	clone, path, first := syncFixture(t)
+	require.NoError(t, SyncDetachedWorktree(clone, path, first, nil))
+	commitFile(t, clone, "y.txt", "y")
+	second := revParse(t, clone, "HEAD")
+	require.NoError(t, os.Remove(filepath.Join(path, ".git")), "gutted: still registered, no longer a tree of its own")
+
+	err := SyncDetachedWorktree(clone, path, second, nil)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "left as it is")
+	assert.Equal(t, "main", branchOfTree(clone), "git run in the gutted directory would walk up to the user's checkout")
+	assert.Equal(t, second, revParse(t, clone, "HEAD"))
+}
+
+func TestSyncDetachedWorktree_NeedsAFullCommitSHA(t *testing.T) {
+	clone, path, _ := syncFixture(t)
+	for name, sha := range map[string]string{
+		"a branch name": "main",
+		"no commit":     strings.Repeat("0", 40),
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := SyncDetachedWorktree(clone, path, sha, nil)
+
+			require.Error(t, err)
+			assert.NoDirExists(t, path)
+		})
+	}
 }

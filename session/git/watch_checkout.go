@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -93,4 +94,86 @@ func ShowFile(repoPath string, rev string, path string, runner CommandRunner) ([
 		return nil, fmt.Errorf("show %s:%s: %w", rev, path, err)
 	}
 	return []byte(body), nil
+}
+
+// SyncDetachedWorktree keeps a detached worktree at path on commit sha: it
+// adds one when path is absent (also over a registration whose directory is
+// gone), and otherwise checks sha out detached in it, discarding edits to
+// tracked files, which are the hook's scratch and never the user's work.
+// sha must be a full SHA of a commit already in the repository (FetchBranch's
+// answer); a branch name is refused.
+//
+// It acts on an existing path only when git lists it as a detached linked
+// worktree of repoPath (the repository's own checkout, whatever its HEAD,
+// and a worktree on a branch, a session's, are refused) and git resolves its
+// toplevel to the path itself: the checkout sits inside the repository, so
+// git run in a gutted one would walk up to the user's own checkout. Any
+// other directory there is left as it is, with an error. Nothing is deleted.
+func SyncDetachedWorktree(repoPath string, path string, sha string, runner CommandRunner) error {
+	if !isFullSHA(sha) {
+		return fmt.Errorf("watcher checkout: %q is not a full commit SHA", sha)
+	}
+	r := defaultRunner(runner)
+	if _, ok := resolveRef(repoPath, sha, r); !ok {
+		return fmt.Errorf("watcher checkout: %s is not a commit in %s", sha, repoPath)
+	}
+
+	_, statErr := os.Lstat(path)
+	switch {
+	case errors.Is(statErr, os.ErrNotExist):
+		// --force: a registration whose directory is gone is overridden.
+		if err := runGitCombined(repoPath, r, gitWorktreeAddTimeout, "worktree", "add", "--force", "--detach", path, sha); err != nil {
+			return fmt.Errorf("watcher checkout %s: %w", path, err)
+		}
+		return nil
+	case statErr != nil:
+		return fmt.Errorf("watcher checkout %s: %w", path, statErr)
+	}
+
+	owned, err := isDetachedLinkedWorktree(repoPath, path, r)
+	if err != nil {
+		return fmt.Errorf("watcher checkout %s: %w", path, err)
+	}
+	if !owned {
+		return fmt.Errorf("watcher checkout: %s exists and is not a detached worktree of %s; left as it is", path, repoPath)
+	}
+	top, err := runGitOutput(path, r, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("watcher checkout %s: %w", path, err)
+	}
+	if resolvedPath(strings.TrimSpace(top)) != resolvedPath(path) {
+		return fmt.Errorf("watcher checkout: git resolves %s to %s, so it is no working tree of its own; left as it is", path, strings.TrimSpace(top))
+	}
+	if err := runGitCombined(path, r, gitWorktreeAddTimeout, "checkout", "--quiet", "--force", "--detach", sha); err != nil {
+		return fmt.Errorf("watcher checkout %s: %w", path, err)
+	}
+	return nil
+}
+
+// isDetachedLinkedWorktree reports whether `git worktree list --porcelain`
+// of repoPath lists path (compared by resolved path) as a linked worktree
+// with a detached HEAD. The first block is the repository's own checkout and
+// never counts.
+func isDetachedLinkedWorktree(repoPath, path string, r CommandRunner) (bool, error) {
+	out, err := runGitOutput(repoPath, r, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	want := resolvedPath(path)
+	for n, block := range strings.Split(strings.TrimSpace(out), "\n\n") {
+		if n == 0 {
+			continue
+		}
+		lines := strings.Split(block, "\n")
+		if !strings.HasPrefix(lines[0], "worktree ") || resolvedPath(strings.TrimPrefix(lines[0], "worktree ")) != want {
+			continue
+		}
+		for _, l := range lines[1:] {
+			if l == "detached" {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return false, nil
 }
