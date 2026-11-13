@@ -202,6 +202,34 @@ class HeadTest(unittest.TestCase):
         self.assertEqual(lint(skeleton(["```text", "- `f(x)`", "```"])), [])
 
 
+class WaveTest(unittest.TestCase):
+    def stories(self, *afters):
+        """Stories 1 to 3, each with the Drafts after line `afters` gives it (None for none)."""
+        listed = []
+        for sid, after in zip("123", afters):
+            listed += entry(sid, extra=() if after is None else (f"  - **Drafts after:** {after}",))
+        return lint(skeleton([], stories=listed))
+
+    def test_a_later_wave_passes(self):
+        self.assertEqual(self.stories(None, None, "Stories 1 and 2"), [])
+
+    def test_an_unknown_story_its_own_and_none_fail(self):
+        problems = self.stories("Story 9", "Story 2", "")
+        self.assertTrue(any("Story 1 entry" in p and "Story 9, which the list doesn't have" in p for p in problems), problems)
+        self.assertTrue(any("Story 2 entry" in p and "its own story" in p for p in problems), problems)
+        self.assertTrue(any("Story 3 entry" in p and "names no story" in p for p in problems), problems)
+
+    def test_a_circle_fails_once(self):
+        problems = self.stories("Story 3", "Story 1", "Story 2")
+        circles = [p for p in problems if "wait in a circle" in p]
+        self.assertEqual(len(circles), 1, problems)
+
+    def test_a_repeated_line_fails(self):
+        listed = entry("1") + entry("2", extra=("  - **Drafts after:** Story 1", "  - **Drafts after:** Story 1"))
+        problems = lint(skeleton([], stories=listed))
+        self.assertTrue(any("gives **Drafts after:** twice" in p for p in problems), problems)
+
+
 class EntryTest(unittest.TestCase):
     def stories(self, *blocks):
         return lint(skeleton([], stories=[line for block in blocks for line in block]))

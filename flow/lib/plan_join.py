@@ -16,6 +16,8 @@ Each entry gives its story's opening lines as bullets nested under it (Developer
 Verify and, when the story has it, Review), and a draft holds none of them: the join writes each
 story as its draft's heading, a blank line, the entry's opening lines, a blank line, and the rest of
 the draft. A draft written before that rule opens with a copy, which the join drops and reports.
+An entry's **Reading** line and its optional **Drafts after** line (the stories whose drafts its
+drafter reads, drafted in an earlier wave) are for the drafter: the join writes neither.
 
 Usage: plan_join.py PLAN [--drafts DIR]
 
@@ -47,6 +49,9 @@ DRAFT_RE = re.compile(r"^S([^.]+)\.md$")
 # /flow:draft keeps its state file in the drafts directory (part 2 spec §4.4); it is not a story draft.
 RESERVED = frozenset({"STATE.md"})
 READING_RE = re.compile(r"^\s*[-*]\s+\*\*Reading:\*\*")
+# A story drafted in a later wave names the stories whose drafts it reads: `- **Drafts after:** Story 3, Story 6`.
+DRAFTS_AFTER_RE = re.compile(r"^\s*[-*]\s+\*\*Drafts after:\*\*\s*(.*)$")
+AFTER_WORD_RE = re.compile(r"\b(?:Stor(?:y|ies)|and)\b")
 COPIED_NOTE = "dropped its copied opening lines; joined the entry's"
 
 
@@ -65,6 +70,8 @@ class Entry:
     fields: dict[str, str] = field(default_factory=dict)
     repeated: list[str] = field(default_factory=list)
     reading: bool = False
+    # The ids its **Drafts after:** line names (only the drafter reads it; the join writes it nowhere), or None without one.
+    after: list[str] | None = None
 
     def missing(self) -> list[str]:
         """The required opening lines the entry lacks, in FIELDS order."""
@@ -135,11 +142,21 @@ def entries(text: str) -> list[Entry]:
                         current.opening.append(line.strip())
                 elif READING_RE.match(line):
                     current.reading = True
+                elif (later := DRAFTS_AFTER_RE.match(line)):
+                    if current.after is not None:
+                        current.repeated.append("Drafts after")
+                    else:
+                        current.after = after_ids(later.group(1))
     if not found:
         raise JoinError(f"the plan has no {STORIES_HEADING} section")
     if not listed:
         raise JoinError(f"the {STORIES_HEADING} section lists no stories")
     return listed
+
+
+def after_ids(text: str) -> list[str]:
+    """The story ids a **Drafts after:** line names: `Story 3, Story 6`, `Stories 3 and 6` or `3, 6`."""
+    return [token.strip("`.") for token in re.split(r"[,\s]+", AFTER_WORD_RE.sub(" ", text)) if token.strip("`.")]
 
 
 def story_order(text: str) -> list[str]:

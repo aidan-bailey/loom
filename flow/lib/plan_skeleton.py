@@ -20,6 +20,8 @@
   path, Interfaces, a Verify line with a backticked command, a Review line (when present) of deep or
   light, and a Reading line, each once; and every bold Story bullet of the list is in the grammar the
   join reads (`- **Story <id>**` at column 0);
+- the waves: a `**Drafts after:**` line names at least one listed story, never its own, and no chain of
+  them comes back to where it started;
 - the part: a `**Part:** N of M` line agreeing with the spec's `## Delivery` list (`N. **Part N: <title>.**`,
   numbered 1 to M), needed when the spec has one;
 - the story budget: more stories than the profile's `[size] plan` (15 when unset) need a `**Size:**` line with a
@@ -195,6 +197,43 @@ def entry_problems(entry: Entry) -> list[str]:
     return problems
 
 
+def wave_problems(listed: list[Entry]) -> list[str]:
+    """What keeps the entries' **Drafts after:** lines from ordering the drafting into waves."""
+    ids = {entry.sid for entry in listed}
+    problems: list[str] = []
+    after: dict[str, list[str]] = {}
+    for entry in listed:
+        if entry.after is None:
+            continue
+        where = f"Story {entry.sid} entry (line {entry.line})"
+        if not entry.after:
+            problems.append(f"{where}: **Drafts after:** names no story")
+        for sid in entry.after:
+            if sid == entry.sid:
+                problems.append(f"{where}: **Drafts after:** names its own story")
+            elif sid not in ids:
+                problems.append(f"{where}: **Drafts after:** names Story {sid}, which the list doesn't have")
+        after[entry.sid] = [sid for sid in entry.after if sid in ids and sid != entry.sid]
+    # A cycle would leave every story on it waiting for another: walk each story's chain.
+    reported: set[frozenset[str]] = set()
+
+    def walk(sid: str, path: list[str]) -> None:
+        for nxt in after.get(sid, []):
+            if nxt in path:
+                cycle = path[path.index(nxt):]
+                key = frozenset(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    chain = " -> ".join(f"Story {s}" for s in [*cycle, nxt])
+                    problems.append(f"the **Drafts after:** lines wait in a circle ({chain}): no story on it can start")
+            else:
+                walk(nxt, [*path, nxt])
+
+    for entry in listed:
+        walk(entry.sid, [entry.sid])
+    return problems
+
+
 def contract_problems(contract: list[tuple[int, str]], ids: set[str]) -> list[str]:
     """Rules 1 to 3 over the names contract's lines."""
     problems: list[str] = []
@@ -315,6 +354,7 @@ def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
         listed = []
     for entry in listed:
         problems += entry_problems(entry)
+    problems += wave_problems(listed)
     for n, line in section(head, STORIES_HEADING) or []:
         if LOOSE_ENTRY_RE.match(line) and not ENTRY_RE.match(line):
             problems.append(f"line {n}: the join reads an entry only as `- **Story <id>**` at column 0: {line.strip()}")

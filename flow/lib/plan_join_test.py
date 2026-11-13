@@ -150,6 +150,34 @@ class EntriesTest(unittest.TestCase):
         self.assertFalse(entry.reading)
 
 
+class DraftsAfterTest(TreeCase):
+    def test_the_line_is_read_and_left_out_of_the_opening_lines(self):
+        after = [*LIST_2[:-1], "  - **Drafts after:** Stories 1 and 3", LIST_2[-1]]
+        (_, second) = plan_join.entries(skeleton(LIST_1, after))
+        self.assertEqual(second.after, ["1", "3"])
+        self.assertEqual(second.opening, ENTRY_2)
+        self.assertTrue(second.reading)
+
+    def test_every_written_form_names_its_ids(self):
+        for text in ("Story 1, Story 2b", "Stories 1 and 2b", "1, 2b", "`Story 1`, `Story 2b`."):
+            self.assertEqual(plan_join.after_ids(text), ["1", "2b"], text)
+
+    def test_an_entry_without_the_line_has_none(self):
+        self.assertIsNone(plan_join.entries(SKELETON)[0].after)
+
+    def test_the_join_writes_it_into_no_story(self):
+        plan = skeleton(LIST_1, [*LIST_2, "  - **Drafts after:** Story 1"])
+        t = self.tree(plan)
+        out, _, _ = plan_join.join(plan, t.drafts)
+        self.assertEqual(out.count("Drafts after"), 1)  # the entry's own line, above the marker
+
+    def test_a_repeated_line_fails_the_join(self):
+        plan = skeleton(LIST_1, [*LIST_2, "  - **Drafts after:** Story 1", "  - **Drafts after:** Story 1"])
+        t = self.tree(plan)
+        with self.assertRaisesRegex(JoinError, r"\*\*Drafts after:\*\* twice"):
+            plan_join.join(plan, t.drafts)
+
+
 class JoinTest(TreeCase):
     def test_output_shape(self):
         t = self.tree()
