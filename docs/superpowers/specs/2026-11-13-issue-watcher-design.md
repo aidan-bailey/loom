@@ -164,7 +164,7 @@ In this order: a comment on N with the reason (and the session's title, the PR, 
 
 ### 5.2 `start`
 
-Called by the start action, for the one issue it starts.
+Called by the start action, for the one issue it starts, and only in a tick whose `git fetch origin <base>` and worktree refresh both succeeded: the watcher worktree is then detached at `base_sha`, the `origin/<base>` that fetch returned, so a file the hook reads there (polyoxide's `divergences.md`) is main's as of this tick. A tick whose fetch or refresh failed starts nothing (§7.1).
 
 In:
 
