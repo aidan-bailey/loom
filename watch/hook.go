@@ -2,14 +2,19 @@ package watch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -322,4 +327,104 @@ func decodeHookNudges(out []byte) ([]Nudge, error) {
 		nudges = append(nudges, Nudge{Kind: it.Kind, Key: it.Key, Text: it.Text})
 	}
 	return nudges, nil
+}
+
+const (
+	hookMaxStdout  = 1 << 20 // bytes of stdout read; more fails the call
+	hookStderrTail = 4 << 10 // bytes of stderr kept for status
+	// hookWaitDelay is how long Wait lets the descendants of a killed hook
+	// hold its pipes open before it closes them and fails the call.
+	hookWaitDelay = 2 * time.Second
+)
+
+var errHookStdoutTooLarge = fmt.Errorf("stdout exceeds %d bytes", hookMaxStdout)
+
+// hookStdout holds a hook's stdout up to hookMaxStdout bytes. The first Write
+// that would pass the cap sets over and fails: exec's copy stops and closes
+// the pipe, so a hook that floods stdout gets EPIPE and the daemon stops
+// growing.
+type hookStdout struct {
+	buf  bytes.Buffer
+	over bool
+}
+
+func (w *hookStdout) Write(p []byte) (int, error) {
+	if w.buf.Len()+len(p) > hookMaxStdout {
+		w.over = true
+		return 0, errHookStdoutTooLarge
+	}
+	return w.buf.Write(p)
+}
+
+// hookStderr keeps the last hookStderrTail bytes written to it.
+type hookStderr struct{ tail []byte }
+
+func (w *hookStderr) Write(p []byte) (int, error) {
+	w.tail = append(w.tail, p...)
+	if extra := len(w.tail) - hookStderrTail; extra > 0 {
+		w.tail = append(w.tail[:0], w.tail[extra:]...)
+	}
+	return len(p), nil
+}
+
+// hookEnv builds the hook's environment (spec §5.1): the daemon's, with PWD
+// moved to dir (os/exec updates PWD only when Env is nil, so a script reading
+// $PWD would see the daemon's directory), then extra, then the two variables
+// the hook contract promises, last so that no extra can override them.
+// os.Environ returns a copy, so appending to it is safe.
+func hookEnv(dir string, extra []string, in HookInput) []string {
+	env := os.Environ()
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			env = append(env, "PWD="+abs)
+		}
+	}
+	env = append(env, extra...)
+	return append(env, "LOOM_WATCH_WORKSPACE="+in.Workspace, "LOOM_WATCH_REPO="+in.Repo)
+}
+
+// runHook runs cfg.Command with in.Point as its last argument in dir, feeds
+// it in as JSON on stdin, and returns its stdout and the tail of its stderr.
+// It fails on a timeout (cfg.Timeout, which must be positive), on the
+// caller's context ending, on a non-zero exit, on stdout over hookMaxStdout
+// bytes, and on a start failure such as a missing dir; a failure returns no
+// stdout. The caller has dealt with an empty cfg.Command (no hook).
+func runHook(ctx context.Context, cfg HookConfig, dir string, env []string, in HookInput) ([]byte, string, error) {
+	switch {
+	case len(cfg.Command) == 0:
+		return nil, "", errors.New("hook command is empty")
+	case cfg.Command[0] == "":
+		return nil, "", errors.New("hook command: the first string is empty")
+	case cfg.Timeout <= 0:
+		return nil, "", fmt.Errorf("hook timeout %s must be positive", cfg.Timeout)
+	}
+	payload, err := json.Marshal(in)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode input: %w", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+	args := append(slices.Clone(cfg.Command[1:]), in.Point)
+	cmd := exec.CommandContext(runCtx, cfg.Command[0], args...)
+	cmd.Dir = dir
+	cmd.Env = hookEnv(dir, env, in)
+	cmd.Stdin = bytes.NewReader(payload)
+	stdout, stderr := &hookStdout{}, &hookStderr{}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.WaitDelay = hookWaitDelay
+	runErr := cmd.Run()
+
+	tail := strings.ToValidUTF8(string(stderr.tail), "")
+	switch {
+	case stdout.over:
+		return nil, tail, errHookStdoutTooLarge
+	case ctx.Err() != nil:
+		return nil, tail, fmt.Errorf("the caller's context ended: %w", ctx.Err())
+	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
+		return nil, tail, fmt.Errorf("timed out after %s: %w", cfg.Timeout, context.DeadlineExceeded)
+	case runErr != nil:
+		return nil, tail, fmt.Errorf("run %s: %w", cfg.Command[0], runErr)
+	}
+	return stdout.buf.Bytes(), tail, nil
 }

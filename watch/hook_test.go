@@ -1,9 +1,13 @@
 package watch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -277,4 +281,196 @@ func TestDecodeHookNudges_Rejects(t *testing.T) {
 			assert.Nil(t, got, "one bad nudge fails the whole answer")
 		})
 	}
+}
+
+// hookTestTimeout is the timeout of every hook call that is not testing one.
+const hookTestTimeout = 20 * time.Second
+
+// hookCmd returns a HookConfig that runs testdata/<script> under sh, with
+// args before the point the runner appends.
+func hookCmd(t *testing.T, timeout time.Duration, script string, args ...string) HookConfig {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the hook stubs are POSIX shell scripts")
+	}
+	path, err := filepath.Abs(filepath.Join("testdata", script))
+	require.NoError(t, err)
+	return HookConfig{Command: append([]string{"sh", path}, args...), Timeout: timeout}
+}
+
+// readCapture reads what hook_ok.sh recorded under name in dir, without its
+// final newline.
+func readCapture(t *testing.T, dir, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, name))
+	require.NoError(t, err)
+	return strings.TrimSuffix(string(b), "\n")
+}
+
+func TestRunHook_ChildEnvironment(t *testing.T) {
+	cfg := hookCmd(t, hookTestTimeout, "hook_ok.sh")
+	dir := t.TempDir()
+	capture := t.TempDir()
+	t.Setenv("LOOM_HOOK_TEST_INHERITED", "from-the-daemon")
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	// An extra reaches the hook; one that names the contract's variables
+	// does not win over them.
+	extra := []string{"HOOK_CAPTURE_DIR=" + capture, "LOOM_WATCH_REPO=spoofed/repo"}
+	out, stderr, err := runHook(context.Background(), cfg, dir, extra, in)
+
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assert.JSONEq(t, `{"start": true, "vars": {"spec": "kalshi-ws", "row": "R33"}}`, string(out))
+	assert.Equal(t, "start", readCapture(t, capture, "point"), "the point is the command's last argument")
+	assert.Equal(t, "1", readCapture(t, capture, "argc"), "and the only one the runner adds")
+	assert.Equal(t, "from-the-daemon", readCapture(t, capture, "inherited"), "the daemon's environment is passed on")
+	assert.Equal(t, "polyoxide", readCapture(t, capture, "workspace"))
+	assert.Equal(t, "owner/name", readCapture(t, capture, "repo"), "LOOM_WATCH_REPO is the runner's, not an extra's")
+	assert.Equal(t, dir, readCapture(t, capture, "pwd"), "PWD follows the directory")
+	wantCwd, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, wantCwd, readCapture(t, capture, "cwd"), "the hook runs in dir")
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readCapture(t, capture, "stdin.json")), &sent))
+	assert.Equal(t, "start", sent["point"])
+	assert.Equal(t, "polyoxide", sent["workspace"])
+	assert.Contains(t, sent, "pr", "pr is present, null at a fresh start")
+	assert.Nil(t, sent["pr"])
+	issue, _ := sent["issue"].(map[string]any)
+	assert.EqualValues(t, 96, issue["number"])
+}
+
+func TestRunHook_Timeout(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	began := time.Now()
+	out, _, err := runHook(context.Background(), hookCmd(t, 300*time.Millisecond, "hook_slow.sh"), t.TempDir(), nil, in)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.ErrorContains(t, err, "timed out after 300ms")
+	assert.Nil(t, out)
+	assert.Less(t, time.Since(began), 10*time.Second, "the hook is killed, not waited out (it sleeps 30 s)")
+}
+
+func TestRunHook_CallerContextEnded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	_, _, err := runHook(ctx, hookCmd(t, hookTestTimeout, "hook_ok.sh"), t.TempDir(), nil, in)
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.ErrorContains(t, err, "caller's context ended")
+	assert.NotErrorIs(t, err, context.DeadlineExceeded, "a cancelled poll is not the hook's timeout")
+}
+
+func TestRunHook_NonZeroExit(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	out, stderr, err := runHook(context.Background(), hookCmd(t, hookTestTimeout, "hook_bad.sh", "non-zero"), t.TempDir(), nil, in)
+
+	assert.ErrorContains(t, err, "exit status 3")
+	assert.Nil(t, out, "its stdout is a valid answer, and is not used")
+	assert.Contains(t, stderr, "boom: the drift script crashed")
+}
+
+func TestRunHook_StdoutOverCap(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	out, _, err := runHook(context.Background(), hookCmd(t, hookTestTimeout, "hook_bad.sh", "flood"), t.TempDir(), nil, in)
+
+	assert.ErrorContains(t, err, "stdout exceeds 1048576 bytes")
+	assert.Nil(t, out, "its stdout is valid JSON, and is not used")
+}
+
+func TestHookStdout_Cap(t *testing.T) {
+	var w hookStdout
+
+	n, err := w.Write(make([]byte, hookMaxStdout-1))
+	require.NoError(t, err)
+	assert.Equal(t, hookMaxStdout-1, n)
+	_, err = w.Write([]byte{'x'})
+	require.NoError(t, err, "exactly the cap is kept")
+	assert.False(t, w.over)
+
+	_, err = w.Write([]byte{'y'})
+	assert.ErrorIs(t, err, errHookStdoutTooLarge, "one byte more is refused")
+	assert.True(t, w.over)
+	assert.Equal(t, hookMaxStdout, w.buf.Len(), "and not kept")
+}
+
+func TestHookStderr_KeepsTheTail(t *testing.T) {
+	var w hookStderr
+
+	n, err := w.Write([]byte("short\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 6, n)
+	assert.Equal(t, "short\n", string(w.tail), "less than the tail is kept whole")
+
+	_, err = w.Write([]byte(strings.Repeat("a", 3000)))
+	require.NoError(t, err)
+	n, err = w.Write([]byte(strings.Repeat("b", 3000)))
+	require.NoError(t, err)
+	assert.Equal(t, 3000, n, "a write always reports its whole length")
+	assert.Equal(t, strings.Repeat("a", 1096)+strings.Repeat("b", 3000), string(w.tail),
+		"the last 4096 bytes are kept")
+}
+
+func TestRunHook_StderrTail(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	_, stderr, err := runHook(context.Background(), hookCmd(t, hookTestTimeout, "hook_bad.sh", "noisy"), t.TempDir(), nil, in)
+
+	assert.ErrorContains(t, err, "exit status 1")
+	assert.LessOrEqual(t, len(stderr), 4096)
+	assert.True(t, strings.HasSuffix(stderr, "line 599 padding padding padding\n"), "the end of stderr is kept")
+	assert.NotContains(t, stderr, "line 0 ", "and the start is cut")
+}
+
+func TestRunHook_RejectsAnUnusableConfig(t *testing.T) {
+	good := hookCmd(t, hookTestTimeout, "hook_ok.sh")
+	cases := []struct {
+		name string
+		cfg  HookConfig
+		want string
+	}{
+		{"no command", HookConfig{Timeout: hookTestTimeout}, "hook command is empty"},
+		{"an empty first string", HookConfig{Command: []string{""}, Timeout: hookTestTimeout}, "first string is empty"},
+		{"a zero timeout", HookConfig{Command: good.Command}, "must be positive"},
+		{"a negative timeout", HookConfig{Command: good.Command, Timeout: -time.Second}, "must be positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := hookTestInput()
+			in.Point = hookPointStart
+
+			out, _, err := runHook(context.Background(), tc.cfg, t.TempDir(), nil, in)
+
+			assert.ErrorContains(t, err, tc.want)
+			assert.Nil(t, out)
+		})
+	}
+}
+
+func TestRunHook_MissingDirectory(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+	dir := filepath.Join(t.TempDir(), "absent")
+	capture := t.TempDir()
+
+	out, _, err := runHook(context.Background(), hookCmd(t, hookTestTimeout, "hook_ok.sh"), dir,
+		[]string{"HOOK_CAPTURE_DIR=" + capture}, in)
+
+	assert.Error(t, err)
+	assert.Nil(t, out)
+	assert.NoFileExists(t, filepath.Join(capture, "stdin.json"), "the hook never ran")
 }
