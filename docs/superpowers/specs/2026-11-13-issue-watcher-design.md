@@ -49,7 +49,7 @@ The watcher runs for every served workspace switched on, whether or not a client
 ## 2. Terms
 
 - **The watcher's session for N:** its title parses with the config's title template (§3.2) to issue N, and its `issue` field is N.
-- **The watcher's PR for N:** its head branch matches the template's branch pattern for N (§3.2), `closingIssuesReferences` holds N, `isCrossRepository` is false, and its author is the watcher's `gh` identity (`gh api user`). All four; a PR the owner opened by hand on their own branch is never adopted.
+- **The watcher's PR for N:** its head branch matches the template's branch pattern for N (§3.2), `closingIssuesReferences` holds N in the workspace's own repository (a reference to another repository's #N does not count), `isCrossRepository` is false, and its author is the watcher's `gh` identity (`gh api user`). All four; a PR the owner opened by hand on their own branch is never adopted.
 - **A foreign session:** any other session whose `issue` field is N. It blocks a start, is never messaged or killed, and does not count toward the cap.
 - **L:** `escalate_label`, required. An issue carrying L is hands-off.
 
