@@ -30,6 +30,15 @@ wrong tier, or not at all, fails the check, as does a token under either list th
 lists no tiers at all. The output says per story whether the plan review vouches for it (a deep story
 the line lists, or a deep story of a line written before tiers).
 
+Two lints read the stories' text and print a `WARN [lint]` line each, never a FAIL (loom flow run
+re-checks a parked run's plan, and a heuristic must not park it for good; /flow:draft sends each to its
+story's fix job; --json prints none). A `Fails without: <test>: <code>` line names its tests
+(backticked, several joined by commas and `and`, or one name as written): an identifier that neither
+the plan's code blocks nor the repo's tracked files hold is warned of, as a test renamed or never
+written. And in a Rust block, a `pub` item's `///` docs that link unqualified (`[name]`,
+`` [`name`] ``) to a top-level item the plan defines only without `pub`, and the tree defines no `pub`
+item of: rustdoc's private_intra_doc_links warns on it, and a doc gate under `-D warnings` fails.
+
 A plan may declare, before its first story, the pairs of stories whose second story's developer runs in
 a lane beside the first under loom flow run: `**Parallel:** 3+4, 7+8`. Each pair is a story and the one
 right after it, with disjoint Files and at most one exclusive build; a pair that isn't fails the check,
@@ -61,6 +70,7 @@ import itertools
 import json
 import posixpath
 import re
+import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -91,6 +101,16 @@ PARALLEL_RE = re.compile(r"^\*\*Parallel:\*\*\s*(.*)$")
 PAIR_RE = re.compile(r"^([^\s+,]+)\s*\+\s*([^\s+,]+)$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 CODE_RE = re.compile(r"`([^`]+)`")
+FAILS_WITHOUT_RE = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?Fails without:(?:\*\*)?\s*(.*)$")
+IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
+# A Rust item definition: group 1 its visibility (empty when private), group 2 its name.
+RUST_ITEM_RE = re.compile(
+    r"^\s*(pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe|extern(?:\s+\"\w+\")?)\s+)*"
+    r"(?:fn|struct|enum|union|trait|type|const|static|mod)\s+(\w+)"
+)
+RUST_LANGS = frozenset({"rust", "rs"})
+# An intra-doc link: `[name]` or ``[`name`]``, a path's last segment the item; never `[text](url)` or `[text][ref]`.
+DOC_LINK_RE = re.compile(r"\[`?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)(?:\(\))?`?\](?![(\[])")
 
 # The deep criteria are the profile's landmines.markers: a light story's fenced code may hold one
 # only when the story's Review reason names it.
@@ -111,6 +131,10 @@ class Story:
     tasks: int = 0
     # Each fenced line inside the story's section, with its plan line number.
     code: list[tuple[int, str]] = field(default_factory=list)
+    # Each fenced block: its opening fence's plan line, its language word (lower case, empty when none) and its lines.
+    blocks: list[tuple[int, str, list[tuple[int, str]]]] = field(default_factory=list)
+    # Each line outside a fence after the story's heading, with its plan line number.
+    prose: list[tuple[int, str]] = field(default_factory=list)
 
     @property
     def files(self) -> set[str]:
@@ -147,11 +171,18 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
     for n, line in enumerate(lines, 1):
         if FENCE_RE.match(line):
             fenced = not fenced
+            if fenced and current is not None:
+                info = line.strip().lstrip("`~").split()
+                current.blocks.append((n, info[0].lower() if info else "", []))
             continue
         if fenced:
             if current is not None:
                 current.code.append((n, line))
+                if current.blocks:
+                    current.blocks[-1][2].append((n, line))
             continue
+        if current is not None and not H2_RE.match(line):
+            current.prose.append((n, line))
         if current is not None and (STORY_RE.match(line) or H2_RE.match(line)):
             current.end = n - 1
         named = SPEC_RE.match(line)
@@ -287,6 +318,179 @@ def vouched(review: str | None, stories: list[Story]) -> dict[str, bool]:
     return {story.sid: story.sid in deep for story in stories}
 
 
+def failing_names(rest: str) -> list[list[str]]:
+    """The candidate test-name lists of a `Fails without:` line's text, shortest head first.
+
+    The head runs to a `:` outside backticks; a head holding backticked spans names those, else it is one
+    name as written. A test name may hold `: ` itself, so each later `:` gives a longer candidate. A line
+    whose names follow on the next lines gives none.
+    """
+    candidates: list[list[str]] = []
+    ticks = False
+    for i, ch in enumerate(rest):
+        if ch == "`":
+            ticks = not ticks
+        elif ch == ":" and not ticks and (i + 1 == len(rest) or rest[i + 1].isspace()):
+            head = rest[:i].strip()
+            spans = CODE_RE.findall(head)
+            names = [span.strip().removesuffix("()") for span in spans] if spans else [head.strip("'\" ")]
+            if all(names):
+                candidates.append(names)
+    return candidates
+
+
+def holds_name(code: str, name: str) -> bool:
+    """Whether code holds a test name: as a word when it is an identifier (its last `::` segment), else as text."""
+    last = name.split("::")[-1]
+    if IDENT_RE.fullmatch(last):
+        return re.search(r"(?<![\w$])" + re.escape(last) + r"(?![\w$])", code) is not None
+    return name in code or name.replace("'", "\\'") in code
+
+
+def unheld_test_names(story: Story, plan_code: str) -> list[tuple[int, list[str]]]:
+    """Each `Fails without:` line of the story with the identifier names it gives that no code block of the plan holds.
+
+    Only identifiers are judged: a name written as prose (a TS test's title cut short, "the sweep") can't be told
+    from a description, so it passes.
+    """
+    code = "\n".join(line for _, line in story.code)
+    found: list[tuple[int, list[str]]] = []
+    for n, line in story.prose:
+        named = FAILS_WITHOUT_RE.match(line)
+        if not named:
+            continue
+        candidates = failing_names(named.group(1))
+        if not candidates or any(all(holds_name(code, name) for name in names) for names in candidates):
+            continue
+        missing = [
+            name for name in candidates[0]
+            if IDENT_RE.fullmatch(name.split("::")[-1]) and not holds_name(code, name) and not holds_name(plan_code, name)
+        ]
+        if missing:
+            found.append((n, missing))
+    return found
+
+
+def tree_words(root: Path, names: set[str]) -> set[str]:
+    """Which of `names` the tracked files at `root` hold as a word (`git grep -w`); every name when git can't answer.
+
+    A test the story doesn't add but leans on, such as an existing test its change keeps green, is in the tree.
+    """
+    if not names:
+        return set()
+    args = ["git", "-C", str(root), "grep", "-h", "-o", "-w", "-F", "-I"]
+    for name in sorted(names):
+        args += ["-e", name]
+    try:
+        done = subprocess.run(args, capture_output=True, text=True)
+    except OSError:
+        return set(names)
+    if done.returncode not in (0, 1):
+        return set(names)
+    return {word for word in done.stdout.split() if word in names}
+
+
+def fails_without_problems(stories: list[Story], root: Path) -> list[str]:
+    """Each `Fails without:` line naming a test that neither the plan's code nor the tree holds."""
+    plan_code = "\n".join(line for story in stories for _, line in story.code)
+    lines = [(story, n, names) for story in stories for n, names in unheld_test_names(story, plan_code)]
+    known = tree_words(root, {name.split("::")[-1] for _, _, names in lines for name in names})
+    problems: list[str] = []
+    for story, n, names in lines:
+        missing = [name for name in names if name.split("::")[-1] not in known]
+        if missing:
+            problems.append(
+                f"Story {story.sid}: line {n}: `Fails without:` names {', '.join(missing)}, which neither the plan's code "
+                "nor the tree holds: name each test as its code does"
+            )
+    return problems
+
+
+def rust_visibility(stories: list[Story]) -> tuple[set[str], set[str]]:
+    """The names the plan's Rust blocks define with plain `pub`, and the top-level items they define only without it.
+
+    A method (an indented `fn`) is left out of the second set: an unqualified link can't reach it, and a trait
+    impl's methods carry no `pub` and are no private items.
+    """
+    public: set[str] = set()
+    private: set[str] = set()
+    for story in stories:
+        for _, lang, block in story.blocks:
+            if lang not in RUST_LANGS:
+                continue
+            for _, line in block:
+                item = RUST_ITEM_RE.match(line)
+                if not item:
+                    continue
+                if (item.group(1) or "").strip() == "pub":
+                    public.add(item.group(2))
+                elif line[:1] not in (" ", "\t"):
+                    private.add(item.group(2))
+    return public, private - public
+
+
+def private_links(story: Story, private: set[str]) -> list[tuple[int, str, str]]:
+    """Each unqualified intra-doc link in a `pub` item's `///` docs to an item the plan defines only without `pub`,
+    as (plan line, the item documented, the item linked)."""
+    found: list[tuple[int, str, str]] = []
+    for _, lang, block in story.blocks:
+        if lang not in RUST_LANGS:
+            continue
+        docs: list[tuple[int, str]] = []
+        for n, line in block:
+            stripped = line.strip()
+            if stripped.startswith("///"):
+                docs.append((n, stripped))
+                continue
+            if not stripped:
+                docs = []
+                continue
+            if stripped.startswith("#["):
+                continue
+            item = RUST_ITEM_RE.match(line)
+            if item and (item.group(1) or "").strip() == "pub":
+                for at, doc in docs:
+                    for link in DOC_LINK_RE.findall(doc):
+                        if "::" not in link and link in private:
+                            found.append((at, item.group(2), link))
+            docs = []
+    return found
+
+
+def tree_public(root: Path, names: set[str]) -> set[str]:
+    """Which of `names` a tracked Rust file at `root` defines with plain `pub`; every name when git can't answer.
+
+    An unqualified link resolves to what is in scope, and a `pub` item of that name in the tree may be what it means.
+    """
+    if not names:
+        return set()
+    alternatives = "|".join(re.escape(name) for name in sorted(names))
+    pattern = (
+        r"pub[[:space:]]+((async|const|unsafe)[[:space:]]+)*(fn|struct|enum|union|trait|type|const|static|mod)"
+        r"[[:space:]]+(" + alternatives + r")([^[:alnum:]_]|$)"
+    )
+    try:
+        done = subprocess.run(["git", "-C", str(root), "grep", "-h", "-o", "-E", "-I", pattern, "--", "*.rs"], capture_output=True, text=True)
+    except OSError:
+        return set(names)
+    if done.returncode not in (0, 1):
+        return set(names)
+    return {name for name in names if re.search(r"\b" + re.escape(name) + r"\b", done.stdout)}
+
+
+def private_link_problems(stories: list[Story], root: Path) -> list[str]:
+    """Each `pub` item whose docs link to an item the plan defines only without `pub` and the tree has no `pub` one of."""
+    _, private = rust_visibility(stories)
+    hits = [(story, *hit) for story in stories for hit in private_links(story, private)]
+    public = tree_public(root, {link for *_, link in hits})
+    return [
+        f"Story {story.sid}: line {at}: the docs of `pub` {item} link to `{link}`, which the plan defines without `pub`: "
+        "rustdoc's private_intra_doc_links warns, and a doc gate under -D warnings fails; name it in backticks only"
+        for story, at, item, link in hits
+        if link not in public
+    ]
+
+
 def repo_root(path: Path) -> Path:
     for parent in [path.resolve().parent, *path.resolve().parents]:
         if (parent / ".git").exists():
@@ -372,6 +576,13 @@ def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], l
                     )
     problems += tier_problems(stories, plan_review(text))
     return stories, problems, spec
+
+
+def lint_warnings(stories: list[Story], plan: Path) -> list[str]:
+    """The lints over the stories' text: a WARN each, never a FAIL, since `loom flow run` re-checks a parked run's plan
+    and a heuristic must not park it for good; /flow:draft sends each to its story's fix job."""
+    root = repo_root(plan)
+    return fails_without_problems(stories, root) + private_link_problems(stories, root)
 
 
 def parallel_safe(stories: list[Story], exclusive: Sequence[str]) -> list[tuple[str, str]]:
@@ -497,10 +708,14 @@ def main(argv: list[str]) -> int:
         stories, problems, spec = check(text, Path(arg), profile.markers)
         pairs, pair_errors = declared_pairs(text)
         problems += pair_errors + pair_problems(stories, pairs, profile.exclusive)
+        # --json's stdout is the engine's to parse: it prints no warnings.
+        warnings = [] if as_json else lint_warnings(stories, Path(arg))
         if problems:
             failed = True
             for problem in problems:
                 print(f"FAIL [plan] {arg}: {problem}")
+            for warning in warnings:
+                print(f"WARN [lint] {arg}: {warning}")
             continue
         review = plan_review(text)
         if as_json:
@@ -531,6 +746,8 @@ def main(argv: list[str]) -> int:
         print(f"  Parallel-safe pairs (disjoint files, at most one exclusive build): {listed}")
         declared = ", ".join(f"{a}+{b}" for a, b in pairs) if pairs else "none, so every story runs in order"
         print(f"  Declared pairs (the second story's developer runs in a lane): {declared}")
+        for warning in warnings:
+            print(f"WARN [lint] {arg}: {warning}")
     return 1 if failed else 0
 
 

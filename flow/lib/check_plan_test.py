@@ -658,3 +658,196 @@ class SkeletonCliTest(unittest.TestCase):
         code, _, err = run_skeleton(SKELETON_TEXT, "other.md")
         self.assertEqual(code, 2)
         self.assertIn("usage", err)
+
+
+def lint_plan(story_body: str, tracked: dict[str, str] | None = None) -> list[str]:
+    """The lint warnings of a one-story plan that otherwise passes, in a repo holding `tracked`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["git", "-C", tmp, "init", "-q"], check=True, capture_output=True, env=CLEAN_ENV)
+        Path(tmp, "docs").mkdir()
+        Path(tmp, "docs", "spec.md").write_text("# Spec\n")
+        for name, body in (tracked or {}).items():
+            Path(tmp, name).parent.mkdir(parents=True, exist_ok=True)
+            Path(tmp, name).write_text(body)
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True, capture_output=True, env=CLEAN_ENV)
+        text = textwrap.dedent(
+            """\
+            # Plan
+
+            **Spec:** `docs/spec.md`
+
+            ## Story 1: One
+
+            - **Developer:** intermediate-dev
+            - **Files:** `a/lib.rs`
+            - **Interfaces:** none
+            - **Verify:** `cargo test`
+
+            ### Task 1.1: The work
+
+            """
+        ) + textwrap.dedent(story_body)
+        plan = Path(tmp, "plan.md")
+        plan.write_text(text)
+        stories, problems, _ = check_plan.check(text, plan, ())
+        assert problems == [], problems
+        return check_plan.lint_warnings(stories, plan)
+
+
+class FailsWithoutLintTest(unittest.TestCase):
+    TEST = """\
+        ```rust
+        #[test]
+        fn a_refused_mint_keeps_the_token() {}
+        ```
+
+        """
+
+    def test_a_test_the_story_writes_passes(self):
+        self.assertEqual(lint_plan(self.TEST + "Fails without: `a_refused_mint_keeps_the_token`: the early return.\n"), [])
+
+    def test_a_test_no_code_holds_fails(self):
+        problems = lint_plan(self.TEST + "Fails without: `a_refused_mint_keeps_the_tokens`: the early return.\n")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("a_refused_mint_keeps_the_tokens", problems[0])
+
+    def test_each_of_several_names_is_judged(self):
+        problems = lint_plan(self.TEST + "Fails without: `a_refused_mint_keeps_the_token` and `gone_test`: the guard.\n")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("gone_test", problems[0])
+        self.assertNotIn("a_refused_mint_keeps_the_token,", problems[0])
+
+    def test_a_bare_identifier_is_judged(self):
+        self.assertEqual(len(lint_plan(self.TEST + "Fails without: renamed_test: the guard.\n")), 1)
+        self.assertEqual(lint_plan(self.TEST + "Fails without: a_refused_mint_keeps_the_token: the guard.\n"), [])
+
+    def test_an_existing_test_in_the_tree_passes(self):
+        tracked = {"a/tests/old.rs": "#[test]\nfn the_old_guard_still_holds() {}\n"}
+        self.assertEqual(lint_plan(self.TEST + "Fails without: `the_old_guard_still_holds`: the guard.\n", tracked), [])
+
+    def test_a_name_written_as_prose_passes(self):
+        # A TS test's title, or a description such as "the sweep", can't be told from prose: it isn't judged.
+        self.assertEqual(lint_plan(self.TEST + "Fails without: opens the drawer on F1: the help wiring.\n"), [])
+
+    def test_a_ts_title_with_spaces_held_by_the_code_passes(self):
+        body = "```ts\nit('opens the drawer: from F1', () => {});\n```\n\nFails without: opens the drawer: from F1: the wiring.\n"
+        self.assertEqual(lint_plan(body), [])
+
+    def test_a_line_whose_names_follow_passes(self):
+        self.assertEqual(lint_plan(self.TEST + "Fails without:\n\n- `a_refused_mint_keeps_the_token`: the return.\n"), [])
+
+    def test_a_line_inside_a_fence_is_code_not_a_claim(self):
+        self.assertEqual(lint_plan("```text\nFails without: `nowhere_test`: x\n```\n"), [])
+
+
+class PrivateLinkLintTest(unittest.TestCase):
+    def test_a_pub_items_link_to_a_private_item_fails(self):
+        body = """\
+            ```rust
+            fn columns_named(id: u32) -> u32 { id }
+
+            /// As [`columns_named`].
+            pub fn columns(id: u32) -> u32 { columns_named(id) }
+            ```
+            """
+        problems = lint_plan(body)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("`pub` columns link to `columns_named`", problems[0])
+
+    def test_an_attribute_between_the_docs_and_the_item_still_counts(self):
+        body = """\
+            ```rust
+            const CAP: usize = 8;
+
+            /// Cut to [CAP].
+            #[must_use]
+            pub fn cut() -> usize { CAP }
+            ```
+            """
+        self.assertEqual(len(lint_plan(body)), 1)
+
+    def test_a_link_to_a_pub_item_passes(self):
+        body = """\
+            ```rust
+            pub fn columns_named(id: u32) -> u32 { id }
+
+            /// As [`columns_named`].
+            pub fn columns(id: u32) -> u32 { columns_named(id) }
+            ```
+            """
+        self.assertEqual(lint_plan(body), [])
+
+    def test_a_private_items_docs_may_link_to_private_items(self):
+        body = """\
+            ```rust
+            fn helper() {}
+
+            /// Calls [`helper`].
+            fn caller() { helper() }
+
+            /// Calls [`helper`] too.
+            pub(crate) fn crate_caller() { helper() }
+            ```
+            """
+        self.assertEqual(lint_plan(body), [])
+
+    def test_qualified_links_and_methods_are_not_judged(self):
+        # A trait impl's methods carry no `pub`, and a path names an item the lint can't resolve.
+        body = """\
+            ```rust
+            impl Default for Page {
+                fn default() -> Self { Page }
+            }
+
+            /// [`Page::default`] builds one; see also [default].
+            pub fn page() -> Page { Page::default() }
+            ```
+            """
+        self.assertEqual(lint_plan(body), [])
+
+    def test_a_pub_item_of_that_name_in_the_tree_passes(self):
+        tracked = {"b/src/lib.rs": "pub async fn export() {}\n"}
+        body = """\
+            ```rust
+            pub(super) async fn export() {}
+
+            /// Like [`export`].
+            pub async fn export_to_scratch() {}
+            ```
+            """
+        self.assertEqual(lint_plan(body, tracked), [])
+        self.assertEqual(len(lint_plan(body)), 1)
+
+    def test_a_blank_line_ends_the_docs(self):
+        body = """\
+            ```rust
+            fn helper() {}
+
+            /// Uses [`helper`].
+
+            pub fn unrelated() {}
+            ```
+            """
+        self.assertEqual(lint_plan(body), [])
+
+
+class LintCliTest(unittest.TestCase):
+    PLAN = GOOD.replace("### Task 1.1: Write the store\n", "### Task 1.1: Write the store\n\nFails without: `gone_test`: the store.\n")
+
+    def test_a_lint_is_a_warning_and_the_plan_still_passes(self):
+        code, out = run(self.PLAN)
+        self.assertEqual(code, 0, out)
+        self.assertIn("WARN [lint] ", out)
+        self.assertIn("names gone_test", out)
+
+    def test_json_prints_no_warning(self):
+        code, out = run(self.PLAN, as_json=True)
+        self.assertEqual(code, 0, out)
+        json.loads(out)
+
+    def test_a_failing_plan_prints_its_warnings_after_its_fails(self):
+        code, out = run(self.PLAN.replace("- **Verify:** `cargo nextest run -p a store`\n", ""))
+        self.assertEqual(code, 1)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].startswith("FAIL [plan] "), out)
+        self.assertTrue(lines[-1].startswith("WARN [lint] "), out)
