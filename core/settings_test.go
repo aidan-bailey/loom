@@ -299,3 +299,36 @@ func TestSaveSettings_TheFlowSettingRewritesTheContextFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "## The agent flow", "the context files drop the fragment at once")
 }
+
+// TestSaveSettings_KeepsTheWatchSwitch: the watcher's switch is SetWatch's
+// to change; a client's copy made before a change, or one claiming another
+// value, writes nothing of it.
+func TestSaveSettings_KeepsTheWatchSwitch(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name         string
+		current, own *bool
+		want         bool
+	}{
+		{"a stale copy with no switch leaves it on", &on, nil, true},
+		{"a copy switching it off leaves it on", &on, &off, true},
+		{"a copy switching it on leaves it off", &off, &on, false},
+		{"a copy switching it on leaves it unset", nil, &on, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewForTest(Options{})
+			ws := storedWorkspace(t, "a")
+			m.SetWorkspacesForTest(ws)
+			ws.cfg.Mutate(func(c *config.Config) { c.Watch = tc.current })
+			s := ws.cfg.Snapshot()
+			s.Watch = tc.own
+			s.BranchPrefix = "y/"
+
+			require.NoError(t, m.SaveSettings(m.wsIDOf(ws), s))
+
+			assert.Equal(t, "y/", ws.cfg.Snapshot().BranchPrefix, "fixture: the save landed")
+			assert.Equal(t, tc.want, ws.cfg.GetWatchEnabled())
+			assert.Equal(t, tc.want, config.LoadConfigFrom(ws.ctx.ConfigDir).WatchEnabled(), "and the file")
+		})
+	}
+}

@@ -38,6 +38,8 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	// The build sweep's threshold is ConfigureBuildSweep's to change: a
 	// client's copy made before a change must not write the old one back.
 	s.BuildSweepAfterHours = ws.cfg.Snapshot().BuildSweepAfterHours
+	// The watcher's switch is SetWatch's to change, for the same reason.
+	s.Watch = ws.cfg.Snapshot().Watch
 	if isGlobalWS(ws) {
 		block, err := diskSchedulerBlock(ws.configDir())
 		if err != nil {
