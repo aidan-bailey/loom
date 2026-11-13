@@ -1,6 +1,6 @@
 # The issue watcher (the model's side)
 
-**Read this when** you change `core/watch.go`, `core/watch_poll.go`, `core/watch_actions.go`, `gateWatch`, `OriginWatch`, `SetWatch`, `ReadWatch`, `WatchView` or `WorkspaceView.Watch`, or the pure package `watch/` they drive.
+**Read this when** you change `core/watch.go`, `core/watch_poll.go`, `core/watch_start.go`, `core/watch_actions.go`, `gateWatch`, `OriginWatch`, `SetWatch`, `ReadWatch`, `WatchView` or `WorkspaceView.Watch`, or the pure package `watch/` they drive.
 
 **What it is.** A daemon-side watcher that starts one session per labelled GitHub issue, nudges it when its PR goes red, conflicts or the issue changes, escalates when it is stuck and kills it once the PR merges. `watch/` holds the pure half (`Config`, `TitleTemplate`, `Memory`, the hook runner, `Decide`); `core/watch*.go` holds the model's half. The user's reference is [`../specs/watch.md`](../specs/watch.md); how it sits in the daemon is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
@@ -18,7 +18,7 @@
 
 ## How it fits
 
-- **Files:** `core/watch.go` (`watchState`, `watchFor`, `watchOf`, `deliverWatch`, `watchViewOf`, `SetWatch`, `ReadWatch`), `core/watch_poll.go` (`maybeWatch`, `startWatchPoll`, the poll job), `core/watch_actions.go` (`dispatchWatchActions`, `deliverWatchAction`), `core/gate.go` (`gateWatch`, 60 s: a cadence only, not a `dispatchGated` job), `core/mod.go` (`OriginWatch`). The `gh` calls are `session/github/watch.go`; the git helpers `session/git/watch_checkout.go`.
+- **Files:** `core/watch.go` (`watchState`, `watchFor`, `watchOf`, `deliverWatch`, `watchViewOf`, `SetWatch`, `ReadWatch`, `maybeWatch`, `startWatchPoll`), `core/watch_poll.go` (`watchRequest`, the poll job `watchPollJob`), `core/watch_start.go` (`watchStart`, `watchPrepareStart`, `finishWatchStart`), `core/watch_actions.go` (`dispatchWatchActions`, `deliverWatchAction`), `core/gate.go` (`gateWatch`, 60 s: a cadence only, not a `dispatchGated` job), `core/mod.go` (`OriginWatch`). The `gh` calls are `session/github/watch.go`; the git helpers `session/git/watch_checkout.go`.
 - **Switch:** `Settings.Watch` in the workspace's own `config.json`; nil is off. `SetWatch` changes it and the next tick follows; `watchOf` returns nil for a workspace the model no longer serves or whose switch is off, so a late result records nothing.
 - **Views:** `ReadWatch` answers a `Reply` whose `Watch` is a `WatchView` (each `WatchIssueView.Failed` is the issue's `actErrs` text, a failed or refused action); with `dryRun` it runs one poll and returns the actions the next tick would take, none taken. `WorkspaceView.Watch` is a `WatchSummary` of the 20 newest escalations, with `Loaded` false while the watcher is off or before the first poll has loaded `watch.json`.
 - **Adding a rule or a nudge kind:** edit `Decide` or `NudgeFor` in `watch/` with a case in its table test, update the rule table in [`../specs/watch.md`](../specs/watch.md), and if it adds an action kind, handle it in `dispatchWatchActions` and key it for `inFlight`.
