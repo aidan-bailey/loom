@@ -32,7 +32,7 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 |---|---|
 | `conf` | `flowconf.py`: key, status, show, state, drafts, vacuous, roster, gates, docs-check, doctor |
 | `check-plan` | `check_plan.py`, with two lints over the stories' text, printed as `WARN [lint]` lines: a `Fails without:` test that neither the plan nor the tree holds, and a `pub` Rust item's doc link to an item the plan keeps private; a `**Plan review:**` line's `deep:`, `light:` and `full:` lists; `--skeleton PLAN` checks a skeleton's names contract, story list, **Drafts after:** lines, an epic's Part line and the story budget (`plan_skeleton.py`) |
-| `packet` | `plan_packet.py`: the seams packet, the drafters' unchecked premises (`D/premises/`) included |
+| `packet` | `plan_packet.py`: the seams packet, the drafters' unchecked premises (`D/premises/`) included; with `--changed`, the seams re-check's: only the shared names a fix changed since the plan review (`D/reviewing/`) |
 | `join` | `plan_join.py`: the stories from the drafts, each story's opening lines from its skeleton entry |
 | `premises` | `plan_premises.py`, which also flags a type a step adds that a generated file (the profile's `generated` globs) already declares |
 | `plan-review` | `plan_review.py`: the `**Plan review:**` line from `/flow:draft`'s review copies (`D/reviewed/`) |

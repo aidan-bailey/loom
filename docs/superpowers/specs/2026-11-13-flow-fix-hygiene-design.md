@@ -30,7 +30,7 @@ For each story it diffs `D/reviewing/S<id>.md` against `D/S<id>.md` (difflib opc
 - **a provider changed**: a name a changed line belongs to, defined in a non-test file, that another story uses (the seams packet's `used`, less that story's own definitions);
 - **a consumer changed**: a name a changed line uses (a whole word, as the seams packet reads uses) that another story defines in a non-test file and this story doesn't define.
 
-Each row is `name | defined <cite> | used <cites> | changed in Story <x> at <plan ranges>`, cites as the seams packet writes them. A section `## Changed spans` gives each changed story's changed plan ranges, and the reading rules tell the recon to check only the listed rows. With no row, the names section reads `(none)`. The command prints `wrote <path>: <n> lines, <k> shared names changed`; a change that touches no shared name is `0 shared names changed`.
+Each row is `name | defined <cite> | used <cites> | changed in S<x>.md:<a>-<b>, …`, cites as the seams packet writes them (draft lines, since the packet needs the join map). A section `## Changed spans` gives each changed story's changed draft lines, and the reading rules tell the recon to check only the listed rows. With no row, the names section reads `(none)`. The command prints `wrote <path>: <n> lines, <k> shared names changed`; a change that touches no shared name is `0 shared names changed`.
 
 ### 2.2 Step 5's order
 
