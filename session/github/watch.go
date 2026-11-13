@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
@@ -172,4 +174,130 @@ func WatchPRs(ctx context.Context, repoDir string, r internalexec.Executor) ([]W
 		prs = append(prs, rp.pr())
 	}
 	return prs, nil
+}
+
+// WatchIssueLimit is how many labelled issues one tick considers (spec
+// §7.1). WatchIssues returns one more than this at most, so that a 51st
+// tells the caller more issues exist than it will consider.
+const WatchIssueLimit = 50
+
+// watchIssueListFields and watchIssueViewFields are the --json fields of
+// WatchIssues and ViewWatchIssue. The list leaves out state: it lists
+// open issues only.
+const (
+	watchIssueListFields = "number,title,body,url,labels,comments"
+	watchIssueViewFields = "number,title,body,state,url,labels,comments"
+)
+
+// IssueComment is one comment on a watched issue. Association is gh's
+// authorAssociation (OWNER, MEMBER, COLLABORATOR, NONE, ...), and ID its
+// node ID, which is stable and so serves as a fingerprint.
+type IssueComment struct {
+	ID          string
+	Author      string
+	Association string
+	Body        string
+	CreatedAt   time.Time
+}
+
+// WatchIssue is an issue with the body and comments the watcher's
+// prompts and its issue-changed nudge read.
+type WatchIssue struct {
+	Number   int
+	Title    string
+	Body     string
+	URL      string
+	Labels   []string
+	Closed   bool
+	Comments []IssueComment
+}
+
+type rawName struct {
+	Name string `json:"name"`
+}
+
+type rawComment struct {
+	ID                string    `json:"id"`
+	Author            rawLogin  `json:"author"`
+	AuthorAssociation string    `json:"authorAssociation"`
+	Body              string    `json:"body"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+type rawWatchIssue struct {
+	Number   int          `json:"number"`
+	Title    string       `json:"title"`
+	Body     string       `json:"body"`
+	State    string       `json:"state"`
+	URL      string       `json:"url"`
+	Labels   []rawName    `json:"labels"`
+	Comments []rawComment `json:"comments"`
+}
+
+func (ri rawWatchIssue) issue() WatchIssue {
+	is := WatchIssue{
+		Number: ri.Number,
+		Title:  ri.Title,
+		Body:   ri.Body,
+		URL:    ri.URL,
+		Closed: ri.State == "CLOSED",
+	}
+	for _, l := range ri.Labels {
+		is.Labels = append(is.Labels, l.Name)
+	}
+	for _, c := range ri.Comments {
+		is.Comments = append(is.Comments, IssueComment{
+			ID:          c.ID,
+			Author:      c.Author.Login,
+			Association: c.AuthorAssociation,
+			Body:        c.Body,
+			CreatedAt:   c.CreatedAt,
+		})
+	}
+	return is
+}
+
+// WatchIssues lists the open issues carrying label, oldest first, with
+// bodies and comments: gh answers newest first by default, so the search
+// sort is what makes the limit keep the lowest-numbered issues. It
+// returns at most WatchIssueLimit+1 issues sorted by number; the caller
+// considers the first WatchIssueLimit. An empty label is an error (it
+// would list every open issue), as is any gh or parse failure.
+func WatchIssues(ctx context.Context, repoDir string, label string, r internalexec.Executor) ([]WatchIssue, error) {
+	if label == "" {
+		return nil, fmt.Errorf("listing watched issues: the label is empty")
+	}
+	out, err := gh(ctx, r, repoDir, "issue", "list", "--label", label, "--state", "open",
+		"--search", "sort:created-asc", "--limit", strconv.Itoa(WatchIssueLimit+1),
+		"--json", watchIssueListFields)
+	if err != nil {
+		return nil, err
+	}
+	var raw []rawWatchIssue
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh issue list: %w", err)
+	}
+	issues := make([]WatchIssue, 0, len(raw))
+	for _, ri := range raw {
+		issues = append(issues, ri.issue())
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Number < issues[j].Number })
+	if len(issues) > WatchIssueLimit+1 {
+		issues = issues[:WatchIssueLimit+1]
+	}
+	return issues, nil
+}
+
+// ViewWatchIssue fetches one issue in any state with its comments, for
+// the closed issues a watcher session or PR names.
+func ViewWatchIssue(ctx context.Context, repoDir string, number int, r internalexec.Executor) (WatchIssue, error) {
+	out, err := gh(ctx, r, repoDir, "issue", "view", strconv.Itoa(number), "--json", watchIssueViewFields)
+	if err != nil {
+		return WatchIssue{}, err
+	}
+	var ri rawWatchIssue
+	if err := json.Unmarshal(out, &ri); err != nil {
+		return WatchIssue{}, fmt.Errorf("parsing gh issue view: %w", err)
+	}
+	return ri.issue(), nil
 }

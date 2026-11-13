@@ -2,10 +2,12 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -137,4 +139,107 @@ func TestJobIDFromURL(t *testing.T) {
 			assert.Equal(t, tc.want, jobIDFromURL(tc.url))
 		})
 	}
+}
+
+func TestWatchIssues_ParsesSortsAndKeepsTheComments(t *testing.T) {
+	ex := &watchExec{fn: answer(readFixture(t, "watch_issues.json"))}
+	issues, err := WatchIssues(context.Background(), "/repo", "loom", ex)
+	require.NoError(t, err)
+	require.Len(t, issues, 3)
+	assert.Equal(t, []int{9, 12, 14}, []int{issues[0].Number, issues[1].Number, issues[2].Number},
+		"sorted by number, whatever order gh answered in")
+
+	is := issues[1]
+	assert.Equal(t, "Parser rejects empty input", is.Title)
+	assert.Equal(t, "Parser rejects empty input.\nExpected: accept it.", is.Body)
+	assert.Equal(t, "https://github.com/o/r/issues/12", is.URL)
+	assert.Equal(t, []string{"loom", "bug"}, is.Labels)
+	assert.False(t, is.Closed, "a listed open issue is not closed")
+	require.Len(t, is.Comments, 2)
+	assert.Equal(t, IssueComment{
+		ID:          "IC_kwDOA1",
+		Author:      "maintainer",
+		Association: "OWNER",
+		Body:        "Please also cover the CRLF case.",
+		CreatedAt:   time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC),
+	}, is.Comments[0])
+	assert.Equal(t, "NONE", is.Comments[1].Association)
+	assert.Equal(t, "drive-by", is.Comments[1].Author)
+
+	assert.Empty(t, issues[0].Labels)
+	assert.Empty(t, issues[0].Comments)
+}
+
+func TestWatchIssues_PassesLoadBearingFlagsInTheRepoDir(t *testing.T) {
+	ex := &watchExec{fn: answer(`[]`)}
+	_, err := WatchIssues(context.Background(), "/repo", "loom", ex)
+	require.NoError(t, err)
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh issue list --label loom --state open --search sort:created-asc --limit 51 "+
+		"--json number,title,body,url,labels,comments", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+}
+
+// gh lists newest first by default, so the limit would drop the oldest
+// issues. WatchIssues asks for the oldest 51 and returns them sorted:
+// the 51st is how Story 8 learns that more issues exist.
+func TestWatchIssues_ReturnsAtMostOneMoreThanTheLimitOldestFirst(t *testing.T) {
+	assert.Equal(t, 50, WatchIssueLimit)
+	var raw []map[string]any
+	for n := WatchIssueLimit + 3; n >= 1; n-- {
+		raw = append(raw, map[string]any{
+			"number": n, "title": "t", "body": "", "url": "u",
+			"labels": []any{}, "comments": []any{},
+		})
+	}
+	b, err := json.Marshal(raw)
+	require.NoError(t, err)
+
+	issues, err := WatchIssues(context.Background(), "/repo", "loom", &watchExec{fn: answer(string(b))})
+	require.NoError(t, err)
+	require.Len(t, issues, WatchIssueLimit+1)
+	assert.Equal(t, 1, issues[0].Number)
+	assert.Equal(t, WatchIssueLimit+1, issues[WatchIssueLimit].Number)
+}
+
+func TestWatchIssues_FailsClosed(t *testing.T) {
+	_, err := WatchIssues(context.Background(), "/repo", "", &watchExec{fn: answer(`[]`)})
+	require.Error(t, err, "an empty label would list every open issue")
+
+	_, err = WatchIssues(context.Background(), "/repo", "loom", &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+
+	_, err = WatchIssues(context.Background(), "/repo", "loom", &watchExec{fn: answer(`nope`)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing gh issue list")
+}
+
+func TestViewWatchIssue_ParsesAClosedIssueWithItsComments(t *testing.T) {
+	ex := &watchExec{fn: answer(readFixture(t, "watch_issue_view.json"))}
+	is, err := ViewWatchIssue(context.Background(), "/repo", 7, ex)
+	require.NoError(t, err)
+	assert.Equal(t, 7, is.Number)
+	assert.Equal(t, "Fix the parser", is.Title)
+	assert.True(t, is.Closed)
+	assert.Equal(t, []string{"loom"}, is.Labels)
+	require.Len(t, is.Comments, 1)
+	assert.Equal(t, "MEMBER", is.Comments[0].Association)
+	assert.Equal(t, "Fixed by #101.", is.Comments[0].Body)
+
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh issue view 7 --json number,title,body,state,url,labels,comments", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+}
+
+func TestViewWatchIssue_FailsClosed(t *testing.T) {
+	_, err := ViewWatchIssue(context.Background(), "/repo", 7, &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+
+	_, err = ViewWatchIssue(context.Background(), "/repo", 7, &watchExec{fn: answer(`[]`)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing gh issue view")
 }
