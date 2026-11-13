@@ -464,7 +464,7 @@ func (g *GitWorktree) setupNewWorktree() error {
 	// every constructor — including NewGitWorktreeFromStorage, which does no
 	// config load — behaves the same. This is the only path that needs it,
 	// and it runs once per session creation, not on any hot path.
-	baseSHA, baseName, err := ResolveBaseCommit(g.repoPath, config.LoadConfigFrom(g.configDir).GetBaseBranch(), g.runner)
+	baseSHA, baseName, err := g.resolveNewBase()
 	if err != nil {
 		return err
 	}
@@ -482,6 +482,41 @@ func (g *GitWorktree) setupNewWorktree() error {
 	g.setBranchCreated()
 
 	return nil
+}
+
+// resolveNewBase returns the commit a new session's branch is cut from and
+// the name to log for it: baseRef when the caller named one, else
+// ResolveBaseCommit's answer for the configured base branch. A baseRef that
+// is not a full commit SHA, or names no commit here, is an error and never a
+// fallback: rooting a session somewhere other than where it was told to is
+// worse than refusing.
+func (g *GitWorktree) resolveNewBase() (sha, name string, err error) {
+	if g.baseRef == "" {
+		return ResolveBaseCommit(g.repoPath, config.LoadConfigFrom(g.configDir).GetBaseBranch(), g.runner)
+	}
+	if !isFullSHA(g.baseRef) {
+		return "", "", fmt.Errorf("base ref %q is not a full commit SHA", g.baseRef)
+	}
+	sha, ok := resolveRef(g.repoPath, g.baseRef, g.runner)
+	if !ok {
+		return "", "", fmt.Errorf("base ref %s is not a commit in %s", g.baseRef, g.repoPath)
+	}
+	return sha, g.baseRef, nil
+}
+
+// isFullSHA reports whether s is a full object name in lower-case hex: 40
+// digits (SHA-1) or 64 (SHA-256). A branch name, an abbreviation and
+// anything starting with "-" are not.
+func isFullSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Cleanup removes the worktree and associated branch. A tree it can vouch

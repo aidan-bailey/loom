@@ -41,6 +41,8 @@ type GitWorktree struct {
 	sessionName string
 	// Branch name for the worktree
 	branchName string
+	// baseRef is WorktreeSpec.BaseRef, read once by setupNewWorktree.
+	baseRef string
 	// refMu guards baseCommitSHA and stashRef. Writers run on tea.Cmd
 	// goroutines (Setup during Start/Resume, SetStashRef during Resume)
 	// while Instance.Snapshot and diff refreshes read concurrently from
@@ -185,6 +187,12 @@ type WorktreeSpec struct {
 	BranchPrefix *string
 	// Runner injects a CommandRunner for tests. nil uses the default.
 	Runner CommandRunner
+	// BaseRef is a full commit SHA to cut the new branch from. Empty keeps
+	// ResolveBaseCommit's answer. It is consumed by the first Setup and
+	// never persisted: a rebuild of a stored record resolves its base as
+	// before. A value that is not a full SHA of a commit in the repository
+	// fails the setup, never falls back.
+	BaseRef string
 }
 
 // NewGitWorktree creates a new GitWorktree instance using the workspace
@@ -253,6 +261,7 @@ func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname st
 		forNewSession: true,
 		configDir:     configDir,
 		runner:        r,
+		baseRef:       spec.BaseRef,
 	}, branchName, nil
 }
 
