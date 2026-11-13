@@ -41,10 +41,10 @@ The goal: a loom-side watcher, configured per workspace, that runs the generic h
 | Watcher subsystem | `core/watch*.go` | A `pollGate` of its own on the health tick. Builds a request snapshot on the loop, dispatches `watchPollJob`, runs `Decide` on delivery, dispatches the actions as Jobs. |
 | Watcher worktree | `{repo}/.loom/watch-checkout`, detached at `origin/<base>` | Where the hook runs. Outside `worktrees/`, so `DiscoverOrphans` never walks it. Refreshed by each poll job (`git fetch origin <base>`, then a detached checkout of `origin/<base>`). |
 | Base override | `NewInstance.BaseRef` | A commit to cut a new session's branch from. The watcher passes `origin/<base>`'s SHA; loom still creates the branch, so a kill still deletes it. Empty keeps `ResolveBaseCommit`. |
-| `gh` additions | `session/github` | For a workspace with the watcher on, the poll's existing `gh pr list` call adds `mergeable`, `author`, `isCrossRepository`, `closingIssuesReferences`, `headRefOid`, `baseRefOid` and `body`; other workspaces' polls are unchanged. Issue bodies and trusted comments (`authorAssociation`) are fetched only for issues carrying the label or named by the watcher's sessions and PRs. `FailedJobLogs` fetches the failed jobs' log tails (`gh run view --job <id> --log-failed`, last `log_tail` lines), called only when a `ci` nudge is sent. |
+| `gh` additions | `session/github` | The watcher makes its own calls and leaves the existing poll's unchanged (§7.1): `WatchPRs` (`gh pr list --author @me --state all`, with `number,state,headRefName,headRefOid,baseRefOid,mergeable,author,isCrossRepository,closingIssuesReferences,statusCheckRollup,body,url`), `WatchIssues` (`gh issue list --label <label> --state open`, with `number,title,body,state,url,labels,comments`), `Viewer` (`gh api user`, the login), and `FailedJobLogs` (`gh run view --job <id> --log-failed`, its last `log_tail` lines), called only when a `ci` nudge is sent. Closed issues a watcher session or PR names come from the existing `View`. |
 | CLI | `loom watch on/off/status/dry-run [-w ws]` | Through the daemon (new `Core` requests). `status` lists each issue's state, its last decision, the counts, why it waits, and any config, memory or hook error. `dry-run` prints the actions the next tick would take and takes none. |
 
-The watcher runs for every workspace switched on, whether or not a TUI has it open. `loom watch on` is stored in the workspace's local config (`{repo}/.loom/config.json`); unregistering the workspace or `loom watch off` stops the watcher, and its sessions keep running untouched.
+The watcher runs for every served workspace switched on, whether or not a client has opened it (the existing poll covers only opened ones, `Workspace.opened`). `loom watch on` is stored in the workspace's local config (`{repo}/.loom/config.json`); unregistering the workspace or `loom watch off` stops the watcher, and its sessions keep running untouched.
 
 ## 2. Terms
 
@@ -154,7 +154,7 @@ A 60 s tick would spend a session's nudges in minutes. A nudge of kind K on a PR
 
 ### 4.4 Escalating
 
-In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client and a push through the PWA's alert path), then record it in memory. A failed comment changes nothing and is retried next tick; a failed label is retried next tick; once L is on, rule 4 holds. Escalating kills nothing.
+In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick; a failed label is retried next tick; once L is on, rule 4 holds. Escalating kills nothing.
 
 ## 5. The hook
 
@@ -198,7 +198,7 @@ Out: `{"nudges": [{"kind": "redrift", "key": "<fingerprint>", "text": "…"}]}`.
  "issues": {"96":  {"escalated": {"at": "…", "reason": "…"}, "seen": "<body hash>:<comment id>"}}}
 ```
 
-A missing file is empty memory. A file that cannot be read or decoded, or whose `version` is newer than the binary's, stops the watcher for that workspace, is kept as it is, and is reported in `status`: acting without the counts would re-nudge and re-escalate. An unknown key inside a known version is written back unchanged.
+A missing file is empty memory. A file that cannot be read or decoded, or whose `version` is newer than the binary's, stops the watcher for that workspace, is kept as it is, and is reported in `status`: acting without the counts would re-nudge and re-escalate. An unknown top-level key inside a known version is written back unchanged; inside a PR or issue record, unknown keys are not kept.
 
 ## 7. Failure handling
 
@@ -208,6 +208,46 @@ A missing file is empty memory. A file that cannot be read or decoded, or whose 
 - A start whose title exists (`CheckNewTitle`) is refused as today and reported.
 - Kills go through `Model.Kill`, so `HeldElsewhere`, Notices and branch ownership apply unchanged; a refused kill leaves the row, and the next tick tries again.
 - A daemon restart loses nothing: every fact is on GitHub, in loom's sessions or in memory, and `Decide` acts only on what it sees.
+
+### 7.1 Limits
+
+Every outside call has a timeout, a per-tick budget and a failure rule. The watcher's tick is its own `pollGate` at 60 s, and it is skipped while the previous tick's poll job is in flight.
+
+| Call | Timeout | Per tick and workspace | On failure |
+|---|---|---|---|
+| `Viewer` | 20 s (`ghTimeout`) | once per daemon and workspace, cached; again only after a failure | no decisions: ownership is unknown |
+| `WatchPRs` | 20 s | 1, `--limit 100` | no decisions |
+| `WatchIssues` | 20 s | 1, `--limit 50`: the 50 lowest-numbered open labelled issues; `status` reports how many more were not considered | no decisions |
+| `View` of a closed issue a session or PR names | 20 s | at most 10, lowest number first; the rest wait for a later tick | that issue is skipped this tick |
+| `git fetch origin <base>` and the worktree refresh | 60 s together | 1 | no start this tick; rules 1 to 8 run with the config at the current `origin/<base>` |
+| `git show` of the config and prompts | 10 s each | 3 | no decisions |
+| hook `nudges` | `hook.timeout` | one per Ready watcher session with an open PR, so at most `cap` | that issue gets no nudge this tick |
+| hook `start` | `hook.timeout` | at most 1 | the issue waits |
+| `FailedJobLogs` | 30 s each | at most 5 failed jobs, for the one `ci` nudge sent | the nudge goes without that job's tail and says it could not be fetched |
+| writes (`gh pr close`, `gh issue comment`, `gh issue edit --add-label`, `gh label create`) | 20 s each | only the tick's actions | reported in `status`; the next tick decides again |
+| `git fetch origin <branch>` for a resume | 60 s | at most 1 | the resume waits |
+
+The poll job's `gh` and `git` reads share a 45 s budget (as `ghPollBudget`); the hook calls run after them, each under its own timeout. A tick's reads are therefore at most 3 `gh` calls plus 10 issue views, about 13 a minute per workspace, well inside GitHub's 5000 an hour.
+
+Bounds on what the config and the hook supply; a value outside them invalidates the config, or fails the hook call:
+
+| Value | Bound |
+|---|---|
+| `cap` | 1 to 10 |
+| `stuck` | 10 m to 48 h |
+| `nudge_limit` | 1 to 10 |
+| `nudge_gap` | 1 m to 24 h |
+| `log_tail` | 1 to 1000 lines |
+| `hook.timeout` | 1 s to 300 s |
+| `hook.command` | 1 to 32 strings, the first non-empty |
+| a prompt template file | at most 64 KiB |
+| `loom-watch.json` | at most 64 KiB |
+| a rendered title | `MaxTitleWidth` (32 cells, `core/new_session.go`); a longer one fails the start with that reason |
+| hook stdout | at most 1 MiB; stderr's last 4 KiB is kept for `status` |
+| hook `vars` | at most 16, each name `[a-z][a-z0-9_]*`, each value at most 64 bytes (title variables also `[A-Za-z0-9._-]+`) |
+| hook `nudges` | at most 8 per call, each `text` at most 16 KiB, each `key` at most 256 bytes |
+| hook `reason` | at most 1 KiB |
+| a rendered prompt or nudge text | at most 64 KiB, log tails included; tails are cut from the top to fit |
 
 ## 8. polyoxide afterwards
 
