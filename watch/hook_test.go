@@ -114,7 +114,7 @@ func TestHookError_StderrLineIsCappedAndPlain(t *testing.T) {
 	got = (&HookError{Point: "start", Err: cause, Stderr: "a\x1b[31mred\x00\tb\rc\x7f"}).Error()
 	assert.Equal(t, "hook start: exit status 1; stderr: a[31mredbc", got, "control characters are dropped")
 
-	multi := strings.Repeat("é", hookErrorLineMax) // 2 bytes a rune
+	multi := "x" + strings.Repeat("é", hookErrorLineMax) // 2 bytes a rune; byte hookErrorLineMax is mid-rune
 	got = (&HookError{Point: "start", Err: cause, Stderr: multi}).Error()
 	assert.True(t, utf8.ValidString(got), "the cut is on a rune boundary")
 }
