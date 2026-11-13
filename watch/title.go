@@ -190,7 +190,8 @@ func (t TitleTemplate) Vars() []string {
 // Render fills the template with issue and vars. A variable the template
 // names must be in vars and match [A-Za-z0-9._-]+ with a letter or digit in
 // it (a value of only dashes and dots merges into the separators in the
-// branch name, and the pattern would miss it; extra entries are ignored); the title may not be wider than maxTitleWidth cells.
+// branch name, and the pattern would miss it; extra entries are ignored); the
+// title may not be wider than maxTitleWidth cells.
 func (t TitleTemplate) Render(issue int, vars map[string]string) (string, error) {
 	if len(t.parts) == 0 {
 		return "", errors.New("title template is empty")
