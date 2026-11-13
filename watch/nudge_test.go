@@ -1,11 +1,27 @@
 package watch
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/aidan-bailey/loom/session/github"
 )
+
+var nfNow = time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+
+func nfHash(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+func nfIssue() github.WatchIssue {
+	return github.WatchIssue{Number: 96, Title: "drift", Body: "body v1"}
+}
 
 func TestAction_JSON(t *testing.T) {
 	for _, tc := range []struct {
@@ -46,4 +62,49 @@ func TestNudge_JSON(t *testing.T) {
 	b, err := json.Marshal(Nudge{Kind: "redrift", Key: "fp", Text: "redo"})
 	assert.NoError(t, err)
 	assert.JSONEq(t, `{"kind":"redrift","key":"fp","text":"redo"}`, string(b))
+}
+
+func TestIssueSeen_BodyHashAndNewestTrustedComment(t *testing.T) {
+	is := nfIssue()
+	is.Comments = []github.IssueComment{
+		{ID: "c1", Association: "OWNER", CreatedAt: nfNow.Add(-3 * time.Hour)},
+		{ID: "c2", Association: "MEMBER", CreatedAt: nfNow.Add(-2 * time.Hour)},
+		{ID: "c3", Association: "NONE", CreatedAt: nfNow.Add(-time.Hour)},
+		{ID: "c0", Association: "COLLABORATOR", CreatedAt: nfNow.Add(-4 * time.Hour)},
+	}
+
+	assert.Equal(t, nfHash("body v1")+":c2", IssueSeen(is))
+}
+
+func TestIssueSeen_OnlyOwnerMemberCollaboratorAreTrusted(t *testing.T) {
+	for _, tc := range []struct {
+		assoc   string
+		trusted bool
+	}{
+		{"OWNER", true},
+		{"MEMBER", true},
+		{"COLLABORATOR", true},
+		{"CONTRIBUTOR", false},
+		{"FIRST_TIME_CONTRIBUTOR", false},
+		{"NONE", false},
+		{"", false},
+	} {
+		is := nfIssue()
+		is.Comments = []github.IssueComment{{ID: "c9", Association: tc.assoc, CreatedAt: nfNow}}
+
+		want := nfHash("body v1") + ":"
+		if tc.trusted {
+			want += "c9"
+		}
+		assert.Equal(t, want, IssueSeen(is), tc.assoc)
+	}
+}
+
+func TestIssueSeen_ChangesWithTheBody(t *testing.T) {
+	a := nfIssue()
+	b := nfIssue()
+	b.Body = "body v2"
+
+	assert.NotEqual(t, IssueSeen(a), IssueSeen(b))
+	assert.Equal(t, nfHash("body v2")+":", IssueSeen(b))
 }
