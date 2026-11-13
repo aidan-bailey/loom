@@ -195,7 +195,9 @@ func (m *Model) deliverWatchAction(r watchActionResult) {
 		setWatchActErr(r.st, r.act, err.Error())
 		return
 	}
-	clearWatchActErr(r.st, r.act)
+	if r.act.Kind != watch.ActSend { // sendWatchNudge cleared it before queueing
+		clearWatchActErr(r.st, r.act)
+	}
 }
 
 // watchActGH is the executor the watcher's gh calls run with: the test seam
@@ -489,8 +491,12 @@ func (m *Model) finishWatchSend(r watchActionResult) error {
 }
 
 // sendWatchNudge queues text for inst's Claude through the loom mod
-// (OriginWatch). A nudge the mod can't take lands in the issue's status.
+// (OriginWatch). A nudge the mod can't take lands in the issue's status. The
+// send's earlier error is forgotten first, so a refusal of a past tick does
+// not outlive a nudge that is on its way, and a report enqueue makes at once
+// (no mod) is not wiped.
 func (m *Model) sendWatchNudge(st *watchState, a watch.Action, inst *session.Instance, text string) {
+	clearWatchActErr(st, a)
 	m.enqueue(inst, &modMessage{text: text, origin: OriginWatch, onUndelivered: func(why string) {
 		setWatchActErr(st, a, "the nudge was not delivered: "+why)
 	}})

@@ -644,6 +644,36 @@ func TestWatchSend_AFailedSaveSendsNothing(t *testing.T) {
 	assert.Error(t, notes[0].Err)
 }
 
+func TestWatchSend_ARefusedSendFollowedByASuccessfulOneLeavesNoError(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	inst := wactReady(t, m, "heal 7", 7)
+	require.NoError(t, inst.TransitionTo(session.Running))
+	a := wactNudge(m, inst, "conflict", "k1", "merge")
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	require.NotEmpty(t, st.actErrs[7], "the refusal is reported")
+
+	require.NoError(t, inst.TransitionTo(session.Ready))
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+
+	assert.Len(t, m.linkFor(inst).outbox, 1)
+	assert.Empty(t, st.actErrs, "the nudge is on its way, so the old refusal is gone")
+}
+
+func TestWatchSend_ANudgeNoModCanTakeStaysReportedAfterItIsQueued(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	inst := startedInst(t, "heal 7", "aider")
+	inst.SetIssue(7)
+	ws.add(inst)
+	require.NoError(t, inst.TransitionTo(session.Ready))
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "conflict", "k1", "merge")})
+
+	assert.Contains(t, st.actErrs[7], "not delivered", "the report enqueue made at once is not cleared")
+}
+
 func TestWatchSend_SendsOnlyToTheWatchersOwnReadySessionForItsOwnPR(t *testing.T) {
 	cases := []struct {
 		name  string
