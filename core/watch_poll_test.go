@@ -806,6 +806,8 @@ func TestStartWatchPoll_OnePollPerWorkspaceAtATime(t *testing.T) {
 
 	require.True(t, rig.m.startWatchPoll(rig.ws, false, 0))
 	assert.True(t, rig.ws.watch.polling)
+	assert.Len(t, rig.m.bgJobs, 1, "the tick's poll is background work")
+	assert.Empty(t, rig.m.out.Jobs, "and no request's follow-on")
 	jobs := rig.m.Drain().Jobs
 	require.Len(t, jobs, 1)
 	_, isResult := jobs[0]().(watchResult)
@@ -820,6 +822,8 @@ func TestStartWatchPoll_ADryRunServesItsRequest(t *testing.T) {
 	rig := newWatchRig(t, watchFiles(watchTestConfig))
 
 	require.True(t, rig.m.startWatchPoll(rig.ws, true, 9), "ReadWatch calls it this way, outside causedBy")
+	assert.Len(t, rig.m.out.Jobs, 1, "a dry run is spawned as a follow-on")
+	assert.Empty(t, rig.m.bgJobs, "not as background work")
 
 	jobs := rig.m.Drain().Jobs
 	require.Len(t, jobs, 1, "a dry run is a request's follow-on (spawn), so Drain returns it and Quiesce waits for it")
