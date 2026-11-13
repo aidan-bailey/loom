@@ -81,6 +81,12 @@ const (
 	// a CLI message is refused, a job's notice is recorded on its job as
 	// undelivered, and it is never pasted (withoutMod).
 	OriginJob Origin = "job"
+	// OriginWatch is an issue watcher's nudge (core/watch_actions.go): no
+	// "From" line and not the person's words. Like a job's notice it goes
+	// only through a live mod and only the model sends it (Send refuses it);
+	// a nudge the mod can't take is reported to the watcher's status
+	// (modMessage.onUndelivered) and never pasted.
+	OriginWatch Origin = "watch"
 )
 
 // Message is a message for a session's Claude, delivered through the loom mod
@@ -97,7 +103,9 @@ type Message struct {
 // needsMod reports whether a message of origin o goes only through a live
 // mod: a CLI message and a web one are refused where a script's is pasted, a
 // job's notice recorded as undelivered.
-func (o Origin) needsMod() bool { return o == OriginCLI || o == OriginWeb || o == OriginJob }
+func (o Origin) needsMod() bool {
+	return o == OriginCLI || o == OriginWeb || o == OriginJob || o == OriginWatch
+}
 
 // emptyReason is why an empty message of origin o is refused. A web refusal
 // reads for the phone, which shows it as it is.
@@ -145,8 +153,9 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	case strings.TrimSpace(msg.Text) == "" && msg.Origin.needsMod():
 		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, msg.Origin.emptyReason()))
 		return
-	case (!msg.Origin.needsMod() && msg.Origin != OriginScript) || msg.Origin == OriginJob:
-		// OriginJob is the queue's own (sendJobNotice): no client sends one.
+	case (!msg.Origin.needsMod() && msg.Origin != OriginScript) || msg.Origin == OriginJob || msg.Origin == OriginWatch:
+		// OriginJob is the queue's own (sendJobNotice) and OriginWatch the
+		// watcher's (sendWatchNudge): no client sends one.
 		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
 		return
 	case msg.Origin.needsMod() && !session.IsClaudeProgram(inst.Program()):
@@ -309,6 +318,9 @@ type modMessage struct {
 	// inbox hands it to a mod that can send to subagents (modLink.agents),
 	// and gives anything else the session's copy (ModInbox).
 	agent string
+	// onUndelivered, for a watcher nudge (OriginWatch), is called on the loop
+	// with why the message will not be queued (withoutMod, undelivered).
+	onUndelivered func(why string)
 }
 
 // modLink is what the model knows of one instance's current launch and its
@@ -480,6 +492,13 @@ func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) 
 			why = jobNoModReason(inst)
 		}
 		m.noteNotice(msg.job, sched.NoticeUndelivered, why)
+	case OriginWatch:
+		if why == "" {
+			why = jobNoModReason(inst)
+		}
+		if msg.onUndelivered != nil {
+			msg.onUndelivered(why)
+		}
 	}
 }
 
@@ -560,6 +579,12 @@ func (m *Model) endLink(inst *session.Instance, l *modLink, why string) {
 // pasted either: its sender hears why, and a first prompt finishes its start
 // as a failed paste does (logged, then Started).
 func (m *Model) undelivered(inst *session.Instance, msg *modMessage, why string) {
+	if msg.origin == OriginWatch {
+		if msg.onUndelivered != nil {
+			msg.onUndelivered(why)
+		}
+		return
+	}
 	if msg.origin == OriginJob {
 		m.noteNotice(msg.job, sched.NoticeUndelivered, why)
 		return
