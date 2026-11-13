@@ -1,6 +1,8 @@
 package core
 
 import (
+	"cmp"
+	"slices"
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
@@ -219,4 +221,156 @@ func (m *Model) maybeWatch() bool {
 		m.gate(gateWatch).last = now
 	}
 	return dispatched
+}
+
+// watchSummaryEscalations is how many escalations a WorkspaceView's
+// WatchSummary carries: the newest.
+const watchSummaryEscalations = 20
+
+// watchEscalations lists the issues memory holds an escalation for,
+// newest first by time, a tie by issue number; nil for none. The slice is
+// a fresh copy.
+func watchEscalations(mem watch.Memory) []WatchEscalation {
+	var out []WatchEscalation
+	for n, im := range mem.Issues {
+		if im.Escalated != nil {
+			out = append(out, WatchEscalation{Issue: n, Reason: im.Escalated.Reason, At: im.Escalated.At})
+		}
+	}
+	slices.SortFunc(out, func(a, b WatchEscalation) int {
+		return cmp.Or(b.At.Compare(a.At), cmp.Compare(a.Issue, b.Issue))
+	})
+	return out
+}
+
+// watchSummaryOf is ws's WatchSummary: empty while its switch is off, and
+// Loaded only once a poll has loaded memory into the state. The state is
+// the loop's, so this runs on the loop (wsViewOf).
+func watchSummaryOf(ws *Workspace) WatchSummary {
+	if ws.cfg == nil || !ws.cfg.GetWatchEnabled() {
+		return WatchSummary{}
+	}
+	sum := WatchSummary{On: true}
+	if st := ws.watch; st != nil {
+		sum.Loaded, sum.Err = st.memLoaded, st.err
+		sum.Escalations = watchEscalations(st.mem)
+		if len(sum.Escalations) > watchSummaryEscalations {
+			sum.Escalations = sum.Escalations[:watchSummaryEscalations]
+		}
+	}
+	return sum
+}
+
+// watchViewOf is ws's WatchView, built on the loop from its watchState and
+// actions: a dry run's, or ws.watch.actions for a status read. A workspace
+// whose switch is off, or that holds no state yet, answers On alone.
+func (m *Model) watchViewOf(ws *Workspace, actions []watch.Action) WatchView {
+	on := ws.cfg != nil && ws.cfg.GetWatchEnabled()
+	st := ws.watch
+	if !on || st == nil {
+		return WatchView{On: on}
+	}
+	v := WatchView{
+		On: true, Err: st.err, Viewer: st.viewer,
+		Actions:     cloneWatchActions(actions),
+		Escalations: watchEscalations(st.mem),
+		Issues:      watchIssueViews(st, actions),
+	}
+	if st.snap != nil {
+		v.Considered, v.Unconsidered = st.snap.Considered, st.snap.Unconsidered
+	}
+	return v
+}
+
+// cloneWatchActions copies actions, with each Settle list its own.
+func cloneWatchActions(actions []watch.Action) []watch.Action {
+	out := slices.Clone(actions)
+	for i := range out {
+		out[i].Settle = slices.Clone(out[i].Settle)
+	}
+	return out
+}
+
+// watchIssueViews lists, in number order, every issue the last snapshot
+// holds, every issue one of the watcher's own sessions or PRs names, every
+// issue the actions name and every issue a failed action (st.actErrs, which
+// is Failed) names. A session or PR counts only when the
+// watcher owns it (watch.OwnSession, watch.OwnPR), as Decide does; a
+// foreign one never shows. With no snapshot only the actions' issues are
+// listed, as unknown.
+func watchIssueViews(st *watchState, actions []watch.Action) []WatchIssueView {
+	numbers := map[int]bool{}
+	state := map[int]string{}
+	waiting := map[int]string{}
+	for _, a := range actions {
+		if a.Issue > 0 {
+			numbers[a.Issue] = true
+		}
+		if _, seen := waiting[a.Issue]; a.Kind == watch.ActWait && !seen {
+			waiting[a.Issue] = a.Reason
+		}
+	}
+	for n := range st.actErrs {
+		if n > 0 {
+			numbers[n] = true
+		}
+	}
+	sessionIDs := map[int]uint64{}
+	sessions := map[int]string{}
+	prs := map[int]int{}
+	if snap := st.snap; snap != nil {
+		for _, is := range snap.Issues {
+			numbers[is.Number] = true
+			state[is.Number] = "open"
+			if is.Closed {
+				state[is.Number] = "closed"
+			}
+		}
+		for _, s := range snap.Sessions {
+			if s.Issue <= 0 || !watch.OwnSession(s, st.tmpl) {
+				continue
+			}
+			numbers[s.Issue] = true
+			if id, ok := sessionIDs[s.Issue]; !ok || s.ID < id {
+				sessionIDs[s.Issue], sessions[s.Issue] = s.ID, s.Title
+			}
+		}
+		for _, pr := range snap.PRs {
+			for _, n := range pr.Closes {
+				if !watch.OwnPR(pr, n, snap.Viewer, st.tmpl.BranchPattern(snap.Prefix, n)) {
+					continue
+				}
+				numbers[n] = true
+				if pr.State == "OPEN" && (prs[n] == 0 || pr.Number < prs[n]) {
+					prs[n] = pr.Number
+				}
+			}
+		}
+		for n, why := range snap.HookFailed {
+			if _, ok := waiting[n]; !ok {
+				waiting[n] = why
+			}
+		}
+	}
+	out := make([]WatchIssueView, 0, len(numbers))
+	for n := range numbers {
+		iv := WatchIssueView{Number: n, State: "unknown", Session: sessions[n], PR: prs[n], Waiting: waiting[n], Failed: st.actErrs[n]}
+		if s, ok := state[n]; ok {
+			iv.State = s
+		}
+		if pm := st.mem.PRs[iv.PR]; iv.PR != 0 {
+			for kind, rec := range pm.Nudges {
+				if rec.N > 0 {
+					if iv.Nudges == nil {
+						iv.Nudges = map[string]int{}
+					}
+					iv.Nudges[kind] = rec.N
+				}
+			}
+		}
+		iv.Escalated = st.mem.Issues[n].Escalated != nil
+		out = append(out, iv)
+	}
+	slices.SortFunc(out, func(a, b WatchIssueView) int { return cmp.Compare(a.Number, b.Number) })
+	return out
 }
