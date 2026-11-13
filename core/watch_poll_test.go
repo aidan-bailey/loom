@@ -680,7 +680,8 @@ func TestDeliverWatch_DecidesOnTheLoopAndKeepsTheTick(t *testing.T) {
 	assert.Equal(t, filepath.Join(rig.ws.ctx.ConfigDir, "watch-checkout"), st.checkout)
 	assert.Equal(t, filepath.Join(rig.ws.ctx.ConfigDir, "watch.json"), st.memPath)
 	assert.False(t, st.polling, "every delivery clears the poll's in-flight bit")
-	assert.Empty(t, rig.m.Drain().Jobs, "Story 8 dispatches no action")
+	assert.Len(t, rig.m.Drain().Jobs, 1, "the tick dispatches its start: the hook and render job")
+	assert.True(t, st.inFlight[watchActKey(watch.Action{Kind: watch.ActStart, Issue: 7})])
 }
 
 func TestDeliverWatch_ATickWithoutAFetchWaitsInsteadOfStartingAndStillKills(t *testing.T) {
