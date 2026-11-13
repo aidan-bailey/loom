@@ -48,7 +48,10 @@ type TitleTemplate struct {
 // ParseTitleTemplate parses tmpl. It refuses a malformed brace, a variable
 // name outside [a-z][a-z0-9_]*, a template that does not start with a literal
 // word, one without {issue} or with a variable twice, two variables with no
-// literal between them, and one no title could ever fit in maxTitleWidth.
+// literal between them, one whose literal beside {issue} the branch sanitizer
+// empties or that touches the number with a digit (the pattern for issue N
+// would take issue 10N+d's or d·10^k+N's branch), and one no title could ever
+// fit in maxTitleWidth.
 func ParseTitleTemplate(tmpl string) (TitleTemplate, error) {
 	parts, err := splitTitle(tmpl)
 	if err == nil {
@@ -135,6 +138,29 @@ func checkTitle(parts []titlePart) error {
 			return fmt.Errorf("{%s} and {%s} need a literal between them", parts[i-1].name, p.name)
 		}
 	}
+	for i, p := range parts {
+		if p.name != issueVar {
+			continue
+		}
+		if i > 0 {
+			s := sanitizedLiteral(parts[i-1].literal)
+			if s == "" {
+				return errors.New("the literal before {issue} is empty once branch-sanitized")
+			}
+			if c := s[len(s)-1]; c >= '0' && c <= '9' {
+				return errors.New("the literal before {issue} must not end in a digit")
+			}
+		}
+		if i+1 < len(parts) {
+			s := sanitizedLiteral(parts[i+1].literal)
+			if s == "" {
+				return errors.New("the literal after {issue} is empty once branch-sanitized")
+			}
+			if c := s[0]; c >= '0' && c <= '9' {
+				return errors.New("the literal after {issue} must not start with a digit")
+			}
+		}
+	}
 	if !seen[issueVar] {
 		return errors.New("must contain {issue}")
 	}
@@ -142,6 +168,14 @@ func checkTitle(parts []titlePart) error {
 		return fmt.Errorf("is %d cells wide with every variable one cell, over the %d-cell limit: no title fits", width, maxTitleWidth)
 	}
 	return nil
+}
+
+// sanitizedLiteral is lit as git.SanitizeBranchName leaves it inside a branch
+// name: wrapped in letters so the sanitizer's trimming of leading and trailing
+// separators does not touch it.
+func sanitizedLiteral(lit string) string {
+	s := git.SanitizeBranchName("x" + lit + "x")
+	return s[1 : len(s)-1]
 }
 
 func isWordStart(c byte) bool {

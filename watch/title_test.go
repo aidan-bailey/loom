@@ -58,6 +58,10 @@ func TestParseTitleTemplate_Invalid(t *testing.T) {
 		{"empty braces", "heal {} {issue}", "variable name"},
 		{"unclosed brace", "heal {issue", "unclosed"},
 		{"stray closing brace", "heal } {issue}", "stray"},
+		{"issue then a separator the sanitizer removes", "heal {issue}#{spec}", "empty once branch-sanitized"},
+		{"separator the sanitizer removes before the issue", "heal {spec}#{issue}", "empty once branch-sanitized"},
+		{"digit before the issue", "heal5{issue}", "end in a digit"},
+		{"digit after the issue", "heal {issue}5 {spec}", "start with a digit"},
 		{"can never fit", strings.Repeat("a", 40) + " {issue}", "cells"},
 	}
 	for _, tc := range tests {
