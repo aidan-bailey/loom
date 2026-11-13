@@ -89,14 +89,14 @@ An unknown key, a missing required field, an invalid value, an unknown `{var}` i
 
 ### 3.2 The title template and the branch pattern
 
-`title` contains `{issue}` exactly once, starts with a literal word, and separates every `{var}` from its neighbours with a literal. Every variable value the hook returns for a title must match `[A-Za-z0-9._-]+`; a `start` whose title variables do not is a hook failure.
+`title` contains `{issue}` exactly once, starts with a literal word, and separates every `{var}` from its neighbours with a literal. The literal on each side of `{issue}` must survive `sanitizeBranchName` non-empty, and its character next to the number must not be a digit (the pattern's anchored start or end also counts as a boundary): `heal {issue}#{spec}` and `heal {spec}:{issue}` are invalid, since the sanitizer drops `#` and `:` and issue 56's branch would then match the pattern for 5. Every variable value the hook returns for a title must match `[A-Za-z0-9._-]+` and hold at least one letter or digit (a value of only `-` or `.` would merge into the separators, and the watcher would not recognise its own branch); a `start` whose title variables do not is a hook failure.
 
 From the template the watcher derives:
 
 - **the title parser**: a regex with `{issue}` as `([0-9]+)` and each other variable as `([A-Za-z0-9._-]+)`, anchored;
 - **the branch pattern for N**: `sanitizeBranchName(prefix + template)`, rendered with `{issue}` as N and each other variable as `[a-z0-9._-]+`, anchored, where `prefix` is the workspace's branch prefix.
 
-A unit test renders titles through the real `sanitizeBranchName` and parses them back.
+A unit test renders titles through the real `sanitizeBranchName` and parses them back, and checks that the pattern for N misses the branches of numbers that extend N's digits (`N*10+d`, `d*10^k+N`), including for templates whose separator the sanitizer removes.
 
 ### 3.3 Prompt templates
 
