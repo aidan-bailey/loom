@@ -361,12 +361,14 @@ func TestDecide_ClassifiesTheSessionListFixture(t *testing.T) {
 	issues := []github.WatchIssue{
 		dcIssue(96, "drift"), dcIssue(97, "drift"), dcIssue(98, "drift"), dcIssue(99, "drift"), dcIssue(100, "drift"),
 	}
-	got := dcDecide(t, Memory{}, issues, nil, sessions)
+	cfg := dcCfg()
+	cfg.Cap = 4
+	got := Decide(dcSnap(issues, nil, sessions), Memory{}, cfg, dcTitleTmpl(t))
 
 	assert.Equal(t, []Action{
 		{Kind: ActWait, Issue: 98, Reason: "a session the watcher did not start already works on issue #98"},
-		{Kind: ActWait, Issue: 99, Reason: "the cap of 2 watcher sessions is full"},
-	}, got, "96 and 97 have their own sessions and 100's is loading; 98 has a foreign one; 99's title parses but its session is unlinked, so it is not the watcher's and the three that are fill the cap")
+		{Kind: ActStart, Issue: 99},
+	}, got, "96 and 97 have their own sessions and 100's is loading, so three of the cap of 4 are used; 98 has a foreign one; 99's title parses but its session is unlinked, so it is not the watcher's, is not counted, and 99 starts")
 }
 
 func TestDecide_Rule7_AStuckSessionEscalates(t *testing.T) {
