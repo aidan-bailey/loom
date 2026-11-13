@@ -11,6 +11,7 @@ End-to-end tests that drive real `loom` builds in a loomdev sandbox (`internal/d
 `e2e/queue_test.go` covers the work queue's rules between real processes: a dependent held until its prerequisite ends done and cancelled unrun when it fails, jobs sharing a `--lock` taking turns where two unlocked jobs overlap, and a cancel ending the job's whole process group.
 `e2e/account_test.go` covers a session on an account launching with that account's `CLAUDE_CONFIG_DIR`, and its resume refusing, with nothing launched, while the account's dir is missing.
 `e2e/confine_test.go` (opt-in: `-tags 'e2e systemd_live'`) covers a job confined to a scope of its own in its loom's slice.
+`e2e/watch_test.go` covers the issue watcher against a stub `gh` (`e2e/testdata/gh-watch-stub.sh`) and the toy repository's bare origin: a labelled issue starting a session cut from `origin/main` while local `main` is ahead of it, a merged PR another login opened leaving that session alone, and the watcher's own merged PR killing it and deleting its branch.
 
 ## Rules when modifying this package
 
@@ -25,6 +26,7 @@ End-to-end tests that drive real `loom` builds in a loomdev sandbox (`internal/d
 
 - **Prove from the daemon's log that a frozen tmux was asked something.** A daemon that sent tmux nothing while it was frozen passes a changed-nothing test vacuously. `TestE2E_Safety_AnUnansweredTmuxChangesNothing` waits for a `liveness.probe_timeout` line, then holds the freeze over another probe, before it thaws, and `TestE2E_Safety_ADaemonBootingIntoAnUnansweredTmuxChangesNothing` requires `reconcile.tmux_probe_inconclusive` beside the `serve.listening` it waits for while frozen; a test that sleeps a guessed time proves nothing on a machine where the probe never ran. **Enforced** by those assertions.
 - **Give the real user bus only to a test built with `systemd_live`.** Every test binary points `DBUS_SESSION_BUS_ADDRESS` at a dead socket (`testenv.IsolateLoomDirs`) so no test creates units in the developer's systemd; `TestE2E_Queue_AJobRunsInItsOwnScope` (`e2e/confine_test.go`) sets it back from `LOOM_TEST_REAL_DBUS`, and only its build tag keeps it out of a plain e2e run. **Convention** — sandbox slices and scopes left in the user's manager by every run.
+- **Put a stub `gh` first on `PATH` before the test's first `loom` command, and wait for the watcher through `loom session list --json`.** The daemon inherits its environment from the command that starts it (`sb.Cmd` copies the test's), so a `PATH` set after the daemon is up never reaches the watcher's `gh` calls, which then run the host's real `gh` against the sandbox's local `origin`; the tick is 60 s (`gateWatch`), so each wait allows 150 s, and a fixed sleep either times out or proves nothing. **Enforced** by `TestE2E_Watch_StartsAndKillsByIssue`'s assertion that the stub's call log holds the watcher's `pr list --author @me` call.
 
 ## Pointers
 
