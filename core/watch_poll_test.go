@@ -800,3 +800,99 @@ func TestDeliverWatch_ADryResultIsHandledWithNoWatchStateAndAnOffWatcher(t *test
 	assert.Nil(t, rig.ws.watch, "a dry result creates no state and stores nothing")
 	assert.Nil(t, rig.m.watchOf(rig.ws), "a switched-off watcher has no state to answer from")
 }
+
+func TestStartWatchPoll_OnePollPerWorkspaceAtATime(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+
+	require.True(t, rig.m.startWatchPoll(rig.ws, false, 0))
+	assert.True(t, rig.ws.watch.polling)
+	jobs := rig.m.Drain().Jobs
+	require.Len(t, jobs, 1)
+	_, isResult := jobs[0]().(watchResult)
+	assert.True(t, isResult, "the tick's poll is a background job: its result is not wrapped for a request")
+
+	assert.False(t, rig.m.startWatchPoll(rig.ws, false, 0), "one is out")
+	assert.False(t, rig.m.startWatchPoll(rig.ws, true, 9), "a dry run waits for it too")
+	assert.Empty(t, rig.m.Drain().Jobs)
+}
+
+func TestStartWatchPoll_ADryRunServesItsRequest(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+
+	require.True(t, rig.m.startWatchPoll(rig.ws, true, 9), "ReadWatch calls it this way, outside causedBy")
+
+	jobs := rig.m.Drain().Jobs
+	require.Len(t, jobs, 1, "a dry run is a request's follow-on (spawn), so Drain returns it and Quiesce waits for it")
+	res, ok := jobs[0]().(watchResult)
+	require.True(t, ok, "the result carries the request itself and is answered through res.req, not wrapped as caused")
+	assert.True(t, res.dry)
+	assert.Equal(t, ReqID(9), res.req)
+}
+
+func TestStartWatchPoll_RefusesAWorkspaceItCannotPoll(t *testing.T) {
+	m := NewForTest(Options{})
+	global := watchWorkspace(t, "", true)
+	served := watchWorkspace(t, t.TempDir(), true)
+	m.SetWorkspacesForTest(global)
+
+	assert.False(t, m.startWatchPoll(global, false, 0), "the global workspace has no repository")
+	assert.False(t, m.startWatchPoll(served, false, 0), "a workspace the model does not serve")
+	assert.False(t, m.startWatchPoll(nil, false, 0))
+	assert.Nil(t, global.watch)
+	assert.Nil(t, served.watch)
+	assert.Empty(t, m.Drain().Jobs)
+}
+
+func TestMaybeWatch_PollsOnlyWorkspacesWithARepositoryAndTheWatcherOn(t *testing.T) {
+	on := watchWorkspace(t, t.TempDir(), true)
+	off := watchWorkspace(t, t.TempDir(), false)
+	global := watchWorkspace(t, "", true)
+	broken := watchWorkspace(t, t.TempDir(), true)
+	broken.loadErr = fmt.Errorf("unreadable")
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(on, off, global, broken)
+
+	require.True(t, m.maybeWatch())
+
+	assert.Len(t, m.Drain().Jobs, 1, "one poll, for the one workspace that qualifies")
+	require.NotNil(t, on.watch)
+	assert.True(t, on.watch.polling)
+	assert.Nil(t, off.watch, "switched off: nothing is created or polled")
+	assert.Nil(t, global.watch)
+	assert.Nil(t, broken.watch, "a workspace that failed to load is not polled")
+}
+
+func TestMaybeWatch_KeepsItsCadenceAndArmsNothingWithoutAJob(t *testing.T) {
+	ws := watchWorkspace(t, t.TempDir(), true)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+
+	require.True(t, m.maybeWatch())
+	m.Drain()
+	ws.watch.polling = false
+	assert.False(t, m.maybeWatch(), "inside watchInterval")
+	assert.Empty(t, m.Drain().Jobs)
+
+	m.gate(gateWatch).last = time.Now().Add(-watchInterval)
+	assert.True(t, m.maybeWatch(), "the interval has passed")
+	m.Drain()
+
+	m.gate(gateWatch).last = time.Time{}
+	assert.False(t, m.maybeWatch(), "the workspace's poll is still out")
+	assert.True(t, m.gate(gateWatch).last.IsZero(), "no job was dispatched, so nothing is armed")
+
+	none := NewForTest(Options{})
+	assert.False(t, none.maybeWatch(), "no workspace at all")
+	assert.True(t, none.gate(gateWatch).last.IsZero())
+}
+
+func TestTickInst_PollsTheWatcher(t *testing.T) {
+	ws := watchWorkspace(t, t.TempDir(), true)
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(ws)
+
+	m.tickInst(nil)
+
+	require.NotNil(t, ws.watch)
+	assert.True(t, ws.watch.polling, "the health tick starts the watcher's poll")
+}

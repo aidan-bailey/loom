@@ -106,6 +106,11 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// gh is known unavailable.
 	m.maybeGHQuery()
 
+	// The issue watcher: a poll per workspace that has it switched on, on
+	// its own 60s cadence (see maybeWatch). Nothing when none is on, or its
+	// poll is out.
+	m.maybeWatch()
+
 	// accounts.json, which another loom or a `loom account` run may have
 	// changed: one stat per tick, a reread only when it moved.
 	m.maybeReloadAccounts()

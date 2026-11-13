@@ -167,3 +167,54 @@ func (m *Model) deliverWatch(res watchResult) {
 	}
 	// Story 9 adds the call to dispatchWatchActions here, with st.actions.
 }
+
+// startWatchPoll dispatches one poll job for ws: false when the model does
+// not serve ws, ws has no repository, or a poll is already out. The tick's
+// poll is the model's own job (spawnBackground); a dry run is a request's
+// follow-on (spawn), so Loop.Quiesce waits for it; its watchResult carries
+// req and the reply is answered through res.req (the caller, ReadWatch, runs
+// outside causedBy, so the job is not wrapped as caused). Loop-goroutine only.
+func (m *Model) startWatchPoll(ws *Workspace, dry bool, req ReqID) bool {
+	if !m.isLoadedWS(ws) || ws.ctx == nil || ws.ctx.RepoPath == "" {
+		return false
+	}
+	st := m.watchFor(ws)
+	if st.polling {
+		return false
+	}
+	st.polling = true
+	job := watchPollJob(m.watchRequest(ws, dry, req), m.watchExec())
+	if dry {
+		m.spawn(job)
+	} else {
+		m.spawnBackground(job)
+	}
+	return true
+}
+
+// maybeWatch starts a poll for every served workspace that has a repository
+// and the watcher switched on, when gateWatch is due: at most every
+// watchInterval. A workspace whose poll is still out is skipped, and nothing
+// is armed unless a job was dispatched. Loop goroutine only.
+func (m *Model) maybeWatch() bool {
+	now := time.Now()
+	if !m.gateDue(gateWatch, now) {
+		return false
+	}
+	dispatched := false
+	for _, ws := range m.Loaded() {
+		if ws.ctx == nil || ws.ctx.RepoPath == "" || ws.cfg == nil || !ws.cfg.GetWatchEnabled() {
+			continue
+		}
+		if ws.loadErr != nil || ws.resetting {
+			continue
+		}
+		if m.startWatchPoll(ws, false, 0) {
+			dispatched = true
+		}
+	}
+	if dispatched {
+		m.gate(gateWatch).last = now
+	}
+	return dispatched
+}
