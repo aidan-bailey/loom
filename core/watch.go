@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/watch"
 )
@@ -393,4 +394,72 @@ func (m *Model) answerWatchDry(res watchResult, actions []watch.Action, failure 
 		return
 	}
 	m.reply(res.req, Reply{Watch: m.watchViewOf(res.ws, actions)})
+}
+
+// SetWatch switches the issue watcher on or off for workspace id
+// (Core.SetWatch): the switch is written to the workspace's own
+// config.json (Settings.Watch), and the poll gate reads it on its next
+// tick. It refuses a workspace the model does not serve, one with no
+// repository (the global workspace has none to watch) and a save that
+// fails, which leaves the in-memory switch as it was. Turning it on
+// expedites the poll gate and polls at once (maybeWatch); turning it off
+// stops the watcher, and its sessions keep running untouched.
+func (m *Model) SetWatch(id WorkspaceID, on bool, req ReqID) {
+	ws := m.wsLookup(id)
+	if ws == nil || ws.cfg == nil {
+		m.refuse(req, 0, fmt.Errorf("set watch: workspace %d is not served", id))
+		return
+	}
+	if ws.ctx == nil || ws.ctx.RepoPath == "" {
+		m.refuse(req, 0, fmt.Errorf("set watch: workspace %s has no repository to watch", ws.Label()))
+		return
+	}
+	dir := settingsDir(ws)
+	if dir == "" {
+		m.refuse(req, 0, fmt.Errorf("set watch: workspace %s has no config dir to write to", ws.Label()))
+		return
+	}
+	var before *bool
+	ws.cfg.Mutate(func(c *config.Config) { before, c.Watch = c.Watch, &on })
+	if err := config.SaveConfigTo(ws.cfg, dir); err != nil {
+		ws.cfg.Mutate(func(c *config.Config) { c.Watch = before })
+		m.refuse(req, 0, fmt.Errorf("set watch: %w", err))
+		return
+	}
+	log.For("core").Info("watch.switch", "workspace", ws.Label(), "on", on)
+	if on {
+		// A switch-on polls at once, not at the next cadence.
+		m.gate(gateWatch).expedite()
+		m.maybeWatch()
+	}
+	m.reply(req, Reply{})
+}
+
+// ReadWatch answers with the watcher's state for workspace id (Core.ReadWatch):
+// the Reply's Watch. A status read is answered at once from the last
+// tick's actions. A dry run starts a poll whose delivery answers it with
+// the actions the next tick would take, none taken (answerWatchDry), and
+// is refused while a poll is already out. A workspace whose switch is off
+// answers On false for either, and polls nothing.
+func (m *Model) ReadWatch(id WorkspaceID, dryRun bool, req ReqID) {
+	ws := m.wsLookup(id)
+	if ws == nil || ws.cfg == nil {
+		m.refuse(req, 0, fmt.Errorf("read watch: workspace %d is not served", id))
+		return
+	}
+	if !ws.cfg.GetWatchEnabled() {
+		m.reply(req, Reply{Watch: m.watchViewOf(ws, nil)})
+		return
+	}
+	if !dryRun {
+		var actions []watch.Action
+		if st := ws.watch; st != nil {
+			actions = st.actions
+		}
+		m.reply(req, Reply{Watch: m.watchViewOf(ws, actions)})
+		return
+	}
+	if !m.startWatchPoll(ws, true, req) {
+		m.refuse(req, 0, errors.New("dry run: a watcher poll is already running; try again when it ends"))
+	}
 }

@@ -879,6 +879,28 @@ type FixThreadParams struct {
 type FixThreadResult struct {
 }
 
+// SetWatchParams are SetWatch's parameters on the wire.
+type SetWatchParams struct {
+	ID  core.WorkspaceID `json:"id"`
+	On  bool             `json:"on"`
+	Req core.ReqID       `json:"req"`
+}
+
+// SetWatchResult is SetWatch's result on the wire; an error travels in the reply.
+type SetWatchResult struct {
+}
+
+// ReadWatchParams are ReadWatch's parameters on the wire.
+type ReadWatchParams struct {
+	ID     core.WorkspaceID `json:"id"`
+	DryRun bool             `json:"dryRun"`
+	Req    core.ReqID       `json:"req"`
+}
+
+// ReadWatchResult is ReadWatch's result on the wire; an error travels in the reply.
+type ReadWatchResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -970,6 +992,8 @@ var methods = []methodInfo{
 	{Name: "FileFeedback", Kind: kindRequest, Params: FileFeedbackParams{}, Result: FileFeedbackResult{}},
 	{Name: "CloseThread", Kind: kindRequest, Params: CloseThreadParams{}, Result: CloseThreadResult{}},
 	{Name: "FixThread", Kind: kindRequest, Params: FixThreadParams{}, Result: FixThreadResult{}},
+	{Name: "SetWatch", Kind: kindRequest, Params: SetWatchParams{}, Result: SetWatchResult{}},
+	{Name: "ReadWatch", Kind: kindRequest, Params: ReadWatchParams{}, Result: ReadWatchResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1671,6 +1695,26 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.FixThread(p.Thread, p.Workspace, p.Req)
 		return FixThreadResult{}, nil, true
+	case "SetWatch":
+		var p SetWatchParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.SetWatch(p.ID, p.On, p.Req)
+		return SetWatchResult{}, nil, true
+	case "ReadWatch":
+		var p ReadWatchParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadWatch(p.ID, p.DryRun, p.Req)
+		return ReadWatchResult{}, nil, true
 	}
 	return nil, nil, false
 }
@@ -2232,4 +2276,16 @@ func (c *Client) CloseThread(thread feedback.ThreadID, req core.ReqID) {
 func (c *Client) FixThread(thread feedback.ThreadID, workspace string, req core.ReqID) {
 	var r FixThreadResult
 	c.noteRefused(c.requestNoErr("FixThread", FixThreadParams{Thread: thread, Workspace: workspace, Req: req}, &r), req)
+}
+
+// SetWatch is core.Core's SetWatch (request).
+func (c *Client) SetWatch(id core.WorkspaceID, on bool, req core.ReqID) {
+	var r SetWatchResult
+	c.noteRefused(c.requestNoErr("SetWatch", SetWatchParams{ID: id, On: on, Req: req}, &r), req)
+}
+
+// ReadWatch is core.Core's ReadWatch (request).
+func (c *Client) ReadWatch(id core.WorkspaceID, dryRun bool, req core.ReqID) {
+	var r ReadWatchResult
+	c.noteRefused(c.requestNoErr("ReadWatch", ReadWatchParams{ID: id, DryRun: dryRun, Req: req}, &r), req)
 }

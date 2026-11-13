@@ -618,6 +618,18 @@ Params: `{"thread":0,"workspace":"","req":0}`
 
 Result: `{}`
 
+### SetWatch (request)
+
+Params: `{"id":0,"on":false,"req":0}`
+
+Result: `{}`
+
+### ReadWatch (request)
+
+Params: `{"id":0,"dryRun":false,"req":0}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged

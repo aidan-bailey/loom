@@ -3,6 +3,8 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -359,4 +361,134 @@ func TestDeliverWatch_ADryResultAnswersItsRequester(t *testing.T) {
 		assert.ErrorIs(t, r.Err, ErrRefused)
 		assert.Contains(t, r.Err.Error(), "switched off")
 	})
+}
+
+// TestSetWatch_WritesTheSwitchToTheWorkspaceConfig: the switch lands in the
+// model's config and in the workspace's config.json, the published summary
+// follows, and switching on starts a poll at once.
+func TestSetWatch_WritesTheSwitchToTheWorkspaceConfig(t *testing.T) {
+	m, ws, id := watchWS(t, false)
+	require.False(t, ws.cfg.GetWatchEnabled(), "fixture: off")
+
+	m.gate(gateWatch).last = time.Now() // the gate is not due: only the expedite makes the poll start
+	m.SetWatch(id, true, 1)
+
+	require.NoError(t, requestReply(t, m, 1).Err)
+	assert.True(t, ws.cfg.GetWatchEnabled())
+	require.NotNil(t, ws.watch, "a switch-on polls at once")
+	assert.True(t, ws.watch.polling, "a switch-on polls at once, not at the next cadence")
+	assert.True(t, config.LoadConfigFrom(ws.ctx.ConfigDir).WatchEnabled(), "and the file")
+	v, _ := m.Workspace(id)
+	assert.True(t, v.Watch.On)
+
+	ws.watch.polling = false
+	m.SetWatch(id, false, 2)
+
+	require.NoError(t, requestReply(t, m, 2).Err)
+	assert.False(t, ws.watch.polling, "switching off starts no poll")
+	assert.False(t, ws.cfg.GetWatchEnabled())
+	assert.False(t, config.LoadConfigFrom(ws.ctx.ConfigDir).WatchEnabled(), "off is written too, not left unset")
+}
+
+// TestSetWatch_RefusesWhatItCannotSwitch: an unserved workspace, a
+// workspace with no repository and a save that fails each leave the switch
+// as it was and answer with a refusal.
+func TestSetWatch_RefusesWhatItCannotSwitch(t *testing.T) {
+	t.Run("an unserved workspace", func(t *testing.T) {
+		m, _, _ := watchWS(t, false)
+
+		m.SetWatch(99, true, 1)
+
+		r := requestReply(t, m, 1)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "not served")
+	})
+	t.Run("a workspace with no repository", func(t *testing.T) {
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "global")
+		m.SetWorkspacesForTest(ws)
+
+		m.SetWatch(m.wsIDOf(ws), true, 1)
+
+		r := requestReply(t, m, 1)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "no repository")
+		assert.False(t, ws.cfg.GetWatchEnabled())
+	})
+	t.Run("a save that fails puts the switch back", func(t *testing.T) {
+		m, ws, id := watchWS(t, false)
+		require.NoError(t, os.Mkdir(filepath.Join(ws.ctx.ConfigDir, config.ConfigFileName), 0o755), "fixture: the file's path is a directory, so the write fails")
+
+		m.SetWatch(id, true, 1)
+
+		r := requestReply(t, m, 1)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.False(t, ws.cfg.GetWatchEnabled(), "the in-memory switch is the file's again")
+	})
+}
+
+// TestReadWatch_StatusAnswersTheLastTickAndPollsNothing: a status read is
+// answered at once from the state's last actions, with no poll started.
+func TestReadWatch_StatusAnswersTheLastTickAndPollsNothing(t *testing.T) {
+	m, ws, id := watchWS(t, true)
+	st := m.watchFor(ws)
+	st.viewer = "bot"
+	st.actions = []watch.Action{{Kind: watch.ActWait, Issue: 3, Reason: "the cap is full"}}
+
+	m.ReadWatch(id, false, 1)
+
+	r := requestReply(t, m, 1)
+	require.NoError(t, r.Err)
+	assert.True(t, r.Watch.On)
+	assert.Equal(t, "bot", r.Watch.Viewer)
+	assert.Equal(t, st.actions, r.Watch.Actions)
+	assert.Equal(t, []WatchIssueView{{Number: 3, State: "unknown", Waiting: "the cap is full"}}, r.Watch.Issues)
+	assert.False(t, st.polling, "a status read starts no poll")
+}
+
+// TestReadWatch_AnOffWorkspaceAnswersOffAndPollsNothing: with the switch
+// off both a status read and a dry run answer On false at once, and no
+// watcher state is made.
+func TestReadWatch_AnOffWorkspaceAnswersOffAndPollsNothing(t *testing.T) {
+	m, ws, id := watchWS(t, false)
+
+	m.ReadWatch(id, false, 1)
+	m.ReadWatch(id, true, 2)
+
+	events := m.Drain().Events // requestReply drains, so both replies are read from one drain
+	for _, req := range []ReqID{1, 2} {
+		r := replyTo(events, req)
+		require.NotNil(t, r, "a Reply to request %d", req)
+		require.NoError(t, r.Err, "request %d", req)
+		assert.Equal(t, WatchView{}, r.Watch, "request %d", req)
+	}
+	assert.Nil(t, ws.watch, "no poll was started, so no state was made")
+}
+
+// TestReadWatch_ADryRunWaitsForItsPollAndIsRefusedWhileOneIsOut: a dry run
+// starts a poll and answers when it is delivered, so no Reply comes at
+// once; a second dry run while it is out is refused.
+func TestReadWatch_ADryRunWaitsForItsPollAndIsRefusedWhileOneIsOut(t *testing.T) {
+	m, ws, id := watchWS(t, true)
+
+	m.ReadWatch(id, true, 5)
+
+	assert.Nil(t, replyTo(m.Drain().Events, 5), "the poll answers it, not the request")
+	assert.True(t, m.watchFor(ws).polling, "a dry run starts a poll")
+
+	m.ReadWatch(id, true, 6)
+
+	r := requestReply(t, m, 6)
+	assert.ErrorIs(t, r.Err, ErrRefused)
+	assert.Contains(t, r.Err.Error(), "already running")
+}
+
+// TestReadWatch_RefusesAnUnservedWorkspace: the request names a workspace
+// the model does not serve.
+func TestReadWatch_RefusesAnUnservedWorkspace(t *testing.T) {
+	m, _, _ := watchWS(t, true)
+
+	m.ReadWatch(99, false, 1)
+
+	assert.ErrorIs(t, requestReply(t, m, 1).Err, ErrRefused)
 }
