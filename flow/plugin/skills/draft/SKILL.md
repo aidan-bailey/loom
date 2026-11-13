@@ -250,7 +250,7 @@ resumes it.
      `mkdir -p D/rechecking && cp D/S<id>.md D/rechecking/S<id>.md`, then one
      fresh `flow:plan-reviewer`, or a fresh `flow:risk-reviewer` when a risk
      reviewer's finding was among those fixed (both when both). Its brief is
-     the review's plus the story's review findings, the draft's path and
+     the review's plus the story's open review findings, the draft's path and
      "re-check: `diff -u D/reviewing/S<id>.md D/rechecking/S<id>.md`". Append
      each report to `D/findings/review-S<id>.md`. When every Critical and
      Important finding is FIXED and no new one is Critical or Important:
