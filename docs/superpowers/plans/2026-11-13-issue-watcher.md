@@ -5112,6 +5112,12 @@ func TestDecide_Rule5_APRClosedUnmergedEscalatesOnceAndSettles(t *testing.T) {
 	assert.Equal(t, 120, got[0].PR)
 	assert.Zero(t, got[0].Session, "no session to name")
 
+	two := []Session{dcSess(14, 96, "Ready", time.Hour), dcSess(11, 96, "Paused", time.Hour)}
+	got = dcDecide(t, Memory{}, issues, []github.WatchPR{dcPR(120, 96, "CLOSED")}, two)
+	require.Len(t, got, 3)
+	assert.Equal(t, ActEscalate, got[0].Kind)
+	assert.Equal(t, uint64(11), got[0].Session, "the escalation names the lowest session ID")
+
 	notWatchers := []github.WatchPR{dcWith(dcPR(120, 96, "CLOSED"), func(p *github.WatchPR) { p.Author = "alice" })}
 	assert.Empty(t, dcDecide(t, Memory{}, issues, notWatchers, sessions), "a closed PR that is not the watcher's is not rule 5's")
 }
@@ -5598,12 +5604,14 @@ func TestDecide_ClassifiesTheSessionListFixture(t *testing.T) {
 	issues := []github.WatchIssue{
 		dcIssue(96, "drift"), dcIssue(97, "drift"), dcIssue(98, "drift"), dcIssue(99, "drift"), dcIssue(100, "drift"),
 	}
-	got := dcDecide(t, Memory{}, issues, nil, sessions)
+	cfg := dcCfg()
+	cfg.Cap = 4
+	got := Decide(dcSnap(issues, nil, sessions), Memory{}, cfg, dcTitleTmpl(t))
 
 	assert.Equal(t, []Action{
 		{Kind: ActWait, Issue: 98, Reason: "a session the watcher did not start already works on issue #98"},
-		{Kind: ActWait, Issue: 99, Reason: "the cap of 2 watcher sessions is full"},
-	}, got, "96 and 97 have their own sessions and 100's is loading; 98 has a foreign one; 99's title parses but its session is unlinked, so it is not the watcher's and the three that are fill the cap")
+		{Kind: ActStart, Issue: 99},
+	}, got, "96 and 97 have their own sessions and 100's is loading, so three of the cap of 4 are used; 98 has a foreign one; 99's title parses but its session is unlinked, so it is not the watcher's, is not counted, and 99 starts")
 }
 ```
 
@@ -5615,7 +5623,7 @@ Fails without: TestDecide_TheCapCountsEveryWatcherSession: `r.owned` counting on
 
 Fails without: TestDecide_OneStartPerCall: `r.started = true` not set, or `case r.started` removed from `start` (every issue starts, and the resume row starts beside issue 96), or the issues not sorted (98 starts first).
 
-Fails without: TestDecide_ClassifiesTheSessionListFixture: `OwnSession` ignoring the `issue` field (the unlinked "heal 99" session then counts as an own one, so the cap fills one session sooner and 96's session is not what the count rests on), or the foreign check ignoring a session that has no title match (98 starts instead of waiting).
+Fails without: TestDecide_ClassifiesTheSessionListFixture: `OwnSession` ignoring the `issue` field (the unlinked "heal 99" session then counts as an own one, the cap of 4 fills and 99 waits instead of starting), or the foreign check ignoring a session that has no title match (98 starts instead of waiting).
 
 - [ ] **Step 2: Run it to see it fail**
 
