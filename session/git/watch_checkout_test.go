@@ -91,6 +91,17 @@ func TestShowFile_PathsAreRelativeToTheRepositoryRoot(t *testing.T) {
 	assert.Equal(t, `{"v":1}`, string(got), "asked from a subdirectory, the path still names the root's file")
 }
 
+func TestShowFile_ReadsANestedPath(t *testing.T) {
+	repo := newRepo(t, "main")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "prompts"), 0o755))
+	commitFile(t, repo, filepath.Join("prompts", "start.md"), "go")
+
+	got, err := ShowFile(repo, "HEAD", "prompts/start.md", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "go", string(got))
+}
+
 func TestShowFile_AMissingPathIsErrNoSuchPath(t *testing.T) {
 	repo := newRepo(t, "main")
 	require.NoError(t, os.MkdirAll(filepath.Join(repo, "prompts"), 0o755))
@@ -238,14 +249,15 @@ func TestSyncDetachedWorktree_RefusesAGuttedCheckoutInsideTheRepository(t *testi
 
 func TestSyncDetachedWorktree_NeedsAFullCommitSHA(t *testing.T) {
 	clone, path, _ := syncFixture(t)
-	for name, sha := range map[string]string{
-		"a branch name": "main",
-		"no commit":     strings.Repeat("0", 40),
+	for name, c := range map[string]struct{ sha, msg string }{
+		"a branch name": {"main", "is not a full commit SHA"},
+		"no commit":     {strings.Repeat("0", 40), "is not a commit in"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := SyncDetachedWorktree(clone, path, sha, nil)
+			err := SyncDetachedWorktree(clone, path, c.sha, nil)
 
 			require.Error(t, err)
+			assert.ErrorContains(t, err, c.msg)
 			assert.NoDirExists(t, path)
 		})
 	}
