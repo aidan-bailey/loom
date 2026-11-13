@@ -11,10 +11,12 @@ import (
 	"github.com/aidan-bailey/loom/session/github"
 )
 
-// sanitizeBranchName transforms an arbitrary string into a Git branch name friendly string.
+// SanitizeBranchName transforms an arbitrary string into a Git branch name friendly string.
 // Note: Git branch names have several rules, so this function uses a simple approach
-// by allowing only a safe subset of characters.
-func sanitizeBranchName(s string) string {
+// by allowing only a safe subset of characters. It is exported so the issue
+// watcher derives the pattern of its own branches from this function itself
+// rather than from a copy of its rules.
+func SanitizeBranchName(s string) string {
 	// Convert to lower-case
 	s = strings.ToLower(s)
 

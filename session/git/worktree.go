@@ -161,7 +161,7 @@ func resolveWorktreePaths(repoPath string, branchName string, configDir string, 
 		return "", "", err
 	}
 
-	worktreePath = filepath.Join(worktreeDir, sanitizeBranchName(branchName))
+	worktreePath = filepath.Join(worktreeDir, SanitizeBranchName(branchName))
 	worktreePath = worktreePath + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
 
 	return resolvedRepo, worktreePath, nil
@@ -231,7 +231,7 @@ func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname st
 	branchName := fmt.Sprintf("%s%s", prefix, spec.SessionName)
 	// Sanitize the final branch name to handle invalid characters from any source
 	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
-	branchName = sanitizeBranchName(branchName)
+	branchName = SanitizeBranchName(branchName)
 	// Reachable only since the prefix became user-controlled: with it
 	// cleared, a title that is entirely punctuation sanitizes away to
 	// nothing, and `worktree add -b ""` fails cryptically further down.
