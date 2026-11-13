@@ -91,6 +91,8 @@ func TestTitleTemplate_Render(t *testing.T) {
 		{"empty value", 96, map[string]string{"spec": "", "row": "r"}, "{spec}"},
 		{"space in value", 96, map[string]string{"spec": "a b", "row": "r"}, "{spec}"},
 		{"slash in value", 96, map[string]string{"spec": "a/b", "row": "r"}, "{spec}"},
+		{"only dashes", 96, map[string]string{"spec": "--", "row": "r"}, "{spec}"},
+		{"only dots", 96, map[string]string{"spec": ".", "row": "r"}, "{spec}"},
 		{"newline in value", 96, map[string]string{"spec": "a\n", "row": "r"}, "{spec}"},
 		{"issue zero", 0, map[string]string{"spec": "a", "row": "r"}, "issue 0"},
 		{"negative issue", -3, map[string]string{"spec": "a", "row": "r"}, "issue -3"},
