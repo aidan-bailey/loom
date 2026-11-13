@@ -202,3 +202,134 @@ func TestMemory_UnknownTopLevelKeysSurviveASave(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, again.PRs[3].Nudges["ci"].N)
 }
+
+func TestMemory_RecordNudge(t *testing.T) {
+	at1 := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	at2 := at1.Add(time.Hour)
+	var m Memory // the zero value works: its maps are nil
+
+	assert.Equal(t, 1, m.RecordNudge(1, "ci", "a", at1))
+	assert.Equal(t, 2, m.RecordNudge(1, "ci", "b", at2))
+	assert.Equal(t, 1, m.RecordNudge(1, "conflict", "c", at1), "counts are per kind")
+	assert.Equal(t, 1, m.RecordNudge(2, "ci", "a", at1), "and per PR")
+
+	assert.Equal(t, NudgeRecord{N: 2, Key: "b", At: at2}, m.PRs[1].Nudges["ci"], "the latest key and time are kept")
+	assert.Equal(t, NudgeRecord{N: 1, Key: "c", At: at1}, m.PRs[1].Nudges["conflict"])
+	assert.Equal(t, 1, m.PRs[2].Nudges["ci"].N)
+}
+
+func TestMemory_Settle(t *testing.T) {
+	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	var m Memory
+	m.Settle(nil)
+	assert.Nil(t, m.PRs, "settling nothing creates nothing")
+
+	m.RecordNudge(1, "ci", "a", at)
+	m.RecordNudge(2, "ci", "a", at)
+	m.Settle([]int{1, 9})
+	m.Settle([]int{1})
+
+	assert.True(t, m.PRs[1].Settled)
+	assert.Equal(t, 1, m.PRs[1].Nudges["ci"].N, "settling keeps the counts")
+	assert.True(t, m.PRs[9].Settled, "a PR the memory had no record of is settled too")
+	assert.False(t, m.PRs[2].Settled, "a PR not named is not")
+}
+
+func TestMemory_RecordEscalationAndSetSeen(t *testing.T) {
+	at1 := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	at2 := at1.Add(time.Hour)
+	var m Memory
+
+	m.SetSeen(96, "h1:c1")
+	m.RecordEscalation(96, "first", at1)
+	assert.Equal(t, "h1:c1", m.Issues[96].Seen, "escalating keeps what was seen")
+	require.NotNil(t, m.Issues[96].Escalated)
+	assert.Equal(t, "first", m.Issues[96].Escalated.Reason)
+
+	m.SetSeen(96, "h2:c2")
+	assert.Equal(t, "h2:c2", m.Issues[96].Seen)
+	require.NotNil(t, m.Issues[96].Escalated, "seeing keeps the escalation")
+
+	m.RecordEscalation(96, "second", at2)
+	assert.Equal(t, "second", m.Issues[96].Escalated.Reason, "a later escalation replaces the record")
+	assert.True(t, m.Issues[96].Escalated.At.Equal(at2))
+
+	m.SetSeen(97, "x:")
+	assert.Nil(t, m.Issues[97].Escalated)
+	assert.Equal(t, "second", m.Issues[96].Escalated.Reason, "another issue is untouched")
+}
+
+func TestMemory_RecordCommented(t *testing.T) {
+	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	var m Memory
+
+	m.RecordCommented(96, "first")
+	assert.Equal(t, "first", m.Issues[96].Commented, "the zero Memory works")
+	assert.Nil(t, m.Issues[96].Escalated, "commenting records no escalation")
+
+	m.RecordEscalation(96, "first", at)
+	m.SetSeen(96, "h:c")
+	assert.Equal(t, "first", m.Issues[96].Commented, "escalating and seeing keep the commented reason")
+
+	m.RecordCommented(96, "second")
+	assert.Equal(t, "second", m.Issues[96].Commented, "a later comment replaces the reason")
+	require.NotNil(t, m.Issues[96].Escalated, "commenting keeps the escalation")
+	assert.Equal(t, "first", m.Issues[96].Escalated.Reason)
+	assert.Equal(t, "h:c", m.Issues[96].Seen, "and what was seen")
+
+	m.RecordCommented(97, "other")
+	assert.Equal(t, "second", m.Issues[96].Commented, "another issue is untouched")
+}
+
+func TestMemory_RecordsSurviveASaveAndLoad(t *testing.T) {
+	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	var m Memory
+	m.RecordNudge(7, "ci", "sha", at)
+	m.Settle([]int{8})
+	m.RecordEscalation(96, "why", at)
+	m.SetSeen(96, "h:c")
+	m.RecordCommented(96, "why")
+
+	path := filepath.Join(t.TempDir(), MemoryFile)
+	require.NoError(t, SaveMemory(path, m))
+	got, err := LoadMemory(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, got.PRs[7].Nudges["ci"].N)
+	assert.True(t, got.PRs[8].Settled)
+	assert.Equal(t, "why", got.Issues[96].Escalated.Reason)
+	assert.Equal(t, "h:c", got.Issues[96].Seen)
+	assert.Equal(t, "why", got.Issues[96].Commented)
+}
+
+func TestMemory_CloneSharesNothing(t *testing.T) {
+	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	path := writeMemoryFile(t, `{"version":1,"future":{"a":1},"prs":{},"issues":{}}`)
+	orig, err := LoadMemory(path)
+	require.NoError(t, err)
+	orig.RecordNudge(1, "ci", "a", at)
+	orig.RecordEscalation(96, "why", at)
+	orig.RecordCommented(96, "why")
+
+	c := orig.Clone()
+	assert.Equal(t, "why", c.Issues[96].Commented, "the clone carries the commented reason")
+	c.PRs[1].Nudges["ci"] = NudgeRecord{N: 9}
+	c.Issues[96].Escalated.Reason = "changed"
+	c.RecordNudge(2, "ci", "b", at)
+	c.Settle([]int{1})
+	c.SetSeen(96, "new")
+	c.RecordCommented(96, "other")
+
+	assert.Equal(t, 1, orig.PRs[1].Nudges["ci"].N, "the clone's nudge map is its own")
+	assert.Equal(t, "why", orig.Issues[96].Escalated.Reason, "and its escalation")
+	assert.NotContains(t, orig.PRs, 2)
+	assert.False(t, orig.PRs[1].Settled)
+	assert.Empty(t, orig.Issues[96].Seen)
+	assert.Equal(t, "why", orig.Issues[96].Commented, "the commented reason is a value, not shared")
+
+	out := filepath.Join(t.TempDir(), MemoryFile)
+	require.NoError(t, SaveMemory(out, c))
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"future"`, "the clone keeps the unknown top-level keys")
+}

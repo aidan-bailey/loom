@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,4 +167,101 @@ func SaveMemory(path string, m Memory) error {
 		return fmt.Errorf("encode %s: %w", MemoryFile, err)
 	}
 	return config.AtomicWriteFile(path, append(data, '\n'), 0o600)
+}
+
+// RecordNudge counts one more nudge of kind on pr and keeps its key and time
+// (the repeat guard's inputs), returning the new count. Counts are per PR and
+// kind for the PR's life.
+func (m *Memory) RecordNudge(pr int, kind string, key string, at time.Time) int {
+	if m.PRs == nil {
+		m.PRs = map[int]PRMemory{}
+	}
+	p := m.PRs[pr]
+	if p.Nudges == nil {
+		p.Nudges = map[string]NudgeRecord{}
+	}
+	rec := p.Nudges[kind]
+	rec.N++
+	rec.Key = key
+	rec.At = at
+	p.Nudges[kind] = rec
+	m.PRs[pr] = p
+	return rec.N
+}
+
+// RecordEscalation records that the watcher escalated issue, replacing an
+// earlier record. What the issue's `Seen` and `Commented` hold is kept.
+func (m *Memory) RecordEscalation(issue int, reason string, at time.Time) {
+	if m.Issues == nil {
+		m.Issues = map[int]IssueMemory{}
+	}
+	is := m.Issues[issue]
+	is.Escalated = &Escalation{At: at, Reason: reason}
+	m.Issues[issue] = is
+}
+
+// RecordCommented records that the comment of the escalation with reason was
+// posted on issue, so a retry of the same escalation (its label failed) skips
+// the comment (spec §4.4). The escalation and what the issue's `Seen` holds
+// are kept.
+func (m *Memory) RecordCommented(issue int, reason string) {
+	if m.Issues == nil {
+		m.Issues = map[int]IssueMemory{}
+	}
+	is := m.Issues[issue]
+	is.Commented = reason
+	m.Issues[issue] = is
+}
+
+// Settle marks each of prs settled, making a record for one the memory has
+// not seen. The nudge counts are kept.
+func (m *Memory) Settle(prs []int) {
+	for _, pr := range prs {
+		if m.PRs == nil {
+			m.PRs = map[int]PRMemory{}
+		}
+		p := m.PRs[pr]
+		p.Settled = true
+		m.PRs[pr] = p
+	}
+}
+
+// SetSeen stores the issue-changed fingerprint (spec §4.2) the watcher has
+// acted on. An existing escalation and commented reason are kept.
+func (m *Memory) SetSeen(issue int, seen string) {
+	if m.Issues == nil {
+		m.Issues = map[int]IssueMemory{}
+	}
+	is := m.Issues[issue]
+	is.Seen = seen
+	m.Issues[issue] = is
+}
+
+// Clone returns a deep copy, so a poll job's snapshot and the model's own
+// memory never share a map. Its maps are never nil.
+func (m Memory) Clone() Memory {
+	c := Memory{
+		Version: m.Version,
+		PRs:     make(map[int]PRMemory, len(m.PRs)),
+		Issues:  make(map[int]IssueMemory, len(m.Issues)),
+	}
+	for n, p := range m.PRs {
+		cp := PRMemory{Settled: p.Settled}
+		if p.Nudges != nil {
+			cp.Nudges = maps.Clone(p.Nudges)
+		}
+		c.PRs[n] = cp
+	}
+	for n, is := range m.Issues {
+		ci := IssueMemory{Seen: is.Seen, Commented: is.Commented}
+		if is.Escalated != nil {
+			e := *is.Escalated
+			ci.Escalated = &e
+		}
+		c.Issues[n] = ci
+	}
+	if m.extra != nil {
+		c.extra = maps.Clone(m.extra)
+	}
+	return c
 }
