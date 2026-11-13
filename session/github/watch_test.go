@@ -336,3 +336,131 @@ func TestTailLines(t *testing.T) {
 	assert.Equal(t, "a", tailLines("a", 5))
 	assert.Equal(t, "", tailLines("", 5))
 }
+
+func TestClosePR_PassesTheNumberAndTheComment(t *testing.T) {
+	ex := &watchExec{fn: answer("")}
+	require.NoError(t, ClosePR(context.Background(), "/repo", 101, "Closing: the issue is closed.", ex))
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh pr close 101 --comment Closing: the issue is closed.", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+}
+
+func TestClosePR_WithoutAComment(t *testing.T) {
+	ex := &watchExec{fn: answer("")}
+	require.NoError(t, ClosePR(context.Background(), "/repo", 101, "", ex))
+	assert.Equal(t, []string{"gh pr close 101"}, ex.calls, "an empty comment is no --comment flag")
+}
+
+func TestClosePR_ReturnsTheFailure(t *testing.T) {
+	err := ClosePR(context.Background(), "/repo", 101, "c", &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+func TestCommentIssue_PassesTheBody(t *testing.T) {
+	ex := &watchExec{fn: answer("")}
+	require.NoError(t, CommentIssue(context.Background(), "/repo", 7, "stuck: out of nudges", ex))
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh issue comment 7 --body stuck: out of nudges", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+
+	err := CommentIssue(context.Background(), "/repo", 7, "b", &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+// The answers of `gh label list --json name` as probed live: every key
+// of a label object, of which AddLabel reads only name. Both lists hold
+// near misses of "stuck" (a longer name, one that contains it), so that
+// only an exact comparison tells them from the label.
+const (
+	labelListWithStuck = `[
+  {"color": "ededed", "description": "", "id": "LA_kwDOA9", "name": "stuck-old"},
+  {"color": "b60205", "description": "Needs a human", "id": "LA_kwDOA8", "name": "stuck"},
+  {"color": "0e8a16", "description": "", "id": "LA_kwDOA7", "name": "unstuck"}
+]`
+	labelListWithoutStuck = `[
+  {"color": "ededed", "description": "", "id": "LA_kwDOA9", "name": "stuck-old"},
+  {"color": "0e8a16", "description": "", "id": "LA_kwDOA7", "name": "unstuck"}
+]`
+)
+
+// labelExec answers gh label list with list and listErr, gh label
+// create with createErr and gh issue edit with editErr.
+func labelExec(list string, listErr, createErr, editErr error) *watchExec {
+	return &watchExec{fn: func(argv string) (string, error) {
+		switch {
+		case strings.HasPrefix(argv, "gh label list"):
+			return list, listErr
+		case strings.HasPrefix(argv, "gh label create"):
+			return "", createErr
+		}
+		return "", editErr
+	}}
+}
+
+func TestAddLabel_AddsAnExistingLabelWithoutCreatingIt(t *testing.T) {
+	ex := labelExec(labelListWithStuck, nil, nil, nil)
+	require.NoError(t, AddLabel(context.Background(), "/repo", 7, "stuck", ex))
+	assert.Equal(t, []string{
+		"gh label list --json name --limit 1000",
+		"gh issue edit 7 --add-label stuck",
+	}, ex.calls)
+	for _, d := range ex.dirs {
+		assert.Equal(t, "/repo", d)
+	}
+}
+
+func TestAddLabel_CreatesAMissingLabelThenAddsIt(t *testing.T) {
+	ex := labelExec(labelListWithoutStuck, nil, nil, nil)
+	require.NoError(t, AddLabel(context.Background(), "/repo", 7, "stuck", ex))
+	assert.Equal(t, []string{
+		"gh label list --json name --limit 1000",
+		"gh label create stuck",
+		"gh issue edit 7 --add-label stuck",
+	}, ex.calls, "no --force: a label made in the meantime keeps its colour")
+	for _, d := range ex.dirs {
+		assert.Equal(t, "/repo", d)
+	}
+}
+
+func TestAddLabel_AnEmptyRepositoryHasNoLabelToMatch(t *testing.T) {
+	ex := labelExec(`[]`, nil, nil, nil)
+	require.NoError(t, AddLabel(context.Background(), "/repo", 7, "stuck", ex))
+	assert.Equal(t, []string{
+		"gh label list --json name --limit 1000",
+		"gh label create stuck",
+		"gh issue edit 7 --add-label stuck",
+	}, ex.calls)
+}
+
+func TestAddLabel_AFailedListChangesNothing(t *testing.T) {
+	ex := labelExec("", assert.AnError, nil, nil)
+	err := AddLabel(context.Background(), "/repo", 7, "stuck", ex)
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{"gh label list --json name --limit 1000"}, ex.calls,
+		"no create and no add after a failed list")
+
+	ex = labelExec("not json", nil, nil, nil)
+	require.Error(t, AddLabel(context.Background(), "/repo", 7, "stuck", ex))
+	assert.Len(t, ex.calls, 1, "an unparsable list is no list: no create and no add")
+}
+
+func TestAddLabel_AFailedCreateIsNotAdded(t *testing.T) {
+	ex := labelExec(labelListWithoutStuck, nil, assert.AnError, nil)
+	err := AddLabel(context.Background(), "/repo", 7, "stuck", ex)
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{
+		"gh label list --json name --limit 1000",
+		"gh label create stuck",
+	}, ex.calls, "no add after a failed create")
+}
+
+func TestAddLabel_AFailedAddIsAnError(t *testing.T) {
+	ex := labelExec(labelListWithStuck, nil, nil, assert.AnError)
+	err := AddLabel(context.Background(), "/repo", 7, "stuck", ex)
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Len(t, ex.calls, 2, "one list, one add, no retry")
+}

@@ -365,3 +365,52 @@ func tailLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// ClosePR closes a PR, leaving comment on it first when comment is not
+// empty.
+func ClosePR(ctx context.Context, repoDir string, number int, comment string, r internalexec.Executor) error {
+	args := []string{"pr", "close", strconv.Itoa(number)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	_, err := gh(ctx, r, repoDir, args...)
+	return err
+}
+
+// CommentIssue adds a comment to an issue.
+func CommentIssue(ctx context.Context, repoDir string, number int, body string, r internalexec.Executor) error {
+	_, err := gh(ctx, r, repoDir, "issue", "comment", strconv.Itoa(number), "--body", body)
+	return err
+}
+
+// AddLabel adds label to an issue, creating the label first when the
+// repository has none of that name. It lists the labels (all of them,
+// up to 1000: gh's --search is not a substring match) and compares the
+// names exactly here; no --force on the create, so a label made in the
+// meantime keeps its colour. A failed or unparsable list, a failed
+// create and a failed add are all errors, and nothing is retried. It
+// never reads gh's error text.
+func AddLabel(ctx context.Context, repoDir string, number int, label string, r internalexec.Executor) error {
+	out, err := gh(ctx, r, repoDir, "label", "list", "--json", "name", "--limit", "1000")
+	if err != nil {
+		return err
+	}
+	var labels []rawName
+	if err := json.Unmarshal(out, &labels); err != nil {
+		return fmt.Errorf("parsing gh label list: %w", err)
+	}
+	exists := false
+	for _, l := range labels {
+		if l.Name == label {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		if _, err := gh(ctx, r, repoDir, "label", "create", label); err != nil {
+			return fmt.Errorf("creating label %q: %w", label, err)
+		}
+	}
+	_, err = gh(ctx, r, repoDir, "issue", "edit", strconv.Itoa(number), "--add-label", label)
+	return err
+}
