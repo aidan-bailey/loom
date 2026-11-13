@@ -11,8 +11,8 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
-// watchFetchTimeout bounds the watcher's `git fetch` of one branch: the
-// 60 s the watcher allots a fetch and its checkout refresh together.
+// watchFetchTimeout bounds the watcher's `git fetch` of one branch alone;
+// the checkout refresh that follows runs under gitWorktreeAddTimeout (5 min).
 const watchFetchTimeout = 60 * time.Second
 
 // ErrNoSuchPath is ShowFile's answer for a revision that has no file at the
