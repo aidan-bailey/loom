@@ -31,10 +31,10 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | Tool | Runs |
 |---|---|
 | `conf` | `flowconf.py`: key, status, show, state, drafts, vacuous, roster, gates, docs-check, doctor |
-| `check-plan` | `check_plan.py`; `--skeleton PLAN` checks a skeleton's names contract, story list, an epic's Part line and the story budget (`plan_skeleton.py`) |
-| `packet` | `plan_packet.py` |
+| `check-plan` | `check_plan.py`, with two lints over the stories' text, printed as `WARN [lint]` lines: a `Fails without:` test that neither the plan nor the tree holds, and a `pub` Rust item's doc link to an item the plan keeps private; `--skeleton PLAN` checks a skeleton's names contract, story list, **Drafts after:** lines, an epic's Part line and the story budget (`plan_skeleton.py`) |
+| `packet` | `plan_packet.py`: the seams packet, the drafters' unchecked premises (`D/premises/`) included |
 | `join` | `plan_join.py`: the stories from the drafts, each story's opening lines from its skeleton entry |
-| `premises` | `plan_premises.py` |
+| `premises` | `plan_premises.py`, which also flags a type a step adds that a generated file (the profile's `generated` globs) already declares |
 | `conformance` | `plan_conformance.py` |
 | `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit; for a later part of an epic, without earlier parts' sessions), `epic SPEC` (an epic's parts: design, drafting and run cost each) |
 | `doctor` | `flowconf.py doctor` |
