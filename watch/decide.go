@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -158,7 +159,29 @@ func (r *ruleRun) issue(is github.WatchIssue) []Action {
 		}
 		return nil
 	}
-	return nil // rules 7 and 8 follow in Task 5.4
+	for _, sess := range sessions { // rule 7
+		if !r.stuck(sess, len(open) > 0) {
+			continue
+		}
+		act := Action{
+			Kind:    ActEscalate,
+			Issue:   n,
+			Session: sess.ID,
+			Reason:  fmt.Sprintf("session %s has been %s since %s", sess.Title, sess.Status, sess.Since.UTC().Format(time.RFC3339)),
+		}
+		if len(open) > 0 {
+			act.PR = open[0].Number
+		}
+		return []Action{act}
+	}
+	if len(open) > 0 { // rule 8
+		for _, sess := range sessions {
+			if act, ok := NudgeFor(is, open[0], sess, r.snap.HookNudges[n], r.mem, r.cfg, r.snap.Now); ok {
+				return []Action{act}
+			}
+		}
+	}
+	return nil
 }
 
 // actionable reports whether the rules may act on a session of this status.
@@ -228,4 +251,21 @@ func (r *ruleRun) hasForeign(n int) bool {
 
 func wait(n int, reason string) []Action {
 	return []Action{{Kind: ActWait, Issue: n, Reason: reason}}
+}
+
+// stuck is rule 7's test: the session has been Prompting or Recoverable, or
+// Ready with none of the issue's PRs open, for longer than the config's
+// stuck duration. A Paused session is never stuck, and a session whose
+// status time is unknown is not either.
+func (r *ruleRun) stuck(sess Session, hasOpenPR bool) bool {
+	if sess.Since.IsZero() || r.snap.Now.Sub(sess.Since) <= r.cfg.Stuck {
+		return false
+	}
+	switch sess.Status {
+	case statusPrompting, statusRecoverable:
+		return true
+	case statusReady:
+		return !hasOpenPR
+	}
+	return false
 }
