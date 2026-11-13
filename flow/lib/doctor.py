@@ -18,6 +18,7 @@ The Python check is flowconf's own: it exits before anything runs on a Python ol
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -181,6 +182,20 @@ def guard_problem() -> str | None:
     return None
 
 
+def copy_line() -> str | None:
+    """PASS or WARN for this session's flow copy against the installed loom's; None when an older loom
+    passes no FLOW_INSTALLED_ROSTER. The words match `loom flow run start`'s (`copyWarning`)."""
+    installed = os.environ.get("FLOW_INSTALLED_ROSTER", "").strip()
+    copy = os.environ.get("FLOW_ROSTER", "").strip()
+    if not installed or not copy:
+        return None
+    if copy == installed:
+        return "PASS flow copy"
+    return (f"WARN flow copy: this session runs {copy}, the installed loom has {installed}: its prompts and tools "
+            "are the ones it launched with; relaunch it (pause, then resume) for the daemon's current copy, once "
+            "the daemon runs the installed build")
+
+
 def root_problem() -> str | None:
     """None when FLOW_ROOT is a flow root loom wrote (plugin/, lib/ and ROSTER), else why not."""
     root = flow_root()
@@ -256,6 +271,9 @@ def doctor(cwd: Path) -> tuple[list[str], int]:
 
     report("flow root", root_problem())
     report("guard", guard_problem())
+    copy = copy_line()
+    if copy:
+        lines.append(copy)
     lines.append(f"PASS python {sys.version.split()[0]}")
     try:
         top = toplevel(cwd)

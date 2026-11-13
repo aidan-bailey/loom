@@ -43,6 +43,20 @@ var flowTools = []flowTool{
 	{name: "check-agents", script: "check-agents.sh", short: "Lint the flow plugin's agents and skills"},
 }
 
+// copyWarning is the WARN line for a session whose flow copy (its root's
+// ROSTER) isn't this binary's, "" when it is or there is none: a session
+// keeps the copy it launched with, so a prompt or tool changed since never
+// reaches it, and the daemon writes each launch's copy from its own build.
+func copyWarning(copy string) string {
+	installed := flow.RosterID()
+	if copy == "" || copy == installed {
+		return ""
+	}
+	return "WARN flow copy: this session runs " + copy + ", the installed loom has " + installed +
+		": its prompts and tools are the ones it launched with; relaunch it (pause, then resume) for the " +
+		"daemon's current copy, once the daemon runs the installed build"
+}
+
 func newFlowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "flow",

@@ -120,7 +120,7 @@ func flowScript(root, script string, args []string, stdin io.Reader, stdout, std
 	runner.Stdin, runner.Stdout, runner.Stderr = stdin, stdout, stderr
 	runner.Env = append(os.Environ(),
 		flow.EnvRoot+"="+root, "FLOW_ROOT="+root, "FLOW_DATA="+data,
-		"FLOW_ROSTER="+strings.TrimSpace(string(roster)))
+		"FLOW_ROSTER="+strings.TrimSpace(string(roster)), "FLOW_INSTALLED_ROSTER="+flow.RosterID())
 	err = runner.Run()
 	var exit *exec.ExitError
 	switch {

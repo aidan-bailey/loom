@@ -231,6 +231,9 @@ func newFlowRunStartCmd() *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: "loom flow run: the roster: " + err.Error()}
 			}
+			if w := copyWarning(strings.TrimSpace(string(roster))); w != "" {
+				fmt.Fprintln(c.ErrOrStderr(), w)
+			}
 			base, err := git.Head("")
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: "loom flow run: " + err.Error()}

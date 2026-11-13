@@ -72,6 +72,21 @@ func TestFlowTool_PassesArgsEnvAndTheExitCodeThrough(t *testing.T) {
 	assert.Equal(t, "--x plan.md loom flow roster 0123456789ab True\n", out)
 }
 
+func TestFlowTool_PassesTheInstalledRoster(t *testing.T) {
+	needPython(t)
+	t.Setenv(flow.EnvRoot, fakeFlowRoot(t, map[string]string{"check_plan.py": "import os\nprint(os.environ['FLOW_INSTALLED_ROSTER'])\n"}))
+	out, _, err := runFlow(t, "check-plan")
+	require.NoError(t, err)
+	assert.Equal(t, flow.RosterID()+"\n", out)
+}
+
+func TestCopyWarning_NamesBothCopiesOnlyWhenTheyDiffer(t *testing.T) {
+	assert.Empty(t, copyWarning(flow.RosterID()), "this binary's copy")
+	assert.Empty(t, copyWarning(""), "no copy to compare")
+	w := copyWarning("loom flow roster 0123456789ab")
+	assert.True(t, strings.HasPrefix(w, "WARN flow copy: this session runs loom flow roster 0123456789ab, the installed loom has "+flow.RosterID()+":"), w)
+}
+
 func TestFlowTool_DoctorRunsFlowconfDoctor(t *testing.T) {
 	needPython(t)
 	t.Setenv(flow.EnvRoot, fakeFlowRoot(t, map[string]string{"flowconf.py": "import sys\nprint(sys.argv[1:])\n"}))

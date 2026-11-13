@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import doctor  # noqa: E402
@@ -62,6 +63,25 @@ class ChecksTest(unittest.TestCase):
         self.assertIsNotNone(doctor.prefix_works("'unbalanced"))
         self.assertIsNone(doctor.missing_programs("no-such-prefix-xyz", ["sh"]))
         self.assertIsNone(doctor.missing_programs("'unbalanced", ["sh"]))
+
+
+class CopyLineTest(unittest.TestCase):
+    def test_no_line_without_the_installed_roster(self):
+        with mock.patch.dict(os.environ, {"FLOW_ROSTER": "loom flow roster aaaaaaaaaaaa"}, clear=False):
+            os.environ.pop("FLOW_INSTALLED_ROSTER", None)
+            self.assertIsNone(doctor.copy_line())
+
+    def test_pass_when_the_copies_match(self):
+        same = {"FLOW_ROSTER": "loom flow roster aaaaaaaaaaaa", "FLOW_INSTALLED_ROSTER": "loom flow roster aaaaaaaaaaaa"}
+        with mock.patch.dict(os.environ, same):
+            self.assertEqual(doctor.copy_line(), "PASS flow copy")
+
+    def test_warn_naming_both_when_they_differ(self):
+        differ = {"FLOW_ROSTER": "loom flow roster aaaaaaaaaaaa", "FLOW_INSTALLED_ROSTER": "loom flow roster bbbbbbbbbbbb"}
+        with mock.patch.dict(os.environ, differ):
+            line = doctor.copy_line()
+        self.assertTrue(line.startswith("WARN flow copy: this session runs loom flow roster aaaaaaaaaaaa, "
+                                        "the installed loom has loom flow roster bbbbbbbbbbbb:"), line)
 
 
 class DoctorTest(unittest.TestCase):
