@@ -301,3 +301,67 @@ func ViewWatchIssue(ctx context.Context, repoDir string, number int, r internale
 	}
 	return ri.issue(), nil
 }
+
+// Viewer returns the login gh is authenticated as: the identity whose
+// PRs the watcher treats as its own (spec §2). An empty answer is an
+// error, never a login.
+func Viewer(ctx context.Context, repoDir string, r internalexec.Executor) (string, error) {
+	out, err := gh(ctx, r, repoDir, "api", "user", "--jq", ".login")
+	if err != nil {
+		return "", err
+	}
+	login := strings.TrimSpace(string(out))
+	if login == "" {
+		return "", fmt.Errorf("gh api user: the reply names no login")
+	}
+	return login, nil
+}
+
+// failedLogsTimeout bounds FailedJobLogs (spec §7.1): a failed job's
+// log can be large, so it gets longer than ghTimeout.
+const failedLogsTimeout = 30 * time.Second
+
+// ghWithTimeout is gh with its own timeout in place of ghTimeout. gh
+// itself cannot take a longer one: a parent context's deadline only
+// ever shortens a child's.
+func ghWithTimeout(ctx context.Context, r internalexec.Executor, dir string, timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	c := internalexec.GhCommand(ctx, args...)
+	c.Dir = dir
+	out, err := runner(r).Output(c)
+	if err != nil {
+		return nil, fmt.Errorf("gh %s: %w", label(args), err)
+	}
+	return out, nil
+}
+
+// FailedJobLogs returns the last lines lines of an Actions job's failed
+// steps' log. It is called only when a ci nudge is sent. A job ID of 0
+// (a check with no Actions job) or a non-positive lines is an error and
+// reaches no gh call.
+func FailedJobLogs(ctx context.Context, repoDir string, jobID int64, lines int, r internalexec.Executor) (string, error) {
+	if jobID <= 0 {
+		return "", fmt.Errorf("fetching a failed job's log: job %d is not an Actions job", jobID)
+	}
+	if lines <= 0 {
+		return "", fmt.Errorf("fetching a failed job's log: %d lines asked for", lines)
+	}
+	out, err := ghWithTimeout(ctx, r, repoDir, failedLogsTimeout,
+		"run", "view", "--job", strconv.FormatInt(jobID, 10), "--log-failed")
+	if err != nil {
+		return "", err
+	}
+	return tailLines(string(out), lines), nil
+}
+
+// tailLines returns the last n lines of s, without the newline that
+// ends it.
+func tailLines(s string, n int) string {
+	s = strings.TrimRight(s, "\r\n")
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}

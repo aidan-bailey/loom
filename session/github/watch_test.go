@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -242,4 +243,96 @@ func TestViewWatchIssue_FailsClosed(t *testing.T) {
 	_, err = ViewWatchIssue(context.Background(), "/repo", 7, &watchExec{fn: answer(`[]`)})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing gh issue view")
+}
+
+func TestViewer_ReturnsTheTrimmedLogin(t *testing.T) {
+	ex := &watchExec{fn: answer("loom-bot\n")}
+	login, err := Viewer(context.Background(), "/repo", ex)
+	require.NoError(t, err)
+	assert.Equal(t, "loom-bot", login)
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh api user --jq .login", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+}
+
+func TestViewer_FailsClosed(t *testing.T) {
+	_, err := Viewer(context.Background(), "/repo", &watchExec{fn: answer("  \n")})
+	require.Error(t, err, "an empty login would match no PR as the watcher's own, and must not pass for an answer")
+
+	_, err = Viewer(context.Background(), "/repo", &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+func TestFailedJobLogs_ReturnsTheLastLines(t *testing.T) {
+	log := "a\nb\nc\nd\ne\nf\n"
+	ex := &watchExec{fn: answer(log)}
+
+	tail, err := FailedJobLogs(context.Background(), "/repo", 7001, 3, ex)
+	require.NoError(t, err)
+	assert.Equal(t, "d\ne\nf", tail)
+	require.Len(t, ex.calls, 1)
+	assert.Equal(t, "gh run view --job 7001 --log-failed", ex.calls[0])
+	assert.Equal(t, "/repo", ex.dirs[0])
+
+	whole, err := FailedJobLogs(context.Background(), "/repo", 7001, 100, &watchExec{fn: answer(log)})
+	require.NoError(t, err)
+	assert.Equal(t, "a\nb\nc\nd\ne\nf", whole, "a log shorter than lines comes back whole, without its trailing newline")
+}
+
+func TestFailedJobLogs_RefusesWhatItCannotFetch(t *testing.T) {
+	ex := &watchExec{fn: answer("x\n")}
+	_, err := FailedJobLogs(context.Background(), "/repo", 0, 5, ex)
+	require.Error(t, err, "a check with no Actions job has no log to fetch")
+	_, err = FailedJobLogs(context.Background(), "/repo", 7001, 0, ex)
+	require.Error(t, err)
+	assert.Empty(t, ex.calls, "neither refusal reaches gh")
+
+	_, err = FailedJobLogs(context.Background(), "/repo", 7001, 5, &watchExec{fn: func(string) (string, error) {
+		return "", assert.AnError
+	}})
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+// sleepExec runs the command's context as a real child that sleeps, so
+// only the context's deadline can end it. Clearing Err matters where gh
+// is not installed: CommandContext records the failed lookup there, and
+// Start would refuse at once, making the test pass for nothing.
+type sleepExec struct{}
+
+func (sleepExec) Output(c *exec.Cmd) ([]byte, error) {
+	c.Path = "/bin/sh"
+	c.Args = []string{"sh", "-c", "exec sleep 5"}
+	c.Err = nil
+	return c.Output()
+}
+
+func (e sleepExec) Run(c *exec.Cmd) error {
+	_, err := e.Output(c)
+	return err
+}
+
+func (e sleepExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { return e.Output(c) }
+
+func TestGhWithTimeout_EndsTheChildAtItsOwnDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the child is /bin/sh and sleep, which Windows lacks")
+	}
+	start := time.Now()
+	_, err := ghWithTimeout(context.Background(), sleepExec{}, t.TempDir(), 100*time.Millisecond, "run", "view")
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 3*time.Second, "the 100 ms deadline ends a 5 s child")
+}
+
+func TestFailedJobLogs_HasItsOwn30sTimeout(t *testing.T) {
+	assert.Equal(t, 30*time.Second, failedLogsTimeout, "spec §7.1: longer than the 20 s every other call has")
+	assert.Greater(t, failedLogsTimeout, ghTimeout)
+}
+
+func TestTailLines(t *testing.T) {
+	assert.Equal(t, "c", tailLines("a\nb\nc\n", 1))
+	assert.Equal(t, "b\nc", tailLines("a\r\nb\nc\r\n", 2), "a log's own trailing newlines are not lines")
+	assert.Equal(t, "a", tailLines("a", 5))
+	assert.Equal(t, "", tailLines("", 5))
 }
