@@ -290,3 +290,30 @@ func TestSettings_FlowEnabledDefaultsOnAndCloneCopiesIt(t *testing.T) {
 	*s.Flow = true
 	assert.False(t, c.FlowEnabled(), "Clone deep-copies the pointer")
 }
+
+func TestSettings_WatchIsOffUntilSwitchedOn(t *testing.T) {
+	assert.False(t, Settings{}.WatchEnabled(), "unset is off: nothing acts on a repository until `loom watch on`")
+	on, off := true, false
+	assert.True(t, Settings{Watch: &on}.WatchEnabled())
+	assert.False(t, Settings{Watch: &off}.WatchEnabled())
+
+	assert.True(t, FromSettings(Settings{Watch: &on}).GetWatchEnabled())
+	assert.False(t, FromSettings(Settings{}).GetWatchEnabled())
+}
+
+func TestSettings_WatchRoundTripsAndCloneCopiesIt(t *testing.T) {
+	var s Settings
+	require.NoError(t, json.Unmarshal([]byte(`{"watch":true}`), &s))
+	assert.True(t, s.WatchEnabled())
+
+	out, err := json.Marshal(s)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"watch":true`)
+	out, err = json.Marshal(Settings{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"watch"`, "an unset switch is omitted")
+
+	c := s.Clone()
+	*s.Watch = false
+	assert.True(t, c.WatchEnabled(), "Clone deep-copies the pointer")
+}

@@ -52,6 +52,12 @@ type Settings struct {
 	// session.SetFlowEnabled). nil is treated as enabled (read via
 	// FlowEnabled), matching ClaudeLoomContext.
 	Flow *bool `json:"flow,omitempty"`
+	// Watch switches the issue watcher on for this workspace (`loom
+	// watch on`): the daemon starts a session per labelled GitHub issue
+	// and follows its PR (see package watch). nil is off (read via
+	// WatchEnabled), unlike Flow: nothing acts on a repository until
+	// someone says so. Stored in the workspace's own config.json.
+	Watch *bool `json:"watch,omitempty"`
 	// ClaudePermissionMode is the --permission-mode value new Claude
 	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
 	// sets this explicitly to "default" rather than leaving it nil — nil
@@ -245,6 +251,7 @@ func (s Settings) Clone() Settings {
 	out.ClaudeLoomContext = clonePtr(s.ClaudeLoomContext)
 	out.ClaudeSubagentTracking = clonePtr(s.ClaudeSubagentTracking)
 	out.Flow = clonePtr(s.Flow)
+	out.Watch = clonePtr(s.Watch)
 	out.ClaudePermissionMode = clonePtr(s.ClaudePermissionMode)
 	out.HeadroomProxy = clonePtr(s.HeadroomProxy)
 	out.ClaudeModel = clonePtr(s.ClaudeModel)
@@ -383,6 +390,18 @@ func (s Settings) SubagentTrackingEnabled() bool {
 // FlowEnabled reports whether new Claude sessions get the agent flow. nil
 // (unset) is treated as enabled, mirroring LoomContextEnabled.
 func (s Settings) FlowEnabled() bool { return s.Flow == nil || *s.Flow }
+
+// WatchEnabled reports whether the issue watcher runs for this workspace.
+// nil (unset) is off.
+func (s Settings) WatchEnabled() bool { return s.Watch != nil && *s.Watch }
+
+// GetWatchEnabled returns WatchEnabled under the config lock: the model's
+// health tick reads it while `loom watch on` writes it.
+func (c *Config) GetWatchEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Settings.WatchEnabled()
+}
 
 // PermissionMode returns the configured --permission-mode value,
 // defaulting to "default" when unset (nil). Deliberately unlocked, like
