@@ -58,8 +58,14 @@ type rawLogin struct {
 	Login string `json:"login"`
 }
 
-type rawNumber struct {
-	Number int `json:"number"`
+// rawIssueRef is one of gh's closingIssuesReferences: the issue's number
+// and the repository it lives in, which may not be the PR's.
+type rawIssueRef struct {
+	Number     int `json:"number"`
+	Repository struct {
+		Name  string   `json:"name"`
+		Owner rawLogin `json:"owner"`
+	} `json:"repository"`
 }
 
 // rawWatchCheck is one element of gh's statusCheckRollup, in both of
@@ -85,7 +91,7 @@ type rawWatchPR struct {
 	Mergeable               string          `json:"mergeable"`
 	Author                  rawLogin        `json:"author"`
 	IsCrossRepository       bool            `json:"isCrossRepository"`
-	ClosingIssuesReferences []rawNumber     `json:"closingIssuesReferences"`
+	ClosingIssuesReferences []rawIssueRef   `json:"closingIssuesReferences"`
 	StatusCheckRollup       []rawWatchCheck `json:"statusCheckRollup"`
 	Body                    string          `json:"body"`
 	URL                     string          `json:"url"`
@@ -131,6 +137,20 @@ func (c rawWatchCheck) failed() (FailedCheck, bool) {
 	return FailedCheck{}, false
 }
 
+// prRepo returns "owner/repo" from a PR's URL
+// (https://host/owner/repo/pull/N), or "" when it has no such shape.
+func prRepo(url string) string {
+	_, rest, ok := strings.Cut(url, "://")
+	if !ok {
+		return ""
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) < 5 || parts[1] == "" || parts[2] == "" || parts[3] != "pull" {
+		return ""
+	}
+	return parts[1] + "/" + parts[2]
+}
+
 func (rp rawWatchPR) pr() WatchPR {
 	pr := WatchPR{
 		Number:      rp.Number,
@@ -145,7 +165,15 @@ func (rp rawWatchPR) pr() WatchPR {
 		Body:        rp.Body,
 		URL:         rp.URL,
 	}
+	owner, repo, _ := strings.Cut(prRepo(rp.URL), "/")
 	for _, c := range rp.ClosingIssuesReferences {
+		// Only this repo's issues: "Closes other/repo#7" names an issue
+		// that is no watcher's N. A reference whose repository, or a PR
+		// whose URL, can't be read is dropped rather than trusted.
+		rr := c.Repository
+		if repo == "" || rr.Name == "" || !strings.EqualFold(rr.Name, repo) || !strings.EqualFold(rr.Owner.Login, owner) {
+			continue
+		}
 		pr.Closes = append(pr.Closes, c.Number)
 	}
 	for _, c := range rp.StatusCheckRollup {
@@ -361,6 +389,9 @@ func FailedJobLogs(ctx context.Context, repoDir string, jobID int64, lines int, 
 func tailLines(s string, n int) string {
 	s = strings.TrimRight(s, "\r\n")
 	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSuffix(l, "\r")
+	}
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}

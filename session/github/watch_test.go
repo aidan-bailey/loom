@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -97,6 +98,26 @@ func TestWatchPRs_ParsesTheFixture(t *testing.T) {
 // scriptedExec-style substring matching hides the flags, so pin them:
 // --author @me and --state all are what make the watcher's own merged
 // PRs visible, and the field list is what fills every WatchPR field.
+func TestWatchPRs_ClosesHoldsOnlyThisReposIssues(t *testing.T) {
+	ref := func(n int, owner, repo string) string {
+		return fmt.Sprintf(`{"number": %d, "repository": {"name": %q, "owner": {"login": %q}}}`, n, repo, owner)
+	}
+	for name, refs := range map[string]string{
+		"another owner":        ref(7, "other", "r") + "," + ref(8, "o", "r"),
+		"another repo":         ref(7, "o", "elsewhere") + "," + ref(8, "o", "r"),
+		"no repository named":  `{"number": 7},` + ref(8, "o", "r"),
+		"case-insensitive too": ref(7, "other", "r") + "," + ref(8, "O", "R"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			js := `[{"number": 1, "state": "OPEN", "url": "https://github.com/o/r/pull/1", "closingIssuesReferences": [` + refs + `]}]`
+			prs, err := WatchPRs(context.Background(), "/repo", &watchExec{fn: answer(js)})
+			require.NoError(t, err)
+			require.Len(t, prs, 1)
+			assert.Equal(t, []int{8}, prs[0].Closes, "#7 is another repo's issue, not this PR's")
+		})
+	}
+}
+
 func TestWatchPRs_PassesLoadBearingFlagsInTheRepoDir(t *testing.T) {
 	ex := &watchExec{fn: answer(`[]`)}
 	prs, err := WatchPRs(context.Background(), "/repo", ex)
@@ -346,6 +367,7 @@ func TestFailedJobLogs_EndsTheChildAtItsOwnDeadline(t *testing.T) {
 func TestTailLines(t *testing.T) {
 	assert.Equal(t, "c", tailLines("a\nb\nc\n", 1))
 	assert.Equal(t, "b\nc", tailLines("a\r\nb\nc\r\n", 2), "a log's own trailing newlines are not lines")
+	assert.Equal(t, "b\nc", tailLines("a\r\nb\r\nc\r\n", 2), "a CRLF log loses every line's \\r, not only the last")
 	assert.Equal(t, "a", tailLines("a", 5))
 	assert.Equal(t, "", tailLines("", 5))
 }
