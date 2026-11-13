@@ -150,8 +150,10 @@ func (m *Model) watchOwnsSession(ws *Workspace, st *watchState, inst *session.In
 }
 
 // watchKill kills the watcher's own session a.Session through Model.Kill, which
-// refuses a busy one and checks HeldElsewhere; a refusal leaves the row and the
-// next tick decides again.
+// refuses a busy one and checks HeldElsewhere. The precondition is checked
+// first, since a refusal Kill makes with request ID 0 is only logged: a busy
+// session is reported in the issue's status, leaves the row and the next tick
+// decides again. A kill Kill accepted clears the kill's earlier error.
 func (m *Model) watchKill(ws *Workspace, st *watchState, a watch.Action) {
 	id := InstanceID(a.Session)
 	inst := m.ownerInst(id)
@@ -160,7 +162,13 @@ func (m *Model) watchKill(ws *Workspace, st *watchState, a watch.Action) {
 		setWatchActErr(st, a, "the session is not the watcher's own for the issue: nothing was killed")
 		return
 	}
+	if err := precondition(opKill, inst); err != nil {
+		log.For("core").Warn("watch.kill_refused", "issue", a.Issue, "session", a.Session, "err", err)
+		setWatchActErr(st, a, "nothing was killed: "+err.Error())
+		return
+	}
 	m.Kill(id, 0)
+	clearWatchActErr(st, a)
 }
 
 // deliverWatchAction settles a watcher job's result on the loop: releases its

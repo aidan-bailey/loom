@@ -151,6 +151,25 @@ func TestWatchKill_KillsTheWatchersOwnSession(t *testing.T) {
 	assert.Len(t, m.Drain().Jobs, 1, "the kill job")
 }
 
+func TestWatchKill_ABusySessionIsReportedAndAKillAfterItClearsTheReport(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	inst := wactPaused(t, ws, "heal 7", 7)
+	a := watch.Action{Kind: watch.ActKill, Issue: 7, Session: uint64(m.idOf(inst))}
+	require.NoError(t, inst.TransitionTo(session.Loading))
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+
+	assert.Equal(t, session.Loading, inst.GetStatus(), "nothing was killed")
+	assert.Empty(t, m.Drain().Jobs)
+	assert.Contains(t, st.actErrs[7], "busy", "the refusal is reported")
+
+	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+
+	assert.Equal(t, session.Deleting, inst.GetStatus())
+	assert.Empty(t, st.actErrs, "the kill went ahead, so the old refusal is gone")
+}
+
 func TestWatchKill_RefusesWhatIsNotItsOwnSession(t *testing.T) {
 	cases := []struct {
 		name      string
