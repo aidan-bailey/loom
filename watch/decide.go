@@ -149,7 +149,16 @@ func (r *ruleRun) issue(is github.WatchIssue) []Action {
 		out := append([]Action{esc}, closePRs(n, open, closeReason)...)
 		return append(out, kills(n, sessions)...)
 	}
-	return nil // rules 6 to 9 follow in Tasks 5.3 and 5.4
+	if len(sessions) == 0 {
+		if len(open) > 0 { // rule 6
+			return r.start(n, Action{Kind: ActStart, Issue: n, PR: open[0].Number, Branch: open[0].HeadRefName, Resume: true})
+		}
+		if hasLabel(is, r.cfg.Label) { // rule 9
+			return r.start(n, Action{Kind: ActStart, Issue: n})
+		}
+		return nil
+	}
+	return nil // rules 7 and 8 follow in Task 5.4
 }
 
 // actionable reports whether the rules may act on a session of this status.
@@ -187,4 +196,36 @@ func closePRs(n int, prs []github.WatchPR, reason string) []Action {
 // case as GitHub does.
 func hasLabel(is github.WatchIssue, label string) bool {
 	return slices.ContainsFunc(is.Labels, func(l string) bool { return strings.EqualFold(l, label) })
+}
+
+// start is the one place a session is started. A foreign session of the
+// issue, a full cap and an earlier start in this call each turn it into a
+// wait with its reason; only otherwise does act go out, and it uses up the
+// call's one start.
+func (r *ruleRun) start(n int, act Action) []Action {
+	switch {
+	case r.hasForeign(n):
+		return wait(n, fmt.Sprintf("a session the watcher did not start already works on issue #%d", n))
+	case r.owned >= r.cfg.Cap:
+		return wait(n, fmt.Sprintf("the cap of %d watcher sessions is full", r.cfg.Cap))
+	case r.started:
+		return wait(n, "another session start already went out this tick")
+	}
+	r.started = true
+	return []Action{act}
+}
+
+// hasForeign reports whether a session that is not the watcher's names the
+// issue.
+func (r *ruleRun) hasForeign(n int) bool {
+	for _, sess := range r.snap.Sessions {
+		if sess.Issue == n && !OwnSession(sess, r.tmpl) {
+			return true
+		}
+	}
+	return false
+}
+
+func wait(n int, reason string) []Action {
+	return []Action{{Kind: ActWait, Issue: n, Reason: reason}}
 }

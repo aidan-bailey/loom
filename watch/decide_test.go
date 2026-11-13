@@ -1,7 +1,9 @@
 package watch
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -232,4 +234,137 @@ func TestDecide_RulesOnTheSnapshotIssuesInNumberOrder(t *testing.T) {
 		{Kind: ActKill, Issue: 97, Session: 12},
 	}, got, "issue 55 is not in the snapshot, so its session is left alone")
 	assert.Equal(t, 97, issues[0].Number, "Decide leaves the snapshot's own order alone")
+}
+
+func TestDecide_Rule6_AnOpenPRWithoutASessionIsResumed(t *testing.T) {
+	labelled := []github.WatchIssue{dcIssue(96, "drift")}
+	open := []github.WatchPR{dcPR(125, 96, "OPEN"), dcPR(123, 96, "OPEN")}
+
+	got := dcDecide(t, Memory{}, labelled, open, nil)
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96, PR: 123, Branch: dcBranch(96), Resume: true}}, got,
+		"the lowest-numbered open PR's branch")
+
+	unlabelled := []github.WatchIssue{dcIssue(96)}
+	got = dcDecide(t, Memory{}, unlabelled, open, nil)
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96, PR: 123, Branch: dcBranch(96), Resume: true}}, got,
+		"rule 6 does not read the issue's label")
+
+	for _, status := range []string{"Ready", "Paused", "Running", "Loading", "Deleting", "Prompting", "Recoverable", "Status(9)"} {
+		got = dcDecide(t, Memory{}, labelled, open[:1], []Session{dcSess(11, 96, status, time.Minute)})
+		for _, a := range got {
+			assert.NotEqual(t, ActStart, a.Kind, "a session in status %q already exists", status)
+		}
+	}
+
+	foreign := Session{ID: 30, Title: "my notes", Status: "Running", Issue: 96}
+	got = dcDecide(t, Memory{}, labelled, open, []Session{foreign})
+	assert.Equal(t, []Action{{
+		Kind: ActWait, Issue: 96, Reason: "a session the watcher did not start already works on issue #96",
+	}}, got)
+
+	full := []Session{dcSess(21, 97, "Paused", time.Hour), dcSess(22, 98, "Ready", time.Minute)}
+	got = dcDecide(t, Memory{}, labelled, open, full)
+	assert.Equal(t, []Action{{Kind: ActWait, Issue: 96, Reason: "the cap of 2 watcher sessions is full"}}, got)
+
+	elsewhere := Session{ID: 31, Title: "my notes", Status: "Running", Issue: 55}
+	got = dcDecide(t, Memory{}, labelled, open, []Session{elsewhere})
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96, PR: 123, Branch: dcBranch(96), Resume: true}}, got,
+		"a foreign session of another issue blocks nothing")
+}
+
+func TestDecide_Rule9_ALabelledIssueWithNothingIsStarted(t *testing.T) {
+	labelled := []github.WatchIssue{dcIssue(96, "drift")}
+
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}}, dcDecide(t, Memory{}, labelled, nil, nil))
+
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}},
+		dcDecide(t, Memory{}, []github.WatchIssue{dcIssue(96, "Drift")}, nil, nil), "the label is matched without case")
+
+	assert.Empty(t, dcDecide(t, Memory{}, []github.WatchIssue{dcIssue(96)}, nil, nil), "no label, no start")
+	assert.Empty(t, dcDecide(t, Memory{}, []github.WatchIssue{dcIssue(96, "bug")}, nil, nil), "another label, no start")
+
+	byAlice := []github.WatchPR{dcWith(dcPR(123, 96, "MERGED"), func(p *github.WatchPR) { p.Author = "alice" })}
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}}, dcDecide(t, Memory{}, labelled, byAlice, nil),
+		"a merged PR that is not the watcher's does not stop a start")
+
+	settled := Memory{PRs: map[int]PRMemory{120: {Settled: true}}}
+	closed := []github.WatchPR{dcPR(120, 96, "CLOSED")}
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}}, dcDecide(t, settled, labelled, closed, nil),
+		"a settled PR is past: with the escalate label gone, the issue is taken again")
+
+	foreign := Session{ID: 30, Title: "my notes", Status: "Ready", Issue: 96}
+	assert.Equal(t, []Action{{
+		Kind: ActWait, Issue: 96, Reason: "a session the watcher did not start already works on issue #96",
+	}}, dcDecide(t, Memory{}, labelled, nil, []Session{foreign}))
+}
+
+func TestDecide_TheCapCountsEveryWatcherSession(t *testing.T) {
+	labelled := []github.WatchIssue{dcIssue(96, "drift")}
+	capWait := []Action{{Kind: ActWait, Issue: 96, Reason: "the cap of 2 watcher sessions is full"}}
+
+	twoForOne := []Session{dcSess(21, 97, "Paused", time.Hour), dcSess(22, 97, "Ready", time.Minute)}
+	assert.Equal(t, capWait, dcDecide(t, Memory{}, labelled, nil, twoForOne),
+		"a Paused session and a second one for the same issue both count")
+
+	loading := []Session{dcSess(21, 97, "Loading", time.Minute), dcSess(22, 98, "Deleting", time.Minute)}
+	assert.Equal(t, capWait, dcDecide(t, Memory{}, labelled, nil, loading), "Loading and Deleting sessions count")
+
+	oneAndForeign := []Session{
+		dcSess(21, 97, "Paused", time.Hour),
+		{ID: 40, Title: "my notes", Status: "Running", Issue: 55},
+		{ID: 41, Title: "heal 98", Status: "Running", Issue: 0},
+	}
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}}, dcDecide(t, Memory{}, labelled, nil, oneAndForeign),
+		"foreign sessions and unlinked ones are not counted")
+}
+
+func TestDecide_OneStartPerCall(t *testing.T) {
+	issues := []github.WatchIssue{dcIssue(98, "drift"), dcIssue(96, "drift"), dcIssue(97, "drift")}
+	oneTick := "another session start already went out this tick"
+
+	got := dcDecide(t, Memory{}, issues, nil, nil)
+	assert.Equal(t, []Action{
+		{Kind: ActStart, Issue: 96},
+		{Kind: ActWait, Issue: 97, Reason: oneTick},
+		{Kind: ActWait, Issue: 98, Reason: oneTick},
+	}, got, "the lowest-numbered issue starts, the others wait")
+
+	both := []github.WatchIssue{dcIssue(96, "drift"), dcIssue(97, "drift")}
+	got = dcDecide(t, Memory{}, both, []github.WatchPR{dcPR(124, 97, "OPEN")}, nil)
+	assert.Equal(t, []Action{
+		{Kind: ActStart, Issue: 96},
+		{Kind: ActWait, Issue: 97, Reason: oneTick},
+	}, got, "a resume and a fresh start share the one start")
+}
+
+func TestDecide_ClassifiesTheSessionListFixture(t *testing.T) {
+	data, err := os.ReadFile("testdata/sessions.json")
+	require.NoError(t, err)
+	var rows []struct {
+		ID          uint64    `json:"id"`
+		Title       string    `json:"title"`
+		Status      string    `json:"status"`
+		StatusSince time.Time `json:"status_since"`
+		Branch      string    `json:"branch"`
+		Issue       int       `json:"issue"`
+	}
+	require.NoError(t, json.Unmarshal(data, &rows))
+	require.Len(t, rows, 6)
+	var sessions []Session
+	for _, row := range rows {
+		sessions = append(sessions, Session{
+			ID: row.ID, Title: row.Title, Status: row.Status, Since: row.StatusSince,
+			Branch: row.Branch, Issue: row.Issue,
+		})
+	}
+
+	issues := []github.WatchIssue{
+		dcIssue(96, "drift"), dcIssue(97, "drift"), dcIssue(98, "drift"), dcIssue(99, "drift"), dcIssue(100, "drift"),
+	}
+	got := dcDecide(t, Memory{}, issues, nil, sessions)
+
+	assert.Equal(t, []Action{
+		{Kind: ActWait, Issue: 98, Reason: "a session the watcher did not start already works on issue #98"},
+		{Kind: ActWait, Issue: 99, Reason: "the cap of 2 watcher sessions is full"},
+	}, got, "96 and 97 have their own sessions and 100's is loading; 98 has a foreign one; 99's title parses but its session is unlinked, so it is not the watcher's and the three that are fill the cap")
 }
