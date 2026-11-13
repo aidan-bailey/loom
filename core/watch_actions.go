@@ -2,11 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
@@ -18,6 +20,13 @@ import (
 // watchWriteBudget bounds one watcher job's gh and git calls from outside;
 // each call also holds its own timeout (spec §7.1).
 const watchWriteBudget = 3 * time.Minute
+
+// watchTextCap is the most a nudge or a start prompt may hold, log tails
+// included (spec §7.1).
+const watchTextCap = 64 << 10
+
+// watchLogJobs is how many failed jobs' log tails one ci nudge carries.
+const watchLogJobs = 5
 
 // watchActionResult is one watcher action's job result, delivered on the loop
 // by deliverWatchAction. ws and st are identity only: a result for a state
@@ -35,6 +44,7 @@ type watchActionResult struct {
 	err     error
 	posted  bool
 	refused string
+	text    string
 }
 
 // watchActKey is the in-flight key of action a: its kind and the PR, session
@@ -116,6 +126,8 @@ func (m *Model) dispatchWatchActions(ws *Workspace, st *watchState, actions []wa
 			m.watchClosePR(ws, st, a)
 		case watch.ActEscalate:
 			m.watchEscalate(ws, st, a)
+		case watch.ActSend:
+			m.watchSend(ws, st, a)
 		}
 	}
 }
@@ -165,6 +177,8 @@ func (m *Model) deliverWatchAction(r watchActionResult) {
 	switch r.act.Kind {
 	case watch.ActEscalate:
 		err = m.finishWatchEscalate(r)
+	case watch.ActSend:
+		err = m.finishWatchSend(r)
 	}
 	if err != nil {
 		log.For("core").Warn("watch.action_failed", "kind", string(r.act.Kind), "issue", r.act.Issue, "err", err)
@@ -334,4 +348,140 @@ func (m *Model) finishWatchEscalate(r watchActionResult) error {
 		return err
 	}
 	return nil
+}
+
+// watchLog is one failed job's log tail for a ci nudge, or why it could not be
+// fetched.
+type watchLog struct {
+	name string
+	tail string
+	err  error
+}
+
+// cutTop is the last n bytes of s, starting on a rune boundary.
+func cutTop(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[len(s)-n:]
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	return s
+}
+
+// watchNudgeText is a nudge's message: head (Nudge.Text), each log's tail under
+// its name, cut from the top to fit watchTextCap with the suffix, then suffix.
+// A log that could not be fetched is named as such; once no room is left for a
+// log it and the rest are left out.
+func watchNudgeText(head string, logs []watchLog, suffix string) string {
+	var b strings.Builder
+	b.WriteString(head)
+	for _, l := range logs {
+		section := "\n\nLog of " + l.name + ":\n"
+		if l.err != nil {
+			note := section + "(the log could not be fetched: " + l.err.Error() + ")"
+			if b.Len()+len(note)+len(suffix) <= watchTextCap {
+				b.WriteString(note)
+			}
+			continue
+		}
+		room := watchTextCap - b.Len() - len(section) - len(suffix)
+		if room <= 0 {
+			break
+		}
+		b.WriteString(section)
+		b.WriteString(cutTop(strings.TrimRight(l.tail, "\n"), room))
+	}
+	b.WriteString(suffix)
+	return b.String()
+}
+
+// watchFailedJobs is the ci nudge's failed Actions jobs of PR a.PR: the
+// checks with a job to read, at most watchLogJobs. Any other kind has none.
+func watchFailedJobs(st *watchState, a watch.Action) []github.FailedCheck {
+	if a.Nudge.Kind != "ci" {
+		return nil
+	}
+	pr, _ := watchPROf(st.snap, a.PR)
+	var out []github.FailedCheck
+	for _, f := range pr.Failing {
+		if f.JobID != 0 && len(out) < watchLogJobs {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// watchSend nudges the watcher's own Ready session a.Session about its own
+// open PR a.PR. Every check comes first, so a refusal counts nothing; then the
+// nudge is counted in memory (an issue-changed one also moves seen) and the
+// file saved before anything is sent, so a failed send costs a count and is
+// never left uncounted, and a failed save sends nothing. A ci nudge reads
+// its failed jobs' log tails in a job and is sent when it returns; any other
+// goes at once.
+func (m *Model) watchSend(ws *Workspace, st *watchState, a watch.Action) {
+	inst := m.ownerInst(InstanceID(a.Session))
+	switch {
+	case inst == nil || !m.watchOwnsSession(ws, st, inst, a.Issue):
+		setWatchActErr(st, a, "the session is not the watcher's own for the issue: nothing was sent")
+		return
+	case inst.GetStatus() != session.Ready:
+		setWatchActErr(st, a, fmt.Sprintf("the session is %s, not Ready: nothing was sent", inst.GetStatus()))
+		return
+	case !watchOwnsPR(st, a.Issue, a.PR):
+		setWatchActErr(st, a, fmt.Sprintf("PR #%d is not the watcher's own open PR for #%d: nothing was sent", a.PR, a.Issue))
+		return
+	}
+	n := st.mem.RecordNudge(a.PR, a.Nudge.Kind, a.Nudge.Key, time.Now())
+	if a.Nudge.Kind == "issue-changed" {
+		st.mem.SetSeen(a.Issue, a.Nudge.Key)
+	}
+	if err := watch.SaveMemory(st.memPath, st.mem); err != nil {
+		err = fmt.Errorf("record the nudge: %w: nothing was sent", err)
+		setWatchActErr(st, a, err.Error())
+		m.notifyErr(err)
+		return
+	}
+	suffix := fmt.Sprintf("\n\n(nudge %d of %d; the next escalates to the owner)", n, st.cfg.NudgeLimit-1)
+	failed := watchFailedJobs(st, a)
+	if len(failed) == 0 {
+		m.sendWatchNudge(st, a, inst, watchNudgeText(a.Nudge.Text, nil, suffix))
+		return
+	}
+	key := watchActKey(a)
+	st.inFlight[key] = true
+	repoDir, r, lines, head := ws.ctx.RepoPath, m.watchActGH(), st.cfg.LogTail, a.Nudge.Text
+	m.spawnBackground(func() any {
+		ctx, cancel := context.WithTimeout(context.Background(), watchWriteBudget)
+		defer cancel()
+		logs := make([]watchLog, 0, len(failed))
+		for _, f := range failed {
+			tail, err := github.FailedJobLogs(ctx, repoDir, f.JobID, lines, r)
+			logs = append(logs, watchLog{name: f.Name, tail: tail, err: err})
+		}
+		return watchActionResult{ws: ws, st: st, key: key, act: a, text: watchNudgeText(head, logs, suffix)}
+	})
+}
+
+// finishWatchSend sends a ci nudge whose log tails are in, if its session is
+// still the watcher's own and can take a message.
+func (m *Model) finishWatchSend(r watchActionResult) error {
+	inst := m.ownerInst(InstanceID(r.act.Session))
+	if inst == nil || !m.watchOwnsSession(r.ws, r.st, inst, r.act.Issue) {
+		return errors.New("the session is gone or no longer the watcher's own: the nudge was not sent")
+	}
+	if why := jobOwnerWhy(inst); why != "" {
+		return fmt.Errorf("the nudge was not sent: %s", why)
+	}
+	m.sendWatchNudge(r.st, r.act, inst, r.text)
+	return nil
+}
+
+// sendWatchNudge queues text for inst's Claude through the loom mod
+// (OriginWatch). A nudge the mod can't take lands in the issue's status.
+func (m *Model) sendWatchNudge(st *watchState, a watch.Action, inst *session.Instance, text string) {
+	m.enqueue(inst, &modMessage{text: text, origin: OriginWatch, onUndelivered: func(why string) {
+		setWatchActErr(st, a, "the nudge was not delivered: "+why)
+	}})
 }

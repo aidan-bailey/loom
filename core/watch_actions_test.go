@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
@@ -577,4 +578,200 @@ func TestWatchEscalationComment_NamesTheReasonTheSessionThePRAndTheCounts(t *tes
 	assert.NotContains(t, bare, "Session:")
 	assert.NotContains(t, bare, "PR:")
 	assert.NotContains(t, bare, "Nudges sent")
+}
+
+// wactReady is a Ready Claude session titled title in ws, linked to issue, on a
+// live mod's launch L1.
+func wactReady(t *testing.T, m *Model, title string, issue int) *session.Instance {
+	t.Helper()
+	inst := modInst(t, m, title)
+	inst.SetIssue(issue)
+	require.NoError(t, inst.TransitionTo(session.Ready))
+	return inst
+}
+
+// wactNudge is a nudge action for issue 7's PR 5.
+func wactNudge(m *Model, inst *session.Instance, kind, key, text string) watch.Action {
+	return watch.Action{Kind: watch.ActSend, Issue: 7, Session: uint64(m.idOf(inst)), PR: 5, Nudge: watch.Nudge{Kind: kind, Key: key, Text: text}, N: 1}
+}
+
+func TestWatchSend_CountsAndSavesThenQueuesTheNudgeThroughTheMod(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	inst := wactReady(t, m, "heal 7", 7)
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "conflict", "k1", "merge origin/main, never rebase")})
+
+	l := m.linkFor(inst)
+	require.Len(t, l.outbox, 1)
+	assert.Equal(t, "merge origin/main, never rebase\n\n(nudge 1 of 2; the next escalates to the owner)", l.outbox[0].text)
+	assert.Equal(t, OriginWatch, l.outbox[0].origin)
+	assert.False(t, l.outbox[0].asUser)
+	rec := st.mem.PRs[5].Nudges["conflict"]
+	assert.Equal(t, 1, rec.N)
+	assert.Equal(t, "k1", rec.Key)
+	onDisk, err := watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, onDisk.PRs[5].Nudges["conflict"].N, "saved")
+}
+
+func TestWatchSend_AnIssueChangedNudgeMovesSeen(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	inst := wactReady(t, m, "heal 7", 7)
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "issue-changed", "h2:c9", "the issue changed")})
+
+	assert.Equal(t, "h2:c9", st.mem.Issues[7].Seen)
+	assert.Len(t, m.linkFor(inst).outbox, 1)
+}
+
+func TestWatchSend_AFailedSaveSendsNothing(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	st.memPath = t.TempDir()
+	inst := wactReady(t, m, "heal 7", 7)
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "conflict", "k1", "merge")})
+
+	assert.Empty(t, m.linkFor(inst).outbox, "the count must be on disk before the message is sent")
+	assert.Contains(t, st.actErrs[7], "nothing was sent")
+	notes, _ := noticesAndStarts(m.Drain().Events)
+	require.Len(t, notes, 1)
+	assert.Error(t, notes[0].Err)
+}
+
+func TestWatchSend_SendsOnlyToTheWatchersOwnReadySessionForItsOwnPR(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		issue int
+		ready bool
+		prs   []github.WatchPR
+	}{
+		{"a session that is Running", "heal 7", 7, false, []github.WatchPR{wactPR(7, 5, "OPEN")}},
+		{"a title that does not parse", "other 7", 7, true, []github.WatchPR{wactPR(7, 5, "OPEN")}},
+		{"a session linked to another issue", "heal 7", 8, true, []github.WatchPR{wactPR(7, 5, "OPEN")}},
+		{"a PR that is not its own open PR", "heal 7", 7, true, []github.WatchPR{wactPR(7, 5, "MERGED")}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, ws, st := wactModel(t, Options{})
+			st.snap.PRs = c.prs
+			inst := modInst(t, m, c.title)
+			inst.SetIssue(c.issue)
+			if !c.ready {
+				require.NoError(t, inst.TransitionTo(session.Running)) // modInst's hook scan leaves it Ready
+			}
+
+			m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "conflict", "k1", "merge")})
+
+			assert.Empty(t, m.linkFor(inst).outbox, "nothing is sent")
+			assert.Empty(t, st.mem.PRs, "and nothing is counted")
+			assert.NotEmpty(t, st.actErrs[7])
+		})
+	}
+}
+
+func TestWatchSend_ACINudgeCarriesEachFailedJobsLogTailAfterTheCountIsSaved(t *testing.T) {
+	gh := &wactGH{out: map[string]string{"run view": "compiling\nerror: expected `;`\n"}}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	pr := wactPR(7, 5, "OPEN")
+	pr.Failing = []github.FailedCheck{{Name: "build", JobID: 11}, {Name: "lint", JobID: 12}, {Name: "deploy", JobID: 0}}
+	st.snap.PRs = []github.WatchPR{pr}
+	inst := wactReady(t, m, "heal 7", 7)
+	a := wactNudge(m, inst, "ci", "sha1", "CI failed on the head commit:\n- build\n- lint\n- deploy")
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	out := m.Drain()
+
+	require.Len(t, out.Jobs, 1, "one log fetch, however often the action is dispatched")
+	assert.Equal(t, 1, st.mem.PRs[5].Nudges["ci"].N, "counted before the logs are fetched")
+	assert.Empty(t, m.linkFor(inst).outbox, "nothing is sent before the logs are in")
+
+	run(m, out)
+
+	calls := gh.seen()
+	require.Len(t, calls, 2, "a check that names no Actions job has no log: %v", calls)
+	l := m.linkFor(inst)
+	require.Len(t, l.outbox, 1)
+	text := l.outbox[0].text
+	assert.True(t, strings.HasPrefix(text, "CI failed on the head commit:"), text)
+	assert.Contains(t, text, "Log of build:\ncompiling\nerror: expected `;`")
+	assert.Contains(t, text, "Log of lint:")
+	assert.True(t, strings.HasSuffix(text, "(nudge 1 of 2; the next escalates to the owner)"), text)
+	assert.Empty(t, st.inFlight)
+}
+
+func TestWatchSend_ACINudgeFetchesAtMostFiveJobsAndSurvivesAFailedFetch(t *testing.T) {
+	gh := &wactGH{fail: "run view"}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	pr := wactPR(7, 5, "OPEN")
+	for i := 1; i <= 7; i++ {
+		pr.Failing = append(pr.Failing, github.FailedCheck{Name: fmt.Sprintf("job%d", i), JobID: int64(100 + i)})
+	}
+	st.snap.PRs = []github.WatchPR{pr}
+	inst := wactReady(t, m, "heal 7", 7)
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "ci", "sha1", "CI failed")})
+	run(m, m.Drain())
+
+	assert.Len(t, gh.seen(), 5, "at most five jobs")
+	l := m.linkFor(inst)
+	require.Len(t, l.outbox, 1, "the nudge goes without the tails it could not fetch")
+	assert.Contains(t, l.outbox[0].text, "the log could not be fetched")
+	assert.NotContains(t, l.outbox[0].text, "job6")
+}
+
+func TestWatchSend_ACINudgeWhoseSessionCanNoLongerTakeItIsReported(t *testing.T) {
+	gh := &wactGH{out: map[string]string{"run view": "log\n"}}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	pr := wactPR(7, 5, "OPEN")
+	pr.Failing = []github.FailedCheck{{Name: "build", JobID: 11}}
+	st.snap.PRs = []github.WatchPR{pr}
+	inst := wactReady(t, m, "heal 7", 7)
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "ci", "sha1", "CI failed")})
+	out := m.Drain()
+	require.NoError(t, inst.TransitionTo(session.Paused))
+
+	run(m, out)
+
+	assert.Empty(t, m.linkFor(inst).outbox)
+	assert.Contains(t, st.actErrs[7], "not running")
+}
+
+func TestWatchNudgeText_CutsLogTailsFromTheTopToFitTheCap(t *testing.T) {
+	suffix := "\n\n(nudge 1 of 2; the next escalates to the owner)"
+	var long strings.Builder
+	for i := 0; i < 40000; i++ {
+		fmt.Fprintf(&long, "line %d\n", i)
+	}
+
+	got := watchNudgeText("CI failed", []watchLog{{name: "build", tail: long.String()}}, suffix)
+
+	assert.LessOrEqual(t, len(got), watchTextCap)
+	assert.True(t, strings.HasSuffix(got, suffix))
+	assert.Contains(t, got, "line 39999", "the bottom of the log is kept")
+	assert.NotContains(t, got, "line 0\n", "the top is cut")
+	assert.True(t, strings.HasPrefix(got, "CI failed\n\nLog of build:\n"))
+}
+
+func TestWatchNudgeText_NeverSplitsARune(t *testing.T) {
+	tail := strings.Repeat("é", watchTextCap)
+
+	got := watchNudgeText("CI failed", []watchLog{{name: "build", tail: tail}}, "")
+
+	assert.True(t, utf8.ValidString(got))
+	assert.LessOrEqual(t, len(got), watchTextCap)
+}
+
+func TestWatchNudgeText_AnUnfetchedLogIsNamedAndNoRoomLeftDropsTheRest(t *testing.T) {
+	got := watchNudgeText("head", []watchLog{{name: "a", err: errors.New("gone")}}, "!")
+	assert.Equal(t, "head\n\nLog of a:\n(the log could not be fetched: gone)!", got)
+
+	huge := strings.Repeat("x", watchTextCap)
+	got = watchNudgeText(huge, []watchLog{{name: "b", tail: "late"}}, "!")
+	assert.NotContains(t, got, "Log of b", "no room is left for it")
+	assert.True(t, strings.HasSuffix(got, "!"))
 }
