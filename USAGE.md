@@ -986,6 +986,39 @@ loom job agent                              # the scheduler's agent: its state, 
 - **The work view.** `w` shows the host's caps, what the running jobs claim and use, the running, queued and recent jobs, and the selected job's log tail (keys: [Work View](#work-view-after-pressing-w)). A session's card in the rail and the overview shows `⚙ job 14` (with `+N` for more running) or `⚙ queued`.
 - **Files.** Everything is under `~/.loom/jobs/`: `jobs.json`, `beliefs.json` (what each command measured, at most 1,000 commands and 20 runs each) and, per job, `<id>/output.log` (no size cap; `keep_finished` bounds how many finished jobs are kept). A `jobs.json` the daemon cannot read is left untouched and the queue refuses submissions, saying why; a `beliefs.json` it cannot read is left untouched too, and jobs take the default claim until it is fixed (`learning off` in `loom job list` and the work view).
 
+### Watch Labelled Issues (the Issue Watcher)
+
+A repository that files work as GitHub issues can have loom run it. The watcher is a part of the daemon: for each open issue carrying the label you choose it starts one session, nudges the session when its pull request goes red, conflicts or the issue changes, escalates to you when the session is stuck, and kills the session once its PR merges. It replaces a cron job or a systemd timer that did the same.
+
+Add a `loom-watch.json` to the repository root and merge it to the base branch. It names the label, the label an escalation adds, a session title template with the issue's number in it, and the start prompt's path:
+
+```json
+{
+  "version": 1,
+  "label": "schema-drift",
+  "escalate_label": "needs-human",
+  "title": "heal {issue}",
+  "session": { "prompt": ".loom-watch/start.md" }
+}
+```
+
+Then switch the watcher on for the workspace:
+
+```
+loom watch on -w myrepo
+loom watch status -w myrepo     # what it sees and why it waits
+loom watch dry-run -w myrepo    # what the next tick would do
+```
+
+- **What counts as its own.** A session whose title fits the template, and a PR whose branch fits the template's branch name, whose body closes the issue (`Closes #N`), that comes from the same repository and that the `gh` login you are signed in as opened. A PR you opened by hand is never adopted, and a session you started yourself for the same issue makes the watcher wait rather than start a second one.
+- **Where the config is read.** Always from `origin/<base>` (after a `git fetch`), never from a working tree, so a branch or a PR cannot change what the watcher does before it merges. A missing or invalid file stops the watcher for that workspace, and `status` says why.
+- **New sessions** are cut from `origin/<base>`, so commits you have not pushed never reach a watcher PR. At most `cap` sessions (default 2) run at once.
+- **Escalation.** When a session is stuck for `stuck` (default 2 hours), or one kind of nudge has been sent `nudge_limit` times (default 3) on a PR, the watcher comments on the issue, adds the escalation label, raises a loom alert (and a push on a paired phone), and leaves the issue alone until you remove the label. It never kills a session for escalating.
+- **A hook** (`hook.command` in the config) lets the repository decide whether and how to start a session (the title's variables, a refusal) and add nudges of its own. A failing hook changes nothing.
+- **Files.** The watcher's memory is `<repo>/.loom/watch.json` (nudge counts and escalations); its checkout, where the hook runs, is `<repo>/.loom/watch-checkout`.
+
+Every key, the rules each tick applies, the nudges and the hook's JSON are in [`docs/specs/watch.md`](docs/specs/watch.md).
+
 ### Feedback from Sessions
 
 Loom's session agents use loom's own tooling (`loom session`, `loom job`, the daemon) and are the first to hit its rough edges. Loom's Claude context asks every agent, subagents included, to file a note when loom's tooling fails, surprises it, contradicts what the context says, or lacks something it needed:
@@ -1199,6 +1232,7 @@ loom [command]
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
 | `feedback` | File, list, show, fix and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
+| `watch` | Switch the issue watcher on or off for a workspace, show what it knows, or print what its next tick would do (see below, and [Watch Labelled Issues](#watch-labelled-issues-the-issue-watcher)); a client of the daemon too |
 | `flow` | The agent flow's tools: plans, profiles, gates and the git guard (see below, and [Supervised Plans](#supervised-plans-the-agent-flow)); runs without the daemon |
 
 ### Workspace Subcommands
@@ -1260,6 +1294,15 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `feedback show <thread \| nN>` | A thread with every note in full, or one note |
 | `feedback fix <thread> [-w <workspace>]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there) |
 | `feedback close <thread>` | Close a thread |
+
+### Watch Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `watch on [-w <workspace>]` | Switch the issue watcher on for the workspace (default: the current repository's); prints `watch on: <workspace>`. The next tick, within a minute, is its first |
+| `watch off [-w <workspace>]` | Switch it off; prints `watch off: <workspace>`. The sessions it started keep running |
+| `watch status [-w <workspace>] [--json]` | Each issue the watcher knows: its state, session, open PR, the nudges sent, whether it is escalated, why it waits, what the last tick decided for it, an action that failed or was refused, and any config, memory or hook error. `--json` prints the same view as JSON |
+| `watch dry-run [-w <workspace>] [--json]` | The actions the next tick would take, then the issues that wait and why and the actions that failed or were refused; none taken |
 
 ### Flow Subcommands
 
@@ -1337,6 +1380,7 @@ Configuration is stored in `~/.loom/config.json` for the global workspace, and i
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
 | `base_branch` | string | `""` | Branch new sessions are cut from. Empty auto-detects. |
+| `watch` | bool | `false` | In a workspace's own `<repo>/.loom/config.json`: whether the issue watcher runs for it. Set it with `loom watch on` and `loom watch off`, not by hand (see [Watch Labelled Issues](#watch-labelled-issues-the-issue-watcher)). |
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
