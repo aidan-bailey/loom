@@ -453,11 +453,13 @@ func (m *Model) watchSend(ws *Workspace, st *watchState, a watch.Action) {
 		setWatchActErr(st, a, fmt.Sprintf("PR #%d is not the watcher's own open PR for #%d: nothing was sent", a.PR, a.Issue))
 		return
 	}
+	undo := rememberNudge(st, a)
 	n := st.mem.RecordNudge(a.PR, a.Nudge.Kind, a.Nudge.Key, time.Now())
 	if a.Nudge.Kind == "issue-changed" {
 		st.mem.SetSeen(a.Issue, a.Nudge.Key)
 	}
 	if err := watch.SaveMemory(st.memPath, st.mem); err != nil {
+		undo() // nothing was sent: later ticks must not count a nudge that never went
 		err = fmt.Errorf("record the nudge: %w: nothing was sent", err)
 		setWatchActErr(st, a, err.Error())
 		m.notifyErr(err)
@@ -482,6 +484,33 @@ func (m *Model) watchSend(ws *Workspace, st *watchState, a watch.Action) {
 		}
 		return watchActionResult{ws: ws, st: st, key: key, act: a, text: watchNudgeText(head, logs, suffix)}
 	})
+}
+
+// rememberNudge captures what watchSend is about to change in memory (the PR's
+// record of the nudge's kind and, for an issue-changed nudge, the issue's seen)
+// and returns what puts it back, for a save that failed.
+func rememberNudge(st *watchState, a watch.Action) (undo func()) {
+	prior, hadNudge := st.mem.PRs[a.PR].Nudges[a.Nudge.Kind]
+	_, hadPR := st.mem.PRs[a.PR]
+	is, hadIssue := st.mem.Issues[a.Issue]
+	return func() {
+		if hadNudge {
+			st.mem.PRs[a.PR].Nudges[a.Nudge.Kind] = prior
+		} else if p, ok := st.mem.PRs[a.PR]; ok {
+			delete(p.Nudges, a.Nudge.Kind)
+			if !hadPR {
+				delete(st.mem.PRs, a.PR)
+			}
+		}
+		if a.Nudge.Kind != "issue-changed" {
+			return
+		}
+		if hadIssue {
+			st.mem.Issues[a.Issue] = is
+		} else {
+			delete(st.mem.Issues, a.Issue)
+		}
+	}
 }
 
 // finishWatchSend sends a ci nudge whose log tails are in, if its session is

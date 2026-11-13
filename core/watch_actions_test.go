@@ -663,6 +663,38 @@ func TestWatchSend_AFailedSaveSendsNothing(t *testing.T) {
 	assert.Error(t, notes[0].Err)
 }
 
+func TestWatchSend_AFailedSaveLeavesMemoryAsItWas(t *testing.T) {
+	for _, kind := range []string{"conflict", "issue-changed"} {
+		t.Run(kind, func(t *testing.T) {
+			m, ws, st := wactModel(t, Options{})
+			st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+			st.memPath = t.TempDir()
+			st.mem.RecordNudge(5, "ci", "old", time.Now()) // another kind's record stays
+			st.mem.RecordNudge(5, kind, "k0", time.Now())
+			st.mem.SetSeen(7, "s0")
+			before := st.mem.Clone()
+			inst := wactReady(t, m, "heal 7", 7)
+
+			m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, kind, "k1", "merge")})
+
+			assert.Equal(t, before.PRs, st.mem.PRs, "the count is back")
+			assert.Equal(t, before.Issues, st.mem.Issues, "seen is back")
+		})
+	}
+}
+
+func TestWatchSend_AFailedSaveForAFirstNudgeLeavesNoRecord(t *testing.T) {
+	m, ws, st := wactModel(t, Options{})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	st.memPath = t.TempDir()
+	inst := wactReady(t, m, "heal 7", 7)
+
+	m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "issue-changed", "k1", "merge")})
+
+	assert.Empty(t, st.mem.PRs)
+	assert.Empty(t, st.mem.Issues)
+}
+
 func TestWatchSend_ARefusedSendFollowedByASuccessfulOneLeavesNoError(t *testing.T) {
 	m, ws, st := wactModel(t, Options{})
 	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
