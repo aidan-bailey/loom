@@ -683,6 +683,103 @@ class PremisesSectionTest(RepoCase):
         self.assertEqual(out, PLAN)
 
 
+class ChangedTest(RepoCase):
+    """The --changed packet: each draft against its plan-review snapshot."""
+
+    def changed(self, edits=None, snapshots=("1", "2")):
+        """The --changed packet and its row count once the drafts take `edits` ({id: [(old, new)]}).
+
+        The fixture drafts are the review snapshots; the edited drafts are joined into a plan named for the test.
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        drafts = Path(tmp.name) / "drafts"
+        (drafts / "reviewing").mkdir(parents=True)
+        self.bodies = {}
+        for sid, body in {"1": DRAFT_1, "2": DRAFT_2}.items():
+            if sid in snapshots:
+                (drafts / "reviewing" / f"S{sid}.md").write_text(body, encoding="utf-8")
+            for old, new in (edits or {}).get(sid, []):
+                self.assertIn(old, body)
+                body = body.replace(old, new, 1)
+            (drafts / f"S{sid}.md").write_text(body, encoding="utf-8")
+            self.bodies[sid] = body
+        plan = self.root / "docs" / "plans" / f"{self._testMethodName}.md"
+        plan.write_text(SKELETON, encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(plan_join.main([str(plan), "--drafts", str(drafts)]), 0)
+        return plan_packet.changed_packet(plan, "HEAD", drafts)
+
+    def at(self, sid, wanted):
+        """The line of `wanted` in Story `sid`'s edited draft."""
+        return line_of(self.bodies[sid], wanted)
+
+    def test_a_body_edit_in_a_providers_definition_lists_the_stories_that_use_it(self):
+        text, count = self.changed({"1": [("    private_helper(id)\n", "    private_helper(id).filter(|p| *p > 0)\n")]})
+        k = self.at("1", "pub fn lookup_price(id: u32) -> Option<u32> {")
+        j = self.at("2", "lookup_price(7)")
+        c = self.at("1", "private_helper(id).filter(|p| *p > 0)")
+        self.assertEqual(seam_rows(text), [f"lookup_price | defined S1.md:{k} | used S2.md:{j} | changed in S1.md:{c}"])
+        self.assertEqual(count, 1)
+
+    def test_a_changed_line_that_uses_another_storys_name_is_listed(self):
+        text, count = self.changed({"2": [("lookup_price(7)", "lookup_price(8)")]})
+        k = self.at("1", "pub fn lookup_price(id: u32) -> Option<u32> {")
+        j = self.at("2", "lookup_price(8)")
+        self.assertEqual(seam_rows(text), [f"lookup_price | defined S1.md:{k} | used S2.md:{j} | changed in S2.md:{j}"])
+        self.assertEqual(count, 1)
+
+    def test_a_use_in_a_test_file_counts(self):
+        tail = "grep -r private_helper src/\n~~~\n"
+        test_block = (
+            "\nAdd to `tests/screen.rs`:\n\n"
+            "~~~rust\n#[test]\nfn screen_prices() {\n    assert_eq!(lookup_price(9), Some(9));\n}\n~~~\n"
+        )
+        text, count = self.changed({"2": [(tail, tail + test_block)]})
+        k = self.at("1", "pub fn lookup_price(id: u32) -> Option<u32> {")
+        a = self.at("2", "assert_eq!(lookup_price(9), Some(9));")
+        # `screen_prices` is defined in a test file, so it is no provider; the line inside it uses Story 1's name.
+        self.assertEqual(seam_rows(text), [f"lookup_price | defined S1.md:{k} | used S2.md:{a} | changed in S2.md:{a}"])
+        self.assertEqual(count, 1)
+
+    def test_a_deletion_inside_a_definition_is_attributed_to_it(self):
+        text, count = self.changed({"1": [("    private_helper(id)\n", "")]})
+        k = self.at("1", "pub fn lookup_price(id: u32) -> Option<u32> {")
+        j = self.at("2", "lookup_price(7)")
+        # The deleted line's place is marked on the line above it, the definition's own.
+        self.assertEqual(seam_rows(text), [f"lookup_price | defined S1.md:{k} | used S2.md:{j} | changed in S1.md:{k}"])
+        self.assertEqual(count, 1)
+
+    def test_a_change_that_touches_no_shared_name_lists_none(self):
+        # `private_helper` is named in Story 2 only after a dot and in a command: no use.
+        text, count = self.changed({"1": [("    Some(id)\n", "    Some(id + 1)\n")]})
+        self.assertEqual((seam_rows(text), count), ([], 0))
+        self.assertIn("## Shared names a fix changed\n\n(none)", text)
+        self.assertIn(f"- Story 1: S1.md:{self.at('1', 'Some(id + 1)')}", text)
+        self.assertNotIn("- Story 2:", text)
+
+    def test_unchanged_drafts_list_none(self):
+        text, count = self.changed()
+        self.assertEqual((seam_rows(text), count), ([], 0))
+        self.assertIn("(none: every draft matches its review snapshot)", text)
+        self.assertIn(plan_packet.CHANGED_RULE, text)
+        self.assertIn(plan_packet.SEAMS_READING_RULES, text)
+        lines = text.splitlines()
+        self.assertEqual(lines[1], f"Packet length: {len(lines)} lines")
+
+    def test_a_story_without_a_review_snapshot_is_refused(self):
+        with self.assertRaises(plan_packet.PacketError) as caught:
+            self.changed(snapshots=("1",))
+        message = str(caught.exception)
+        self.assertTrue(message.startswith("Story 2 has no review snapshot "), message)
+        self.assertTrue(message.endswith(str(Path("reviewing") / "S2.md")), message)
+
+    def test_a_plan_without_a_join_map_is_refused(self):
+        with self.assertRaises(plan_packet.PacketError) as caught:
+            plan_packet.changed_packet(self.plan, "HEAD", self.root / "no-drafts")
+        self.assertIn("holds no join map", str(caught.exception))
+
+
 class CliTest(RepoCase):
     def run_cli(self, *args, plan=None):
         # A FLOW_HOME with no profiles, so the default drafts directory is the plan's own.
@@ -710,6 +807,37 @@ class CliTest(RepoCase):
         self.assertIn(" | defined S1.md:", text)
         # The rev is resolved once and printed as the commit it names.
         self.assertIn(f"Written against the tree at {git(self.root, 'rev-parse', 'HEAD')}.", text)
+
+    def snapshot_drafts(self):
+        """A copy of the drafts whose review snapshots are the drafts themselves."""
+        drafts = self.copy_drafts()
+        (drafts / "reviewing").mkdir()
+        for sid in ("1", "2"):
+            shutil.copy(drafts / f"S{sid}.md", drafts / "reviewing" / f"S{sid}.md")
+        return drafts
+
+    def test_changed_writes_its_own_packet_and_counts_the_rows(self):
+        drafts = self.snapshot_drafts()
+        code, out, err = self.run_cli("--seams", "--changed", "--drafts", str(drafts))
+        self.assertEqual(code, 0, out + err)
+        packet = drafts / "packets" / "seams-changed.md"
+        text = packet.read_text(encoding="utf-8")
+        self.assertEqual(out.strip(), f"wrote {packet}: {len(text.splitlines())} lines, 0 shared names changed")
+        self.assertFalse((drafts / "packets" / "seams.md").exists())
+
+    def test_changed_refuses_a_story_without_a_snapshot(self):
+        drafts = self.copy_drafts()
+        code, out, err = self.run_cli("--seams", "--changed", "--drafts", str(drafts))
+        self.assertEqual(code, 1, out + err)
+        self.assertEqual(out, f"FAIL [packet] {self.plan}: Story 1 has no review snapshot {drafts / 'reviewing' / 'S1.md'}\n")
+
+    def test_changed_refuses_a_plan_out_of_date_with_its_drafts(self):
+        drafts = self.snapshot_drafts()
+        with (drafts / "S2.md").open("a", encoding="utf-8") as handle:
+            handle.write("\nA line added after the join.\n")
+        code, out, err = self.run_cli("--seams", "--changed", "--drafts", str(drafts))
+        self.assertEqual(code, 1, out + err)
+        self.assertEqual(out, f"FAIL [packet] {self.plan}: the plan is out of date with its drafts; re-run loom flow join\n")
 
     def test_without_a_join_map_a_definition_is_cited_to_the_plan(self):
         elsewhere = self.root / "elsewhere"

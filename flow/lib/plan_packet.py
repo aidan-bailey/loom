@@ -9,17 +9,24 @@ relies on about another story's code), then every story's Files line, for the
 one `flow:recon` that checks the contracts between the stories and the files
 outside the plan that list or count what it adds (part 2 spec §4.3, step 4).
 
-Usage: plan_packet.py PLAN --seams [--rev REV] [--drafts DIR]
+Usage: plan_packet.py PLAN --seams [--changed] [--rev REV] [--drafts DIR]
 
 REV defaults to HEAD, DIR to the plan's drafts directory. The packet is written
 to DIR/packets/seams.md. When DIR holds a join map, the plan must be the join of
 its drafts. Exit 0 when the packet is written, 1 when the plan is refused or the
 packet can't be written, 2 on a usage error.
+
+With --changed, the packet is the seams re-check's, DIR/packets/seams-changed.md:
+only the names one story defines and another uses where a change since the plan
+review (each draft against DIR/reviewing/S<id>.md) touched the definition or a
+line that uses it, then each story's changed lines. It needs the join map and
+every story's review snapshot, and prints how many names it lists.
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import re
 import subprocess
 import sys
@@ -68,6 +75,16 @@ BODY_ITEM_RE = re.compile(r"^(?:pub(?:\([^)]*\))?\s+|export\s+(?:default\s+)?)?(
 PY_DEF_RE = re.compile(r"^(?:async\s+)?(?:def|class)\s")
 DOCSTRING_RE = re.compile(r'^[rRuUbB]?("""|\'\'\')')
 PLACEHOLDER = "@@LENGTH@@"
+REVIEWING_DIR = "reviewing"
+CHANGED_RULE = (
+    "Each row is a name one story defines and another uses, where a fix since the plan review changed the "
+    "definition (a provider changed) or a line that uses it (a consumer changed): check only these rows, "
+    "that the contract and the behaviour across each still match, reading the changed lines first."
+)
+
+
+class PacketError(Exception):
+    """A packet refused for what the drafts directory lacks."""
 
 
 def cite(plan_line: int, story_map: dict[str, Span]) -> str:
@@ -344,6 +361,140 @@ def unchecked_premises(drafts: Path, order: list[str]) -> list[tuple[str, list[s
     return found
 
 
+def changed_draft_lines(before: list[str], after: list[str]) -> set[int]:
+    """The 1-based lines of `after` a diff from `before` changed: each replaced or inserted line, and for a
+    pure deletion the line above its place (the first line when it is at the top)."""
+    changed: set[int] = set()
+    for tag, _, _, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        if tag in ("replace", "insert"):
+            changed.update(range(j1 + 1, j2 + 1))
+        elif tag == "delete":
+            changed.add(max(j1, 1))
+    return changed
+
+
+def line_ranges(lines: set[int]) -> list[tuple[int, int]]:
+    """The runs of consecutive numbers in `lines`, as (first, last) pairs in order."""
+    runs: list[tuple[int, int]] = []
+    for n in sorted(lines):
+        if runs and n == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], n)
+        else:
+            runs.append((n, n))
+    return runs
+
+
+def draft_ranges(sid: str, lines: set[int]) -> str:
+    """`S<id>.md:<a>-<b>` for each run of draft lines, comma-separated."""
+    return ", ".join(f"S{sid}.md:{a}" if a == b else f"S{sid}.md:{a}-{b}" for a, b in line_ranges(lines))
+
+
+def owners(
+    blocks: list[Fenced], found: dict[str, tuple[int, list[str], list[str]]], lines: set[int]
+) -> dict[str, set[int]]:
+    """The definitions the plan lines in `lines` belong to, each with its lines.
+
+    A line in a code block belongs to the nearest definition at or above it in that block, so an edit to a
+    body counts as well as one to a signature; a line above the block's first definition belongs to none.
+    """
+    starts = sorted((at, name) for name, (at, _, _) in found.items())
+    owned: dict[str, set[int]] = {}
+    for block in blocks:
+        if block.lang in NOT_CODE_LANGS or not block.lines:
+            continue
+        first, last = block.lines[0][0], block.lines[-1][0]
+        inside = [(at, name) for at, name in starts if first <= at <= last]
+        for n in sorted(lines):
+            above = [name for at, name in inside if at <= n]
+            if first <= n <= last and above:
+                owned.setdefault(above[-1], set()).add(n)
+    return owned
+
+
+def changed_uses(blocks: list[Fenced], lines: set[int]) -> dict[str, set[int]]:
+    """Every whole word on a code line in `lines`, with the lines holding it."""
+    found: dict[str, set[int]] = {}
+    for block in blocks:
+        if block.lang in NOT_CODE_LANGS:
+            continue
+        for n, line in block.lines:
+            if n in lines:
+                for token in TOKEN_RE.findall(line):
+                    found.setdefault(token, set()).add(n)
+    return found
+
+
+def changed_packet(plan: Path, rev: str, drafts: Path) -> tuple[str, int]:
+    """The seams re-check's packet, and how many rows it lists.
+
+    Each story's draft is diffed against its plan-review snapshot. A row is a name one story defines outside a
+    test file and another uses, where a changed line belongs to its definition (the provider changed) or uses
+    it (a consumer changed); its changed lines are cited as draft lines.
+    """
+    text = plan.read_text(encoding="utf-8")
+    story_map = checked_map(text, drafts)
+    if not story_map:
+        raise PacketError(f"{drafts} holds no join map; run loom flow join first")
+    tree = Tree(repo_root(plan), rev)
+    parsed = gather(text, tree.ignored_root)
+    order = [story for story, _ in parsed.stories]
+    regions = Regions(parsed, tree)
+    regions.walk()
+    defs = {story: definitions(parsed, story, regions.blocks) for story in order}
+    own = {story: definitions(parsed, story, regions.blocks, tests=True) for story in order}
+    used = {story: identifiers(parsed, story) for story in order}
+    changed: dict[str, set[int]] = {}
+    for story in order:
+        snapshot = drafts / REVIEWING_DIR / f"S{story}.md"
+        if not snapshot.is_file():
+            raise PacketError(f"Story {story} has no review snapshot {snapshot}")
+        before = snapshot.read_text(encoding="utf-8").splitlines()
+        after = (drafts / f"S{story}.md").read_text(encoding="utf-8").splitlines()
+        # Draft line 1 is the heading; line k after it is plan line start + k - 1.
+        lines = {k for k in changed_draft_lines(before, after) if k > 1}
+        if lines:
+            changed[story] = lines
+    rows: list[str] = []
+    for story, draft_lines in changed.items():
+        start = story_map[story].start
+        plan_lines = {start + k - 1 for k in draft_lines}
+        blocks = code_blocks(parsed, story)
+        for name, at in sorted(owners(blocks, own[story], plan_lines).items()):
+            users = [other for other in order if other != story and name in used[other] and name not in own[other]]
+            if name in defs[story] and users:
+                defined = cite(defs[story][name][0], story_map)
+                uses = ", ".join(cite(used[other][name], story_map) for other in users)
+                rows.append(f"{name} | defined {defined} | used {uses} | changed in {draft_ranges(story, {n - start + 1 for n in at})}")
+        for name, at in sorted(changed_uses(blocks, plan_lines).items()):
+            definers = [other for other in order if other != story and name in defs[other]]
+            if definers and name not in own[story]:
+                defined = ", ".join(cite(defs[other][name][0], story_map) for other in definers)
+                rows.append(
+                    f"{name} | defined {defined} | used {cite(min(at), story_map)} | "
+                    f"changed in {draft_ranges(story, {n - start + 1 for n in at})}"
+                )
+    out = [
+        f"# Seams re-check packet for {plan.name}",
+        PLACEHOLDER,
+        "",
+        f"Written against the tree at {rev}. A change is a draft's difference from its review snapshot "
+        f"({REVIEWING_DIR}/S<id>.md).",
+        "",
+        SEAMS_READING_RULES,
+        "",
+        CHANGED_RULE,
+        "",
+        "## Shared names a fix changed",
+        "",
+    ]
+    out += fenced(rows, "text") if rows else ["(none)"]
+    out += ["", "## Changed spans", ""]
+    if changed:
+        out += [f"- Story {story}: {draft_ranges(story, lines)}" for story, lines in changed.items()]
+    else:
+        out.append("(none: every draft matches its review snapshot)")
+    return finish(out), len(rows)
+
 def seams_packet(plan: Path, rev: str, drafts: Path) -> str:
     """Every name one story defines and another's code uses, the premises its drafters couldn't check, then every story's Files line."""
     text = plan.read_text(encoding="utf-8")
@@ -405,6 +556,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="plan_packet.py", description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("plan", type=Path)
     parser.add_argument("--seams", action="store_true", required=True, help="write the packet of names shared between stories")
+    parser.add_argument(
+        "--changed", action="store_true",
+        help="only the shared names a fix changed since the plan review (DIR/reviewing/S<id>.md)",
+    )
     parser.add_argument("--rev", default="HEAD", help="read the tree at this commit (default HEAD)")
     parser.add_argument("--drafts", type=Path, help="the drafts directory (default: the plan's)")
     try:
@@ -430,25 +585,30 @@ def main(argv: list[str]) -> int:
     if sha is None:
         print(f"plan_packet: --rev {args.rev} is not a commit in {root}", file=sys.stderr)
         return 2
+    count: int | None = None
     try:
-        body = seams_packet(args.plan, sha, drafts)
+        if args.changed:
+            body, count = changed_packet(args.plan, sha, drafts)
+        else:
+            body = seams_packet(args.plan, sha, drafts)
     except subprocess.CalledProcessError as err:
         print(f"plan_packet: git failed in {root}: {err.stderr.strip()}", file=sys.stderr)
         return 2
-    except JoinError as err:
+    except (JoinError, PacketError) as err:
         print(f"FAIL [packet] {args.plan}: {err}")
         return 1
     except (OSError, UnicodeDecodeError) as err:
         print(f"FAIL [packet] {args.plan}: {describe(err)}")
         return 1
-    target = drafts / "packets" / "seams.md"
+    target = drafts / "packets" / ("seams-changed.md" if args.changed else "seams.md")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
     except OSError as err:
         print(f"FAIL [packet] {args.plan}: {target}: {describe(err)}")
         return 1
-    print(f"wrote {target}: {len(body.splitlines())} lines")
+    counted = "" if count is None else f", {count} shared names changed"
+    print(f"wrote {target}: {len(body.splitlines())} lines{counted}")
     return 0
 
 
