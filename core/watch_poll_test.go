@@ -853,8 +853,10 @@ func TestMaybeWatch_PollsOnlyWorkspacesWithARepositoryAndTheWatcherOn(t *testing
 	global := watchWorkspace(t, "", true)
 	broken := watchWorkspace(t, t.TempDir(), true)
 	broken.loadErr = fmt.Errorf("unreadable")
+	resetting := watchWorkspace(t, t.TempDir(), true)
+	resetting.resetting = true
 	m := NewForTest(Options{})
-	m.SetWorkspacesForTest(on, off, global, broken)
+	m.SetWorkspacesForTest(on, off, global, broken, resetting)
 
 	require.True(t, m.maybeWatch())
 
@@ -864,6 +866,7 @@ func TestMaybeWatch_PollsOnlyWorkspacesWithARepositoryAndTheWatcherOn(t *testing
 	assert.Nil(t, off.watch, "switched off: nothing is created or polled")
 	assert.Nil(t, global.watch)
 	assert.Nil(t, broken.watch, "a workspace that failed to load is not polled")
+	assert.Nil(t, resetting.watch, "a workspace being reset is not polled")
 }
 
 func TestMaybeWatch_KeepsItsCadenceAndArmsNothingWithoutAJob(t *testing.T) {
