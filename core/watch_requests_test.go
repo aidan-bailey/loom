@@ -219,3 +219,56 @@ func TestWatchViewOf_AFailedActionShowsOnItsIssue(t *testing.T) {
 		{Number: 30, State: "unknown", Failed: "kill: boom"},
 	}, v.Issues)
 }
+
+// TestWorkspaceView_CarriesTheWatchSummary: the summary is the switch,
+// whether memory is loaded, the last tick's error and the 20 newest
+// escalations, and it is empty while the switch is off.
+func TestWorkspaceView_CarriesTheWatchSummary(t *testing.T) {
+	m, ws, id := watchWS(t, true)
+	st := m.watchFor(ws)
+	st.err, st.mem = "no loom-watch.json on origin/main", watchEscalatedMemory()
+
+	v, ok := m.Workspace(id)
+	require.True(t, ok)
+	assert.True(t, v.Watch.On)
+	assert.False(t, v.Watch.Loaded, "memory is not loaded until a poll loads it, whatever it holds")
+	assert.Equal(t, "no loom-watch.json on origin/main", v.Watch.Err)
+	require.Len(t, v.Watch.Escalations, 20, "the newest 20 of 27")
+	assert.Equal(t, watchEscalationOrder()[:20], watchIssueNumbers(v.Watch.Escalations))
+	assert.True(t, v.Settings.WatchEnabled(), "and the switch is in the settings copy too")
+
+	st.memLoaded = true
+	v, _ = m.Workspace(id)
+	assert.True(t, v.Watch.Loaded, "a loaded memory shows as loaded")
+
+	off := false
+	ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
+	v, _ = m.Workspace(id)
+	assert.Equal(t, WatchSummary{}, v.Watch, "off shows nothing, whatever the state holds")
+}
+
+// TestWorkspaceView_AnEscalationRepublishesTheWorkspaces: a new escalation
+// in memory reaches clients as a WorkspacesChanged, and nothing changing
+// publishes nothing.
+func TestWorkspaceView_AnEscalationRepublishesTheWorkspaces(t *testing.T) {
+	m, ws, _ := watchWS(t, true)
+	st := m.watchFor(ws)
+	m.syncEvents()
+	changed := func(events []Event) (WorkspacesChanged, bool) {
+		for _, e := range events {
+			if wc, ok := e.(WorkspacesChanged); ok {
+				return wc, true
+			}
+		}
+		return WorkspacesChanged{}, false
+	}
+	_, again := changed(m.syncEvents())
+	require.False(t, again, "fixture: nothing changed, nothing published")
+
+	st.mem.Issues = map[int]watch.IssueMemory{12: {Escalated: &watch.Escalation{At: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC), Reason: "stuck"}}}
+
+	wc, ok := changed(m.syncEvents())
+	require.True(t, ok, "the new escalation is published")
+	require.Len(t, wc.Views, 1)
+	assert.Equal(t, []WatchEscalation{{Issue: 12, Reason: "stuck", At: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)}}, wc.Views[0].Watch.Escalations)
+}
