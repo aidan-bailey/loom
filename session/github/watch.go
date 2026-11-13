@@ -319,7 +319,8 @@ func Viewer(ctx context.Context, repoDir string, r internalexec.Executor) (strin
 
 // failedLogsTimeout bounds FailedJobLogs (spec §7.1): a failed job's
 // log can be large, so it gets longer than ghTimeout.
-const failedLogsTimeout = 30 * time.Second
+// A var so a test can shorten it.
+var failedLogsTimeout = 30 * time.Second
 
 // ghWithTimeout is gh with its own timeout in place of ghTimeout. gh
 // itself cannot take a longer one: a parent context's deadline only

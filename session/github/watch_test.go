@@ -330,6 +330,19 @@ func TestFailedJobLogs_HasItsOwn30sTimeout(t *testing.T) {
 	assert.Greater(t, failedLogsTimeout, ghTimeout)
 }
 
+func TestFailedJobLogs_EndsTheChildAtItsOwnDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the child is /bin/sh and sleep, which Windows lacks")
+	}
+	old := failedLogsTimeout
+	failedLogsTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { failedLogsTimeout = old })
+	start := time.Now()
+	_, err := FailedJobLogs(context.Background(), t.TempDir(), 7001, 10, sleepExec{})
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 3*time.Second, "FailedJobLogs ends its child at failedLogsTimeout, not at gh's 20 s")
+}
+
 func TestTailLines(t *testing.T) {
 	assert.Equal(t, "c", tailLines("a\nb\nc\n", 1))
 	assert.Equal(t, "b\nc", tailLines("a\r\nb\nc\r\n", 2), "a log's own trailing newlines are not lines")
