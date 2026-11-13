@@ -50,10 +50,17 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual((m.stories, m.vouched), (3, 1))
         self.assertEqual(m.review_usd, 6.0)
 
+    def test_the_skeleton_reviews_cost_is_read_apart_from_the_plan_reviews(self):
+        text = RECORD.replace("; plan review $6.00;", "; skeleton review $1.50; plan review $6.00;")
+        m = plan_measures.measure("r", text, 40.0)
+        self.assertEqual(m.skeleton_usd, 1.5)
+        self.assertEqual(m.review_usd, 6.0)
+
     def test_a_design_stage_line_without_the_clauses_gives_none(self):
         text = RECORD.replace("; plan review $6.00; loom flow roster aaaaaaaaaaaa.", ".")
         m = plan_measures.measure("r", text, 40.0)
         self.assertIsNone(m.review_usd)
+        self.assertIsNone(m.skeleton_usd)
         self.assertIsNone(m.draft_copy)
         self.assertEqual(m.plan_lines, 10000)
 
@@ -72,10 +79,22 @@ class TableTest(unittest.TestCase):
         b = plan_measures.measure("b", RECORD.replace(STAGE, ""), 10.0)
         out = plan_measures.table([a, b])
         self.assertIn("## Plan code", out)
-        self.assertIn("| a | aaaaaaaaaaaa | cccccccccccc | 10,000 | 2 | 0.20 | $20.00 | $40.00 | $6.00 | $22.00 | 3 | 1 | $6.00 | $2.00 |", out)
-        self.assertIn("| b | n/a | cccccccccccc | n/a | 2 | n/a | n/a | $10.00 | n/a | $22.00 | 3 | 1 | n/a | n/a |", out)
+        self.assertIn("| a | aaaaaaaaaaaa | cccccccccccc | 10,000 | 2 | 0.20 | $20.00 | $40.00 | $6.00 | $22.00 | 3 | 1 | $6.00 | $2.00 | n/a |", out)
+        self.assertIn("| b | n/a | cccccccccccc | n/a | 2 | n/a | n/a | $10.00 | n/a | $22.00 | 3 | 1 | n/a | n/a | n/a |", out)
         # Pooled: the per-1,000 figures only over a (the run with plan lines); questions and dollars over both.
-        self.assertIn("| Pooled (2 runs) | | | 10,000 | 4 | 0.20 | $20.00 | $50.00 | $6.00 | $44.00 | 6 | 2 | $6.00 | $2.00 |", out)
+        self.assertIn("| Pooled (2 runs) | | | 10,000 | 4 | 0.20 | $20.00 | $50.00 | $6.00 | $44.00 | 6 | 2 | $6.00 | $2.00 | n/a |", out)
+
+    def test_the_pooled_skeleton_review_is_the_average_a_plan_over_the_runs_with_it(self):
+        def skeleton(usd):
+            return RECORD.replace("; plan review $6.00;", f"; skeleton review ${usd}; plan review $6.00;")
+        runs = [plan_measures.measure("a", skeleton("1.50"), 40.0), plan_measures.measure("b", RECORD, 10.0),
+                plan_measures.measure("c", skeleton("2.50"), 30.0)]
+        out = plan_measures.table(runs)
+        self.assertIn("| Skeleton review |", out)
+        self.assertTrue(any(line.startswith("| a |") and line.endswith("| $1.50 |") for line in out.splitlines()))
+        self.assertTrue(any(line.startswith("| b |") and line.endswith("| n/a |") for line in out.splitlines()))
+        pooled = next(line for line in out.splitlines() if line.startswith("| Pooled"))
+        self.assertTrue(pooled.endswith("| $2.00 a plan |"), pooled)
 
 
 if __name__ == "__main__":

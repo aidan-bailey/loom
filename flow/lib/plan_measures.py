@@ -4,7 +4,8 @@
 A record the run engine wrote (`- Engine: loom flow run`) gives, per run, from its text alone:
 the draft session's flow copy and the run's (the `loom flow roster <hex>` of its Design stage line,
 and the last of its Definitions line); the plan's lines, the drafting's logged USD and the plan
-review's USD (`<n> plan lines`, `$<n> logged` and `plan review $<n>` in the Design stage line); its
+review's and the skeleton review's USD (`<n> plan lines`, `$<n> logged`, `plan review $<n>` and
+`skeleton review $<n>` in the Design stage line); its
 plan-code questions (`- Asked (unresolved-findings, Story N): Reviews of Story N found problems in
 the plan's own code`); what the fix rounds and re-reviews of those stories cost (every Cost by agent
 row named `…-s<N>-fix<k>`, or `…-s<N>-review<k>` with k >= 2, its USD column); and its stories and
@@ -12,7 +13,9 @@ how many its Stories table marks vouched.
 
 The table gives each run and the pooled figures the plan review's provenance entry judges: plan-code
 questions per 1,000 plan lines, drafting plus run USD per 1,000 plan lines and the review's USD per
-story. A run without a figure shows n/a; each pooled ratio uses only the runs with both its figures.
+story, and the skeleton review's USD a plan, which its own provenance entry judges. A run without a
+figure shows n/a; each pooled ratio uses only the runs with both its figures, and the pooled skeleton
+review is the average over the runs that have one.
 Logged USD throughout, the Design stage line's basis.
 """
 
@@ -28,6 +31,7 @@ ROSTER_RE = re.compile(r"loom flow roster ([0-9a-f]{12})")
 LOGGED_RE = re.compile(r"\$([0-9][0-9,]*(?:\.[0-9]+)?) logged")
 PLAN_LINES_RE = re.compile(r"([0-9][0-9,]*) plan lines")
 REVIEW_RE = re.compile(r"plan review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
+SKELETON_RE = re.compile(r"skeleton review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
 ASKED_RE = re.compile(
     r"^- Asked \(unresolved-findings, Story ([^)]+)\): Reviews of Story \S+ found problems in the plan's own code", re.M
 )
@@ -49,6 +53,7 @@ class RunMeasures:
     stories: int
     vouched: int
     review_usd: float | None
+    skeleton_usd: float | None = None
 
 
 def number(text: str) -> float:
@@ -104,6 +109,7 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
                 pass
     stories = table_rows(text, "Story")
     lines, logged, review = found(PLAN_LINES_RE, stage), found(LOGGED_RE, stage), found(REVIEW_RE, stage)
+    skeleton = found(SKELETON_RE, stage)
     return RunMeasures(
         name=name,
         draft_copy=found(ROSTER_RE, stage),
@@ -116,6 +122,7 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
         stories=len(stories),
         vouched=sum(1 for row in stories if row.get("Review") == "vouched"),
         review_usd=number(review) if review else None,
+        skeleton_usd=number(skeleton) if skeleton else None,
     )
 
 
@@ -128,13 +135,13 @@ def per_thousand(amount: float | None, lines: int | None) -> float | None:
 
 
 def row(name: str, draft_copy: str, run_copy: str, lines: int | None, questions: int, draft: float | None,
-        run: float, review: float | None, fix: float, stories: int, vouched: int) -> str:
+        run: float, review: float | None, fix: float, stories: int, vouched: int, skeleton: str) -> str:
     rate = per_thousand(questions, lines)
     spend = per_thousand(None if draft is None else draft + run, lines)
     each = None if review is None or not stories else review / stories
     return (f"| {name} | {draft_copy} | {run_copy} | {'n/a' if lines is None else f'{lines:,}'} | {questions} | "
             f"{'n/a' if rate is None else f'{rate:.2f}'} | {usd(draft)} | {usd(run)} | {usd(spend)} | {usd(fix)} | "
-            f"{stories} | {vouched} | {usd(review)} | {usd(each)} |")
+            f"{stories} | {vouched} | {usd(review)} | {usd(each)} | {skeleton} |")
 
 
 def table(runs: list[RunMeasures]) -> str:
@@ -145,12 +152,13 @@ def table(runs: list[RunMeasures]) -> str:
         "and fix + re-review is what the fix rounds and re-reviews of their stories cost. Logged USD; a pooled "
         "ratio uses only the runs with both its figures.", "",
         "| Run | Draft copy | Run copy | Plan lines | Plan-code questions | per 1,000 lines | Drafting | Run "
-        "| Drafting + run per 1,000 lines | Fix + re-review on them | Stories | Vouched | Plan review | per story |",
-        "|---|---|---|" + "---:|" * 11,
+        "| Drafting + run per 1,000 lines | Fix + re-review on them | Stories | Vouched | Plan review | per story "
+        "| Skeleton review |",
+        "|---|---|---|" + "---:|" * 12,
     ]
     for r in runs:
         lines.append(row(r.name, r.draft_copy or "n/a", r.run_copy or "n/a", r.plan_lines, r.questions, r.draft_usd,
-                         r.run_usd, r.review_usd, r.fix_usd, r.stories, r.vouched))
+                         r.run_usd, r.review_usd, r.fix_usd, r.stories, r.vouched, usd(r.skeleton_usd)))
     sized = [r for r in runs if r.plan_lines]
     priced = [r for r in sized if r.draft_usd is not None]
     reviewed = [r for r in runs if r.review_usd is not None]
@@ -161,12 +169,14 @@ def table(runs: list[RunMeasures]) -> str:
     review_stories = sum(r.stories for r in reviewed)
     each = sum(r.review_usd or 0 for r in reviewed) / review_stories if reviewed and review_stories else None
     drafted = [r.draft_usd for r in runs if r.draft_usd is not None]
+    skeletons = [r.skeleton_usd for r in runs if r.skeleton_usd is not None]
+    skeleton = f"{usd(sum(skeletons) / len(skeletons))} a plan" if skeletons else "n/a"
     lines.append(
         f"| Pooled ({len(runs)} run{'' if len(runs) == 1 else 's'}) | | | "
         f"{'n/a' if pooled_lines is None else f'{pooled_lines:,}'} | {sum(r.questions for r in runs)} | "
         f"{'n/a' if rate is None else f'{rate:.2f}'} | {usd(sum(drafted) if drafted else None)} | "
         f"{usd(sum(r.run_usd for r in runs))} | {usd(spend)} | {usd(sum(r.fix_usd for r in runs))} | "
         f"{sum(r.stories for r in runs)} | {sum(r.vouched for r in runs)} | "
-        f"{usd(sum(r.review_usd or 0 for r in reviewed) if reviewed else None)} | {usd(each)} |"
+        f"{usd(sum(r.review_usd or 0 for r in reviewed) if reviewed else None)} | {usd(each)} | {skeleton} |"
     )
     return "\n".join(lines)
