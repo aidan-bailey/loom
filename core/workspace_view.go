@@ -1,6 +1,11 @@
 package core
 
-import "github.com/aidan-bailey/loom/config"
+import (
+	"time"
+
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/watch"
+)
 
 // WorkspaceID names a workspace the model serves: a hash of its canonical
 // config dir (wsIDOf), so every daemon over one disk gives it the same ID. A
@@ -37,6 +42,70 @@ type WorkspaceView struct {
 	// Opening it retries the load (Core.Open), which reports the error
 	// again if it still fails.
 	LoadErr string
+	// Watch is the issue watcher's summary for the workspace: whether it
+	// is on, why its last tick decided nothing, and the newest
+	// escalations, from which the PWA's push watch sends one push each.
+	Watch WatchSummary
+}
+
+// WatchSummary is the part of the issue watcher's state every
+// WorkspaceView carries: On is the workspace's switch (Settings.Watch),
+// Loaded whether memory has been read from watch.json yet (false until
+// the first poll loads it, so a client can tell escalations already in
+// memory from new ones), Err why the last tick decided nothing ("" when
+// it decided), and Escalations the newest at most 20 of memory's
+// escalated issues, newest first by time, then by issue number. All four
+// are zero while the watcher is off.
+type WatchSummary struct {
+	On          bool
+	Loaded      bool
+	Err         string
+	Escalations []WatchEscalation
+}
+
+// WatchEscalation is one escalated issue: what the watcher wrote on it
+// and when.
+type WatchEscalation struct {
+	Issue  int       `json:"issue"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+// WatchView is the issue watcher's state for one workspace as ReadWatch
+// answers it (the Reply's Watch; `loom watch status --json` prints it).
+// Err is why the last tick decided nothing (config, memory or a read; ""
+// when it decided). Actions are the last tick's, or with a dry run the
+// next tick's, none taken. Escalations are every escalated issue memory
+// holds, newest first. Everything but On is empty while the watcher is
+// off.
+type WatchView struct {
+	On           bool              `json:"on"`
+	Err          string            `json:"err"`
+	Viewer       string            `json:"viewer"`
+	Considered   int               `json:"considered"`
+	Unconsidered int               `json:"unconsidered"`
+	Issues       []WatchIssueView  `json:"issues"`
+	Actions      []watch.Action    `json:"actions"`
+	Escalations  []WatchEscalation `json:"escalations"`
+}
+
+// WatchIssueView is one issue in a WatchView. State is "open" or "closed"
+// from the last snapshot, "unknown" for an issue seen only through a
+// session or a PR. Session is the watcher session's title ("" for none),
+// PR the watcher's open PR (0 for none). Waiting is why the issue's
+// action was a wait, else the hook's failure text, else "". Failed is the
+// text of the issue's last failed or refused action (watchState.actErrs),
+// "" for none. Nudges is memory's count per kind on that PR (nil for
+// none).
+type WatchIssueView struct {
+	Number    int            `json:"number"`
+	State     string         `json:"state"`
+	Session   string         `json:"session"`
+	PR        int            `json:"pr"`
+	Waiting   string         `json:"waiting"`
+	Failed    string         `json:"failed"`
+	Nudges    map[string]int `json:"nudges"`
+	Escalated bool           `json:"escalated"`
 }
 
 // RegistryView is a copy of the workspace registry: every registered
