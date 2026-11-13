@@ -215,6 +215,12 @@ func TestDecide_Rule5_APRClosedUnmergedEscalatesOnceAndSettles(t *testing.T) {
 	assert.Equal(t, 120, got[0].PR)
 	assert.Zero(t, got[0].Session, "no session to name")
 
+	two := []Session{dcSess(14, 96, "Ready", time.Hour), dcSess(11, 96, "Paused", time.Hour)}
+	got = dcDecide(t, Memory{}, issues, []github.WatchPR{dcPR(120, 96, "CLOSED")}, two)
+	require.Len(t, got, 3)
+	assert.Equal(t, ActEscalate, got[0].Kind)
+	assert.Equal(t, uint64(11), got[0].Session, "the escalation names the lowest session ID")
+
 	notWatchers := []github.WatchPR{dcWith(dcPR(120, 96, "CLOSED"), func(p *github.WatchPR) { p.Author = "alice" })}
 	assert.Empty(t, dcDecide(t, Memory{}, issues, notWatchers, sessions), "a closed PR that is not the watcher's is not rule 5's")
 }
