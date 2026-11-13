@@ -428,3 +428,46 @@ func runHook(ctx context.Context, cfg HookConfig, dir string, env []string, in H
 	}
 	return stdout.buf.Bytes(), tail, nil
 }
+
+// RunStart asks the hook whether to start a session for in.Issue and with
+// which variables (spec §5.2). dir is the watcher checkout, env are extra
+// `KEY=VALUE` entries for the hook's environment (callers pass nil), and
+// in.Point is set here. An empty cfg.Command is no hook: it answers "start,
+// no variables" without running anything (spec §5.1). Every failure is a
+// *HookError and starts nothing.
+func RunStart(ctx context.Context, cfg HookConfig, dir string, env []string, in HookInput) (StartAnswer, error) {
+	if len(cfg.Command) == 0 {
+		return StartAnswer{Start: true}, nil
+	}
+	in.Point = hookPointStart
+	out, stderr, err := runHook(ctx, cfg, dir, env, in)
+	var ans StartAnswer
+	if err == nil {
+		ans, err = decodeHookStart(out)
+	}
+	if err != nil {
+		return StartAnswer{}, &HookError{Point: hookPointStart, Err: err, Stderr: stderr}
+	}
+	return ans, nil
+}
+
+// RunNudges asks the hook for the nudges of in.Issue's session and PR (spec
+// §5.3), in the order the hook returned them. Its arguments are RunStart's;
+// the caller sets in.PR, in.Session and in.HeadSHA. An empty cfg.Command is
+// no hook and returns none. Every failure is a *HookError and returns no
+// nudge.
+func RunNudges(ctx context.Context, cfg HookConfig, dir string, env []string, in HookInput) ([]Nudge, error) {
+	if len(cfg.Command) == 0 {
+		return nil, nil
+	}
+	in.Point = hookPointNudges
+	out, stderr, err := runHook(ctx, cfg, dir, env, in)
+	var nudges []Nudge
+	if err == nil {
+		nudges, err = decodeHookNudges(out)
+	}
+	if err != nil {
+		return nil, &HookError{Point: hookPointNudges, Err: err, Stderr: stderr}
+	}
+	return nudges, nil
+}

@@ -474,3 +474,143 @@ func TestRunHook_MissingDirectory(t *testing.T) {
 	assert.Nil(t, out)
 	assert.NoFileExists(t, filepath.Join(capture, "stdin.json"), "the hook never ran")
 }
+
+func TestRunStart_Answers(t *testing.T) {
+	capture := t.TempDir()
+
+	ans, err := RunStart(context.Background(), hookCmd(t, hookTestTimeout, "hook_ok.sh"), t.TempDir(),
+		[]string{"HOOK_CAPTURE_DIR=" + capture}, hookTestInput())
+
+	require.NoError(t, err)
+	assert.Equal(t, StartAnswer{Start: true, Vars: map[string]string{"spec": "kalshi-ws", "row": "R33"}}, ans)
+	assert.Equal(t, "start", readCapture(t, capture, "point"), "the runner passes the point")
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readCapture(t, capture, "stdin.json")), &sent))
+	assert.Equal(t, "start", sent["point"], "and sets it in the input, which the caller left empty")
+	assert.NotContains(t, sent, "session")
+	assert.NotContains(t, sent, "head_sha")
+}
+
+func TestRunStart_Refusal(t *testing.T) {
+	capture := t.TempDir()
+
+	ans, err := RunStart(context.Background(), hookCmd(t, hookTestTimeout, "hook_ok.sh", "refuse"), t.TempDir(),
+		[]string{"HOOK_CAPTURE_DIR=" + capture}, hookTestInput())
+
+	require.NoError(t, err, "a refusal is an answer, not a failure")
+	assert.Equal(t, StartAnswer{Reason: "no free row"}, ans, "its variables are dropped")
+	assert.Equal(t, "2", readCapture(t, capture, "argc"), "the command's own arguments come before the point")
+	assert.Equal(t, "start", readCapture(t, capture, "point"))
+}
+
+func TestRunNudges_Answers(t *testing.T) {
+	capture := t.TempDir()
+	in := hookTestInput()
+	in.PR = &HookPR{Number: 101, Issue: 96, Branch: "aidanb/heal-kalshi-ws-96-r33", Body: "Closes #96"}
+	in.Session = &HookSession{
+		Title: "heal kalshi-ws 96 R33", Issue: 96, Branch: "aidanb/heal-kalshi-ws-96-r33", Status: "Ready",
+		Vars: map[string]string{"spec": "kalshi-ws", "row": "R33"},
+	}
+	in.HeadSHA = "deadbeef"
+
+	got, err := RunNudges(context.Background(), hookCmd(t, hookTestTimeout, "hook_ok.sh"), t.TempDir(),
+		[]string{"HOOK_CAPTURE_DIR=" + capture}, in)
+
+	require.NoError(t, err)
+	assert.Equal(t, []Nudge{{Kind: "redrift", Key: "k1", Text: "rerun the drift check"}}, got)
+	assert.Equal(t, "nudges", readCapture(t, capture, "point"))
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readCapture(t, capture, "stdin.json")), &sent))
+	assert.Equal(t, "nudges", sent["point"])
+	assert.Equal(t, "deadbeef", sent["head_sha"])
+	pr, _ := sent["pr"].(map[string]any)
+	assert.EqualValues(t, 101, pr["number"])
+	sess, _ := sent["session"].(map[string]any)
+	assert.Equal(t, "heal kalshi-ws 96 R33", sess["title"])
+}
+
+func TestRunStart_NoHookStartsWithoutVariables(t *testing.T) {
+	// A directory that does not exist: a process started in it would fail.
+	dir := filepath.Join(t.TempDir(), "absent")
+
+	ans, err := RunStart(context.Background(), HookConfig{}, dir, nil, hookTestInput())
+
+	require.NoError(t, err)
+	assert.Equal(t, StartAnswer{Start: true}, ans)
+}
+
+func TestRunNudges_NoHookReturnsNone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+
+	got, err := RunNudges(context.Background(), HookConfig{}, dir, nil, hookTestInput())
+
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+func TestRunStart_FailuresAreHookErrors(t *testing.T) {
+	cases := []struct {
+		name       string
+		script     string
+		args       []string
+		timeout    time.Duration
+		wantErr    string
+		wantStderr string
+	}{
+		{"a timeout", "hook_slow.sh", nil, 300 * time.Millisecond, "hook start: timed out after 300ms", ""},
+		{"invalid JSON", "hook_bad.sh", []string{"invalid-json"}, hookTestTimeout, "not the expected JSON object", ""},
+		{"a non-zero exit with a valid answer", "hook_bad.sh", []string{"non-zero"}, hookTestTimeout,
+			"exit status 3; stderr: boom: the drift script crashed", "boom: the drift script crashed"},
+		{"stdout over the cap", "hook_bad.sh", []string{"flood"}, hookTestTimeout, "stdout exceeds", ""},
+		{"a bad variable", "hook_bad.sh", []string{"bad-var"}, hookTestTimeout, `name "Spec"`, ""},
+		{"stderr noise", "hook_bad.sh", []string{"noisy"}, hookTestTimeout, "stderr: line 599 padding padding padding", "line 599 padding"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := hookCmd(t, tc.timeout, tc.script, tc.args...)
+
+			ans, err := RunStart(context.Background(), cfg, t.TempDir(), nil, hookTestInput())
+
+			assert.Equal(t, StartAnswer{}, ans, "a failed call starts nothing")
+			var he *HookError
+			require.ErrorAs(t, err, &he)
+			assert.Equal(t, "start", he.Point)
+			assert.ErrorContains(t, err, tc.wantErr)
+			assert.Contains(t, he.Stderr, tc.wantStderr)
+		})
+	}
+}
+
+func TestRunStart_TimeoutIsDeadlineExceeded(t *testing.T) {
+	_, err := RunStart(context.Background(), hookCmd(t, 300*time.Millisecond, "hook_slow.sh"), t.TempDir(), nil, hookTestInput())
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "through HookError's Unwrap")
+}
+
+func TestRunNudges_FailuresAreHookErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		script  string
+		args    []string
+		timeout time.Duration
+		wantErr string
+	}{
+		{"a timeout", "hook_slow.sh", nil, 300 * time.Millisecond, "hook nudges: timed out after 300ms"},
+		{"invalid JSON", "hook_bad.sh", []string{"invalid-json"}, hookTestTimeout, "not the expected JSON object"},
+		{"a reserved kind", "hook_bad.sh", []string{"reserved-kind"}, hookTestTimeout, `kind "ci" is reserved`},
+		{"stdout over the cap", "hook_bad.sh", []string{"flood"}, hookTestTimeout, "stdout exceeds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := hookCmd(t, tc.timeout, tc.script, tc.args...)
+
+			got, err := RunNudges(context.Background(), cfg, t.TempDir(), nil, hookTestInput())
+
+			assert.Nil(t, got, "a failed call returns no nudge")
+			var he *HookError
+			require.ErrorAs(t, err, &he)
+			assert.Equal(t, "nudges", he.Point)
+			assert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
