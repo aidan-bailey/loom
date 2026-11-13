@@ -433,15 +433,15 @@ class MarkerFloorTest(unittest.TestCase):
 class PlanReviewTierTest(unittest.TestCase):
     def test_review_tiers_reads_both_lists(self):
         review = "2026-10-15; code-quality-reviewer on seams; deep: 1, 6; recon on seams; light: 2 3,7"
-        self.assertEqual(check_plan.review_tiers(review), ({"1", "6"}, {"2", "3", "7"}))
+        self.assertEqual(check_plan.review_tiers(review), ({"1", "6"}, {"2", "3", "7"}, set()))
 
     def test_review_tiers_is_none_for_a_line_without_tokens(self):
         self.assertIsNone(check_plan.review_tiers(None))
         self.assertIsNone(check_plan.review_tiers("2026-10-14, code-quality-reviewer and recon, every story"))
 
     def test_review_tiers_with_one_token_leaves_the_other_empty(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1"), ({"1"}, set()))
-        self.assertEqual(check_plan.review_tiers("recon on seams; light: 4, 5"), (set(), {"4", "5"}))
+        self.assertEqual(check_plan.review_tiers("deep: 1"), ({"1"}, set(), set()))
+        self.assertEqual(check_plan.review_tiers("recon on seams; light: 4, 5"), (set(), {"4", "5"}, set()))
 
     def test_vouched_follows_the_line(self):
         stories = [check_plan.Story("1", 1), check_plan.Story("2", 2)]
@@ -482,17 +482,17 @@ class PlanReviewTierTest(unittest.TestCase):
         self.assertNotIn("Story 1 (", out)
 
     def test_a_case_typo_in_the_tier_tokens_still_parses(self):
-        self.assertEqual(check_plan.review_tiers("Deep: 1; Light: 2"), ({"1"}, {"2"}))
+        self.assertEqual(check_plan.review_tiers("Deep: 1; Light: 2"), ({"1"}, {"2"}, set()))
         code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="2026-10-15; Deep: 1; LIGHT: 2"))
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"Story 1\s+.*deep\s+review: vouched")
         self.assertRegex(out, r"Story 2\s+.*light\s+review: full")
 
     def test_review_tiers_keeps_ids_with_letters(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1a, B2; light: 3-x"), ({"1a", "B2"}, {"3-x"}))
+        self.assertEqual(check_plan.review_tiers("deep: 1a, B2; light: 3-x"), ({"1a", "B2"}, {"3-x"}, set()))
 
     def test_review_tiers_strips_one_trailing_dot(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1, 7."), ({"1", "7"}, set()))
+        self.assertEqual(check_plan.review_tiers("deep: 1, 7."), ({"1", "7"}, set(), set()))
         code, out = run(tiered(("1", "deep", "x"), ("7", "light", "x"), review="2026-10-15; deep: 1; light: 7."))
         self.assertEqual(code, 0, out)
 
@@ -506,7 +506,7 @@ class PlanReviewTierTest(unittest.TestCase):
                 "(list ids one at a time, on one physical line: no ranges, punctuation or backticks)",
                 out,
             )
-            self.assertIn("Story 2: the Plan review line lists it under neither deep: nor light:", out)
+            self.assertIn("Story 2: the Plan review line lists it under none of deep:, light: and full:", out)
 
     def test_no_plan_review_line_means_the_full_review(self):
         code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x")))
@@ -535,7 +535,7 @@ class PlanReviewTierTest(unittest.TestCase):
     def test_a_story_in_neither_list_fails(self):
         code, out = run(tiered(("1", "deep", "x"), ("2", None, "x"), review="2026-10-15; deep: 1"))
         self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it under neither deep: nor light:", out)
+        self.assertIn("Story 2: the Plan review line lists it under none of deep:, light: and full:", out)
         self.assertNotIn("Story 1: the Plan review line", out)
 
     def test_a_story_in_both_lists_fails(self):
@@ -543,6 +543,42 @@ class PlanReviewTierTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("Story 2: the Plan review line lists it under both deep: and light:", out)
         self.assertNotIn("Story 1: the Plan review line", out)
+
+    def test_review_tiers_reads_a_full_list(self):
+        self.assertEqual(check_plan.review_tiers("deep: 1; light: 2; full: 3, 4"), ({"1"}, {"2"}, {"3", "4"}))
+        self.assertEqual(check_plan.review_tiers("Full: 5"), (set(), set(), {"5"}))
+
+    def test_vouched_leaves_a_full_story_unvouched(self):
+        stories = [check_plan.Story("1", 1), check_plan.Story("2", 2)]
+        self.assertEqual(check_plan.vouched("deep: 1; full: 2", stories), {"1": True, "2": False})
+
+    def test_a_deep_story_under_full_passes_and_gets_the_full_review(self):
+        review = "/flow:draft plan review; deep: 1; light: 2; full: 3"
+        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), ("3", None, "x"), review=review))
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"Story 1\s+.*deep\s+review: vouched")
+        self.assertRegex(out, r"Story 2\s+.*light\s+review: full")
+        self.assertRegex(out, r"Story 3\s+.*deep\s+review: full")
+
+    def test_a_light_story_under_full_fails(self):
+        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="deep: 1; full: 2"))
+        self.assertEqual(code, 1, out)
+        self.assertIn(
+            "Story 2: the Plan review line lists it under full:, which holds only deep stories, "
+            "and its Review line says light",
+            out,
+        )
+        self.assertNotIn("Story 1: the Plan review line", out)
+
+    def test_a_story_under_deep_and_full_fails(self):
+        code, out = run(tiered(("1", "deep", "x"), ("2", "deep", "x"), review="deep: 1, 2; full: 2"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("Story 2: the Plan review line lists it under both deep: and full:", out)
+
+    def test_an_unknown_id_under_full_fails(self):
+        code, out = run(tiered(("1", "deep", "x"), review="deep: 1; full: 9"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("the Plan review line lists 9 under full:, which is no story id", out)
 
 
 if __name__ == "__main__":

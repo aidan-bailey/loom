@@ -24,11 +24,12 @@ gets the full code-quality review.
 A story may carry a fifth opening line, `- **Review:** deep` or `- **Review:** light`, either with
 a reason in parentheses. A story without it is deep. A light story whose fenced code holds one of
 the profile's landmine markers fails the check unless its reason names the marker. A Plan review line
-may list the deep and light story ids as `deep: 1, 6; light: 2, 3`: a story it lists under the
-wrong tier, or not at all, fails the check, as does a token under either list that is no story id
+may list the deep and light story ids as `deep: 1, 6; light: 2, 3`, and the deep stories the review
+didn't vouch for as `full: 4`: a story it lists under the wrong tier, under more than one list or under
+none fails the check, as does a token under any list that is no story id
 (ids are listed one at a time, on one physical line), and so does a light story under a line that
 lists no tiers at all. The output says per story whether the plan review vouches for it (a deep story
-the line lists, or a deep story of a line written before tiers).
+under `deep:`, or a deep story of a line written before tiers).
 
 Two lints read the stories' text and print a `WARN [lint]` line each, never a FAIL (loom flow run
 re-checks a parked run's plan, and a heuristic must not park it for good; /flow:draft sends each to its
@@ -116,7 +117,10 @@ DOC_LINK_RE = re.compile(r"\[`?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)(?:\(\))?`?\](?!
 # only when the story's Review reason names it.
 
 REVIEW_VALUE_RE = re.compile(r"^(deep|light)(?:\s*\((.*)\))?$")
-TIER_RE = re.compile(r"\b(deep|light):([^;]*)", re.IGNORECASE)
+TIER_RE = re.compile(r"\b(deep|light|full):([^;]*)", re.IGNORECASE)
+# A Plan review line's lists: `deep:` the vouched deep stories, `light:` the light ones, `full:` the deep
+# stories a review didn't vouch for (/flow:draft's plan review writes it).
+TIER_LISTS = ("deep", "light", "full")
 
 
 @dataclass
@@ -289,11 +293,11 @@ def markers_in(story: Story, markers: Sequence[str]) -> list[tuple[str, int]]:
     return found
 
 
-def review_tiers(review: str | None) -> tuple[set[str], set[str]] | None:
-    """The story ids after `deep:` and after `light:` in a Plan review line.
+def review_tiers(review: str | None) -> tuple[set[str], set[str], set[str]] | None:
+    """The story ids after `deep:`, `light:` and `full:` in a Plan review line.
 
     Each list runs to the next `;` or the end of the line, its ids separated by commas and
-    spaces, one trailing `.` stripped from each. None when the line has neither token (a line
+    spaces, one trailing `.` stripped from each. None when the line has none of the tokens (a line
     written before tiers) or is missing.
     """
     if review is None:
@@ -301,10 +305,10 @@ def review_tiers(review: str | None) -> tuple[set[str], set[str]] | None:
     found = TIER_RE.findall(review)
     if not found:
         return None
-    ids: dict[str, set[str]] = {"deep": set(), "light": set()}
+    ids: dict[str, set[str]] = {name: set() for name in TIER_LISTS}
     for tier, rest in found:
         ids[tier.lower()].update(token.removesuffix(".") for token in re.split(r"[,\s]+", rest) if token.removesuffix("."))
-    return ids["deep"], ids["light"]
+    return ids["deep"], ids["light"], ids["full"]
 
 
 def vouched(review: str | None, stories: list[Story]) -> dict[str, bool]:
@@ -314,7 +318,7 @@ def vouched(review: str | None, stories: list[Story]) -> dict[str, bool]:
     tiers = review_tiers(review)
     if tiers is None:
         return {story.sid: story.tier == "deep" for story in stories}
-    deep, _ = tiers
+    deep = tiers[0]
     return {story.sid: story.sid in deep for story in stories}
 
 
@@ -514,22 +518,28 @@ def tier_problems(stories: list[Story], review: str | None) -> list[str]:
                 )
         return problems
     known = {story.sid for story in stories}
-    for name, ids in zip(("deep", "light"), tiers):
+    for name, ids in zip(TIER_LISTS, tiers):
         for token in sorted(ids - known):
             problems.append(
                 f"the Plan review line lists {token} under {name}:, which is no story id "
                 "(list ids one at a time, on one physical line: no ranges, punctuation or backticks)"
             )
     for story in stories:
-        listed = [name for name, ids in zip(("deep", "light"), tiers) if story.sid in ids]
+        listed = [name for name, ids in zip(TIER_LISTS, tiers) if story.sid in ids]
         if not listed:
-            problems.append(f"Story {story.sid}: the Plan review line lists it under neither deep: nor light:")
-        elif len(listed) == 2:
-            problems.append(f"Story {story.sid}: the Plan review line lists it under both deep: and light:")
-        elif "Review" in story.fields and not REVIEW_VALUE_RE.match(story.fields["Review"]):
+            problems.append(f"Story {story.sid}: the Plan review line lists it under none of deep:, light: and full:")
+            continue
+        if len(listed) > 1:
+            names = " and ".join(f"{name}:" for name in listed)
+            problems.append(f"Story {story.sid}: the Plan review line lists it under {'both ' if len(listed) == 2 else ''}{names}")
+            continue
+        if "Review" in story.fields and not REVIEW_VALUE_RE.match(story.fields["Review"]):
             continue  # its Review value already fails the check
+        says = f"its Review line says {story.tier}" if "Review" in story.fields else f"its tier is {story.tier} (no Review line)"
+        if listed == ["full"]:
+            if story.tier != "deep":
+                problems.append(f"Story {story.sid}: the Plan review line lists it under full:, which holds only deep stories, and {says}")
         elif listed != [story.tier]:
-            says = f"its Review line says {story.tier}" if "Review" in story.fields else f"its tier is {story.tier} (no Review line)"
             problems.append(f"Story {story.sid}: the Plan review line lists it as {listed[0]}, {says}")
     return problems
 
