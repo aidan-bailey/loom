@@ -1,6 +1,6 @@
 ---
 name: premise-check
-description: Settles the premises loom flow premises flags in a plan (a missing path, a line range past a file's end, a stale current block, an item already defined) by reading only the flagged lines and the code they name, with one verdict per flag. Not for design review, which is recon's. Pins set by the owner; change only on their instruction.
+description: Settles the premises loom flow premises flags in a plan (a missing path, a line range past a file's end, a stale current block, an item already defined, a type a generated file already declares) by reading only the flagged lines and the code they name, with one verdict per flag. Not for design review, which is recon's. Pins set by the owner; change only on their instruction.
 model: haiku
 effort: high
 maxTurns: 40
@@ -37,7 +37,11 @@ For each flag:
    - **STALE**: the tree no longer says what the plan quotes. Say what it says
      instead, with `file:line`.
    - **CLASH**: the step would define an item its file already has. Give both
-     `file:line`s.
+     `file:line`s. For a `generated` flag (a type whose name a generated file
+     already declares), it is a CLASH when the new type reaches that file
+     too: it carries the derive, attribute or registration the existing
+     type's source carries for the generator. It HOLDS when the new type
+     never reaches the generator.
    - **UNSURE**: what you checked, and what would settle it.
 4. For any verdict but HOLDS, say whether it matters to the plan:
    **COSMETIC** (a developer fixes it in passing: a line number, a moved file,

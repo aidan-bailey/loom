@@ -147,8 +147,10 @@ class PlanPremisesTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, env=CLEAN_ENV)
 
     def run_script(self, *args):
+        # No test reads the real home store: FLOW_HOME points at a directory with no profiles.
+        env = {**CLEAN_ENV, "FLOW_HOME": str(self.root / "flow-home")}
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), str(self.plan), *args], capture_output=True, text=True, env=CLEAN_ENV
+            [sys.executable, str(SCRIPT), str(self.plan), *args], capture_output=True, text=True, env=env
         )
         return result.returncode, result.stdout
 
@@ -247,6 +249,103 @@ class PlanPremisesTest(unittest.TestCase):
         self.plan.unlink()
         code, _ = self.run_script()
         self.assertEqual(code, 2)
+
+
+GENERATED_PLAN = textwrap.dedent(
+    f"""\
+    # Plan
+
+    **Spec:** `docs/README.md`
+
+    ## Story 1: Charts
+
+    - **Developer:** intermediate-dev
+    - **Files:** `crate/src/chart.rs`, `crate/src/lib.rs`
+    - **Interfaces:** none
+    - **Verify:** `cargo test`
+
+    ### Task 1.1: The chart's wire types
+
+    **Files:**
+    - Create: `crate/src/chart.rs`
+    - Modify: `crate/src/lib.rs`
+
+    Create `crate/src/chart.rs`:
+
+    {FENCE}rust
+    pub struct ChartFrame {{
+        pub bars: u32,
+    }}
+
+    pub struct ChartNote {{
+        pub text: String,
+    }}
+    {FENCE}
+
+    In `crate/src/lib.rs`, current:
+
+    {FENCE}rust
+    pub struct Legend {{}}
+    {FENCE}
+
+    Replace with:
+
+    {FENCE}rust
+    pub struct Legend {{
+        pub entries: u32,
+    }}
+    {FENCE}
+    """
+)
+
+
+class GeneratedClashTest(PlanPremisesTest):
+    """A type a step adds whose name a generated file (the profile's `generated` globs) already declares."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "crate/src/lib.rs").write_text("pub struct Legend {}\n")
+        (self.root / "app").mkdir()
+        (self.root / "app/bindings.ts").write_text(
+            "// generated\nexport type ChartFrame = { bars: number };\nexport type Legend = { entries: number };\n"
+        )
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "bindings")
+        self.plan.write_text(GENERATED_PLAN)
+
+    def profile(self, text):
+        (self.root / ".claude").mkdir(exist_ok=True)
+        (self.root / ".claude/flow.toml").write_text(text)
+
+    def test_a_new_type_a_generated_file_declares_is_flagged(self):
+        self.profile('schema = 1\ngenerated = ["app/bindings.ts"]\n')
+        code, out = self.run_script()
+        self.assertEqual(code, 1, out)
+        self.assertIn("generated adds `ChartFrame` (app/bindings.ts:2), already declared in a generated file", out)
+        # ChartNote is new everywhere, and Legend replaces the type the generated file was written from.
+        self.assertNotIn("ChartNote", out)
+        self.assertNotIn("`Legend`", out)
+
+    def test_without_generated_globs_nothing_is_flagged(self):
+        self.profile("schema = 1\n")
+        _, out = self.run_script()
+        self.assertNotIn("generated", out)
+
+    def test_the_tree_at_a_commit_is_read(self):
+        self.profile('schema = 1\ngenerated = ["app/bindings.ts"]\n')
+        (self.root / "app/bindings.ts").write_text("// generated\n")
+        _, at_head = self.run_script("--rev", "HEAD")
+        self.assertIn("adds `ChartFrame`", at_head)
+
+    # The inherited fixtures' tests don't apply to this plan.
+    test_flags_each_kind_of_broken_premise = None
+    test_premises_that_hold_are_not_flagged = None
+    test_current_text_an_earlier_step_adds_is_not_flagged = None
+    test_rev_reads_the_tree_at_a_commit = None
+    test_a_file_under_a_directory_git_ignores_is_never_flagged = None
+    test_a_current_block_whose_intro_names_an_ignored_root_falls_back_to_the_task_file = None
+    test_a_directory_with_tracked_files_is_not_ignored_whatever_its_rules_say_of_the_rest = None
+    test_a_missing_plan_is_a_usage_error = None
 
 
 if __name__ == "__main__":

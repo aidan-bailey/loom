@@ -22,6 +22,11 @@ Flags, per story:
            is already defined in the file it is added to. The block may only
            quote it as context: premise-check decides.
   file?    a "current" block whose file the plan doesn't name
+  generated  a type a step adds (a new file's, or one added to or replacing
+           text in a file) whose name a generated file already declares: a
+           generator that gathers every module's types into one file (the
+           profile's `generated` globs) writes both names there, and they
+           clash. premise-check decides whether the new type reaches it.
 
 Not flagged, only counted: "current" blocks found away from the lines the plan
 names (developers find a block by its text), and prose paths outside the
@@ -48,7 +53,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_plan import CODE_RE, FENCE_RE, H2_RE, STORY_RE, TASK_RE, repo_root  # noqa: E402
-from flowconf import FlowError  # noqa: E402
+from flowconf import COMMON_LOCKFILES, FlowError, glob_match, optional_profile  # noqa: E402
 from langs import COMMON_NAMES, DEF_RES, EXTENSIONS  # noqa: E402
 
 FILES_ITEM_RE = re.compile(r"^\s*[-*]\s+(Create|Modify|Test|Delete)\b[^:`]*:\s*(.*)$")
@@ -62,6 +67,11 @@ CURRENT_RE = re.compile(r"\bcurrent\b[^`]*:\s*$|\bcurrent\b.*\):\s*$", re.IGNORE
 REPLACE_RE = re.compile(r"\breplace with\b", re.IGNORECASE)
 ADD_RE = re.compile(r"\b(add|append|insert)\b.*:\s*$", re.IGNORECASE)
 ELIDED = {"...", "…", "// ...", "// …", "# ...", "/* ... */", "<!-- ... -->"}
+# Type declarations, the names a generator gathers into one file: Rust's, and TS's in a generated `.ts`.
+TYPE_RES = (
+    re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|union|trait|type)\s+(\w+)"),
+    re.compile(r"^(?:export\s+)?(?:declare\s+)?(?:const\s+)?(?:abstract\s+)?(?:type|interface|enum|class)\s+([\w$]+)"),
+)
 # A rewrapped block must squeeze to at least this many characters to match: `}` is everywhere.
 MIN_SQUEEZED = 40
 
@@ -186,6 +196,22 @@ def defined_names(block: list[str]) -> dict[str, str]:
             match = pattern.match(line.strip())
             if match and match.group(1) not in COMMON_NAMES:
                 names.setdefault(match.group(1), line.strip())
+                break
+    return names
+
+
+def type_names(lines: list[str], top_only: bool) -> dict[str, int]:
+    """The types the lines declare, each with its 1-based line; only at the block's top level when `top_only`."""
+    indents = [len(line) - len(line.lstrip()) for line in lines if line.strip()]
+    top = min(indents) if indents else 0
+    names: dict[str, int] = {}
+    for n, line in enumerate(lines, 1):
+        if not line.strip() or (top_only and len(line) - len(line.lstrip()) != top):
+            continue
+        for pattern in TYPE_RES:
+            match = pattern.match(line.strip())
+            if match and match.group(1) not in COMMON_NAMES:
+                names.setdefault(match.group(1), n)
                 break
     return names
 
@@ -418,9 +444,11 @@ class Walker:
 class Checker(Walker):
     """Checks each premise a plan makes about the tree."""
 
-    def __init__(self, plan: Plan, tree: Tree, wanted: set[str] | None, verbose: bool):
+    def __init__(self, plan: Plan, tree: Tree, wanted: set[str] | None, verbose: bool, generated: tuple[str, ...] = ()):
         super().__init__(plan, tree, wanted)
         self.verbose = verbose
+        self.generated = generated
+        self._generated_types: dict[str, tuple[str, int]] | None = None
         self.planned_top = {p.split("/", 1)[0] for p in self.planned}
         self.reports = {sid: StoryReport(sid, line) for sid, line in plan.stories}
         self.preamble = StoryReport("preamble", 1)
@@ -468,9 +496,40 @@ class Checker(Walker):
         report = self.report_for(start)
         if kind == "current":
             return self.check_current(report, start, intro, block)
+        if kind in ("replace", "add", "new"):
+            self.check_generated(report, start, intro, block, kind)
         if kind in ("replace", "add"):
             self.check_addition(report, start, intro, block, kind)
         return None
+
+    def generated_types(self) -> dict[str, tuple[str, int]]:
+        """Each type the tree's generated files declare (the profile's `generated` globs, lockfiles aside), with its file and line."""
+        if self._generated_types is None:
+            found: dict[str, tuple[str, int]] = {}
+            for path in sorted(self.tree.paths):
+                if posixpath.basename(path) in COMMON_LOCKFILES or not glob_match(path, self.generated):
+                    continue
+                for name, at in type_names(self.tree.lines(path) or [], top_only=False).items():
+                    found.setdefault(name, (path, at))
+            self._generated_types = found
+        return self._generated_types
+
+    def check_generated(self, report: StoryReport, start: int, intro: str, block: list[str], kind: str) -> None:
+        """A block a step adds: does it declare a type whose name a generated file already declares?"""
+        if not self.generated:
+            return
+        target = self.target(intro, kind)
+        if target and glob_match(posixpath.normpath(target), self.generated):
+            return
+        replaced = self.pending[0] if kind == "replace" and self.pending else set()
+        known = self.generated_types()
+        clashes = [
+            f"`{name}` ({known[name][0]}:{known[name][1]})"
+            for name in type_names(block, top_only=True)
+            if name not in replaced and name in known
+        ]
+        if clashes:
+            report.flags.append(Flag(start, "generated", f"adds {', '.join(clashes)}, already declared in a generated file"))
 
     def check_current(self, report: StoryReport, start: int, intro: str, block: list[str]):
         """A block quoted as the file's current text: is it there?"""
@@ -560,7 +619,13 @@ def main(argv: list[str]) -> int:
     except subprocess.CalledProcessError as err:
         print(f"plan_premises: git failed in {root}: {err.stderr.strip()}", file=sys.stderr)
         return 2
-    reports = Checker(gather(text, tree.ignored_root), tree, story_filter(args.stories), args.verbose).run()
+    try:
+        profile = optional_profile(root)
+    except FlowError as err:
+        print(f"plan_premises: the profile can't be read ({err}); the generated-file check is skipped", file=sys.stderr)
+        profile = None
+    generated = profile.generated if profile else ()
+    reports = Checker(gather(text, tree.ignored_root), tree, story_filter(args.stories), args.verbose, generated).run()
     where = f"the tree at {args.rev}" if args.rev else "the working tree"
     print(f"plan_premises: {args.plan} against {where}")
     for report in reports:
