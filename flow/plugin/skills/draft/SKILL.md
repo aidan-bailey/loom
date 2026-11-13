@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories; it joins and checks them, one recon checks the seams, fresh drafters fix what the checks find, and it commits the plan for /flow:run.
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories; it joins and checks them, one recon checks the seams and reviewers review each story, fresh drafters fix what they find, and it commits the plan for /flow:run.
 argument-hint: <plan path>
 disable-model-invocation: true
 ---
@@ -12,7 +12,7 @@ the names contract, the `## Stories` list and the marker line, and no
 read. Start from a fresh session (`/clear` first): every turn you take re-reads
 this conversation, so keep each turn short, and work from the agents' reports,
 never from the drafts. You write only the names contract, the story entries, the plan's header,
-`STATE.md`, the per-story findings files and the spec's answers, and never a
+`STATE.md`, the per-story findings files, the review snapshots and the spec's answers, and never a
 story's code. Ask the owner only what the spec and the contract don't settle,
 and write each answer into the spec, committed by pathspec as soon as it is
 written, in the repo's commit convention, never with `--no-verify`; on a hook
@@ -28,7 +28,7 @@ fix job goes to a fresh `flow:drafter`, and its brief holds the draft
 `D/S<id>.md`, its findings, the plan's path (the names contract sits above its
 `## Stories`), the spec's path and the drafter's profile block; it runs at the
 drafter's pinned high, whatever the story's shape: its fixes are decided
-before it starts, and the run's full review checks the story again. Steps 2,
+before it starts, and step 5's re-check or the run's full review checks the story again. Steps 2,
 3 and 5 name only the findings. Never
 send a running drafter new work by message: it arrives framed as another
 agent's request. Only your answer to a drafter's own NEEDS_CONTEXT report, and
@@ -179,7 +179,7 @@ resumes it.
    After these fix jobs, run this step once more: the join, `loom flow check-plan`,
    `loom flow premises`, and a `flow:premise-check` on any new flags. Step 5 bundles
    that run's rows. It is one more check, not a second fix round.
-4. **Seams.** Run `loom flow packet $ARGUMENTS --seams --rev <REV>`.
+4. **Seams and plan review.** Run `loom flow packet $ARGUMENTS --seams --rev <REV>`.
    It writes `D/packets/seams.md`, the drafters' `D/premises/S<id>.md`
    included, and fails with "the plan is out of date
    with its drafts; re-run loom flow join" when the plan isn't the join of its
@@ -205,6 +205,24 @@ resumes it.
    It doesn't re-check quotes of the tree (premise-check settled those) or
    review a story's code on its own. Write its report on arrival to
    `D/findings/seams.md`.
+
+   In the same batch, dispatch one `flow:plan-reviewer` per story. Before each,
+   copy the story's draft, the text its reviewer sees:
+   `mkdir -p D/reviewing && cp D/S<id>.md D/reviewing/S<id>.md`. Its brief
+   holds the plan's path, the story's id and plan lines (its `line` and `end`
+   in `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>` and
+   the drafter's profile block. Write each report on arrival to
+   `D/findings/review-S<id>.md`. When it holds `ESCALATE` lines, dispatch one
+   `flow:risk-reviewer` for the story with the same brief and those lines,
+   and append its report to the same file. A report with no `COVERAGE` line,
+   or a reviewer that goes quiet, goes to a fresh reviewer with the same
+   brief; never message the quiet one. A `SPEC` finding is yours, as a
+   DESIGN verdict is. A finding you judge wrong is closed with your reason
+   written under it in the review file. A story's review is clean when no
+   Critical, Important or `SPEC` finding of its review or its risk review is
+   open; then `mkdir -p D/reviewed && cp D/reviewing/S<id>.md D/reviewed/S<id>.md`.
+   On a resume, a story with a `D/reviewing/` copy and no review file is
+   reviewed again.
 5. **Fix.** Read the findings, never the drafts.
    - Write each cross-story decision into the names contract. A design
      question the spec doesn't settle goes to the owner: write the answer into
@@ -217,14 +235,29 @@ resumes it.
      parallel fixers can't break a later story's quote.
    - Before the fixers start, write `D/findings/S<id>.md` for each story with
      findings: that story's premise-check rows still open after step 3's last
-     run (they cite that run's join) and the seams findings that name it. A
+     run (they cite that run's join), the seams findings that name it, and
+     its review's open findings, Minor ones included. A
      COSMETIC row step 3 already fixed isn't bundled again. List each file in
      `STATE.md`'s **Findings files**.
    - Dispatch one fresh `flow:drafter` per story with findings, to fix its draft in
      place. Its findings are the path of that story's `D/findings/S<id>.md`
      and the story's `start` from `D/join.json`, so that it turns `plan:<n>`
      into draft lines.
-   - Then run step 3 again, and step 4 too when a fix changed the contract.
+   - Then run step 3 again, and step 4's seams recon too when a fix changed
+     the contract; the plan review doesn't run again.
+   - Re-check each story whose draft differs from its review copy
+     (`cmp -s D/reviewing/S<id>.md D/S<id>.md` fails), whatever changed it:
+     `mkdir -p D/rechecking && cp D/S<id>.md D/rechecking/S<id>.md`, then one
+     fresh `flow:plan-reviewer`, or a fresh `flow:risk-reviewer` when a risk
+     reviewer's finding was among those fixed (both when both). Its brief is
+     the review's plus the story's review findings, the draft's path and
+     "re-check: `diff -u D/reviewing/S<id>.md D/rechecking/S<id>.md`". Append
+     each report to `D/findings/review-S<id>.md`. When every Critical and
+     Important finding is FIXED and no new one is Critical or Important:
+     `cp D/rechecking/S<id>.md D/reviewed/S<id>.md`. There is no second
+     re-check, and an open review finding doesn't go to the owner: the run
+     reviews that story in full. On a resume, a story with a `D/rechecking/`
+     copy and no re-check report in its review file is re-checked again.
    - A finding still open after its fix round goes to the owner: there is no
      second automatic round.
    - Drop from the `**Parallel:**` line a pair the seams findings refute, and
@@ -237,8 +270,12 @@ resumes it.
      session id on `STATE.md`'s **Sessions** line, and add up the `USD` and
      `USD incl. est.` of each **Total** row. Note the end time
      (`date -u +%FT%TZ`) and the plan's line count (`wc -l < $ARGUMENTS`).
+   - Run `loom flow plan-review $ARGUMENTS`; on a failure, show its message
+     and stop. Its output is the `**Plan review:**` line: a deep story is
+     vouched only when its draft is byte-identical to its `D/reviewed/` copy.
    - Write the Design stage line (below) into `STATE.md`'s **Design stage**
-     slot and into the skeleton's head, directly above `## Stories`. Then run
+     slot, and it and the Plan review line into the skeleton's head, directly
+     above `## Stories`. Then run
      step 3's `loom flow join` and `loom flow check-plan` again, and fix what fails
      before the commit.
    - Commit the plan by pathspec, and nothing else, in the repo's commit
@@ -247,7 +284,9 @@ resumes it.
      `--no-verify`: when the pre-commit hook fails the commit, show its
      output and stop.
    - Set the **Phase** to committed. Tell the owner what was drafted, what
-     the checks and the seams recon found, and anything still open, and end
+     the checks, the seams recon and the plan review found, which stories the
+     review vouched, its cost (the plan-reviewer and risk-reviewer rows of
+     `loom flow costs session`), and anything still open, and end
      with: run `/clear`, then `/flow:run <plan>`.
 
 The Design stage line is one physical line:
@@ -275,19 +314,21 @@ quoted heredoc (`cat > D/STATE.md <<'EOF'`). The heredoc's text and its closing
 set it off here; indented, the heredoc never terminates):
 
     # Draft state: <plan file stem>
-    **Phase:** <questions | drafting | checking | seams | fixing | committed>. Done: <what>. Next: <what>.
+    **Phase:** <questions | drafting | checking | seams | reviewing | fixing | committed>. Done: <what>. Next: <what>.
     **Started:** <start time>. **REV:** <sha>. **Sessions:** <session id of each /flow:draft session>.
     **Design stage:** <the line step 6 writes; none until then>
 
-    | Story | Tier | Effort | Drafter | Deviations settled | Findings (premises, seams) | Fixer |
-    |---|---|---|---|---|---|---|
+    | Story | Tier | Effort | Drafter | Deviations settled | Findings (premises, seams, review) | Plan review | Fixer |
+    |---|---|---|---|---|---|---|---|
+
+    Plan review: pending, clean, findings, re-check, vouched or full.
 
     ## Findings files
-    - <D/findings/premises.md, seams.md or S<id>.md: which agent (or the manager), and when>
+    - <D/findings/premises.md, seams.md, review-S<id>.md or S<id>.md: which agent (or the manager), and when>
 
     ## Open questions
     - <question, or none>
 
     ## In flight
-    - <agent id>: <questions | drafting | waiting on Stories <ids> | fix> <story ids>
+    - <agent id>: <questions | drafting | waiting on Stories <ids> | review | risk review | re-check | fix> <story ids>
     EOF
