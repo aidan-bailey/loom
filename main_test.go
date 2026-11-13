@@ -577,7 +577,7 @@ func TestRootCmd_RegistersLoomWatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, cli.WatchCmd, found, "main attaches the cli package's command")
 
-	for _, sub := range []string{"on", "off"} {
+	for _, sub := range []string{"on", "off", "status", "dry-run"} {
 		found, rest, err := rootCmd.Find([]string{"watch", sub})
 		require.NoError(t, err, sub)
 		assert.Equal(t, sub, found.Name())
