@@ -313,14 +313,16 @@ Expected: `OK: agent definitions passed (15 files)`.
 In `flow/plugin/skills/draft/SKILL.md`, replace
 
 ```
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories;
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories; …
 ```
 
 with
 
 ```
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round while a reviewer checks the skeleton's design, then write the stories;
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round as Opus reviews the design, then write the stories; it joins and checks them, a recon checks the seams and reviewers each story, fresh drafters fix what they find, and it commits the plan for /flow:run.
 ```
+
+(The whole line is replaced: `lib/check-agents.sh` caps a skill's description at 400 characters, and this one is 396.)
 
 - [ ] **Step 3: Step 1's resume rule**
 

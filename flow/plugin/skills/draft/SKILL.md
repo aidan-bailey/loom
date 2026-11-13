@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round, then write the stories; it joins and checks them, one recon checks the seams and reviewers review each story, fresh drafters fix what they find, and it commits the plan for /flow:run.
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round as Opus reviews the design, then write the stories; it joins and checks them, a recon checks the seams and reviewers each story, fresh drafters fix what they find, and it commits the plan for /flow:run.
 argument-hint: <plan path>
 disable-model-invocation: true
 ---
@@ -80,8 +80,9 @@ resumes it.
      with that step's findings (for step 5, `D/findings/S<id>.md` or
      `D/findings/wave-S<id>.md`, "wave job" for the second, and the story's
      `start` from `D/join.json`), plus "some of these may already be fixed in
-     `D/S<id>.md`; fix what remains". A `flow:recon` or `flow:premise-check` restarts
-     fresh unless its findings file shows it reported. Otherwise record `REV`
+     `D/S<id>.md`; fix what remains". A `flow:recon`, `flow:premise-check` or
+     `flow:skeleton-reviewer` restarts fresh unless its findings file shows it
+     reported. Otherwise record `REV`
      (`git rev-parse HEAD`) and the start time (`date -u +%FT%TZ`), and write
      `STATE.md` (below).
    - Either way, add this session's id to `STATE.md`'s **Sessions** line: the
@@ -113,9 +114,20 @@ resumes it.
      that isn't the five lists goes to a fresh drafter with the same brief;
      don't guess its content. A drafter that drafts in the round keeps its
      `D/S<id>.md`: its 2b message adds "finish `D/S<id>.md` against the
-     settled contract".
-   - **The wait.** Wait until every drafter of the batch has reported, and
-     settle everything in one pass: read the questions files; write each
+     settled contract". In the same batch, dispatch one
+     `flow:skeleton-reviewer` with the plan's path, the spec's path, `<REV>`
+     and the drafter's profile block, and write its report on arrival to
+     `D/findings/skeleton.md`. A report with no `COVERAGE` line, or a
+     reviewer that goes quiet, goes to a fresh reviewer with the same brief;
+     never message the quiet one.
+   - **The wait.** Wait until every drafter of the batch and the skeleton
+     reviewer have reported, and settle everything in one pass: read the
+     questions files and `D/findings/skeleton.md`; settle each skeleton
+     finding, a `CONTRACT` or `ENTRY` one by amending the contract or the
+     entry, a `SPEC` one as a DESIGN verdict (by the spec where it decides,
+     else by the owner, the answer written into the spec and committed by
+     pathspec at once), and one you judge wrong by writing your reason under
+     it in that file; write each
      decision into the names contract, choosing where a user's proposal and a
      definer's differ; amend the entries; settle each proposed split, by
      replacing the entry with its two halves and moving each contract owner
@@ -294,8 +306,9 @@ resumes it.
      don't re-price. To price, run
      `loom flow costs session <id> --since <start>` for each
      session id on `STATE.md`'s **Sessions** line, and add up the `USD` and
-     `USD incl. est.` of each **Total** row, and the `USD` of the
-     plan-reviewer and risk-reviewer rows for the plan review's cost. Note
+     `USD incl. est.` of each **Total** row, the `USD` of the
+     skeleton-reviewer row for the skeleton review's cost, and that of the
+     plan-reviewer and risk-reviewer rows for the plan review's. Note
      the end time (`date -u +%FT%TZ`), the plan's line count
      (`wc -l < $ARGUMENTS`) and this session's flow copy
      (`loom flow conf roster`).
@@ -313,6 +326,7 @@ resumes it.
      `--no-verify`: when the pre-commit hook fails the commit, show its
      output and stop.
    - Set the **Phase** to committed. Tell the owner what was drafted, what
+     the skeleton review found and how each finding was settled, what
      the checks, the seams recon and the plan review found, the seams
      re-check's line (`Seams re-check: <k> shared names changed, <n>
      findings, <m> wave jobs`, with `full recon` in place of the count when a
@@ -323,7 +337,7 @@ resumes it.
 
 The Design stage line is one physical line:
 
-`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; plan review $<plan-reviewer and risk-reviewer USD>; <loom flow conf roster's output>.`
+`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; plan review $<plan-reviewer and risk-reviewer USD>; <loom flow conf roster's output>.`
 
 It leaves out the design session's own cost, which the owner measures by
 hand. `/flow:run`'s engine copies it into the run's record.
@@ -356,11 +370,11 @@ set it off here; indented, the heredoc never terminates):
     Plan review: pending, clean, findings, re-check, vouched or full.
 
     ## Findings files
-    - <D/findings/premises.md, seams.md, review-S<id>.md, S<id>.md, seams-changed.md, seams-rerun.md or wave-S<id>.md: which agent (or the manager), and when>
+    - <D/findings/skeleton.md, premises.md, seams.md, review-S<id>.md, S<id>.md, seams-changed.md, seams-rerun.md or wave-S<id>.md: which agent (or the manager), and when>
 
     ## Open questions
     - <question, or none>
 
     ## In flight
-    - <agent id>: <questions | drafting | waiting on Stories <ids> | review | risk review | re-check | fix | seams re-check | wave fix> <story ids>
+    - <agent id>: <questions | skeleton review | drafting | waiting on Stories <ids> | review | risk review | re-check | fix | seams re-check | wave fix> <story ids>
     EOF

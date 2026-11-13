@@ -141,7 +141,9 @@ owner starts retros with `/flow:retro`.
 ### The skeleton
 
 The design session writes the skeleton beside the spec: what takes judgment,
-and none of the stories' code. It holds, in order:
+and none of the stories' code. `/flow:draft`'s question round reviews its
+design before anything is drafted ([drafting the stories](#drafting-the-stories)).
+It holds, in order:
 
 - the header: writing-plans' title, Goal, Architecture and Tech Stack, the
   `**Spec:**` line, and, when stories may overlap under `/flow:run`, a
@@ -275,8 +277,19 @@ doesn't give exactly (each with its proposed form, a clash with the tree's
 names included), its `(Story N proposes)` lines with their forms, and the
 entry lines that can't hold, and each story's size: the subtasks it will
 need, with a proposed split for a story over 7 (the p90 of 526 past stories),
-which the manager accepts or rejects in its settlement. The manager waits for every drafter, settles
-everything in one pass (contract, entries, the owner's answers in the spec),
+which the manager accepts or rejects in its settlement. In the same batch one
+`flow:skeleton-reviewer` (Opus @ high) reviews the design the spec and the
+names contract fix: ordering when a later step fails, atomicity, where an
+async signature's blocking work runs, failure paths, the spec's invariants
+against the mechanisms it mandates, ids and bounds, and the repo's rules for
+the names the contract mandates. About 19 of the ~95 defects in the plans'
+own code drafted from 2026-11-10 to 2026-11-13 were the spec's or the
+skeleton's, copied faithfully ("rotate, then mint" lost a token; async
+signatures said nothing of where SQLite runs), and the plan review catches
+them only after drafting, a fix job per story they reach. Its report goes to
+`D/findings/skeleton.md`. The manager waits for every drafter and the
+reviewer, settles everything in one pass (contract, entries, the skeleton
+review's findings, the owner's answers in the spec),
 runs the skeleton check, then resumes every drafter with the lines that
 changed. Every drafter waits, one that asked nothing included: a name it
 defines may change in the settlement. A story with a **Drafts after:** line
@@ -560,6 +573,7 @@ divert that spend:
 | Enumeration sweeps, `file:line` inventories, verifying a claim against source, absence claims, live-endpoint probes | `flow:recon` |
 | Settling the plan premises `loom flow premises` flags (missing paths, stale "current" blocks, clashing definitions) | `flow:premise-check` |
 | Reviewing each story's plan code in `/flow:draft`, and re-checking its fixes | `flow:plan-reviewer`; the tasks it escalates to `flow:risk-reviewer` |
+| Reviewing the design a spec and skeleton fix, in `/flow:draft`'s question round | `flow:skeleton-reviewer` |
 | Writing a plan's stories from its skeleton, and fixing the drafts | `flow:drafter`, from `/flow:draft` |
 | One story that `loom flow check-plan` marks `review: vouched`, and every re-review under `supervised` | `flow:story-reviewer` |
 | Running the profile's gates (check-only, in the background) | `flow:verifier` |
