@@ -1,6 +1,7 @@
 package watch_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -184,6 +185,10 @@ func TestTitleTemplate_RoundTrip(t *testing.T) {
 		{"prefix the sanitizer rewrites", "heal {issue} {spec}", `DOMAIN\user/`, 5, map[string]string{"spec": "a.b"}},
 		{"variable first, then the issue", "heal {spec}-{issue}", "u/", 12, map[string]string{"spec": "x"}},
 		{"issue last", "heal {spec} {issue}", "u/", 3, map[string]string{"spec": "A-B"}},
+		{"issue then a variable", "heal {issue}-{spec}", "u/", 5, map[string]string{"spec": "x"}},
+		{"separator with a character the sanitizer removes", "heal {spec}!-{issue}", "u/", 5, map[string]string{"spec": "x"}},
+		{"separator with a character the sanitizer removes, issue first", "heal {issue}!.{spec}", "u/", 5, map[string]string{"spec": "x"}},
+		{"underscore separator", "heal {spec}_{issue}", "u/", 5, map[string]string{"spec": "x1"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,10 +207,27 @@ func TestTitleTemplate_RoundTrip(t *testing.T) {
 
 			branch := git.SanitizeBranchName(tc.prefix + title)
 			assert.True(t, tt.BranchPattern(tc.prefix, tc.issue).MatchString(branch), "pattern for %q misses %q", tc.prefix, branch)
-			assert.False(t, tt.BranchPattern(tc.prefix, tc.issue+1).MatchString(branch), "another issue's pattern takes %q", branch)
+			pattern := tt.BranchPattern(tc.prefix, tc.issue)
+			// No other issue's branch (same variables) may match this issue's
+			// pattern: not the next number, one with a digit appended, or one
+			// with a digit prepended.
+			for _, other := range []int{tc.issue + 1, tc.issue*10 + 1, 10*tc.issue + 9, 1_000_000 + tc.issue, 1*pow10(len(strconv.Itoa(tc.issue))) + tc.issue, 9*pow10(len(strconv.Itoa(tc.issue))) + tc.issue} {
+				otherTitle, err := tt.Render(other, tc.vars)
+				require.NoError(t, err)
+				otherBranch := git.SanitizeBranchName(tc.prefix + otherTitle)
+				assert.False(t, pattern.MatchString(otherBranch), "issue %d's pattern takes issue %d's branch %q", tc.issue, other, otherBranch)
+			}
 			assert.False(t, tt.BranchPattern(tc.prefix+"x/", tc.issue).MatchString(branch), "another prefix's pattern takes %q", branch)
 		})
 	}
+}
+
+func pow10(n int) int {
+	p := 1
+	for ; n > 0; n-- {
+		p *= 10
+	}
+	return p
 }
 
 func TestBranchPattern_IssueNumberIsWholeAndLiteralsAreQuoted(t *testing.T) {
