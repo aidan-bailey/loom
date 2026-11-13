@@ -219,7 +219,7 @@ Every outside call has a timeout, a per-tick budget and a failure rule. The watc
 | `WatchPRs` | 20 s | 1, `--limit 100` | no decisions |
 | `WatchIssues` | 20 s | 1, oldest first (`--search "sort:created-asc"`) with `--limit 51`: the 50 lowest-numbered open labelled issues are considered; a 51st tells `status` that more were not considered (one call can't count them) | no decisions |
 | `View` of a closed issue a session or PR names | 20 s | at most 10, lowest number first; the rest wait for a later tick | that issue is skipped this tick |
-| `git fetch origin <base>` and the worktree refresh | 60 s together | 1 | no start this tick; rules 1 to 8 run with the config at the current `origin/<base>` |
+| `git fetch origin <base>` and the worktree refresh | the fetch 60 s; the refresh git's `worktree add` timeout (5 min), since a first checkout of a large repository can outlast 60 s and the tick waits while its job is in flight | 1 | no start this tick; rules 1 to 8 run with the config at the current `origin/<base>` |
 | `git show` of the config and prompts | 10 s each | 3 | no decisions |
 | hook `nudges` | `hook.timeout` | one per Ready watcher session with an open PR, so at most `cap` | that issue gets no nudge this tick |
 | hook `start` | `hook.timeout` | at most 1 | the issue waits |
