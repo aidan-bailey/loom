@@ -27,8 +27,9 @@ const watchGitTimeout = 10 * time.Second
 const watchReadBudget = 45 * time.Second
 
 // watchHookBudget bounds all of one poll's hook calls together, so a slow
-// hook cannot hold a workspace's poll for cap times its timeout.
-const watchHookBudget = 5 * time.Minute
+// hook cannot hold a workspace's poll for cap times its timeout. A variable
+// only so a test can spend it at once.
+var watchHookBudget = 5 * time.Minute
 
 // watchViewLimit is how many closed issues a poll views through gh: the
 // lowest-numbered ones a watcher session or PR names; the rest wait for a

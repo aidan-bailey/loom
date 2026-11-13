@@ -618,6 +618,24 @@ func TestWatchPoll_AFailedHookCostsOnlyThatIssuesNudges(t *testing.T) {
 	assert.Contains(t, res.snap.HookFailed[7], "boom", "the hook's stderr is kept for status")
 }
 
+func TestWatchPoll_ASpentHookBudgetFailsTheRemainingIssuesWithoutCallingTheHook(t *testing.T) {
+	rig := newWatchRig(t, watchHookFiles(watchNudgingHook))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	rig.prs = []string{ghPRJSON(40, "OPEN", "loom/heal-7", "bot", 7)}
+	rig.addSession("heal 7", 7, session.Ready)
+	was := watchHookBudget
+	watchHookBudget = 0
+	t.Cleanup(func() { watchHookBudget = was })
+
+	res := rig.job()
+
+	require.Empty(t, res.err, "the tick still decides")
+	assert.Empty(t, res.snap.HookNudges)
+	assert.Contains(t, res.snap.HookFailed[7], "time budget", "the issue is told why it got no nudges")
+	_, err := os.Stat(filepath.Join(rig.ws.ctx.ConfigDir, "hook-calls.txt"))
+	assert.True(t, os.IsNotExist(err), "the hook was never run")
+}
+
 // actionsOfKind lists the actions of kind k.
 func actionsOfKind(as []watch.Action, k watch.ActionKind) []watch.Action {
 	var out []watch.Action
