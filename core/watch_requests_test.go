@@ -272,3 +272,91 @@ func TestWorkspaceView_AnEscalationRepublishesTheWorkspaces(t *testing.T) {
 	require.Len(t, wc.Views, 1)
 	assert.Equal(t, []WatchEscalation{{Issue: 12, Reason: "stuck", At: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)}}, wc.Views[0].Watch.Escalations)
 }
+
+// TestAnswerWatchDry: a dry run's poll answers its requester with the view
+// of the actions it decided, or refuses; it records nothing and takes
+// none.
+func TestAnswerWatchDry(t *testing.T) {
+	t.Run("the dry actions are the view's, the stored ones stay", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		st := m.watchFor(ws)
+		stored := []watch.Action{{Kind: watch.ActKill, Issue: 1, Session: 5}}
+		st.actions = stored
+		dry := []watch.Action{{Kind: watch.ActStart, Issue: 9}}
+
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, dry, "")
+
+		r := requestReply(t, m, 6)
+		require.NoError(t, r.Err)
+		assert.True(t, r.Watch.On)
+		assert.Equal(t, dry, r.Watch.Actions)
+		assert.Equal(t, stored, st.actions, "a dry run stores nothing")
+	})
+	t.Run("a failed poll refuses with its reason", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		m.watchFor(ws)
+
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, nil, "no loom-watch.json on origin/main")
+
+		r := requestReply(t, m, 6)
+		require.Error(t, r.Err)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "no loom-watch.json on origin/main")
+	})
+	t.Run("a watcher switched off meanwhile refuses", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		m.watchFor(ws)
+		off := false
+		ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
+
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, nil, "")
+
+		r := requestReply(t, m, 6)
+		require.Error(t, r.Err)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "switched off")
+	})
+}
+
+// TestDeliverWatch_ADryResultAnswersItsRequester: a dry result reaching
+// deliverWatch is answered, and stores nothing.
+func TestDeliverWatch_ADryResultAnswersItsRequester(t *testing.T) {
+	t.Run("a failed poll is refused with its reason", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		st := m.watchFor(ws)
+		st.polling = true
+
+		m.Deliver(watchResult{ws: ws, dry: true, req: 4, err: "no loom-watch.json on origin/main"})
+
+		r := requestReply(t, m, 4)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "no loom-watch.json on origin/main")
+		assert.False(t, st.polling)
+		assert.Empty(t, st.err, "a dry run stores nothing")
+	})
+	t.Run("a decided poll is answered with the view", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		st := m.watchFor(ws)
+		st.polling = true
+		tmpl, err := watch.ParseTitleTemplate("heal {issue}")
+		require.NoError(t, err)
+
+		m.Deliver(watchResult{ws: ws, dry: true, req: 4, startOK: true, tmpl: tmpl})
+
+		r := requestReply(t, m, 4)
+		require.NoError(t, r.Err)
+		assert.True(t, r.Watch.On)
+		assert.Nil(t, st.snap, "a dry run records no tick")
+	})
+	t.Run("a workspace the model no longer serves is refused, not left waiting", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		m.watchFor(ws).polling = true
+		m.SetWorkspacesForTest()
+
+		m.Deliver(watchResult{ws: ws, dry: true, req: 4, startOK: true})
+
+		r := requestReply(t, m, 4)
+		assert.ErrorIs(t, r.Err, ErrRefused)
+		assert.Contains(t, r.Err.Error(), "switched off")
+	})
+}

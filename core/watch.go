@@ -2,6 +2,8 @@ package core
 
 import (
 	"cmp"
+	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -151,11 +153,11 @@ func (m *Model) deliverWatch(res watchResult) {
 		st.polling = false
 	}
 	if res.dry {
-		// Story 10's reply goes here, before any watchOf check, so a dry
-		// result is answered even with no watch state, an off watcher or
-		// an unserved workspace: when res.err is "", watchViewOf(res.ws,
-		// actions) for the actions decideWatch(res) returns, else a refusal
-		// naming res.err. It then returns.
+		var actions []watch.Action
+		if res.err == "" {
+			_, actions = m.decideWatch(res)
+		}
+		m.answerWatchDry(res, actions, res.err)
 		return
 	}
 	st := m.watchOf(res.ws)
@@ -373,4 +375,22 @@ func watchIssueViews(st *watchState, actions []watch.Action) []WatchIssueView {
 	}
 	slices.SortFunc(out, func(a, b WatchIssueView) int { return cmp.Compare(a.Number, b.Number) })
 	return out
+}
+
+// answerWatchDry answers the requester of a dry run (res.req) once its poll
+// is delivered: with a Reply whose Watch is the view of actions, the ones
+// Decide would take next tick, or with a refusal when the poll failed
+// (failure is the text a delivered non-dry result stores in watchState.err,
+// "" when it decided) or the watcher was switched off while it ran. It
+// stores nothing and dispatches nothing: a dry run takes no action.
+func (m *Model) answerWatchDry(res watchResult, actions []watch.Action, failure string) {
+	if failure != "" {
+		m.refuse(res.req, 0, fmt.Errorf("dry run: %s", failure))
+		return
+	}
+	if m.watchOf(res.ws) == nil {
+		m.refuse(res.req, 0, errors.New("dry run: the watcher was switched off while the poll ran"))
+		return
+	}
+	m.reply(res.req, Reply{Watch: m.watchViewOf(res.ws, actions)})
 }
