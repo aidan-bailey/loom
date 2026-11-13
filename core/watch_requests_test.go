@@ -286,7 +286,7 @@ func TestAnswerWatchDry(t *testing.T) {
 		st.actions = stored
 		dry := []watch.Action{{Kind: watch.ActStart, Issue: 9}}
 
-		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, dry, "")
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, watch.Snapshot{}, dry, "")
 
 		r := requestReply(t, m, 6)
 		require.NoError(t, r.Err)
@@ -298,7 +298,7 @@ func TestAnswerWatchDry(t *testing.T) {
 		m, ws, _ := watchWS(t, true)
 		m.watchFor(ws)
 
-		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, nil, "no loom-watch.json on origin/main")
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, watch.Snapshot{}, nil, "no loom-watch.json on origin/main")
 
 		r := requestReply(t, m, 6)
 		require.Error(t, r.Err)
@@ -311,7 +311,7 @@ func TestAnswerWatchDry(t *testing.T) {
 		off := false
 		ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
 
-		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, nil, "")
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, watch.Snapshot{}, nil, "")
 
 		r := requestReply(t, m, 6)
 		require.Error(t, r.Err)
@@ -360,6 +360,57 @@ func TestDeliverWatch_ADryResultAnswersItsRequester(t *testing.T) {
 		r := requestReply(t, m, 4)
 		assert.ErrorIs(t, r.Err, ErrRefused)
 		assert.Contains(t, r.Err.Error(), "switched off")
+	})
+}
+
+// TestDeliverWatch_ADryViewComesWhollyFromItsPoll: a dry run shows what the
+// next tick would see and do, so its view takes the poll's viewer, counts and
+// err-free state, never the stored tick's, and the stored tick stays as it was.
+func TestDeliverWatch_ADryViewComesWhollyFromItsPoll(t *testing.T) {
+	tmpl, err := watch.ParseTitleTemplate("heal {issue}")
+	require.NoError(t, err)
+	t.Run("after a config fix no old error shows", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		st := m.watchFor(ws)
+		st.polling = true
+		st.viewer, st.err = "old-bot", "no loom-watch.json on origin/main"
+		oldSnap := &watch.Snapshot{Viewer: "old-bot", Considered: 9, Unconsidered: 9}
+		st.snap = oldSnap
+
+		m.Deliver(watchResult{
+			ws: ws, dry: true, req: 4, startOK: true, tmpl: tmpl, viewer: "bot",
+			snap: watch.Snapshot{Viewer: "bot", Considered: 3, Unconsidered: 1, Issues: []github.WatchIssue{{Number: 5}}},
+		})
+
+		r := requestReply(t, m, 4)
+		require.NoError(t, r.Err)
+		assert.Empty(t, r.Watch.Err, "the stored tick's error is not the fresh poll's")
+		assert.Equal(t, "bot", r.Watch.Viewer)
+		assert.Equal(t, 3, r.Watch.Considered)
+		assert.Equal(t, 1, r.Watch.Unconsidered)
+		assert.Equal(t, "no loom-watch.json on origin/main", st.err, "a dry run stores nothing")
+		assert.Equal(t, "old-bot", st.viewer)
+		assert.Same(t, oldSnap, st.snap)
+	})
+	t.Run("before the first tick the poll's viewer and counts show", func(t *testing.T) {
+		m, ws, _ := watchWS(t, true)
+		st := m.watchFor(ws)
+		st.polling = true
+
+		m.Deliver(watchResult{
+			ws: ws, dry: true, req: 4, startOK: true, tmpl: tmpl, viewer: "bot",
+			snap: watch.Snapshot{Viewer: "bot", Considered: 2, Unconsidered: 1, Issues: []github.WatchIssue{{Number: 5}}},
+		})
+
+		r := requestReply(t, m, 4)
+		require.NoError(t, r.Err)
+		assert.Equal(t, "bot", r.Watch.Viewer)
+		assert.Equal(t, 2, r.Watch.Considered)
+		assert.Equal(t, 1, r.Watch.Unconsidered)
+		require.NotEmpty(t, r.Watch.Issues)
+		assert.Equal(t, 5, r.Watch.Issues[0].Number)
+		assert.Empty(t, st.viewer, "a dry run stores nothing")
+		assert.Nil(t, st.snap)
 	})
 }
 

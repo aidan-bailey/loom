@@ -119,10 +119,10 @@ func (m *Model) decideWatch(res watchResult) (watch.Snapshot, []watch.Action) {
 	return snap, actions
 }
 
-// storeWatch keeps a live workspace's poll result: the facts it read, and,
-// when no read failed, the tick Decide made. A failed tick clears the last
-// one's snapshot and actions: stale decisions are worse than none.
-func (m *Model) storeWatch(st *watchState, res watchResult) {
+// applyWatchFacts copies a poll's reads into st: the viewer, the paths, the
+// fetch's outcome, and the memory and config when this poll read them. It
+// leaves the tick's err, snapshot and actions to the caller.
+func applyWatchFacts(st *watchState, res watchResult) {
 	st.viewer, st.memPath, st.checkout = res.viewer, res.memPath, res.checkout
 	st.base, st.baseSHA, st.startOK = res.base, res.baseSHA, res.startOK
 	if res.slug != "" {
@@ -135,6 +135,13 @@ func (m *Model) storeWatch(st *watchState, res watchResult) {
 		st.cfg, st.tmpl = res.cfg, res.tmpl
 		st.prompt, st.resumePrompt = res.prompt, res.resumePrompt
 	}
+}
+
+// storeWatch keeps a live workspace's poll result: the facts it read, and,
+// when no read failed, the tick Decide made. A failed tick clears the last
+// one's snapshot and actions: stale decisions are worse than none.
+func (m *Model) storeWatch(st *watchState, res watchResult) {
+	applyWatchFacts(st, res)
 	st.err = res.err
 	if res.err != "" {
 		st.snap, st.actions = nil, nil
@@ -154,11 +161,12 @@ func (m *Model) deliverWatch(res watchResult) {
 		st.polling = false
 	}
 	if res.dry {
+		var snap watch.Snapshot
 		var actions []watch.Action
 		if res.err == "" {
-			_, actions = m.decideWatch(res)
+			snap, actions = m.decideWatch(res)
 		}
-		m.answerWatchDry(res, actions, res.err)
+		m.answerWatchDry(res, snap, actions, res.err)
 		return
 	}
 	st := m.watchOf(res.ws)
@@ -268,8 +276,13 @@ func watchSummaryOf(ws *Workspace) WatchSummary {
 // actions: a dry run's, or ws.watch.actions for a status read. A workspace
 // whose switch is off, or that holds no state yet, answers On alone.
 func (m *Model) watchViewOf(ws *Workspace, actions []watch.Action) WatchView {
+	return m.watchViewFrom(ws, ws.watch, actions)
+}
+
+// watchViewFrom is watchViewOf over the state st: ws.watch for a status
+// read, a dry run's copy with the fresh poll laid over it for a dry run.
+func (m *Model) watchViewFrom(ws *Workspace, st *watchState, actions []watch.Action) WatchView {
 	on := ws.cfg != nil && ws.cfg.GetWatchEnabled()
-	st := ws.watch
 	if !on || st == nil {
 		return WatchView{On: on}
 	}
@@ -379,21 +392,31 @@ func watchIssueViews(st *watchState, actions []watch.Action) []WatchIssueView {
 }
 
 // answerWatchDry answers the requester of a dry run (res.req) once its poll
-// is delivered: with a Reply whose Watch is the view of actions, the ones
-// Decide would take next tick, or with a refusal when the poll failed
-// (failure is the text a delivered non-dry result stores in watchState.err,
-// "" when it decided) or the watcher was switched off while it ran. It
-// stores nothing and dispatches nothing: a dry run takes no action.
-func (m *Model) answerWatchDry(res watchResult, actions []watch.Action, failure string) {
+// is delivered: with a Reply whose Watch is the view of snap and actions,
+// what the next tick would see and Decide would take, built wholly from this
+// poll (its viewer, memory, config, snapshot and counts; never the stored
+// tick's err or snapshot), or with a refusal when the poll failed (failure
+// is the text a delivered non-dry result stores in watchState.err, "" when
+// it decided) or the watcher was switched off while it ran. It stores
+// nothing and dispatches nothing: a dry run takes no action.
+func (m *Model) answerWatchDry(res watchResult, snap watch.Snapshot, actions []watch.Action, failure string) {
 	if failure != "" {
 		m.refuse(res.req, 0, fmt.Errorf("dry run: %s", failure))
 		return
 	}
-	if m.watchOf(res.ws) == nil {
+	st := m.watchOf(res.ws)
+	if st == nil {
 		m.refuse(res.req, 0, errors.New("dry run: the watcher was switched off while the poll ran"))
 		return
 	}
-	m.reply(res.req, Reply{Watch: m.watchViewOf(res.ws, actions)})
+	// The view reads a copy of the stored state with this poll laid over it:
+	// the stored tick's err and snapshot never reach it, and the stored state
+	// itself is left as it was. The copy shares the stored maps, which the
+	// view only reads.
+	dry := *st
+	applyWatchFacts(&dry, res)
+	dry.err, dry.snap, dry.actions = "", &snap, actions
+	m.reply(res.req, Reply{Watch: m.watchViewFrom(res.ws, &dry, actions)})
 }
 
 // SetWatch switches the issue watcher on or off for workspace id
