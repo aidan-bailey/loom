@@ -732,11 +732,14 @@ func TestWatchSend_SendsOnlyToTheWatchersOwnReadySessionForItsOwnPR(t *testing.T
 		issue int
 		ready bool
 		prs   []github.WatchPR
+		// elsewhere puts the session in another workspace.
+		elsewhere bool
 	}{
-		{"a session that is Running", "heal 7", 7, false, []github.WatchPR{wactPR(7, 5, "OPEN")}},
-		{"a title that does not parse", "other 7", 7, true, []github.WatchPR{wactPR(7, 5, "OPEN")}},
-		{"a session linked to another issue", "heal 7", 8, true, []github.WatchPR{wactPR(7, 5, "OPEN")}},
-		{"a PR that is not its own open PR", "heal 7", 7, true, []github.WatchPR{wactPR(7, 5, "MERGED")}},
+		{"a session that is Running", "heal 7", 7, false, []github.WatchPR{wactPR(7, 5, "OPEN")}, false},
+		{"a title that does not parse", "other 7", 7, true, []github.WatchPR{wactPR(7, 5, "OPEN")}, false},
+		{"a session linked to another issue", "heal 7", 8, true, []github.WatchPR{wactPR(7, 5, "OPEN")}, false},
+		{"a PR that is not its own open PR", "heal 7", 7, true, []github.WatchPR{wactPR(7, 5, "MERGED")}, false},
+		{"another workspace's session", "heal 7", 7, true, []github.WatchPR{wactPR(7, 5, "OPEN")}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -746,6 +749,12 @@ func TestWatchSend_SendsOnlyToTheWatchersOwnReadySessionForItsOwnPR(t *testing.T
 			inst.SetIssue(c.issue)
 			if !c.ready {
 				require.NoError(t, inst.TransitionTo(session.Running)) // modInst's hook scan leaves it Ready
+			}
+			if c.elsewhere {
+				other := storedWorkspace(t, "b")
+				require.True(t, ws.remove(inst))
+				other.add(inst)
+				m.SetWorkspacesForTest(ws, other)
 			}
 
 			m.dispatchWatchActions(ws, st, []watch.Action{wactNudge(m, inst, "conflict", "k1", "merge")})
