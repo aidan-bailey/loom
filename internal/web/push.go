@@ -135,6 +135,9 @@ func (p *pusher) apply(evs []core.Event) {
 		switch ev := ev.(type) {
 		case core.WorkspacesChanged:
 			p.watch.forget(ev.Views)
+			for _, job := range p.watch.observeEscalations(ev.Views) {
+				p.enqueue(job)
+			}
 		case core.ViewsChanged:
 			for _, job := range p.watch.observe(ev.WS, ev.Views) {
 				p.enqueue(job)
@@ -221,7 +224,7 @@ func pushAllows(n core.NotifySettings, kind string, now time.Time) bool {
 		return false
 	}
 	switch kind {
-	case pushWaiting:
+	case pushWaiting, pushEscalated:
 		return n.Waiting
 	case pushFinished, pushDone:
 		return n.Finished

@@ -859,3 +859,42 @@ func TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents(t *testing.T
 	assert.Contains(t, string(sw), `addEventListener("push"`)
 	assert.Contains(t, string(sw), `addEventListener("notificationclick"`)
 }
+
+func TestPusher_TheSenderPostsAnEscalationFromAWorkspaceProjection(t *testing.T) {
+	rig := newPushRig(t, "iPhone")
+	e14 := core.WatchEscalation{Issue: 14, Reason: "ci nudge limit reached", At: escalationAt}
+	e15 := core.WatchEscalation{Issue: 15, Reason: "PR #40: ci nudge limit (3) reached", At: escalationAt.Add(time.Minute)}
+	workspaces := func(escs ...core.WatchEscalation) []core.Event {
+		return []core.Event{core.WorkspacesChanged{Views: []core.WorkspaceView{escalationView(10, "ws-a", escs...)}}}
+	}
+
+	rig.p.apply([]core.Event{core.WorkspacesChanged{Views: []core.WorkspaceView{unloadedView(10, "ws-a")}}})
+	rig.p.apply(workspaces(e14))
+	assert.Empty(t, rig.p.queue, "the first loaded projection is the baseline, though it holds an old escalation")
+
+	rig.p.apply(workspaces(e15, e14))
+	require.Len(t, rig.p.queue, 1)
+	rig.p.apply(workspaces(e15, e14))
+	assert.Len(t, rig.p.queue, 1, "the same summary published again queues nothing")
+
+	rig.p.start()
+	require.Eventually(t, func() bool {
+		state, err := rig.stateOf("iPhone")
+		return err == nil && state == core.PushOK
+	}, 5*time.Second, 5*time.Millisecond, "the sender never recorded the push")
+	reqs := rig.svc.seen()
+	require.Len(t, reqs, 1)
+	assert.Equal(t, "gAAACgAAAA8", reqs[0].header.Get("Topic"))
+	assert.Equal(t, "high", reqs[0].header.Get("Urgency"))
+}
+
+func TestPusher_AnEscalationGoesToTheDevicesThatTakeWaiting(t *testing.T) {
+	rig := newPushRig(t)
+	rig.addDevice(t, "both", core.NotifyChange{})
+	rig.addDevice(t, "waitingOnly", core.NotifyChange{Finished: pushPtr(false)})
+	rig.addDevice(t, "finishedOnly", core.NotifyChange{Waiting: pushPtr(false)})
+
+	rig.p.deliver(pushJob{Kind: pushEscalated, Title: "ws-a: issue #14 escalated", Body: "r", Workspace: 10, Issue: 14})
+
+	assert.ElementsMatch(t, []string{"both", "waitingOnly"}, rig.svc.requested())
+}

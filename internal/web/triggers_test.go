@@ -609,3 +609,10 @@ func TestPushJob_AnEscalationTopicIsPerIssueAndNeverASessions(t *testing.T) {
 		assert.Zero(t, raw[0]&0x80, "session %d: a session's topic never has it", id)
 	}
 }
+
+func TestPushAllows_EscalatedFollowsTheWaitingToggle(t *testing.T) {
+	now := time.Now()
+	assert.True(t, pushAllows(core.NotifySettings{Waiting: true}, pushEscalated, now))
+	assert.False(t, pushAllows(core.NotifySettings{Finished: true}, pushEscalated, now))
+	assert.False(t, pushAllows(core.NotifySettings{Waiting: true, PausedUntil: now.Add(time.Hour)}, pushEscalated, now), "a paused device")
+}
