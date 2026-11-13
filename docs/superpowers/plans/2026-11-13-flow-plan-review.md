@@ -603,7 +603,7 @@ goes in your report too.
 ````markdown
 ---
 name: risk-reviewer
-description: Reviews the tasks of one story's plan text that flow:plan-reviewer escalated, in /flow:draft before the plan is committed: whether invented logic for store writes, transactions, concurrency, outside calls, bounds or auth holds, and whether a test exercises it; also re-checks those findings' fixes. Read-only. Opus at high by the owner's instruction (2026-11-13). Pins set by the owner; change only on their instruction.
+description: Reviews the tasks flow:plan-reviewer escalated from one story's plan text in /flow:draft: whether invented logic for store writes, transactions, concurrency, outside calls, bounds or auth holds, and whether a test exercises it; also re-checks those findings' fixes. Read-only. Opus at high by the owner's instruction (2026-11-13). Pins set by the owner; change only on their instruction.
 model: opus
 effort: high
 tools: Bash, Read, SendMessage
