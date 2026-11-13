@@ -37,7 +37,7 @@ Claude namespaces a plugin's names: the skills are `/flow:init`, `/flow:draft`, 
 | `premises` | `plan_premises.py`, which also flags a type a step adds that a generated file (the profile's `generated` globs) already declares |
 | `plan-review` | `plan_review.py`: the `**Plan review:**` line from `/flow:draft`'s review copies (`D/reviewed/`) |
 | `conformance` | `plan_conformance.py` |
-| `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit; for a later part of an epic, without earlier parts' sessions), `epic SPEC` (an epic's parts: design, drafting and run cost each) |
+| `costs` | `agent_costs.py`: `session`, `records [FILE ...]` (a path, or a record's name in the home store: `<key>/<file>.md`; a Plan code table gives each engine run's flow copies, plan-code questions and drafting plus run USD per 1,000 plan lines, the fix and re-review cost of those questions' stories, and the plan review's USD per story, from `plan_measures.py`), `run RUN [--json] [--session NAME=ID]` (the JSON is loom's flow board's), `design SPEC [--plan PLAN] [--json]` (the design session: the transcripts that wrote the spec, up to the plan's commit; for a later part of an epic, without earlier parts' sessions), `epic SPEC` (an epic's parts: design, drafting and run cost each) |
 | `doctor` | `flowconf.py doctor` |
 | `check-agents` | `lib/check-agents.sh` |
 | `wait start NAME -- CMD`, `wait wait (NAME \| --job N) [SECONDS]` | Go: a step as a job in loom's queue, and a bounded wait for it |

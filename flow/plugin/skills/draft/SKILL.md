@@ -42,7 +42,9 @@ resumes it.
      or `.claude/skills/`). If `$ARGUMENTS` isn't under that top level, stop:
      the plan belongs to another worktree or repo.
    - Run `loom flow conf doctor`. On any FAIL, show the FAIL lines
-     and stop.
+     and stop. A `WARN flow copy` line means this session runs older
+     prompts and tools than the installed loom: tell the owner, and go on
+     unless they stop you.
    - Run `loom flow check-plan --skeleton $ARGUMENTS`. On any FAIL, show the
      FAIL lines and stop: the owner fixes the skeleton in a design session,
      or marks the line `(Story N proposes)`.
@@ -268,8 +270,11 @@ resumes it.
      don't re-price. To price, run
      `loom flow costs session <id> --since <start>` for each
      session id on `STATE.md`'s **Sessions** line, and add up the `USD` and
-     `USD incl. est.` of each **Total** row. Note the end time
-     (`date -u +%FT%TZ`) and the plan's line count (`wc -l < $ARGUMENTS`).
+     `USD incl. est.` of each **Total** row, and the `USD` of the
+     plan-reviewer and risk-reviewer rows for the plan review's cost. Note
+     the end time (`date -u +%FT%TZ`), the plan's line count
+     (`wc -l < $ARGUMENTS`) and this session's flow copy
+     (`loom flow conf roster`).
    - Run `loom flow plan-review $ARGUMENTS`; on a failure, show its message
      and stop. Its output is the `**Plan review:**` line: a deep story is
      vouched only when its draft is byte-identical to its `D/reviewed/` copy.
@@ -291,7 +296,7 @@ resumes it.
 
 The Design stage line is one physical line:
 
-`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines.`
+`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; plan review $<plan-reviewer and risk-reviewer USD>; <loom flow conf roster's output>.`
 
 It leaves out the design session's own cost, which the owner measures by
 hand. `/flow:run`'s engine copies it into the run's record.

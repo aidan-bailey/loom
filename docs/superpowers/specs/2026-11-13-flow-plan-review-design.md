@@ -141,7 +141,7 @@ The provenance entries' "Wrong if", for the next retro, over the next 3 plans dr
 | Measure | Baseline | Wrong if |
 |---|---|---|
 | Plan-code questions per 1,000 plan lines | 0.35 | not below 0.20 |
-| Design stage plus run, per 1,000 plan lines | $5.16 ($2.70 + $2.46) | higher |
+| Drafting plus run, per 1,000 plan lines (logged USD, `loom flow costs records`' Plan code table) | $5.14 | higher |
 | The review's own cost (plan-reviewer and risk-reviewer rows) | none | above $1.20 a story on average |
 
 The retro first checks which plugin copy each run's sessions used: a session keeps the copy it launched with, and the deployed loom lags main.
