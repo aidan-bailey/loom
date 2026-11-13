@@ -73,7 +73,11 @@ own story is your choice.
   heading is `## Story <id>: <title>` with the entry's id; the join matches
   drafts to entries by it. A line that can't hold (a file the story must
   also touch, a **Developer** that doesn't fit its code) goes in your
-  report; don't change it.
+  report; don't change it. When your entry has a **Drafts after:** line,
+  the stories it names were drafted before your drafting job started: read
+  what your story uses from them (the code it calls, documents or tests, what
+  it renders and returns) in their drafts, `D/S<id>.md`, by grep and line
+  range, and write against that code, not only its contract line.
 - **A fix job:** you didn't write the draft, since every fix job goes to a
   fresh drafter. The dispatch gives the draft `D/S<id>.md`; its findings (a
   check's or premise-check's findings with the draft lines they cite, a
@@ -139,6 +143,14 @@ A draft is the story's plan text, without the opening lines the join writes:
 - **Names are the contract's.** Use every contract name and signature
   exactly. If one can't work against the real code, stop and report
   NEEDS_CONTEXT: say why, and the amendment you propose.
+- **Reuse, never copy.** Before you write a helper, constant, error
+  mapping, fixture or test harness, grep the package and the code your
+  stories call for one that exists, and call it. When reuse needs a change
+  in another file (a wider visibility, an export, a shared test module),
+  write that change in a task and name the file in your report as an entry
+  line that can't hold. The **Files** line is the design session's
+  estimate, not a fence: never copy code, move it, or choose a weaker design
+  to stay inside it.
 - **Registries.** When your story adds what one of the profile block's
   design registries lists (a route, a command, a counted item), a task of
   yours edits that registry too. If the entry's **Files** line lacks the
@@ -168,15 +180,22 @@ A draft is the story's plan text, without the opening lines the join writes:
 Reading is most of what you cost: every file you read is re-read on each
 later request.
 
+- **First, the package rules, with the Read tool.** Read whole, with Read,
+  every CLAUDE.md below the repo root on the path to each directory your
+  entries' **Files** lines name (`git ls-files -- '*CLAUDE.md'` lists
+  them). Bash output (`cat`, `sed`, `grep`) never loads a directory's
+  CLAUDE.md, and its rules bind your code.
 - Of the spec and any recon reports, read only what your entries'
   **Reading** lines name and what those lack, never a whole file by default.
-- Read only the code your stories touch, by line range. Grep for a
+- Read only the code your stories touch or reuse, and a precedent your
+  **Reading** line or a recon report names, by line range. Grep for a
   signature before opening a file, and don't re-read what you have read.
 - Search the repo and its dependency sources, never `/` or `~`. For Cargo,
   `cargo metadata --format-version 1 --offline`, run with the profile
   block's prefix, gives each dependency's `manifest_path`.
-- Never read a whole long plan or another drafter's draft: grep a plan for
-  the pattern you need.
+- Never read a whole long plan or another drafter's draft, except the
+  drafts your **Drafts after:** line names, by grep and line range: grep a
+  plan for the pattern you need.
 - A library's API comes from its source under those dependency paths, or
   from the dispatch.
 
@@ -200,6 +219,14 @@ and fix every flag that is your mistake. A quote of text an earlier story
 adds is flagged too, because that story is in another file: list those in
 your report.
 
+Then write `D/premises/S<id>.md` for each draft: one line per premise your
+draft relies on about another story's code that you couldn't check against
+it (a status and its envelope, an order of events, what renders when, what
+a value means), as `- S<id>.md:<line>: <what that line relies on> (Story
+<other id>)`, or the single line `none`. The seams recon checks each one
+against that story's draft. A fix job rewrites the file only when its fixes
+change a line it cites.
+
 On a fix job, fix each finding you were given and nothing else, and leave
 unchanged every text the contract names as quoted by another story. A finding
 you think is wrong goes in your report with your reason, unapplied.
@@ -210,8 +237,10 @@ At most 15 lines (a question round's, at most 5: above):
 
 - each draft's path and line count;
 - each entry line that can't hold, and why;
-- the premises you relied on but couldn't check, such as a data shape or an
-  API's behaviour, and the `loom flow premises` flags you left, with why;
+- the premises you relied on but couldn't check outside the stories, such
+  as a data shape or an API's behaviour (another story's go in
+  `D/premises/S<id>.md`: give their count), and the `loom flow premises`
+  flags you left, with why;
 - each spec section or file range you read beyond your **Reading** line.
 
 Don't paste the draft. Your report goes back to whoever dispatched you

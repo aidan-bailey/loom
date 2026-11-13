@@ -180,7 +180,8 @@ contract written as an expression draws a false flag, and the cure is to type
 it. It also fails a skeleton listing more stories than the profile's
 `[size] plan` (15 when unset) unless a `**Size:**` line says why it stays one
 plan, and a `**Part:**` line that disagrees with the spec's `## Delivery`
-list, or is missing when the spec has one. Story count predicts a plan's size
+list, or is missing when the spec has one, and a **Drafts after:** line that
+names no listed story, its own story, or a circle of stories. Story count predicts a plan's size
 well (r = 0.82 over 51 past plans), and plans over 15 stories mostly ran at
 $9 to $10 a story against $3 to $4 for the three parts of a split spec.
 
@@ -210,6 +211,20 @@ its paragraph and six lines are indented below it:
       - **Verify:** `the command`
       - **Review:** deep
       - **Reading:** spec §4, §6.2; `lib/b.py:10-80`
+
+An entry may add a **Drafts after:** line, which, like **Reading**, only the
+drafter reads: `- **Drafts after:** Story 3, Story 6`. Give it to a story
+whose code documents, tests or renders what other stories add (a docs story,
+an end-to-end story, a UI story over another story's service): its drafter
+drafts once those stories' drafts exist, and writes against their code
+rather than their contract lines. Drafted beside its subjects, such a story
+guessed at their behaviour: in the runs of 2026-11-10 to 2026-11-12, docs
+tables missed the tests later stories added, and a test expected a box
+another story always renders.
+
+The skeleton names the code a story reuses, on its **Reading** line, never
+code to mirror or copy: entries that said "mirroring `X`" or "copied where its
+shape fits" got copies, and the run's reviews asked for them to be shared.
 
 `- **Story 1:** title`, `- **Story 1**: title`, `1. **Story 1**`, an indented
 bullet and a heading other than `## Stories` (`### Stories`, `## Story list`)
@@ -242,6 +257,17 @@ registries). It writes each task's commands from those values and never runs
 them, checks its own quotes of the tree with `loom flow premises`, and reports
 in at most 15 lines.
 
+Before drafting, it reads, with the Read tool, every CLAUDE.md on the path to
+the directories its **Files** lines name: Claude Code loads a directory's
+CLAUDE.md when a file under it is Read, never for Bash output, and drafters
+read code through Bash (7,366 Bash calls to 220 Reads in 66 drafters of
+2026-11-10 to 2026-11-13, of which 52 never loaded a package's CLAUDE.md). It reuses
+what the tree has rather than copying it, and a file reuse needs goes in its
+report as an entry line that can't hold, which the manager adds to the
+entry's **Files** line: the Files line is the design session's estimate, not
+a fence. What its draft relies on about another story's code and it couldn't
+check, it writes to `D/premises/S<id>.md`, for the seams recon.
+
 The batch drafts in two phases. In the question round, each drafter reads what
 its entries need and writes only `D/questions/S<first id>.md`: the names its
 stories use from others and those they define for others that the contract
@@ -253,7 +279,9 @@ which the manager accepts or rejects in its settlement. The manager waits for ev
 everything in one pass (contract, entries, the owner's answers in the spec),
 runs the skeleton check, then resumes every drafter with the lines that
 changed. Every drafter waits, one that asked nothing included: a name it
-defines may change in the settlement. A gap that shows only while drafting
+defines may change in the settlement. A story with a **Drafts after:** line
+is resumed later, once the stories it names have reported their drafts, and
+its drafter reads those drafts. A gap that shows only while drafting
 takes the old path: the drafter stops and reports NEEDS_CONTEXT, the manager
 amends the contract and answers, and once the drafters whose stories use an
 amended name have reported, a fresh drafter per affected story fixes its
@@ -299,14 +327,21 @@ What the scripts can't check across stories goes to one `flow:recon`.
 `loom flow packet <plan> --seams --rev <REV>`
 writes `D/packets/seams.md`: every name one story's added code defines and
 another story's code uses, cited to the draft lines that define and use it,
+the premises the drafters wrote they couldn't check (`D/premises/S<id>.md`),
 then every story's **Files** line. It refuses a plan that isn't the join of
 its drafts ("the plan is out of date with its drafts; re-run loom flow join"),
 so `/flow:draft` joins after every change before it writes the packet.
 
-The recon reads the packet and the names contract, and answers two questions,
-and a third when the plan declares pairs.
+The recon reads the packet and the names contract, and answers three questions,
+and a fourth when the plan declares pairs.
 Do the contracts between stories match: is every name a story uses from
-another defined there, with the same type, signature and visibility? Which
+another defined there, with the same type, signature and visibility? Does the
+behaviour across them match: where a story's code or test mocks, documents or
+asserts another story's behaviour (a status and its envelope, an order of
+events, what renders when, what a value means), does that story's code do it,
+starting from the packet's unchecked premises? Names alone passed seams in
+which a mock answered a bare 401 the other story enveloped, and a test
+expected a box another story always renders. Which
 files outside every story's **Files** line list or count what the plan adds or
 changes? Does each declared pair's second story use anything its first
 creates? The packet's Declared pairs section lists the names; files, flags and
@@ -314,7 +349,7 @@ behaviour no name shows are the recon's to find. It starts from the profile's `d
 repo that list or count what stories add: a generated region and the command
 that regenerates it, a route or command table, a test that counts registered
 items, a document that states a count. It doesn't re-check quotes of the tree,
-which `flow:premise-check` settled, or review code. Its report goes to
+which `flow:premise-check` settled, or review a story's code on its own. Its report goes to
 `D/findings/seams.md`.
 
 ### Fixing the plan

@@ -93,6 +93,11 @@ resumes it.
    one of the block's landmine markers; this sentence is the instruction the
    Agent tool needs to set a per-call effort. Every other drafter runs at its
    pinned high, a story whose shape only the block's notes describe included.
+   A story whose entry has a **Drafts after:** line drafts in a later wave:
+   its drafter joins the question round with the rest, but step 2b resumes it
+   only once every story that line names has reported its draft, and its
+   drafter then reads those drafts. Give its drafter no story of an earlier
+   wave.
    - **2a. Questions.** The brief adds: "Question round: write only
      `D/questions/S<first id>.md`, then report." The drafter reads what its
      entries need and writes the file's five lists (its definition gives
@@ -120,7 +125,15 @@ resumes it.
      changed among those its questions file raised or its stories own. A
      drafter whose split was accepted drafts both halves; if it already held
      two stories, dispatch a fresh drafter with step 2's drafting brief for
-     the new half.
+     the new half. A later-wave drafter waits (`STATE.md`'s **In flight**
+     says `waiting on Stories <ids>`); when the last story its **Drafts
+     after:** line names reports, resume it the same way, adding "The stories
+     on your **Drafts after:** line are drafted: read what you use from them
+     in their drafts."
+   - A drafting report names entry lines that can't hold. Amend each entry
+     before the join: a file the story's code needs, reuse included, goes on
+     its **Files** line. Never ask a drafter to copy code, or bend its design,
+     to stay inside a Files line, and never accept a report that did.
    - After the round, a drafter that finds a gap in the contract stops and
      reports NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
      `## Stories`), run the skeleton check again, then answer it with
@@ -140,7 +153,9 @@ resumes it.
 
    A join or `loom flow check-plan` failure goes to a fresh drafter as a fix job,
    its findings the failure text, unless it names an entry: fix that in the
-   skeleton. The checks cite plan lines (`line <n>`,
+   skeleton. Each `WARN [lint]` line of `loom flow check-plan` (a
+   `Fails without:` test nothing holds, a `pub` item's doc link to a private
+   one) joins its story's fix job as a finding. The checks cite plan lines (`line <n>`,
    `plan:<n>`), and a fixer works in its draft: give it draft line
    k = n − start + 1, with `start` the story's `start` in `D/join.json`. A
    finding on a line inside a story's `entry` in `D/join.json` is the
@@ -165,15 +180,22 @@ resumes it.
    `loom flow premises`, and a `flow:premise-check` on any new flags. Step 5 bundles
    that run's rows. It is one more check, not a second fix round.
 4. **Seams.** Run `loom flow packet $ARGUMENTS --seams --rev <REV>`.
-   It writes `D/packets/seams.md`, and fails with "the plan is out of date
+   It writes `D/packets/seams.md`, the drafters' `D/premises/S<id>.md`
+   included, and fails with "the plan is out of date
    with its drafts; re-run loom flow join" when the plan isn't the join of its
    drafts: join (step 3) after every change to a draft or to the skeleton,
    before the packet. Dispatch one `flow:recon` with the packet's path, the plan's
    path (the names contract is above its `## Stories`), the design registries
-   from the drafter's block, and two questions:
+   from the drafter's block, and these questions:
    - Do the contracts between stories match? Every name a story uses from
      another must be defined there, with the same name, type, signature and
      visibility.
+   - Does the behaviour across them match? Where a story's code or test
+     mocks, fakes, documents or asserts another story's behaviour (a status
+     and its envelope, an order of events, what renders when, what a value
+     means), does that story's code do it? Check first each premise the
+     packet's "Premises the drafters couldn't check" section lists, against
+     the draft of the story it names, citing both lines for each that fails.
    - Which files outside every story's **Files** line list or count what the
      plan adds or changes? Start from the design registries.
    - When the skeleton has a `**Parallel:**` line: does each declared pair's
@@ -181,7 +203,8 @@ resumes it.
      section lists the names; check files, flags and behaviour too.
 
    It doesn't re-check quotes of the tree (premise-check settled those) or
-   review code. Write its report on arrival to `D/findings/seams.md`.
+   review a story's code on its own. Write its report on arrival to
+   `D/findings/seams.md`.
 5. **Fix.** Read the findings, never the drafts.
    - Write each cross-story decision into the names contract. A design
      question the spec doesn't settle goes to the owner: write the answer into
@@ -266,5 +289,5 @@ set it off here; indented, the heredoc never terminates):
     - <question, or none>
 
     ## In flight
-    - <agent id>: <questions | drafting | fix> <story ids>
+    - <agent id>: <questions | drafting | waiting on Stories <ids> | fix> <story ids>
     EOF
