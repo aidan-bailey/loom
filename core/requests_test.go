@@ -698,3 +698,36 @@ func TestKill_ASessionThatNeverStartedIsRemoved(t *testing.T) {
 	assert.NoError(t, rs[0].Err)
 	assert.NotContains(t, ws.instances(), inst, "the row is gone")
 }
+
+// baseRefSHA is a well-formed commit SHA: createWS only passes it on, and
+// the worktree checks it at the first start.
+const baseRefSHA = "0123456789abcdef0123456789abcdef01234567"
+
+func TestCreate_PassesBaseRefToTheInstance(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	m.SetWorkspacesForTest(ws)
+
+	m.createWS(ws, NewInstance{Title: "w", Path: t.TempDir(), Program: "claude", BaseRef: baseRefSHA}, 1)
+	rs := replies(m.Drain())
+
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+	insts := ws.instances()
+	require.Len(t, insts, 1)
+	assert.Equal(t, baseRefSHA, insts[0].BaseRef())
+}
+
+func TestCreate_BaseRefWithAnExistingBranchIsRefused(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	m.SetWorkspacesForTest(ws)
+
+	m.createWS(ws, NewInstance{Title: "w", Path: t.TempDir(), Program: "claude", Branch: "feature", BaseRef: baseRefSHA}, 2)
+	rs := replies(m.Drain())
+
+	require.Len(t, rs, 1)
+	assert.Zero(t, rs[0].ID)
+	assert.ErrorContains(t, rs[0].Err, "BaseRef")
+	assert.Empty(t, ws.instances(), "no row was added")
+}

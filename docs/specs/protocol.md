@@ -200,7 +200,7 @@ Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRe
 
 ### Create (request)
 
-Params: `{"id":0,"spec":{"Title":"","Path":"","Program":"","Prompt":"","Branch":"","Issue":0,"Launch":{"RemoteControl":false,"PermissionMode":"","Model":"","Context1M":false,"HeadroomProxy":false,"Effort":"","CacheTTL1h":false,"BranchPrefix":"","Account":""},"Start":false},"req":0}`
+Params: `{"id":0,"spec":{"Title":"","Path":"","Program":"","Prompt":"","Branch":"","Issue":0,"BaseRef":"","Launch":{"RemoteControl":false,"PermissionMode":"","Model":"","Context1M":false,"HeadroomProxy":false,"Effort":"","CacheTTL1h":false,"BranchPrefix":"","Account":""},"Start":false},"req":0}`
 
 Result: `{}`
 

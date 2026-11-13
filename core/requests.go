@@ -461,6 +461,7 @@ type NewInstance struct {
 	Prompt  string // sent once it has started
 	Branch  string // the branch picker's choice; "" for a new branch
 	Issue   int    // the GitHub issue it was made from, 0 for none
+	BaseRef string // a full commit SHA to cut the new branch from; "" for the base branch's tip. Excludes Branch
 	// Launch is the Session Launch Options choice. Its account and branch
 	// prefix are recorded on the instance; the rest is composed onto
 	// Program with the account's remote-control auth (applyLaunch). Only
@@ -497,6 +498,7 @@ func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) (InstanceID
 		Prompt:    spec.Prompt,
 		Branch:    spec.Branch,
 		ConfigDir: cfgDir,
+		BaseRef:   spec.BaseRef,
 	})
 	if err != nil {
 		m.refuse(req, 0, err)
