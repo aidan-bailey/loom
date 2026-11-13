@@ -243,9 +243,11 @@ func TestWriteWatchJSON_CarriesAFailedActionsText(t *testing.T) {
 // watchableRepo registers a repository as name whose origin holds a
 // loom-watch.json and its prompt on main, and puts a fake gh first on PATH
 // that finds no PRs and no issues: a poll of it, dry run or not, succeeds
-// without a network. (A bare `git init` repository has no commit, and the
-// daemon refuses a dry run of it.)
-func watchableRepo(t *testing.T, name string) {
+// without a network. It returns the path of the file the fake gh appends a
+// line to on every call, so a test can tell a command that polls from one
+// that does not. (A bare `git init` repository has no commit, and the daemon
+// refuses a dry run of it.)
+func watchableRepo(t *testing.T, name string) (ghLog string) {
 	t.Helper()
 	git := func(dir string, args ...string) {
 		t.Helper()
@@ -261,37 +263,64 @@ func watchableRepo(t *testing.T, name string) {
 		[]byte(`{"version":1,"label":"drift","escalate_label":"needs-human","title":"heal {issue}","session":{"prompt":".loom-watch/start.md"}}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".loom-watch", "start.md"), []byte("Fix issue {issue}.\n"), 0o644))
 	git(repo, "add", "-A")
-	git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init")
+	git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", "init")
 	git(repo, "remote", "add", "origin", origin)
 	git(repo, "push", "-q", "-u", "origin", "main")
 	git(repo, "remote", "set-head", "origin", "main")
 
 	bin := t.TempDir()
-	script := "#!/bin/sh\nif [ \"$1\" = api ]; then echo octocat; else echo '[]'; fi\n"
+	ghLog = filepath.Join(t.TempDir(), "gh.log")
+	script := "#!/bin/sh\necho \"$*\" >> '" + ghLog + "'\nif [ \"$1\" = api ]; then echo octocat; else echo '[]'; fi\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	registeredAt(t, name, repo, "")
+	return ghLog
+}
+
+// ghCalls counts the calls the fake gh at path has logged.
+func ghCalls(t *testing.T, path string) int {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	require.NoError(t, err)
+	return strings.Count(string(b), "\n")
 }
 
 func TestWatchDryRun_TakesNoActionAndPrintsThePlan(t *testing.T) {
 	isolateWorkspaces(t)
-	watchableRepo(t, "ws-a")
+	ghLog := watchableRepo(t, "ws-a")
 	serveDaemon(t, "true")
 	_, _, err := runWatch(t, "on", "-w", "ws-a")
 	require.NoError(t, err)
 
 	// Switching on starts a poll at once, and a dry run is refused while one
-	// is out: ask again until it ends.
+	// is out: ask again until it ends, and only on that refusal.
 	var out string
+	var lastErr error
 	require.Eventually(t, func() bool {
-		var err error
-		out, _, err = runWatch(t, "dry-run", "-w", "ws-a")
-		return err == nil
-	}, 10*time.Second, 20*time.Millisecond)
+		out, _, lastErr = runWatch(t, "dry-run", "-w", "ws-a")
+		if lastErr == nil {
+			return true
+		}
+		if !strings.Contains(lastErr.Error(), "a watcher poll is already running") {
+			require.NoError(t, lastErr)
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "last error: %v", lastErr)
 	assert.True(t, strings.HasPrefix(out, "Dry run for ws-a: nothing was done.\n"), out)
+
+	// A dry run polls (it asks gh); status reads the daemon's view and does not.
+	afterDry := ghCalls(t, ghLog)
+	assert.Positive(t, afterDry, "the dry run polled")
+	_, _, err = runWatch(t, "status", "-w", "ws-a")
+	require.NoError(t, err)
+	assert.Equal(t, afterDry, ghCalls(t, ghLog), "status takes no poll")
 
 	out, _, err = runWatch(t, "dry-run", "--json", "-w", "ws-a")
 	require.NoError(t, err)
+	assert.Greater(t, ghCalls(t, ghLog), afterDry, "a second dry run polls again")
 	var v core.WatchView
 	require.NoError(t, json.Unmarshal([]byte(out), &v))
 	assert.True(t, v.On)
