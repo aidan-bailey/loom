@@ -3,10 +3,11 @@
 
 A plan of many stories is too long for one reader to cross-check whole. The
 seams packet lists each name a story's added code defines that another story's
-code uses, cited to the draft lines that define and use it, then every story's
-Files line, for the one `flow:recon` that checks the contracts between the stories
-and the files outside the plan that list or count what it adds (part 2 spec
-§4.3, step 4).
+code uses, cited to the draft lines that define and use it, then the premises
+each drafter wrote it couldn't check (`DIR/premises/S<id>.md`: what its draft
+relies on about another story's code), then every story's Files line, for the
+one `flow:recon` that checks the contracts between the stories and the files
+outside the plan that list or count what it adds (part 2 spec §4.3, step 4).
 
 Usage: plan_packet.py PLAN --seams [--rev REV] [--drafts DIR]
 
@@ -36,6 +37,11 @@ SEAMS_READING_RULES = (
     "Reading rules: read this packet whole first, then the plan's names contract, in reads of up to 2,000 lines. "
     "Search outside them only for the draft lines a row cites, several searches to one Bash call. "
     "Never re-read what you have read."
+)
+PREMISES_DIR = "premises"
+PREMISES_RULE = (
+    "Each line is a premise a drafter's story relies on about another story's code (a status, an order of events, "
+    "what renders when, a value's meaning) that it couldn't check while it drafted: check it against that story's draft."
 )
 PAIRS_RULE = (
     "Each pair's second story runs its developer in a lane at the first story's base, without the first's code: "
@@ -325,8 +331,21 @@ def checked_map(text: str, drafts: Path) -> dict[str, Span]:
     return story_map
 
 
+def unchecked_premises(drafts: Path, order: list[str]) -> list[tuple[str, list[str]]]:
+    """Each story's `premises/S<id>.md` lines, in story order, leaving out a file that says only `none`."""
+    found: list[tuple[str, list[str]]] = []
+    for story in order:
+        path = drafts / PREMISES_DIR / f"S{story}.md"
+        if not path.is_file():
+            continue
+        lines = [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if lines and not (len(lines) == 1 and lines[0].strip("-* .").lower() == "none"):
+            found.append((story, lines))
+    return found
+
+
 def seams_packet(plan: Path, rev: str, drafts: Path) -> str:
-    """Every name one story defines and another's code uses, then every story's Files line."""
+    """Every name one story defines and another's code uses, the premises its drafters couldn't check, then every story's Files line."""
     text = plan.read_text(encoding="utf-8")
     tree = Tree(repo_root(plan), rev)
     parsed = gather(text, tree.ignored_root)
@@ -354,6 +373,14 @@ def seams_packet(plan: Path, rev: str, drafts: Path) -> str:
         for a, b in pairs:
             names = sorted(name for name in defs.get(a, {}) if name in used.get(b, {}) and name not in own.get(b, {}))
             out.append(f"- {a}+{b}: names Story {a} defines that Story {b} uses: {', '.join(names) if names else '(none found)'}")
+    out += ["", "## Premises the drafters couldn't check", ""]
+    premises = unchecked_premises(drafts, order)
+    if premises:
+        out += [PREMISES_RULE, ""]
+        for story, lines in premises:
+            out += [f"### Story {story}", ""] + fenced(lines, "text") + [""]
+    else:
+        out.append(f"(none: no {PREMISES_DIR}/S<id>.md names one)")
     out += ["", "## Files line of every story", ""]
     for story in order:
         out.append(f"- Story {story}: {field_text(parsed, story, 'Files') or '(none stated)'}")

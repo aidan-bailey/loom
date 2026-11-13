@@ -643,6 +643,46 @@ class SeamsTest(RepoCase):
         self.assertIn("- Story 2: `src/short.rs`", text)
 
 
+class PremisesSectionTest(RepoCase):
+    def premises(self, files):
+        """The packet's section of unchecked premises, with `files` written under the drafts' premises/ (then removed)."""
+        made = []
+        for name, body in files.items():
+            path = self.drafts / "premises" / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(body)
+            made.append(path)
+        try:
+            text = plan_packet.seams_packet(self.plan, "HEAD", self.drafts)
+        finally:
+            for path in made:
+                path.unlink()
+        return text.split("## Premises the drafters couldn't check", 1)[1].split("## Files line of every story", 1)[0]
+
+    def test_each_storys_premises_are_listed_in_story_order(self):
+        section = self.premises({
+            "S2.md": "- S2.md:3: Story 1's lookup answers None for an unknown id (Story 1)\n",
+            "S1.md": "none\n",
+        })
+        self.assertIn(plan_packet.PREMISES_RULE, section)
+        self.assertIn("### Story 2", section)
+        self.assertIn("- S2.md:3: Story 1's lookup answers None for an unknown id (Story 1)", section)
+        self.assertNotIn("### Story 1", section)
+
+    def test_no_premises_say_so(self):
+        self.assertIn("(none: no premises/S<id>.md names one)", self.premises({}))
+        self.assertIn("(none: no premises/S<id>.md names one)", self.premises({"S1.md": "- none\n"}))
+
+    def test_a_premises_file_is_no_draft_to_the_join(self):
+        (self.drafts / "premises").mkdir(exist_ok=True)
+        (self.drafts / "premises" / "S1.md").write_text("none\n")
+        try:
+            out, _, _ = plan_join.join(self.plan.read_text(encoding="utf-8"), self.drafts)
+        finally:
+            (self.drafts / "premises" / "S1.md").unlink()
+        self.assertEqual(out, PLAN)
+
+
 class CliTest(RepoCase):
     def run_cli(self, *args, plan=None):
         # A FLOW_HOME with no profiles, so the default drafts directory is the plan's own.
