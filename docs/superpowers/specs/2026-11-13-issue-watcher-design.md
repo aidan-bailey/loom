@@ -154,7 +154,7 @@ A 60 s tick would spend a session's nudges in minutes. A nudge of kind K on a PR
 
 ### 4.4 Escalating
 
-In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick; a failed label is retried next tick; once L is on, rule 4 holds. Escalating kills nothing.
+In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick. Once the comment is posted, memory records it (the issue's `commented`, the escalation's reason) before the label is tried, so a failed label is retried next tick without commenting again; once L is on, rule 4 holds. Escalating kills nothing.
 
 ## 5. The hook
 
