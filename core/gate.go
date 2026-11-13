@@ -31,6 +31,11 @@ const (
 	// gateFeedback keeps one feedback grouping call in flight
 	// (maybeGroupFeedback).
 	gateFeedback
+	// gateWatch spaces the issue watcher's polls (maybeWatch). It is a
+	// cadence only: one tick can start a poll per workspace, so each
+	// workspace's watchState.polling is the in-flight bit, cleared by
+	// every delivery (deliverWatch).
+	gateWatch
 
 	numGateKinds
 )
@@ -56,6 +61,8 @@ func (k gateKind) String() string {
 		return "queue"
 	case gateFeedback:
 		return "feedback"
+	case gateWatch:
+		return "watch"
 	}
 	return "unknown"
 }
@@ -70,6 +77,7 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateUsage:      usageInterval,
 	gateBuildSweep: buildSweepInterval,
 	gateQueue:      queueInterval,
+	gateWatch:      watchInterval,
 	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
 	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.
