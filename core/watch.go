@@ -165,7 +165,9 @@ func (m *Model) deliverWatch(res watchResult) {
 	if res.err != "" {
 		log.For("watch").Debug("poll.failed", "workspace", res.ws.Name(), "err", res.err)
 	}
-	// Story 9 adds the call to dispatchWatchActions here, with st.actions.
+	if st.err == "" {
+		m.dispatchWatchActions(res.ws, st, st.actions)
+	}
 }
 
 // startWatchPoll dispatches one poll job for ws: false when the model does
