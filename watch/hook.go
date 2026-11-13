@@ -1,8 +1,14 @@
 package watch
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"maps"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/aidan-bailey/loom/session/github"
@@ -170,4 +176,150 @@ func hookLastLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// StartAnswer is the hook's answer to `start` (spec §5.2): whether to start,
+// the variables for the title and the prompt, and on a refusal why. A
+// refusal's Vars are always nil.
+type StartAnswer struct {
+	Start  bool
+	Vars   map[string]string
+	Reason string
+}
+
+// Bounds on what the hook returns (spec §7.1).
+const (
+	hookMaxVars      = 16
+	hookMaxVarValue  = 64       // bytes
+	hookMaxNudges    = 8        // per call
+	hookMaxNudgeText = 16 << 10 // bytes
+	hookMaxNudgeKey  = 256      // bytes
+	hookMaxReason    = 1 << 10  // bytes
+)
+
+var (
+	// hookVarName is what the name of a `start` variable matches.
+	hookVarName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	// hookKind is what the kind of a hook nudge matches.
+	hookKind = regexp.MustCompile(`^[a-z][a-z-]*$`)
+	// hookPromptVars are the variables every prompt template has (spec §3.3).
+	// A hook may not return one: merging it in would shadow the real value.
+	hookPromptVars = map[string]bool{
+		"issue": true, "issue_title": true, "issue_url": true,
+		"pr": true, "pr_url": true, "branch": true, "base": true,
+	}
+	// hookLoomKinds are the kinds of loom's own nudges (spec §4.2), which a
+	// hook's may not take.
+	hookLoomKinds = map[string]bool{"conflict": true, "ci": true, "issue-changed": true}
+)
+
+type hookStartWire struct {
+	Start  *bool             `json:"start"`
+	Vars   map[string]string `json:"vars"`
+	Reason string            `json:"reason"`
+}
+
+type hookNudgeWire struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+	Text string `json:"text"`
+}
+
+type hookNudgesWire struct {
+	Nudges *[]hookNudgeWire `json:"nudges"`
+}
+
+// decodeHookObject decodes the one JSON object in out into v. A key v lacks,
+// and any data after the object, fail it.
+func decodeHookObject(out []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(out))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("stdout is not the expected JSON object: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("stdout has data after the JSON object")
+	}
+	return nil
+}
+
+// decodeHookStart checks a `start` answer against the shape of spec §5.2 and
+// the bounds of §7.1. A refusal's variables are dropped without being checked.
+func decodeHookStart(out []byte) (StartAnswer, error) {
+	var w hookStartWire
+	if err := decodeHookObject(out, &w); err != nil {
+		return StartAnswer{}, err
+	}
+	if w.Start == nil {
+		return StartAnswer{}, errors.New(`answer lacks "start"`)
+	}
+	if len(w.Reason) > hookMaxReason {
+		return StartAnswer{}, fmt.Errorf("reason is %d bytes, at most %d", len(w.Reason), hookMaxReason)
+	}
+	if !*w.Start {
+		return StartAnswer{Reason: w.Reason}, nil
+	}
+	if err := checkHookVars(w.Vars); err != nil {
+		return StartAnswer{}, err
+	}
+	return StartAnswer{Start: true, Vars: w.Vars, Reason: w.Reason}, nil
+}
+
+// checkHookVars checks the variables of a `start` that starts: at most 16,
+// each name `[a-z][a-z0-9_]*` and not a prompt builtin, each value at most
+// 64 bytes. It reports the first fault in name order. The title-variable
+// charset is TitleTemplate.Render's to check: the runner does not know the
+// template.
+func checkHookVars(vars map[string]string) error {
+	if len(vars) > hookMaxVars {
+		return fmt.Errorf("vars: %d entries, at most %d", len(vars), hookMaxVars)
+	}
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		switch {
+		case !hookVarName.MatchString(name):
+			return fmt.Errorf("vars: name %q is not [a-z][a-z0-9_]*", name)
+		case hookPromptVars[name]:
+			return fmt.Errorf("vars: name %q is a prompt variable", name)
+		case len(vars[name]) > hookMaxVarValue:
+			return fmt.Errorf("vars: value of %q is %d bytes, at most %d", name, len(vars[name]), hookMaxVarValue)
+		}
+	}
+	return nil
+}
+
+// decodeHookNudges checks a `nudges` answer against the shape of spec §5.3
+// and the bounds of §7.1: at most 8 nudges, each kind `[a-z][a-z-]*` and none
+// of loom's own, each key and text non-empty and within their sizes. One bad
+// nudge fails the answer.
+func decodeHookNudges(out []byte) ([]Nudge, error) {
+	var w hookNudgesWire
+	if err := decodeHookObject(out, &w); err != nil {
+		return nil, err
+	}
+	if w.Nudges == nil {
+		return nil, errors.New(`answer lacks "nudges"`)
+	}
+	items := *w.Nudges
+	if len(items) > hookMaxNudges {
+		return nil, fmt.Errorf("%d nudges, at most %d", len(items), hookMaxNudges)
+	}
+	nudges := make([]Nudge, 0, len(items))
+	for i, it := range items {
+		switch {
+		case !hookKind.MatchString(it.Kind):
+			return nil, fmt.Errorf("nudges[%d]: kind %q is not [a-z][a-z-]*", i, it.Kind)
+		case hookLoomKinds[it.Kind]:
+			return nil, fmt.Errorf("nudges[%d]: kind %q is reserved for loom's own nudges", i, it.Kind)
+		case it.Key == "":
+			return nil, fmt.Errorf("nudges[%d]: key is empty", i)
+		case len(it.Key) > hookMaxNudgeKey:
+			return nil, fmt.Errorf("nudges[%d]: key is %d bytes, at most %d", i, len(it.Key), hookMaxNudgeKey)
+		case it.Text == "":
+			return nil, fmt.Errorf("nudges[%d]: text is empty", i)
+		case len(it.Text) > hookMaxNudgeText:
+			return nil, fmt.Errorf("nudges[%d]: text is %d bytes, at most %d", i, len(it.Text), hookMaxNudgeText)
+		}
+		nudges = append(nudges, Nudge{Kind: it.Kind, Key: it.Key, Text: it.Text})
+	}
+	return nudges, nil
 }
