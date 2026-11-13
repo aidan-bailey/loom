@@ -3,7 +3,11 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,4 +250,331 @@ func TestDeliverWatchAction_ALateResultForAStateNoLongerLiveRecordsNothing(t *te
 
 	assert.Empty(t, st.inFlight, "the key is still released")
 	assert.Empty(t, st.actErrs)
+}
+
+// wactGH is a gh the watcher's calls run against: it records each call's
+// arguments after "gh", fails the calls whose arguments start with fail, and
+// answers the ones that start with a key of out.
+type wactGH struct {
+	mu    sync.Mutex
+	calls []string
+	fail  string
+	out   map[string]string
+}
+
+func (g *wactGH) do(c *exec.Cmd) ([]byte, error) {
+	args := strings.Join(c.Args[1:], " ")
+	g.mu.Lock()
+	g.calls = append(g.calls, args)
+	g.mu.Unlock()
+	if g.fail != "" && strings.HasPrefix(args, g.fail) {
+		return nil, errors.New("boom")
+	}
+	for prefix, text := range g.out {
+		if strings.HasPrefix(args, prefix) {
+			return []byte(text), nil
+		}
+	}
+	if strings.HasPrefix(args, "label list") {
+		return []byte("[]"), nil // AddLabel lists the repo's labels first
+	}
+	return nil, nil
+}
+
+func (g *wactGH) Run(c *exec.Cmd) error {
+	_, err := g.do(c)
+	return err
+}
+
+func (g *wactGH) Output(c *exec.Cmd) ([]byte, error) { return g.do(c) }
+
+func (g *wactGH) CombinedOutput(c *exec.Cmd) ([]byte, error) { return g.do(c) }
+
+func (g *wactGH) seen() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.calls)
+}
+
+// wactRunAll runs out's jobs and then the jobs their results spawn, until none
+// is left, and returns every event produced on the way (out's own included).
+func wactRunAll(m *Model, out Out) []Event {
+	var events []Event
+	for {
+		events = append(events, out.Events...)
+		if len(out.Jobs) == 0 {
+			return events
+		}
+		out = run(m, out)
+	}
+}
+
+// wactCount is how many of calls start with prefix.
+func wactCount(calls []string, prefix string) int {
+	n := 0
+	for _, c := range calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestWatchClosePR_ClosesTheWatchersOwnOpenPRWithTheCommentItWasGiven(t *testing.T) {
+	gh := &wactGH{}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	a := watch.Action{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "Closing: issue #7 is closed."}
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	out := m.Drain()
+
+	require.Len(t, out.Jobs, 1)
+	assert.True(t, st.inFlight[watchActKey(a)])
+	run(m, out)
+	calls := gh.seen()
+	require.Len(t, calls, 1)
+	assert.True(t, strings.HasPrefix(calls[0], "pr close"), calls[0])
+	assert.Contains(t, calls[0], "Closing: issue #7 is closed.")
+	assert.Empty(t, st.inFlight)
+	assert.Empty(t, st.actErrs)
+}
+
+func TestWatchClosePR_RefusesAPRThatIsNotItsOwnOpenPR(t *testing.T) {
+	own := wactPR(7, 5, "OPEN")
+	merged := own
+	merged.State = "MERGED"
+	stranger := own
+	stranger.Author = "someone"
+	crossRepo := own
+	crossRepo.CrossRepo = true
+	cases := []struct {
+		name string
+		prs  []github.WatchPR
+	}{
+		{"absent from the snapshot", nil},
+		{"not open", []github.WatchPR{merged}},
+		{"someone else's", []github.WatchPR{stranger}},
+		{"cross-repository", []github.WatchPR{crossRepo}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gh := &wactGH{}
+			m, ws, st := wactModel(t, Options{GHExec: gh})
+			st.snap.PRs = c.prs
+
+			m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"}})
+
+			assert.Empty(t, m.Drain().Jobs)
+			assert.Empty(t, gh.seen())
+			assert.NotEmpty(t, st.actErrs[7], "the refusal is reported")
+		})
+	}
+}
+
+func TestWatchClosePR_AFailedCloseIsReported(t *testing.T) {
+	gh := &wactGH{fail: "pr close"}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+
+	m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"}})
+	run(m, m.Drain())
+
+	assert.Contains(t, st.actErrs[7], "close PR #5")
+	assert.Contains(t, st.actErrs[7], "boom")
+	assert.Empty(t, st.inFlight)
+}
+
+func TestDispatchWatchActions_AnActionInFlightIsNotDispatchedAgain(t *testing.T) {
+	m, ws, st := wactModel(t, Options{GHExec: &wactGH{}})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	actions := []watch.Action{
+		{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"},
+		{Kind: watch.ActEscalate, Issue: 7, Reason: "stuck"},
+	}
+
+	m.dispatchWatchActions(ws, st, actions)
+	m.dispatchWatchActions(ws, st, actions)
+
+	assert.Len(t, m.Drain().Jobs, 2, "one close and one escalation, not four jobs")
+}
+
+func TestWatchEscalate_CommentsLabelsAlertsThenRecords(t *testing.T) {
+	gh := &wactGH{}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	a := watch.Action{Kind: watch.ActEscalate, Issue: 7, PR: 5, Reason: "PR #5 was closed unmerged", Settle: []int{5}}
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	out := m.Drain()
+	require.Len(t, out.Jobs, 1)
+	assert.Empty(t, st.mem.Issues, "nothing is recorded before the comment and the label are posted")
+	assert.True(t, st.inFlight[watchActKey(a)])
+
+	out = run(m, out)
+	assert.Equal(t, 0, wactCount(gh.seen(), "issue edit"), "the label waits for the comment's record")
+	assert.Equal(t, "PR #5 was closed unmerged", st.mem.Issues[7].Commented, "the posted comment is recorded before the label is tried")
+	assert.Nil(t, st.mem.Issues[7].Escalated, "the escalation is recorded only once the label is on")
+	require.Len(t, out.Jobs, 1, "the label is its own job")
+	assert.True(t, st.inFlight[watchActKey(a)], "the key is held across the two jobs")
+	onDisk, err := watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	assert.Equal(t, "PR #5 was closed unmerged", onDisk.Issues[7].Commented, "and saved")
+	notes, _ := noticesAndStarts(wactRunAll(m, out))
+	require.Len(t, notes, 1, "one alert, after the label")
+
+	calls := gh.seen()
+	comment := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "issue comment") })
+	label := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "issue edit") })
+	require.GreaterOrEqual(t, comment, 0, "calls: %v", calls)
+	require.Greater(t, label, comment, "the comment comes before the label")
+	assert.Contains(t, calls[comment], "PR #5 was closed unmerged")
+	assert.Contains(t, calls[label], "needs-human")
+	assert.Contains(t, notes[0].Info, "#7")
+	assert.Contains(t, notes[0].Info, "PR #5 was closed unmerged")
+	rec := st.mem.Issues[7].Escalated
+	require.NotNil(t, rec)
+	assert.Equal(t, "PR #5 was closed unmerged", rec.Reason)
+	assert.False(t, rec.At.IsZero())
+	assert.True(t, st.mem.PRs[5].Settled, "rule 5 settles its PRs")
+	onDisk, err = watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	require.NotNil(t, onDisk.Issues[7].Escalated)
+	assert.True(t, onDisk.PRs[5].Settled)
+	assert.Empty(t, st.inFlight)
+}
+
+func TestWatchEscalate_AFailedStepAlertsAndEscalatesNothing(t *testing.T) {
+	cases := []struct {
+		name          string
+		fail          string
+		wantLabel     bool
+		wantCommented string
+	}{
+		{"the comment", "issue comment", false, ""},
+		{"the label", "issue edit", true, "stuck"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gh := &wactGH{fail: c.fail}
+			m, ws, st := wactModel(t, Options{GHExec: gh})
+
+			m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActEscalate, Issue: 7, Reason: "stuck"}})
+			events := wactRunAll(m, m.Drain())
+
+			calls := gh.seen()
+			assert.Equal(t, c.wantLabel, wactCount(calls, "issue edit") > 0, "the label is tried only after the comment was posted: %v", calls)
+			notes, _ := noticesAndStarts(events)
+			assert.Empty(t, notes, "no alert")
+			assert.Nil(t, st.mem.Issues[7].Escalated, "the escalation is not recorded")
+			assert.Equal(t, c.wantCommented, st.mem.Issues[7].Commented, "only a posted comment is recorded")
+			assert.Contains(t, st.actErrs[7], "boom")
+			assert.Empty(t, st.inFlight, "the next tick decides again")
+		})
+	}
+}
+
+func TestWatchEscalate_ARetryAfterAFailedLabelPostsNoSecondComment(t *testing.T) {
+	gh := &wactGH{fail: "issue edit"}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	a := watch.Action{Kind: watch.ActEscalate, Issue: 7, Reason: "stuck"}
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	wactRunAll(m, m.Drain())
+	require.Equal(t, 1, wactCount(gh.seen(), "issue comment"))
+	require.Equal(t, 1, wactCount(gh.seen(), "issue edit"), "the first label failed")
+	gh.fail = ""
+
+	m.dispatchWatchActions(ws, st, []watch.Action{a})
+	events := wactRunAll(m, m.Drain())
+
+	calls := gh.seen()
+	assert.Equal(t, 1, wactCount(calls, "issue comment"), "the retry skips the comment already posted: %v", calls)
+	assert.Equal(t, 2, wactCount(calls, "issue edit"), "and tries the label again")
+	notes, _ := noticesAndStarts(events)
+	assert.Len(t, notes, 1, "the alert follows the label that finally went on")
+	require.NotNil(t, st.mem.Issues[7].Escalated)
+	assert.Empty(t, st.actErrs[7])
+	assert.Empty(t, st.inFlight)
+}
+
+func TestWatchEscalate_ACommentRecordedForAnotherReasonOrNoneIsPostedAgain(t *testing.T) {
+	cases := []struct{ name, recorded, reason string }{
+		{"another reason", "old reason", "new reason"},
+		{"none recorded and an empty reason", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gh := &wactGH{}
+			m, ws, st := wactModel(t, Options{GHExec: gh})
+			if c.recorded != "" {
+				st.mem.RecordCommented(7, c.recorded)
+			}
+
+			m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActEscalate, Issue: 7, Reason: c.reason}})
+			wactRunAll(m, m.Drain())
+
+			assert.Equal(t, 1, wactCount(gh.seen(), "issue comment"), "the recorded comment was for another escalation: %v", gh.seen())
+			assert.Equal(t, 1, wactCount(gh.seen(), "issue edit"))
+		})
+	}
+}
+
+func TestWatchEscalate_AMemorySaveThatFailsIsReported(t *testing.T) {
+	cases := []struct {
+		name        string
+		want        string
+		breakAfter  bool
+		wantLabeled bool
+	}{
+		{"the comment's record", "record the comment", false, false},
+		{"the escalation's record", "record the escalation", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gh := &wactGH{}
+			m, ws, st := wactModel(t, Options{GHExec: gh})
+			if !c.breakAfter {
+				st.memPath = t.TempDir()
+			}
+
+			m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActEscalate, Issue: 7, Reason: "stuck"}})
+			out := run(m, m.Drain())
+			if c.breakAfter {
+				st.memPath = t.TempDir()
+			}
+			events := wactRunAll(m, out)
+
+			assert.Contains(t, st.actErrs[7], c.want)
+			assert.Equal(t, c.wantLabeled, wactCount(gh.seen(), "issue edit") > 0, "an unsaved comment's record stops the label: %v", gh.seen())
+			notes, _ := noticesAndStarts(events)
+			var errs int
+			for _, n := range notes {
+				if n.Err != nil {
+					errs++
+				}
+			}
+			assert.Equal(t, 1, errs, "the failure is shown to the clients")
+		})
+	}
+}
+
+func TestWatchEscalationComment_NamesTheReasonTheSessionThePRAndTheCounts(t *testing.T) {
+	_, _, st := wactModel(t, Options{})
+	st.mem.RecordNudge(5, "ci", "k1", time.Now())
+	st.mem.RecordNudge(5, "ci", "k2", time.Now())
+	st.mem.RecordNudge(5, "conflict", "k3", time.Now())
+	a := watch.Action{Kind: watch.ActEscalate, Issue: 7, PR: 5, Reason: "PR #5: ci nudge limit (3) reached"}
+
+	got := watchEscalationComment(st, a, "heal 7")
+
+	assert.Contains(t, got, "PR #5: ci nudge limit (3) reached")
+	assert.Contains(t, got, "Session: heal 7")
+	assert.Contains(t, got, "PR: #5")
+	assert.Contains(t, got, "ci 2, conflict 1")
+	assert.Contains(t, got, "`needs-human`")
+
+	bare := watchEscalationComment(st, watch.Action{Kind: watch.ActEscalate, Issue: 7, Reason: "x"}, "")
+	assert.NotContains(t, bare, "Session:")
+	assert.NotContains(t, bare, "PR:")
+	assert.NotContains(t, bare, "Nudges sent")
 }
