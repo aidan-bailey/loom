@@ -36,6 +36,7 @@ var flowTools = []flowTool{
 	{name: "packet", script: "plan_packet.py", short: "Write a plan's seams packet"},
 	{name: "join", script: "plan_join.py", short: "Rebuild a plan's stories from their drafts"},
 	{name: "premises", script: "plan_premises.py", short: "List a plan's premises the tree doesn't bear out"},
+	{name: "plan-review", script: "plan_review.py", short: "Print the Plan review line of a plan /flow:draft reviewed"},
 	{name: "conformance", script: "plan_conformance.py", short: "Show which of a story's plan code landed as written"},
 	{name: "costs", script: "agent_costs.py", short: "Token usage and API-price cost of a session's agents, or of run records"},
 	{name: "doctor", script: "flowconf.py", args: []string{"doctor"}, short: "Check that a supervised run can start here"},
