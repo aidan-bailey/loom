@@ -181,6 +181,11 @@ type Instance struct {
 	// branch name it produced is stored in Branch — so a resume has no use
 	// for it and InstanceData needs no schema bump.
 	branchPrefix *string
+	// baseRef is InstanceOptions.BaseRef: the commit the new branch is cut
+	// from at first-time setup. Set once by NewInstance and never changed,
+	// so it needs no lock; deliberately not persisted, for the reason
+	// branchPrefix is not.
+	baseRef string
 
 	// The below fields are initialized upon calling Start().
 
@@ -527,6 +532,11 @@ type InstanceOptions struct {
 	ConfigDir string
 	// IsWorkspaceTerminal creates a workspace terminal instance (no worktree).
 	IsWorkspaceTerminal bool
+	// BaseRef is a full commit SHA to cut the session's new branch from
+	// (optional; empty keeps the resolved base branch). It reaches the
+	// worktree at the first Start and is never persisted. It excludes
+	// Branch, which starts the session on an existing branch.
+	BaseRef string
 }
 
 // NewInstance constructs a blank Instance in the Ready state. No git
@@ -535,6 +545,10 @@ type InstanceOptions struct {
 // resolved to an absolute path so worktree setup is not affected by later
 // chdir calls.
 func NewInstance(opts InstanceOptions) (*Instance, error) {
+	if opts.BaseRef != "" && opts.Branch != "" {
+		return nil, fmt.Errorf("BaseRef and Branch are exclusive: a new branch is cut from BaseRef, an existing one is started as it is")
+	}
+
 	t := time.Now()
 
 	// Convert path to absolute
@@ -556,6 +570,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		CreatedAt:           t,
 		UpdatedAt:           t,
 		selectedBranch:      opts.Branch,
+		baseRef:             opts.BaseRef,
 		ConfigDir:           opts.ConfigDir,
 		IsWorkspaceTerminal: opts.IsWorkspaceTerminal,
 		logger:              log.For("instance", "title", opts.Title),
@@ -717,6 +732,12 @@ func (i *Instance) SetBranchPrefix(prefix string) {
 // when none was set and the configured prefix applies.
 func (i *Instance) BranchPrefixOverride() *string {
 	return i.branchPrefix
+}
+
+// BaseRef returns the commit SHA the session's new branch is cut from at its
+// first Start, or "" when it is cut from the resolved base branch.
+func (i *Instance) BaseRef() string {
+	return i.baseRef
 }
 
 // Program returns the agent command this instance launches (the bare
@@ -932,6 +953,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 				SessionName:  i.Title,
 				ConfigDir:    i.ConfigDir,
 				BranchPrefix: i.branchPrefix,
+				BaseRef:      i.baseRef,
 			})
 			if err != nil {
 				setupErr = fmt.Errorf("failed to create git worktree: %w", err)
