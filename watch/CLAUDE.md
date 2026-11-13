@@ -6,6 +6,7 @@ The issue watcher's logic: the `loom-watch.json` config, the title template and 
 
 - **Keep `maxTitleWidth` equal to `core.MaxTitleWidth` (32 cells).** `watch` can't import `core` (core imports it), and a title wider than core accepts is refused at the start of every session, so the issue never gets one and the status says only that the start failed. **Enforced** by `TestMaxTitleWidth_MatchesCore`.
 - **Derive the branch pattern from `git.SanitizeBranchName` itself (`TitleTemplate.BranchPattern`), never from a copy of its rules.** The watcher recognises its own PRs by that pattern, and one that drifts from the sanitizer stops matching them: their issues get a second session and the PRs are never nudged or settled. **Enforced** by `TestTitleTemplate_RoundTrip`.
+- **Treat any fault in `loom-watch.json` as the whole file's (`ParseConfig`): an unknown key, a missing required key, a value outside its bound, a version other than 1 return an error naming the key and a zero `Config`, never a default for the bad value.** A silently defaulted value runs the watcher on settings nobody wrote, starting and killing sessions on them. **Enforced** by `TestParseConfig_Invalid`, `TestParseConfig_Required` and `TestParseConfig_Bounds`.
 
 ## Pointers
 
