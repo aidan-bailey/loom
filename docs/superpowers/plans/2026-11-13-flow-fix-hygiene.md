@@ -494,8 +494,8 @@ with:
      plan's path and two questions: do the listed pairs' contracts still
      match, and does the behaviour across them (step 4's second question)?
      Write its report to `D/findings/seams-changed.md`.
-   - **The wave.** For each story the re-check's findings, or a settled
-     finding, name, write `D/findings/wave-S<id>.md` and dispatch one fresh
+   - **The wave.** For each story the seams re-check's findings, or a
+     settled finding, name, write `D/findings/wave-S<id>.md` and dispatch one fresh
      `flow:drafter` with the fix-job brief, that file, the story's `start` and
      "wave job". Then run step 3 once more. The wave runs once: what a wave
      fixer reports unapplied goes to the owner.

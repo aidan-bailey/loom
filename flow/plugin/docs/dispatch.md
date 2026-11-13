@@ -364,7 +364,8 @@ concurrency, outside calls, bounds or auth to a `flow:risk-reviewer` (Opus @
 high), which reads only those tasks. Either may report a `SPEC` finding: code
 that follows a spec or entry that is itself wrong, settled like a DESIGN
 verdict. Findings join the story's fix job. After the fixes, a story whose
-draft changed since its review gets one re-check of the diff, never a loop.
+draft changed since its review gets one re-check of the diff and of the uses
+of what it changed, never a loop.
 
 `/flow:draft` copies each draft to `D/reviewing/` as its review starts and to
 `D/reviewed/` once the review or its re-check is clean, and
@@ -383,7 +384,13 @@ review is `flow:story-reviewer`'s, which reads only what departs from the plan.
    committed at once. Opus decides; a `flow:drafter` writes, since Opus writes
    code only as a last resort. Name there, too, each text a later story quotes
    from an earlier one (its "current" block). Every fixer leaves a named text
-   unchanged, so fixers working at once can't break a later story's quote.
+   unchanged, so fixers working at once can't break a later story's quote. A
+   finding states the defect and the result it needs, never the lines to edit:
+   one that said "edit only lines 137-141" put a bullet under the wrong
+   heading. A defect with two sides names both, and a decision between two
+   stories' versions names what each keeps and drops, in both stories'
+   findings in the same round: two fixers given halves of one duplicate's
+   decision left a test that the kept code fails.
 2. **Fix each story in place.** One fresh `flow:drafter` per story with findings
    edits `D/S<id>.md` and nothing else, so no two agents edit one file. It gets
    its story's findings, as the path of its findings file (the recon's seam
@@ -398,13 +405,28 @@ review is `flow:story-reviewer`'s, which reads only what departs from the plan.
    findings file bundles the story's `flow:premise-check` rows
    still open after the check stage's last run (the check stage runs once more
    after its own fix jobs: one more check, not a second fix round), the seams
-   findings that name the story, and its plan review's open findings.
+   findings that name the story, and its plan review's open findings. A fixer
+   also fixes what its fixes make false in its own draft, grepping it for the
+   uses of each name whose code or behaviour it changed.
 3. **Join and check again:** `loom flow join`, `loom flow check-plan` and
-   `loom flow premises`, with `flow:premise-check` on any new flag, and the seams
-   check once more when a fix changed the contract. Then a story whose draft
-   changed since its plan review gets its one re-check.
-4. **One round.** A finding still open after its fix round goes to the owner;
-   there is no second automatic round.
+   `loom flow premises`, with `flow:premise-check` on any new flag. Then the
+   seams re-check: the full seams check when a fix changed the contract, else
+   `loom flow packet <plan> --seams --changed`, which lists only the names one
+   story defines and another uses where a fix since the plan review changed
+   the definition (a body edit counts) or a line that uses it, from each
+   draft's `D/reviewing/` copy; when it lists any, one `flow:recon` checks
+   their contracts and behaviour. Its findings go to one wave of fresh
+   drafters, one per story they name, which runs once: a wave fixer that would
+   change what another story uses reports it instead. The seams check used to
+   re-run only when a fix changed a name, and 2 to 3 of the 11 defects that
+   planning's fixes introduced in the 8 drafted plans of 2026-11-10 to
+   2026-11-13 were behaviour another story relied on. After the wave, join and
+   check once more, and a story whose draft changed since its plan review gets
+   its one re-check.
+4. **One round.** A finding still open after its fix round and the wave goes
+   to the owner; there is no further automatic round. Each finding a fixer
+   leaves unapplied, and each clash it reports, is settled: closed with a
+   reason, given to the wave, or taken to the owner.
 5. **Record and commit.** `/flow:draft` prices its sessions with
    `loom flow costs session` unless `STATE.md`'s Design stage slot already holds
    the line, which it reuses (as after a session that died before the commit),

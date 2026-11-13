@@ -29,7 +29,12 @@ fix job goes to a fresh `flow:drafter`, and its brief holds the draft
 `## Stories`), the spec's path and the drafter's profile block; it runs at the
 drafter's pinned high, whatever the story's shape: its fixes are decided
 before it starts, and step 5's re-check or the run's full review checks the story again. Steps 2,
-3 and 5 name only the findings. Never
+3 and 5 name only the findings. A finding you write states the defect and the
+result it needs, never the lines to edit or a "nothing else" fence: "edit only
+lines 137-141" once put a bullet under the wrong heading. A defect with two
+sides names both (both directions of a match, both stories of a duplicate),
+and a decision between two stories' versions names what each keeps and what
+each drops, in both stories' findings in the same round. Never
 send a running drafter new work by message: it arrives framed as another
 agent's request. Only your answer to a drafter's own NEEDS_CONTEXT report, and
 step 2's message that ends the question round, go to a drafter, and each
@@ -70,9 +75,10 @@ resumes it.
      dispatch each fresh with step 2b's drafting brief. A drafter on a drafting job
      is dispatched again, fresh, with step 2's drafting brief plus "finish
      `D/S<id>.md` without redoing what is there". A drafter on a fix job (step
-     2's amendment fixes, step 3's fix jobs, step 5's fixers) is dispatched
-     again, fresh, with its fix-job brief as the intro gives it, with that
-     step's findings (for step 5, `D/findings/S<id>.md` and the story's
+     2's amendment fixes, step 3's fix jobs, step 5's fixers and its wave) is
+     dispatched again, fresh, with its fix-job brief as the intro gives it,
+     with that step's findings (for step 5, `D/findings/S<id>.md` or
+     `D/findings/wave-S<id>.md`, "wave job" for the second, and the story's
      `start` from `D/join.json`), plus "some of these may already be fixed in
      `D/S<id>.md`; fix what remains". A `flow:recon` or `flow:premise-check` restarts
      fresh unless its findings file shows it reported. Otherwise record `REV`
@@ -140,9 +146,9 @@ resumes it.
      reports NEEDS_CONTEXT. Amend the names contract (in the skeleton, above
      `## Stories`), run the skeleton check again, then answer it with
      SendMessage to the id on its report.
-   - When an amendment changes a name that other drafts use, wait until their
-     drafters have reported, then give each affected draft a fix job whose
-     findings are the amendment. An amended entry needs no fix job: the join
+   - When an amendment changes a name, or what a named thing does, that other
+     drafts use, wait until their drafters have reported, then give each
+     affected draft a fix job whose findings are the amendment. An amended entry needs no fix job: the join
      writes each story's opening lines from its entry.
 3. **Join and check.** Run, in order:
    - `loom flow join $ARGUMENTS`, which writes the plan from the
@@ -245,8 +251,26 @@ resumes it.
      place. Its findings are the path of that story's `D/findings/S<id>.md`
      and the story's `start` from `D/join.json`, so that it turns `plan:<n>`
      into draft lines.
-   - Then run step 3 again, and step 4's seams recon too when a fix changed
-     the contract; the plan review doesn't run again.
+   - Then run step 3 again; the plan review doesn't run again.
+   - Settle each finding a fixer left unapplied with its reason, and each
+     clash a fixer reports: close it with your reason written in its findings
+     file, give it to the wave (below), or take it to the owner. Leave none
+     unanswered.
+   - **The seams re-check.** When a fix changed the contract, run step 4's
+     seams packet and recon again, its report to `D/findings/seams-rerun.md`.
+     Otherwise run `loom flow packet $ARGUMENTS --seams --changed --rev <REV>`:
+     it writes `D/packets/seams-changed.md`, the names one story defines and
+     another uses where a fix since the plan review changed the definition or
+     a line that uses it, and prints how many (`<k> shared names changed`).
+     When k is above 0, dispatch one `flow:recon` with the packet's path, the
+     plan's path and two questions: do the listed pairs' contracts still
+     match, and does the behaviour across them (step 4's second question)?
+     Write its report to `D/findings/seams-changed.md`.
+   - **The wave.** For each story the seams re-check's findings, or a
+     settled finding, name, write `D/findings/wave-S<id>.md` and dispatch one fresh
+     `flow:drafter` with the fix-job brief, that file, the story's `start` and
+     "wave job". Then run step 3 once more. The wave runs once: what a wave
+     fixer reports unapplied goes to the owner.
    - Re-check each story whose draft differs from its review copy
      (`cmp -s D/reviewing/S<id>.md D/S<id>.md` fails), whatever changed it:
      `mkdir -p D/rechecking && cp D/S<id>.md D/rechecking/S<id>.md`, then one
@@ -260,8 +284,8 @@ resumes it.
      re-check, and an open review finding doesn't go to the owner: the run
      reviews that story in full. On a resume, a story with a `D/rechecking/`
      copy and no re-check report in its review file is re-checked again.
-   - A finding still open after its fix round goes to the owner: there is no
-     second automatic round.
+   - A finding still open after its fix round and the wave goes to the owner:
+     there is no further automatic round.
    - Drop from the `**Parallel:**` line a pair the seams findings refute, and
      name it in the hand-over.
 6. **Commit and hand over.**
@@ -289,7 +313,10 @@ resumes it.
      `--no-verify`: when the pre-commit hook fails the commit, show its
      output and stop.
    - Set the **Phase** to committed. Tell the owner what was drafted, what
-     the checks, the seams recon and the plan review found, which stories the
+     the checks, the seams recon and the plan review found, the seams
+     re-check's line (`Seams re-check: <k> shared names changed, <n>
+     findings, <m> wave jobs`, with `full recon` in place of the count when a
+     fix changed the contract), which stories the
      review vouched, its cost (the plan-reviewer and risk-reviewer rows of
      `loom flow costs session`), and anything still open, and end
      with: run `/clear`, then `/flow:run <plan>`.
@@ -329,11 +356,11 @@ set it off here; indented, the heredoc never terminates):
     Plan review: pending, clean, findings, re-check, vouched or full.
 
     ## Findings files
-    - <D/findings/premises.md, seams.md, review-S<id>.md or S<id>.md: which agent (or the manager), and when>
+    - <D/findings/premises.md, seams.md, review-S<id>.md, S<id>.md, seams-changed.md, seams-rerun.md or wave-S<id>.md: which agent (or the manager), and when>
 
     ## Open questions
     - <question, or none>
 
     ## In flight
-    - <agent id>: <questions | drafting | waiting on Stories <ids> | review | risk review | re-check | fix> <story ids>
+    - <agent id>: <questions | drafting | waiting on Stories <ids> | review | risk review | re-check | fix | seams re-check | wave fix> <story ids>
     EOF

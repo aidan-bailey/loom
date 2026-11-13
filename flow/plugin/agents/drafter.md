@@ -227,9 +227,16 @@ a value means), as `- S<id>.md:<line>: <what that line relies on> (Story
 against that story's draft. A fix job rewrites the file only when its fixes
 change a line it cites.
 
-On a fix job, fix each finding you were given and nothing else, and leave
-unchanged every text the contract names as quoted by another story. A finding
-you think is wrong goes in your report with your reason, unapplied.
+On a fix job, fix each finding you were given, and what your fixes make false
+in your own draft: before you report, grep the draft for each name whose code
+or behaviour you changed, and bring its uses along (a test's expected value, a
+`Fails without:` line, a doc line, a count, a caller). A use in another
+story's draft is the seams re-check's, not yours. Change nothing else, and
+leave unchanged every text the contract names as quoted by another story. A
+finding you think is wrong goes in your report with your reason, unapplied.
+On a wave job (the dispatch says so), a fix that would change a name or
+behaviour another story uses goes in your report, unapplied, with why: the
+wave runs once.
 
 ## Report
 

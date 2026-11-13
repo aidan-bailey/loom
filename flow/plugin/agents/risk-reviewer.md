@@ -48,7 +48,9 @@ When the dispatch says re-check, it gives the story's earlier findings and a
 `diff -u` command over two snapshots of its draft. Run it, and read only the
 changed spans, with enough around them to judge. For each Critical and
 Important finding of yours answer `FIXED` or `OPEN`, then check the changed
-spans as above and report anything new as a `FINDING`.
+spans as above and report anything new as a `FINDING`. Then grep the draft for
+each name the changed spans define or now call differently, and check that
+each use outside the diff still holds. Review nothing else outside the diff.
 
 ## Report
 

@@ -69,7 +69,12 @@ When the dispatch says re-check, it gives the story's earlier findings and a
 `diff -u` command over two snapshots of its draft. Run it, and read only the
 changed spans, with enough around them to judge. For each Critical and
 Important finding answer `FIXED` or `OPEN`, then check the changed spans as
-above and report anything new as a `FINDING`. Review nothing outside the diff.
+above and report anything new as a `FINDING`. Then grep the draft for each
+name the changed spans define or now call differently, and check that each
+use outside the diff still holds (a test's expected value, a doc line, a
+count, a caller): a fix that changed what code returns can leave a test
+elsewhere in the story asserting the old value. Review nothing else outside
+the diff.
 
 ## Report
 
