@@ -22,7 +22,7 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `claude_status.go` | the roster query (`maybeRosterQuery`, `rosterQueryJob`, `deliverRoster`, `rosterStatusFor`, `observeRoster`), `adoptClaudeStatus`, `applyClaudeStatus`, `statusEligible`, `maybeRosterQuerySoon` |
 | `hook_scan.go` | `maybeHookScan`, `HookTick`, `deliverHookScan` |
 | `github.go` | the GitHub poller (`maybeGHQuery`, `ghPollJob`, `deliverGH`, `openedRepos`, `ghRepoKey`, `baseBranchByRepo`), `ExpediteGitHub`, `WatchGitHub` |
-| `watch.go`, `watch_poll.go`, `watch_actions.go` | the issue watcher: `watchState`, `watchFor`, `watchOf`, `deliverWatch`, `watchViewOf`, `SetWatch`, `ReadWatch` (`watch.go`); `maybeWatch`, `startWatchPoll` and the poll job (`watch_poll.go`); `dispatchWatchActions`, `deliverWatchAction` (`watch_actions.go`) |
+| `watch.go`, `watch_poll.go`, `watch_start.go`, `watch_actions.go` | the issue watcher: `watchState`, `watchFor`, `watchOf`, `deliverWatch`, `watchViewOf`, `SetWatch`, `ReadWatch`, `maybeWatch`, `startWatchPoll` (`watch.go`); the poll job (`watch_poll.go`); `watchStart`, `watchPrepareStart`, `finishWatchStart` (`watch_start.go`); `dispatchWatchActions`, `deliverWatchAction` (`watch_actions.go`) |
 | `accounts.go`, `usage.go` | the account registry, auth, sync and reload (`InitAccounts`, `ReloadAccounts`, `maybeReloadAccounts`, `publishAccounts`, `accountsRefreshJob`), usage probes (`maybeUsageProbe`, `deliverUsage`) |
 | `claude_tmp.go` | `requestClaudeTmpSweep`, `maybeClaudeTmpSweep` |
 | `mod.go`, `mod_command.go`, `loop_mod.go` | the loom mod's links (`ModHost`, `modLink`, `Send`, `endLink`, `modGone`), its slash commands (`parseCommand`, `commandRefusal`), and `*Loop`'s `ModHost` methods (never on the wire) |
