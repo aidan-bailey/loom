@@ -15,6 +15,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/watch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -408,4 +409,211 @@ func TestWatchSessions(t *testing.T) {
 	assert.Equal(t, "Ready", got[1].Status)
 	assert.True(t, got[1].Since.After(watchEpoch) || got[1].Since.Equal(watchEpoch))
 	assert.Less(t, time.Since(got[1].Since), time.Minute, "an observed transition keeps its time")
+}
+
+// ghPRJSON is one PR as `gh pr list --json` prints it.
+func ghPRJSON(number int, state, branch, author string, closes ...int) string {
+	refs := make([]string, len(closes))
+	for i, n := range closes {
+		refs[i] = fmt.Sprintf(`{"number":%d,"repository":{"name":"r","owner":{"login":"o"}}}`, n)
+	}
+	return fmt.Sprintf(`{"number":%d,"state":%q,"headRefName":%q,"baseRefName":"main","headRefOid":"head%d","baseRefOid":"base1","mergeable":"MERGEABLE","author":{"login":%q},"isCrossRepository":false,"closingIssuesReferences":[%s],"statusCheckRollup":[],"body":"","url":"https://github.com/o/r/pull/%d"}`,
+		number, state, branch, number, author, strings.Join(refs, ","), number)
+}
+
+// ghIssueJSON is one issue as `gh issue list|view --json` prints it.
+func ghIssueJSON(number int, state string) string {
+	return fmt.Sprintf(`{"number":%d,"title":"issue %d","body":"body","url":"https://github.com/o/r/issues/%d","labels":[{"name":"drift"}],"state":%q,"comments":[]}`,
+		number, number, number, state)
+}
+
+func issueNumbers(is []github.WatchIssue) []int {
+	out := make([]int, len(is))
+	for i, x := range is {
+		out[i] = x.Number
+	}
+	return out
+}
+
+func TestWatchPoll_ReadsTheViewerThePRsAndTheLabelledIssues(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	rig.prs = []string{ghPRJSON(40, "OPEN", "loom/heal-7", "bot", 7)}
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Equal(t, "bot", res.viewer)
+	assert.Equal(t, "bot", res.snap.Viewer)
+	assert.Equal(t, "loom/", res.snap.Prefix)
+	assert.Equal(t, []int{7}, issueNumbers(res.snap.Issues))
+	require.Len(t, res.snap.PRs, 1)
+	assert.Equal(t, 40, res.snap.PRs[0].Number)
+	assert.Equal(t, 1, res.snap.Considered)
+	assert.Zero(t, res.snap.Unconsidered)
+	assert.Len(t, rig.gh.callsTo("api user"), 1)
+	assert.Contains(t, rig.gh.callsTo("issue list")[0], "drift", "the issue list is of the config's label")
+
+	rq := rig.m.watchRequest(rig.ws, false, 0)
+	rq.viewer = "cached"
+	rig.gh.calls = nil
+	res, ok := watchPollJob(rq, rig.m.watchExec())().(watchResult)
+	require.True(t, ok)
+	assert.Empty(t, rig.gh.callsTo("api user"), "a cached viewer is not read again")
+	assert.Equal(t, "cached", res.snap.Viewer)
+}
+
+func TestWatchPoll_AFailedGHReadDecidesNothing(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.prsErr = fmt.Errorf("boom")
+	res := rig.job()
+	assert.Contains(t, res.err, "pr list")
+	assert.Empty(t, res.snap.Issues, "nothing is half-read")
+
+	rig = newWatchRig(t, watchFiles(watchTestConfig))
+	rig.viewerErr = fmt.Errorf("not logged in")
+	res = rig.job()
+	assert.Contains(t, res.err, "viewer")
+	assert.Empty(t, rig.gh.callsTo("pr list"), "ownership is unknown without the viewer: no further read")
+}
+
+func TestWatchPoll_KeepsFiftyIssuesAndCountsTheFiftyFirst(t *testing.T) {
+	many := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = ghIssueJSON(i+1, "OPEN")
+		}
+		return out
+	}
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = many(51)
+	res := rig.job()
+	require.Empty(t, res.err)
+	assert.Equal(t, 50, res.snap.Considered)
+	assert.Equal(t, 1, res.snap.Unconsidered, "a 51st came back: more were not considered")
+	assert.Len(t, res.snap.Issues, 50)
+	assert.Equal(t, 50, res.snap.Issues[49].Number, "the 50 lowest-numbered")
+
+	rig = newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = many(50)
+	res = rig.job()
+	require.Empty(t, res.err)
+	assert.Equal(t, 50, res.snap.Considered)
+	assert.Zero(t, res.snap.Unconsidered, "exactly 50 is all of them")
+}
+
+func TestWatchPoll_ViewsOnlyTheClosedIssuesItsOwnSessionsAndPRsName(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	// Issue 8 is named by its session, 9 by its PR: both are viewed.
+	rig.addSession("heal 8", 8, session.Paused)
+	// 12's session title is not its template's, 11's PR is another author's
+	// and 13's branch is not its pattern: none is viewed.
+	rig.addSession("other 12", 12, session.Ready)
+	rig.prs = []string{
+		ghPRJSON(41, "MERGED", "loom/heal-9", "bot", 9),
+		ghPRJSON(42, "MERGED", "loom/heal-11", "someone", 11),
+		ghPRJSON(43, "MERGED", "other/branch", "bot", 13),
+	}
+	rig.views = map[int]string{8: ghIssueJSON(8, "CLOSED"), 9: ghIssueJSON(9, "CLOSED")}
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Equal(t, []int{7, 8, 9}, issueNumbers(res.snap.Issues), "the labelled issue and the two it viewed, in number order")
+	assert.Equal(t, 1, res.snap.Considered, "Considered counts the labelled issues only")
+	views := rig.gh.callsTo("issue view")
+	require.Len(t, views, 2)
+	assert.Contains(t, views[0], "issue view 8")
+	assert.Contains(t, views[1], "issue view 9")
+	assert.True(t, res.snap.Issues[1].Closed)
+}
+
+func TestWatchPoll_ViewsAtMostTenClosedIssuesLowestFirst(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	for n := 21; n <= 32; n++ {
+		rig.addSession(fmt.Sprintf("heal %d", n), n, session.Paused)
+		rig.views[n] = ghIssueJSON(n, "CLOSED")
+	}
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Len(t, rig.gh.callsTo("issue view"), 10)
+	assert.Equal(t, []int{21, 22, 23, 24, 25, 26, 27, 28, 29, 30}, issueNumbers(res.snap.Issues), "the lowest ten; the rest wait for a later tick")
+}
+
+func TestWatchPoll_AFailedViewSkipsOnlyThatIssue(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.addSession("heal 8", 8, session.Paused)
+	rig.addSession("heal 9", 9, session.Paused)
+	rig.views = map[int]string{9: ghIssueJSON(9, "CLOSED")} // 8's view fails
+
+	res := rig.job()
+
+	require.Empty(t, res.err, "a failed view is not a failed tick")
+	assert.Equal(t, []int{9}, issueNumbers(res.snap.Issues))
+}
+
+// watchHookFiles is a rig's origin tree with a hook script that records its
+// calls, its stdin and its environment beside the checkout, and answers.
+func watchHookFiles(script string) map[string]string {
+	files := watchFiles(watchHookTestConfig)
+	files[".loom-watch/hook.sh"] = script
+	return files
+}
+
+const watchNudgingHook = `echo "$1" >> ../hook-calls.txt
+cat > ../hook-input.json
+echo "$LOOM_WATCH_WORKSPACE" > ../hook-workspace.txt
+echo "$LOOM_WATCH_REPO" > ../hook-repo.txt
+echo '{"nudges":[{"kind":"redrift","key":"k1","text":"look again"}]}'
+`
+
+func TestWatchPoll_TheHookNudgesAReadySessionWithAnOpenPR(t *testing.T) {
+	rig := newWatchRig(t, watchHookFiles(watchNudgingHook))
+	rig.issues = []string{ghIssueJSON(7, "OPEN"), ghIssueJSON(9, "OPEN"), ghIssueJSON(10, "OPEN")}
+	rig.prs = []string{
+		ghPRJSON(40, "OPEN", "loom/heal-7", "bot", 7),
+		ghPRJSON(42, "OPEN", "loom/heal-9", "bot", 9),
+		ghPRJSON(43, "MERGED", "loom/heal-10", "bot", 10),
+	}
+	// 7 is Ready with an open PR: asked. 9 has an open PR but its session
+	// is Paused, and 10's is Ready but its PR is merged: neither is asked.
+	rig.addSession("heal 7", 7, session.Ready)
+	rig.addSession("heal 9", 9, session.Paused)
+	rig.addSession("heal 10", 10, session.Ready)
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Equal(t, map[int][]watch.Nudge{7: {{Kind: "redrift", Key: "k1", Text: "look again"}}}, res.snap.HookNudges)
+	assert.Empty(t, res.snap.HookFailed)
+	cfgDir := rig.ws.ctx.ConfigDir
+	calls, err := os.ReadFile(filepath.Join(cfgDir, "hook-calls.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "nudges\n", string(calls), "one call, for the one issue that qualifies")
+	input, err := os.ReadFile(filepath.Join(cfgDir, "hook-input.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(input), `"point":"nudges"`)
+	assert.Contains(t, string(input), `"head_sha":"head40"`)
+	workspace, err := os.ReadFile(filepath.Join(cfgDir, "hook-workspace.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "polyoxide\n", string(workspace), "the hook's environment names the workspace")
+	repo, err := os.ReadFile(filepath.Join(cfgDir, "hook-repo.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, res.slug+"\n", string(repo), "and the repository's owner/name")
+}
+
+func TestWatchPoll_AFailedHookCostsOnlyThatIssuesNudges(t *testing.T) {
+	rig := newWatchRig(t, watchHookFiles("echo boom >&2\nexit 3\n"))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	rig.prs = []string{ghPRJSON(40, "OPEN", "loom/heal-7", "bot", 7)}
+	rig.addSession("heal 7", 7, session.Ready)
+
+	res := rig.job()
+
+	require.Empty(t, res.err, "the tick still decides")
+	assert.Empty(t, res.snap.HookNudges)
+	assert.Contains(t, res.snap.HookFailed[7], "boom", "the hook's stderr is kept for status")
 }

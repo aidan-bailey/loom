@@ -1,15 +1,20 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/watch"
 )
 
@@ -191,7 +196,12 @@ func (p *watchPoll) run() watchResult {
 	if err := p.readGit(); err != nil {
 		return p.fail(err)
 	}
-	// Task 8.4 adds the gh reads and the hook here.
+	ctx, cancel := context.WithTimeout(context.Background(), watchReadBudget)
+	defer cancel()
+	if err := p.readGitHub(ctx); err != nil {
+		return p.fail(err)
+	}
+	p.runHooks()
 	return p.res
 }
 
@@ -348,4 +358,175 @@ func repoSlug(remote string) string {
 		return ""
 	}
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+}
+
+// ownPR reports whether pr is the watcher's PR for issue n (spec §2: all
+// four terms, decided by watch.OwnPR).
+func (p *watchPoll) ownPR(pr github.WatchPR, n int) bool {
+	return watch.OwnPR(pr, n, p.res.viewer, p.res.tmpl.BranchPattern(p.rq.prefix, n))
+}
+
+// readGitHub is the poll's gh half: the viewer (once), the PRs, the
+// labelled issues, and the views of the closed issues the watcher's
+// sessions and PRs name. The first failed read ends the poll: ownership or
+// the issue set is unknown, so nothing is decided.
+func (p *watchPoll) readGitHub(ctx context.Context) error {
+	if p.res.viewer == "" {
+		viewer, err := github.Viewer(ctx, p.rq.repo, p.r)
+		if err != nil {
+			return fmt.Errorf("gh viewer: %w", err)
+		}
+		p.res.viewer = strings.TrimSpace(viewer)
+	}
+	prs, err := github.WatchPRs(ctx, p.rq.repo, p.r)
+	if err != nil {
+		return fmt.Errorf("gh pr list: %w", err)
+	}
+	issues, err := github.WatchIssues(ctx, p.rq.repo, p.res.cfg.Label, p.r)
+	if err != nil {
+		return fmt.Errorf("gh issue list: %w", err)
+	}
+	snap := &p.res.snap
+	snap.Viewer, snap.Prefix, snap.PRs = p.res.viewer, p.rq.prefix, prs
+	if len(issues) > github.WatchIssueLimit {
+		issues = issues[:github.WatchIssueLimit]
+		snap.Unconsidered = 1
+	}
+	snap.Considered = len(issues)
+	all := append(slices.Clone(issues), p.viewNamed(ctx, prs, issues)...)
+	slices.SortFunc(all, func(a, b github.WatchIssue) int { return cmp.Compare(a.Number, b.Number) })
+	snap.Issues = all
+	return nil
+}
+
+// viewNamed views the issues a watcher session or PR names that the label
+// query did not return: at most watchViewLimit, lowest number first. A failed
+// view skips that issue for this tick.
+func (p *watchPoll) viewNamed(ctx context.Context, prs []github.WatchPR, have []github.WatchIssue) []github.WatchIssue {
+	listed := map[int]bool{}
+	for _, is := range have {
+		listed[is.Number] = true
+	}
+	var named []int
+	for _, s := range p.rq.sessions {
+		if s.Issue > 0 && watch.OwnSession(s, p.res.tmpl) {
+			named = append(named, s.Issue)
+		}
+	}
+	for _, pr := range prs {
+		for _, n := range pr.Closes {
+			if p.ownPR(pr, n) {
+				named = append(named, n)
+			}
+		}
+	}
+	slices.Sort(named)
+	named = slices.Compact(named)
+
+	var out []github.WatchIssue
+	views := 0
+	for _, n := range named {
+		if listed[n] {
+			continue
+		}
+		if views == watchViewLimit {
+			break
+		}
+		views++
+		is, err := github.ViewWatchIssue(ctx, p.rq.repo, n, p.r)
+		if err != nil {
+			log.For("watch").Debug("issue_view_failed", "workspace", p.rq.name, "issue", n, "err", err.Error())
+			continue
+		}
+		out = append(out, is)
+	}
+	return out
+}
+
+// runHooks calls the hook's nudges point once for each issue whose watcher
+// session is Ready and which has an open watcher PR, in issue order, all
+// under watchHookBudget. A failure is that issue's HookFailed and gives it
+// no nudge this tick; nothing else changes.
+func (p *watchPoll) runHooks() {
+	cfg := p.res.cfg
+	if !hasHook(cfg) {
+		return
+	}
+	ordered := slices.Clone(p.rq.sessions)
+	slices.SortFunc(ordered, func(a, b watch.Session) int { return cmp.Compare(a.ID, b.ID) })
+	var sessions []watch.HookSession
+	ready := map[int]watch.HookSession{}
+	for _, s := range ordered {
+		if s.Issue <= 0 || !watch.OwnSession(s, p.res.tmpl) {
+			continue
+		}
+		_, vars, _ := p.res.tmpl.Parse(s.Title)
+		hs := watch.HookSession{Title: s.Title, Issue: s.Issue, Branch: s.Branch, Status: s.Status, Vars: vars}
+		sessions = append(sessions, hs)
+		if _, ok := ready[s.Issue]; !ok && s.Status == session.Ready.String() {
+			ready[s.Issue] = hs
+		}
+	}
+	var prs []watch.HookPR
+	open := map[int]github.WatchPR{}
+	for _, pr := range p.res.snap.PRs {
+		if pr.State != "OPEN" {
+			continue
+		}
+		for _, n := range pr.Closes {
+			if !p.ownPR(pr, n) {
+				continue
+			}
+			prs = append(prs, watch.HookPR{Number: pr.Number, Issue: n, Branch: pr.HeadRefName, Body: pr.Body})
+			if cur, ok := open[n]; !ok || pr.Number < cur.Number {
+				open[n] = pr
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), watchHookBudget)
+	defer cancel()
+	snap := &p.res.snap
+	for _, is := range snap.Issues {
+		hs, haveSession := ready[is.Number]
+		pr, havePR := open[is.Number]
+		if is.Closed || !haveSession || !havePR {
+			continue
+		}
+		if ctx.Err() != nil {
+			p.hookFailed(is.Number, "the hook's time budget for this tick is spent")
+			continue
+		}
+		in := watch.HookInput{
+			Workspace: p.rq.name,
+			Repo:      p.res.slug,
+			Base:      p.res.base,
+			BaseSHA:   p.res.baseSHA,
+			Issue:     is,
+			PR:        &watch.HookPR{Number: pr.Number, Issue: is.Number, Branch: pr.HeadRefName, Body: pr.Body},
+			Sessions:  sessions,
+			PRs:       prs,
+			Session:   &hs,
+			HeadSHA:   pr.HeadSHA,
+		}
+		nudges, err := watch.RunNudges(ctx, *cfg.Hook, p.res.checkout, nil, in)
+		if err != nil {
+			p.hookFailed(is.Number, err.Error())
+			continue
+		}
+		if len(nudges) > 0 {
+			if snap.HookNudges == nil {
+				snap.HookNudges = map[int][]watch.Nudge{}
+			}
+			snap.HookNudges[is.Number] = nudges
+		}
+	}
+}
+
+// hookFailed records why issue got no hook nudges this tick.
+func (p *watchPoll) hookFailed(issue int, why string) {
+	if p.res.snap.HookFailed == nil {
+		p.res.snap.HookFailed = map[int]string{}
+	}
+	p.res.snap.HookFailed[issue] = why
 }
