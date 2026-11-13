@@ -509,6 +509,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverLaunchWatched(msg)
 	case ghResult:
 		m.deliverGH(msg)
+	case watchResult:
+		m.deliverWatch(msg)
 	case pushResult:
 		m.deliverPush(msg)
 	case accountsRefreshed:

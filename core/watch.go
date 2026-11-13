@@ -3,6 +3,7 @@ package core
 import (
 	"time"
 
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/watch"
 )
 
@@ -83,4 +84,86 @@ func (m *Model) watchOf(ws *Workspace) *watchState {
 		return nil
 	}
 	return ws.watch
+}
+
+// decideWatch runs Decide on the loop for a poll's reads: the snapshot the
+// job built, stamped with now and the workspace's sessions as they are now
+// (not as they were at dispatch), against the memory the loop holds (the
+// file's, when this poll loaded it). A tick whose fetch or checkout refresh
+// failed starts nothing: each ActStart becomes an ActWait saying why, so
+// rules 1 to 8 still act (spec 7.1). Only for a result with no err.
+func (m *Model) decideWatch(res watchResult) (watch.Snapshot, []watch.Action) {
+	snap := res.snap
+	snap.Now = time.Now()
+	snap.Sessions = m.watchSessions(res.ws)
+	var mem watch.Memory
+	if st := res.ws.watch; st != nil {
+		mem = st.mem
+	}
+	if res.mem != nil {
+		mem = *res.mem
+	}
+	actions := watch.Decide(snap, mem, res.cfg, res.tmpl)
+	if !res.startOK {
+		for i, a := range actions {
+			if a.Kind == watch.ActStart {
+				actions[i] = watch.Action{Kind: watch.ActWait, Issue: a.Issue, Reason: "no start this tick: " + res.startWhy}
+			}
+		}
+	}
+	return snap, actions
+}
+
+// storeWatch keeps a live workspace's poll result: the facts it read, and,
+// when no read failed, the tick Decide made. A failed tick clears the last
+// one's snapshot and actions: stale decisions are worse than none.
+func (m *Model) storeWatch(st *watchState, res watchResult) {
+	st.viewer, st.memPath, st.checkout = res.viewer, res.memPath, res.checkout
+	st.base, st.baseSHA, st.startOK = res.base, res.baseSHA, res.startOK
+	if res.slug != "" {
+		st.repo = res.slug
+	}
+	if res.mem != nil {
+		st.mem, st.memLoaded = *res.mem, true
+	}
+	if res.cfgOK {
+		st.cfg, st.tmpl = res.cfg, res.tmpl
+		st.prompt, st.resumePrompt = res.prompt, res.resumePrompt
+	}
+	st.err = res.err
+	if res.err != "" {
+		st.snap, st.actions = nil, nil
+		return
+	}
+	snap, actions := m.decideWatch(res)
+	st.snap, st.actions, st.at = &snap, actions, snap.Now
+}
+
+// deliverWatch applies a poll result. The in-flight bit clears first,
+// whatever the result is. A dry result is handled before any check of the
+// workspace (its requester is waiting) and stores nothing. A result for a
+// workspace the model no longer serves, or whose watcher is switched off,
+// records nothing. Otherwise the tick is kept (storeWatch).
+func (m *Model) deliverWatch(res watchResult) {
+	if st := res.ws.watch; st != nil {
+		st.polling = false
+	}
+	if res.dry {
+		// Story 10's reply goes here, before any watchOf check, so a dry
+		// result is answered even with no watch state, an off watcher or
+		// an unserved workspace: when res.err is "", watchViewOf(res.ws,
+		// actions) for the actions decideWatch(res) returns, else a refusal
+		// naming res.err. It then returns.
+		return
+	}
+	st := m.watchOf(res.ws)
+	if st == nil {
+		log.For("watch").Debug("poll.dropped", "workspace", res.ws.Name())
+		return
+	}
+	m.storeWatch(st, res)
+	if res.err != "" {
+		log.For("watch").Debug("poll.failed", "workspace", res.ws.Name(), "err", res.err)
+	}
+	// Story 9 adds the call to dispatchWatchActions here, with st.actions.
 }

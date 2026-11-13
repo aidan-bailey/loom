@@ -617,3 +617,186 @@ func TestWatchPoll_AFailedHookCostsOnlyThatIssuesNudges(t *testing.T) {
 	assert.Empty(t, res.snap.HookNudges)
 	assert.Contains(t, res.snap.HookFailed[7], "boom", "the hook's stderr is kept for status")
 }
+
+// actionsOfKind lists the actions of kind k.
+func actionsOfKind(as []watch.Action, k watch.ActionKind) []watch.Action {
+	var out []watch.Action
+	for _, a := range as {
+		if a.Kind == k {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// tick runs one poll the way the loop would and delivers its result.
+func (r *watchRig) tick() watchResult {
+	r.t.Helper()
+	r.m.watchFor(r.ws).polling = true
+	res := r.job()
+	r.m.Deliver(res)
+	return res
+}
+
+func TestDeliverWatch_DecidesOnTheLoopAndKeepsTheTick(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+
+	rig.tick()
+
+	st := rig.ws.watch
+	require.NotNil(t, st.snap)
+	assert.Empty(t, st.err)
+	assert.Equal(t, []watch.Action{{Kind: watch.ActStart, Issue: 7}}, st.actions, "rule 9: a labelled issue with nothing yet is started")
+	assert.Equal(t, 1, st.snap.Considered)
+	assert.False(t, st.snap.Now.IsZero(), "the loop stamps the tick")
+	assert.Equal(t, st.snap.Now, st.at)
+	assert.Equal(t, "bot", st.viewer)
+	assert.True(t, st.memLoaded)
+	assert.Equal(t, "main", st.base)
+	assert.Equal(t, gitOut(t, rig.origin, "rev-parse", "main"), st.baseSHA)
+	assert.True(t, st.startOK)
+	assert.Equal(t, watchTestPrompt, st.prompt)
+	assert.Equal(t, watchTestPrompt, st.resumePrompt)
+	assert.Equal(t, "drift", st.cfg.Label)
+	assert.Equal(t, filepath.Join(rig.ws.ctx.ConfigDir, "watch-checkout"), st.checkout)
+	assert.Equal(t, filepath.Join(rig.ws.ctx.ConfigDir, "watch.json"), st.memPath)
+	assert.False(t, st.polling, "every delivery clears the poll's in-flight bit")
+	assert.Empty(t, rig.m.Drain().Jobs, "Story 8 dispatches no action")
+}
+
+func TestDeliverWatch_ATickWithoutAFetchWaitsInsteadOfStartingAndStillKills(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	runGit(t, rig.repo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	merged := rig.addSession("heal 8", 8, session.Paused)
+	rig.prs = []string{ghPRJSON(41, "MERGED", "loom/heal-8", "bot", 8)}
+	rig.views = map[int]string{8: ghIssueJSON(8, "CLOSED")}
+
+	rig.tick()
+
+	st := rig.ws.watch
+	require.Empty(t, st.err)
+	assert.False(t, st.startOK)
+	assert.Empty(t, actionsOfKind(st.actions, watch.ActStart), "no start without a fetch")
+	waits := actionsOfKind(st.actions, watch.ActWait)
+	require.Len(t, waits, 1)
+	assert.Equal(t, 7, waits[0].Issue)
+	assert.Contains(t, waits[0].Reason, "no start this tick")
+	assert.Contains(t, waits[0].Reason, "git fetch origin main failed")
+	assert.Equal(t, []watch.Action{{Kind: watch.ActKill, Issue: 8, Session: uint64(rig.m.idOf(merged))}},
+		actionsOfKind(st.actions, watch.ActKill), "rule 1 still runs: the merged PR's session is killed")
+}
+
+func TestDeliverWatch_AFailedTickClearsWhatTheLastOneDecided(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	rig.tick()
+	require.NotEmpty(t, rig.ws.watch.actions)
+
+	rig.prsErr = fmt.Errorf("boom")
+	rig.tick()
+
+	st := rig.ws.watch
+	assert.Contains(t, st.err, "pr list")
+	assert.Nil(t, st.snap, "stale decisions are worse than none")
+	assert.Nil(t, st.actions)
+	assert.False(t, st.polling, "errors clear the in-flight bit too")
+	assert.Equal(t, "bot", st.viewer, "the viewer read before the failure is kept")
+}
+
+func TestDeliverWatch_ABadMemoryFileKeepsTheWatcherStopped(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	path := filepath.Join(rig.ws.ctx.ConfigDir, "watch.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{not json`), 0o644))
+
+	rig.tick()
+	st := rig.ws.watch
+	assert.Contains(t, st.err, "watch.json")
+	assert.Nil(t, st.actions)
+	assert.False(t, st.memLoaded, "the next poll reads the file again")
+
+	require.NoError(t, os.Remove(path))
+	rig.tick()
+	assert.Empty(t, st.err)
+	assert.True(t, st.memLoaded)
+	assert.NotEmpty(t, st.actions)
+}
+
+func TestDeliverWatch_AMemoryTheLoopOwnsIsNotReplacedByAnotherPoll(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.tick()
+	st := rig.ws.watch
+	st.mem.RecordEscalation(7, "stuck", time.Now()) // what Story 9's actions do
+
+	rig.tick()
+
+	assert.Contains(t, st.mem.Issues, 7, "the second poll did not reread the file over the loop's memory")
+}
+
+func TestDeliverWatch_AWorkspaceSwitchedOffMidFlightRecordsNothing(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	st := rig.m.watchFor(rig.ws)
+	st.polling = true
+	res := rig.job()
+
+	off := false
+	rig.ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
+	rig.m.Deliver(res)
+
+	assert.False(t, st.polling, "the in-flight bit clears even for a result that is dropped")
+	assert.Nil(t, st.snap)
+	assert.Nil(t, st.actions)
+	assert.Empty(t, st.viewer)
+	assert.False(t, st.memLoaded)
+}
+
+func TestDeliverWatch_AWorkspaceNoLongerServedRecordsNothing(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	st := rig.m.watchFor(rig.ws)
+	st.polling = true
+	res := rig.job()
+
+	rig.m.SetWorkspacesForTest()
+	rig.m.Deliver(res)
+
+	assert.False(t, st.polling)
+	assert.Nil(t, st.snap)
+	assert.False(t, st.memLoaded)
+}
+
+func TestDeliverWatch_ADryResultStoresNothingButDecides(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	st := rig.m.watchFor(rig.ws)
+	st.polling = true
+	res, ok := watchPollJob(rig.m.watchRequest(rig.ws, true, 9), rig.m.watchExec())().(watchResult)
+	require.True(t, ok)
+	require.True(t, res.dry)
+	assert.Equal(t, ReqID(9), res.req)
+
+	_, actions := rig.m.decideWatch(res)
+	assert.Equal(t, []watch.Action{{Kind: watch.ActStart, Issue: 7}}, actions, "a dry run decides what the next tick would")
+
+	rig.m.Deliver(res)
+
+	assert.False(t, st.polling, "a dry poll clears the in-flight bit too")
+	assert.Nil(t, st.snap, "a dry run records no tick")
+	assert.Nil(t, st.actions)
+	assert.Empty(t, st.viewer)
+	assert.False(t, st.memLoaded)
+}
+
+func TestDeliverWatch_ADryResultIsHandledWithNoWatchStateAndAnOffWatcher(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	off := false
+	rig.ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
+	require.Nil(t, rig.ws.watch, "no poll ever ran for this workspace")
+
+	rig.m.Deliver(watchResult{ws: rig.ws, dry: true, req: 3})
+
+	assert.Nil(t, rig.ws.watch, "a dry result creates no state and stores nothing")
+	assert.Nil(t, rig.m.watchOf(rig.ws), "a switched-off watcher has no state to answer from")
+}
