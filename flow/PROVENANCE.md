@@ -54,6 +54,10 @@ Pin changes from the move into loom on, 2026-11-05. Each entry goes under its ag
 
 - 2026-11-11, removed with `/flow:supervise` (owner, 2026-11-11). `/flow:run`'s engine runs every plan: six engine runs came to $2.17 per 1,000 plan lines, against $4.38 for 18 supervised runs, and parallel pairs moved to the engine first (`docs/superpowers/specs/2026-11-11-flow-run-parallel-pairs-design.md`).
 
+## plan-reviewer
+
+- 2026-11-13, a new agent at `model: sonnet`, `effort: high`, no `maxTurns`, `cacheTtl: 5m`, on the owner's instruction in the plan review's design (`docs/superpowers/specs/2026-11-13-flow-plan-review-design.md` §2): one pass per story in `/flow:draft`, which must pay for itself. Evidence, from the 7 engine runs of 2026-11-11 to 2026-11-13 (152,028 plan lines): the 53 stories with a plan-code question took 65 fix rounds and $74.70 of fix and re-review, the 22 without one 4 rounds and $1.60; a first review by code-quality-reviewer averaged $1.10, a story-reviewer re-review $0.56. Wrong if, over the next 3 plans drafted with the review: plan-code questions don't fall below 0.20 per 1,000 plan lines (0.35 before), design stage plus run costs more than $5.16 per 1,000 plan lines, or the review averages over $1.20 a story. Check which plugin copy each run's sessions used first.
+
 ## premise-check
 
 - 2026-11-13, a `generated` flag to settle: a type a step adds whose name a generated file already declares, a CLASH when the new type reaches the generator too (`agents/premise-check.md`, `lib/plan_premises.py`); no pin changed. On the owner's instruction, from the same transcripts: a story added two wire types whose names the generated bindings already exported, and the TypeScript build broke in the run.
@@ -61,6 +65,10 @@ Pin changes from the move into loom on, 2026-11-05. Each entry goes under its ag
 ## recon
 
 - 2026-11-13, the seams recon's brief gains a question, does the behaviour across stories match (a status and its envelope, an order of events, what renders when), starting from the packet's unchecked premises (the draft skill's step 4, `docs/dispatch.md`, `lib/plan_packet.py`); no pin changed. On the owner's instruction, from the same transcripts: seams that checked names and signatures passed a mock of a bare 401 the other story enveloped, and tests of markup another story renders otherwise.
+
+## risk-reviewer
+
+- 2026-11-13, a new agent at `model: opus`, `effort: high`, no `maxTurns`, `cacheTtl: 5m`, on the owner's instruction in the plan review's design (`docs/superpowers/specs/2026-11-13-flow-plan-review-design.md` §2): reviews only the tasks `plan-reviewer` escalates. Evidence: about 12 of the ~95 plan-code defects in the 8 drafted plans of 2026-11-10 to 2026-11-13 were invented concurrency, atomicity, ordering or bounds logic (ids from `MAX(id)+1`, a read and a write in separate transactions, 500 outside calls with no timeout), and none held a landmine marker. Wrong if: as `plan-reviewer`'s entry.
 
 ## senior-dev
 

@@ -88,8 +88,8 @@ own story is your choice.
   `## Stories`); the spec's path; and the drafter's profile block. Edit
   `D/S<id>.md` in place, and read the spec only where a finding needs it.
   A fix job runs at your pinned high, whatever the story's shape: its fixes
-  are decided before it starts, and the run's full review checks the story
-  again.
+  are decided before it starts, and a re-check or the run's full review
+  checks the story again.
   Leave unchanged every text the contract names as quoted by another story.
 
 ## The story format

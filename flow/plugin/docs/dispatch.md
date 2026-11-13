@@ -319,10 +319,6 @@ story's `entry` lines is the entry's, which the manager amends.
 
 ### The seams check
 
-The design stage reviews no story. A per-story plan review once cost about as
-much as the run it planned, and the run's own reviews still found defects in
-plan code it had passed ([the part 2 spec](specs/2026-10-17-generic-agent-flow-part-2-design.md),
-§2.2), so every story of a drafted plan gets the run's full review instead.
 What the scripts can't check across stories goes to one `flow:recon`.
 `loom flow packet <plan> --seams --rev <REV>`
 writes `D/packets/seams.md`: every name one story's added code defines and
@@ -352,6 +348,32 @@ items, a document that states a count. It doesn't re-check quotes of the tree,
 which `flow:premise-check` settled, or review a story's code on its own. Its report goes to
 `D/findings/seams.md`.
 
+### The plan review
+
+Nothing else reviews a story's own code before the run, and nearly every
+plan-code defect that reaches it sits inside one story: in the 7 engine runs
+of 2026-11-11 to 2026-11-13, the 53 stories with a plan-code question took 65
+fix rounds and $74.70 of fix and re-review, the 22 without one 4 rounds and
+$1.60. A per-story review loop once cost about as much as the run it planned,
+so this review is one pass that must pay for itself (the owner, 2026-11-13;
+loom's `flow/PROVENANCE.md` has the evidence). In the same batch as the seams
+recon, one `flow:plan-reviewer` (Sonnet @ high) per story checks its tests and
+`Fails without:` lines, copies of code that exists and the repo's rules, and
+escalates each task whose code invents logic for store writes, transactions,
+concurrency, outside calls, bounds or auth to a `flow:risk-reviewer` (Opus @
+high), which reads only those tasks. Either may report a `SPEC` finding: code
+that follows a spec or entry that is itself wrong, settled like a DESIGN
+verdict. Findings join the story's fix job. After the fixes, a story whose
+draft changed since its review gets one re-check of the diff, never a loop.
+
+`/flow:draft` copies each draft to `D/reviewing/` as its review starts and to
+`D/reviewed/` once the review or its re-check is clean, and
+`loom flow plan-review <plan>` writes the `**Plan review:**` line from those
+copies: a deep story is listed under `deep:`, vouched, only when its draft is
+byte-identical to its `D/reviewed/` copy; every other deep story goes under
+`full:`, and every light story under `light:`. A vouched story's first run
+review is `flow:story-reviewer`'s, which reads only what departs from the plan.
+
 ### Fixing the plan
 
 1. **Settle what spans stories first.** `/flow:draft` reads the findings,
@@ -371,27 +393,29 @@ which `flow:premise-check` settled, or review a story's code on its own. Its rep
    a story's opening lines goes to its entry, which the manager amends; no
    fixer copies it. A fix job
    runs at the drafter's pinned high, whatever the story's shape: its fixes
-   are decided before it starts, and the run's full review checks the story
-   again (the owner, 2026-10-31; claude-flow's archived `PROVENANCE.md` has the evidence). A
+   are decided before it starts, and a re-check or the run's full review
+   checks the story again (the owner, 2026-10-31; claude-flow's archived `PROVENANCE.md` has the evidence). A
    findings file bundles the story's `flow:premise-check` rows
    still open after the check stage's last run (the check stage runs once more
-   after its own fix jobs: one more check, not a second fix round), and the
-   seams findings that name the story.
+   after its own fix jobs: one more check, not a second fix round), the seams
+   findings that name the story, and its plan review's open findings.
 3. **Join and check again:** `loom flow join`, `loom flow check-plan` and
    `loom flow premises`, with `flow:premise-check` on any new flag, and the seams
-   check once more when a fix changed the contract.
+   check once more when a fix changed the contract. Then a story whose draft
+   changed since its plan review gets its one re-check.
 4. **One round.** A finding still open after its fix round goes to the owner;
    there is no second automatic round.
 5. **Record and commit.** `/flow:draft` prices its sessions with
    `loom flow costs session` unless `STATE.md`'s Design stage slot already holds
    the line, which it reuses (as after a session that died before the commit),
-   then writes the `**Design stage:**` line into the skeleton's head, directly
-   above `## Stories`, and into the slot. It joins and checks once more, and
+   then writes the `**Design stage:**` line and `loom flow plan-review`'s
+   `**Plan review:**` line into the skeleton's head, directly above
+   `## Stories`, and the first into the slot. It joins and checks once more, and
    commits the plan by pathspec; each spec answer was committed as it was
    written.
 
-No `**Plan review:**` line is written, so `loom flow check-plan` marks every story
-`review: full`, and the run reviews each story in full.
+`loom flow check-plan` then marks each story `review: vouched` or `review: full`
+from that line.
 
 
 ### Epics
@@ -513,6 +537,7 @@ divert that spend:
 | A quick lookup with one answer: where X is defined, what Y returns, which file handles Z, what the spec says about W, a summary of one file | `flow:glance` |
 | Enumeration sweeps, `file:line` inventories, verifying a claim against source, absence claims, live-endpoint probes | `flow:recon` |
 | Settling the plan premises `loom flow premises` flags (missing paths, stale "current" blocks, clashing definitions) | `flow:premise-check` |
+| Reviewing each story's plan code in `/flow:draft`, and re-checking its fixes | `flow:plan-reviewer`; the tasks it escalates to `flow:risk-reviewer` |
 | Writing a plan's stories from its skeleton, and fixing the drafts | `flow:drafter`, from `/flow:draft` |
 | One story that `loom flow check-plan` marks `review: vouched`, and every re-review under `supervised` | `flow:story-reviewer` |
 | Running the profile's gates (check-only, in the background) | `flow:verifier` |
@@ -698,8 +723,8 @@ the last. `loom flow conformance` first maps the story's diff onto the plan:
 which blocks landed as written, which didn't, and which changed lines no block
 covers. `loom flow check-plan` prints a `review:` column per story. For a `vouched`
 story, `flow:story-reviewer` (Opus @ high) reads just those, the developer's
-deviations and tests, and the seams. For a `full` story (a light story, or any
-story of a plan without a `**Plan review:**` line), `flow:code-quality-reviewer`
+deviations and tests, and the seams. For a `full` story (a light story, a deep story the plan review
+listed under `full:`, or any story of a plan without a `**Plan review:**` line), `flow:code-quality-reviewer`
 does a combined pass: the plan's code, quality and the seam. A `vouched` story
 gets that pass too when the developer reported DONE_WITH_CONCERNS or the
 changed lines no plan block covers hold one of the profile's landmine
