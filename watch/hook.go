@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -159,7 +161,9 @@ type HookError struct {
 }
 
 // Error reads `hook <point>: <cause>`, plus `; stderr: <last non-blank line>`
-// when the hook wrote to stderr, so a caller can store it as the reason.
+// when the hook wrote to stderr, so a caller can store it as the reason. The
+// line has its control characters removed and is cut to hookErrorLineMax
+// bytes (then ends in "…"), so the message is safe to store and print.
 func (e *HookError) Error() string {
 	msg := fmt.Sprintf("hook %s: %v", e.Point, e.Err)
 	if line := hookLastLine(e.Stderr); line != "" {
@@ -172,11 +176,28 @@ func (e *HookError) Error() string {
 // context.DeadlineExceeded.
 func (e *HookError) Unwrap() error { return e.Err }
 
-// hookLastLine returns the last non-blank line of s, trimmed.
+// hookErrorLineMax is the most bytes of stderr's last line that Error carries.
+const hookErrorLineMax = 200
+
+// hookLastLine returns the last non-blank line of s, trimmed, without control
+// characters and cut to hookErrorLineMax bytes.
 func hookLastLine(s string) string {
 	lines := strings.Split(s, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
+		line := strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, lines[i])
+		if line = strings.TrimSpace(line); line != "" {
+			if len(line) > hookErrorLineMax {
+				cut := hookErrorLineMax
+				for cut > 0 && !utf8.RuneStart(line[cut]) {
+					cut--
+				}
+				line = line[:cut] + "…"
+			}
 			return line
 		}
 	}
@@ -334,6 +355,9 @@ const (
 	hookStderrTail = 4 << 10 // bytes of stderr kept for status
 	// hookWaitDelay is how long Wait lets the descendants of a killed hook
 	// hold its pipes open before it closes them and fails the call.
+	//
+	// A timed-out or cancelled hook is killed, but its descendants are not:
+	// a child the hook started outlives the call, with its pipes closed.
 	hookWaitDelay = 2 * time.Second
 )
 

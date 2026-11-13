@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/stretchr/testify/assert"
@@ -100,6 +101,22 @@ func TestHookInput_MarshalJSON_Nudges(t *testing.T) {
 		            "status": "Ready", "vars": {}},
 		"head_sha": "deadbeef"
 	}`, string(got), "a nil vars is sent as {}, and session and head_sha are sent when set")
+}
+
+func TestHookError_StderrLineIsCappedAndPlain(t *testing.T) {
+	cause := errors.New("exit status 1")
+	long := strings.Repeat("x", 5000)
+
+	got := (&HookError{Point: "start", Err: cause, Stderr: "ok\n" + long + "\n"}).Error()
+	assert.LessOrEqual(t, len(got), len("hook start: exit status 1; stderr: ")+hookErrorLineMax+len("…"))
+	assert.True(t, strings.HasSuffix(got, "…"), "a cut line says so")
+
+	got = (&HookError{Point: "start", Err: cause, Stderr: "a\x1b[31mred\x00\tb\rc\x7f"}).Error()
+	assert.Equal(t, "hook start: exit status 1; stderr: a[31mredbc", got, "control characters are dropped")
+
+	multi := strings.Repeat("é", hookErrorLineMax) // 2 bytes a rune
+	got = (&HookError{Point: "start", Err: cause, Stderr: multi}).Error()
+	assert.True(t, utf8.ValidString(got), "the cut is on a rune boundary")
 }
 
 func TestHookError(t *testing.T) {
@@ -309,7 +326,13 @@ func readCapture(t *testing.T, dir, name string) string {
 
 func TestRunHook_ChildEnvironment(t *testing.T) {
 	cfg := hookCmd(t, hookTestTimeout, "hook_ok.sh")
-	dir := t.TempDir()
+	// dir is reached through a symlink: sh recomputes a stale PWD to the
+	// physical path, so only a PWD hookEnv set keeps the link's spelling.
+	real := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, dir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 	capture := t.TempDir()
 	t.Setenv("LOOM_HOOK_TEST_INHERITED", "from-the-daemon")
 	in := hookTestInput()
@@ -328,8 +351,8 @@ func TestRunHook_ChildEnvironment(t *testing.T) {
 	assert.Equal(t, "from-the-daemon", readCapture(t, capture, "inherited"), "the daemon's environment is passed on")
 	assert.Equal(t, "polyoxide", readCapture(t, capture, "workspace"))
 	assert.Equal(t, "owner/name", readCapture(t, capture, "repo"), "LOOM_WATCH_REPO is the runner's, not an extra's")
-	assert.Equal(t, dir, readCapture(t, capture, "pwd"), "PWD follows the directory")
-	wantCwd, err := filepath.EvalSymlinks(dir)
+	assert.Equal(t, dir, readCapture(t, capture, "pwd"), "PWD follows the directory, spelled as given")
+	wantCwd, err := filepath.EvalSymlinks(real)
 	require.NoError(t, err)
 	assert.Equal(t, wantCwd, readCapture(t, capture, "cwd"), "the hook runs in dir")
 
@@ -355,6 +378,18 @@ func TestRunHook_Timeout(t *testing.T) {
 	assert.ErrorContains(t, err, "timed out after 300ms")
 	assert.Nil(t, out)
 	assert.Less(t, time.Since(began), 10*time.Second, "the hook is killed, not waited out (it sleeps 30 s)")
+}
+
+func TestRunHook_TimeoutWithSurvivingChild(t *testing.T) {
+	in := hookTestInput()
+	in.Point = hookPointStart
+
+	began := time.Now()
+	_, _, err := runHook(context.Background(), hookCmd(t, 300*time.Millisecond, "hook_slow_child.sh"), t.TempDir(), nil, in)
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(began), 10*time.Second,
+		"a child still holding the pipes is cut off by WaitDelay, not waited out (it sleeps 20 s)")
 }
 
 func TestRunHook_CallerContextEnded(t *testing.T) {
