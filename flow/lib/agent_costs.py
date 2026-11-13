@@ -63,6 +63,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flowconf import flow_data, repo_key  # noqa: E402
+import plan_measures  # noqa: E402
 
 import tomllib  # noqa: E402  (after flowconf, whose Python-version message comes first)
 
@@ -819,26 +820,33 @@ def records_report(paths: list[str]) -> tuple[str, int]:
     """Totals across the records' runs: one table when the records share a directory (a repo's key),
     else one per directory and then the pooled one."""
     runs: list[tuple[str, dict]] = []
+    measures: list[plan_measures.RunMeasures] = []
     for arg in paths:
-        comments = [json.loads(m.group(1)) for m in COMMENT_RE.finditer(Path(arg).read_text())]
+        text = Path(arg).read_text()
+        comments = [json.loads(m.group(1)) for m in COMMENT_RE.finditer(text)]
         if comments:
-            runs.append((arg, merge_sessions(comments)))
+            data = merge_sessions(comments)
+            runs.append((arg, data))
+            measured = plan_measures.measure(Path(arg).stem, text, data["total"]["usd"])
+            if measured is not None:
+                measures.append(measured)
         else:
             print(f"WARN {arg}: no agent-costs comment", file=sys.stderr)
     if not runs:
         return "agent_costs: no run records with an agent-costs comment", 1
+    plan_code = "\n\n" + plan_measures.table(measures) if measures else ""
     groups: dict[Path, list[tuple[str, dict]]] = {}
     for path, data in runs:
         groups.setdefault(Path(path).resolve().parent, []).append((path, data))
     if len(groups) == 1:
-        return runs_table(runs), 0
+        return runs_table(runs) + plan_code, 0
     names = [directory.name for directory in groups]
     sections = [
         f"## {directory.name if names.count(directory.name) == 1 else directory}\n\n{runs_table(group)}"
         for directory, group in sorted(groups.items(), key=lambda item: (item[0].name, str(item[0])))
     ]
     sections.append(f"## Pooled\n\n{runs_table(runs)}")
-    return "\n\n".join(sections), 0
+    return "\n\n".join(sections) + plan_code, 0
 
 
 def runs_table(runs: list[tuple[str, dict]]) -> str:

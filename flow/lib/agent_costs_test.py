@@ -171,6 +171,20 @@ class AgentCostsTest(unittest.TestCase):
         code, _, err = run("records", str(Path(self.tmp.name, "sess.jsonl")))
         self.assertEqual(code, 1)
 
+    def test_records_add_the_plan_code_table_for_an_engine_record(self):
+        _, out, _ = run("session", str(self.main), "--since", "2026-10-13T09:30:00Z")
+        plain = Path(self.tmp.name, "2026-10-13-plain.md")
+        plain.write_text("# Run\n\n" + out)
+        code, report, err = run("records", str(plain))
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("## Plan code", report)
+        engine = Path(self.tmp.name, "2026-10-14-engine.md")
+        engine.write_text("# Run\n\n- Engine: loom flow run (flow in loom part 3b)\n\n" + out)
+        code, report, err = run("records", str(engine))
+        self.assertEqual(code, 0, err)
+        self.assertIn("## Plan code", report)
+        self.assertIn("| 2026-10-14-engine | n/a | n/a | n/a | 0 |", report)
+
     def test_records_sum_every_session_of_a_run(self):
         _, out, _ = run("session", str(self.main), "--since", "2026-10-13T09:30:00Z")
         doubled = 2 * totals(out)["total"]["usd"]
