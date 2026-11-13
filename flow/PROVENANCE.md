@@ -76,6 +76,10 @@ Pin changes from the move into loom on, 2026-11-05. Each entry goes under its ag
 
 ## senior-dev
 
+## skeleton-reviewer
+
+- 2026-11-13, a new agent at `model: opus`, `effort: high`, no `maxTurns`, `cacheTtl: 5m`, on the owner's instruction in the skeleton review's design (`docs/superpowers/specs/2026-11-13-flow-skeleton-review-design.md`): one pass per plan in `/flow:draft`'s question round over the design the spec and the names contract fix (ordering, atomicity, blocking work, failure paths, invariants, ids and bounds, repo rules), its findings settled in the wait. Evidence, from the transcripts of the 8 `/flow:draft` sessions of 2026-11-10 to 2026-11-13: about 19 of the ~95 plan-code defects came from the spec or the skeleton, 0.125 per 1,000 plan lines over 152,028, about 11 of them design logic the spec or contract fixed or left out (a token rotated before a mint that can refuse, a spec invariant broken by two mechanisms it mandates, `MAX(id)+1` ids, async signatures silent on where SQLite runs, failure paths left open), which the drafters copied and the plan review catches only after drafting. Opus, as `risk-reviewer`, whose questions it asks of the design: these were designs Sonnet drafters and reviewers passed. Estimate: $1–2 a plan at 5.5 prices. `5m`: it never waits on a gate. **Wrong if:** the next retro's transcript trace finds spec- and skeleton-caused defects at 0.06 or more per 1,000 plan lines, or `loom flow costs records`' Plan code table shows the review averaging over $3 a plan.
+
 ## spec-reviewer
 
 ## story-reviewer
