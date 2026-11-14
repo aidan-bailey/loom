@@ -78,7 +78,7 @@ func refused(err error) (string, bool) {
 	return "", false
 }
 
-func (fx *runFX) Agent(dir, name, role, effort, brief string) (flowrun.Report, error) {
+func (fx *runFX) Agent(dir, name, role, effort, brief string, sc flowrun.Scope) (flowrun.Report, error) {
 	cwd := fx.dirOf(dir)
 	started, err := fx.AgentStarted(name)
 	if err != nil {

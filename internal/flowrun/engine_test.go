@@ -34,6 +34,7 @@ type fakeFX struct {
 	started    map[string]bool
 	roles      map[string]string
 	briefs     map[string]string
+	scopes     map[string]Scope
 	answered   map[string]string // an agent run's last answer
 	answerRep  map[string]Report // and the report it got
 	head       int
@@ -71,7 +72,7 @@ type fakeLane struct {
 
 func newFake() *fakeFX {
 	return &fakeFX{reports: map[string]Report{}, resumes: map[string][]Report{}, gates: map[string]GateResult{},
-		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{},
+		noCommit: map[string]bool{}, started: map[string]bool{}, roles: map[string]string{}, briefs: map[string]string{}, scopes: map[string]Scope{},
 		answered: map[string]string{}, answerRep: map[string]Report{}, strays: map[string][]string{}, commitsOn: map[string]bool{},
 		dirs: map[string]string{}, lanes: map[string]*fakeLane{}, picked: map[string][]string{}, planOnly: map[string]bool{},
 		dirtyAfter: map[string]bool{}, regen: map[string][]string{}, regenDone: map[string]Regenerated{},
@@ -111,7 +112,7 @@ func (f *fakeFX) AgentStarted(name string) (bool, error) {
 	return f.started[name], nil
 }
 
-func (f *fakeFX) Agent(dir, name, role, effort, brief string) (Report, error) {
+func (f *fakeFX) Agent(dir, name, role, effort, brief string, sc Scope) (Report, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ch := f.entered[name]; ch != nil {
@@ -123,7 +124,7 @@ func (f *fakeFX) Agent(dir, name, role, effort, brief string) (Report, error) {
 		f.calls = append(f.calls, "follow "+name)
 		return r, nil
 	}
-	f.started[name], f.roles[name], f.briefs[name], f.dirs[name] = true, role, brief, dir
+	f.started[name], f.roles[name], f.briefs[name], f.dirs[name], f.scopes[name] = true, role, brief, dir, sc
 	f.calls = append(f.calls, strings.TrimSpace(fmt.Sprintf("agent %s %s %s", name, role, effort)))
 	if commits(role) && (r.done() || f.commitsOn[name]) && !f.noCommit[name] {
 		if l := f.lanes[dir]; l != nil {
@@ -1277,6 +1278,34 @@ func script() (*State, *fakeFX, map[string]string) {
 	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"))
 	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
 	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one.", "failed:r-s2-review1": "Read the conformance first.", "strays:r-s2-docs1": "accept"}
+}
+
+// Each dispatch carries the scope its package rules cover (package rules
+// spec §2.1): a first build the Files line, a fix or review the Files line
+// and the story's commits so far, the doc pass its story's diff, the final
+// round the run's whole diff.
+func TestRun_EachAgentGetsItsScope(t *testing.T) {
+	f := newFake()
+	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\nSTATUS: DONE"}
+	f.reports["r-final-review1"] = Report{Status: "DONE", Text: "FINDING: Important b.go:2 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	s := story("1", "intermediate-dev", "vouched")
+	s.Files = []string{"pkg/a.go"}
+	st := newState(s)
+	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	files := []string{"pkg/a.go"}
+	assert.Equal(t, map[string]Scope{
+		"r-s1-dev1":       {Files: files},
+		"r-s1-review1":    {Files: files, Base: "h0", Head: "h1"},
+		"r-s1-fix1":       {Files: files, Base: "h0", Head: "h1"},
+		"r-s1-review2":    {Files: files, Base: "h0", Head: "h2"},
+		"r-s1-docs1":      {Base: "h0", Head: "h2"},
+		"r-final-review1": {Base: "h0", Head: "h3"},
+		"r-final-fix1":    {Base: "h0", Head: "h3"},
+		"r-final-review2": {Base: "h0", Head: "h4"},
+	}, f.scopes)
 }
 
 func TestRun_ARestartAtEverySavePointSubmitsNothingTwice(t *testing.T) {

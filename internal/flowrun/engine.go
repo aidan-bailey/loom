@@ -55,14 +55,24 @@ type Conformance struct {
 	Markers []string `json:"markers,omitempty"`
 }
 
+// Scope is what an agent's package rules cover (package rules spec
+// §2.1): the plan's paths for it, and the files Base..Head changed, which
+// the CLI lists. No Base, no diff.
+type Scope struct {
+	Files []string `json:"files,omitempty"`
+	Base  string   `json:"base,omitempty"`
+	Head  string   `json:"head,omitempty"`
+}
+
 // Effects is everything the engine does outside its state. Every wait is
 // the effect's: Agent, Resume and Gates return once the run they start, or
 // follow, has ended.
 type Effects interface {
 	AgentStarted(name string) (bool, error)
 	// Agent starts agent run name in dir ("" for the session's worktree;
-	// parallel pairs spec §5.3), or follows it.
-	Agent(dir, name, role, effort, brief string) (Report, error)
+	// parallel pairs spec §5.3), with the package rules sc covers, or
+	// follows it.
+	Agent(dir, name, role, effort, brief string, sc Scope) (Report, error)
 	// Resume answers the ended agent run name with text, or follows the
 	// answer already queued with that text.
 	Resume(name, text string) (Report, error)
@@ -457,7 +467,7 @@ func (e *track) retake(name string) {
 
 // agent is agent run name's report: memoized, followed when it exists, else
 // started after the tree check.
-func (e *track) agent(name, role, effort, brief string) (Report, error) {
+func (e *track) agent(name, role, effort, brief string, sc Scope) (Report, error) {
 	var r Report
 	if e.recall("agent:"+name, &r) {
 		return e.outlast(name, r)
@@ -478,7 +488,7 @@ func (e *track) agent(name, role, effort, brief string) (Report, error) {
 			return r, err
 		}
 	}
-	if err := e.wait(func() (err error) { r, err = e.fx.Agent(e.dir, name, role, effort, brief); return err }); err != nil {
+	if err := e.wait(func() (err error) { r, err = e.fx.Agent(e.dir, name, role, effort, brief, sc); return err }); err != nil {
 		return r, err
 	}
 	if err := e.remember("agent:"+name, r); err != nil {
@@ -604,12 +614,18 @@ func (e *track) failed(name string, r Report) (string, error) {
 	return a, nil
 }
 
+// storyScope is a story's scope from base to the head last recorded: its
+// Files line and what its commits changed (package rules spec §2.1).
+func (e *track) storyScope(s *Story, base string) Scope {
+	return Scope{Files: s.Files, Base: base, Head: e.head}
+}
+
 // review runs a reviewer at prefix until its report reads (spec §5.6).
-func (e *track) review(prefix, role, brief string) (Review, Report, error) {
+func (e *track) review(prefix, role, brief string, sc Scope) (Review, Report, error) {
 	next := brief
 	for {
 		name := e.next(prefix)
-		r, err := e.agent(name, role, "", next)
+		r, err := e.agent(name, role, "", next, sc)
 		if err == nil {
 			r, err = e.settle(name, r)
 		}
@@ -643,7 +659,7 @@ func developerEffort(s *Story, role string) string {
 // build runs developers at prefix until one reports done with commits,
 // escalating as spec §5.3 step 2 says. fix is true for a fix round, whose
 // developers stay at their pinned effort.
-func (e *track) build(s *Story, prefix, role, brief string, fix bool) (Report, error) {
+func (e *track) build(s *Story, prefix, role, brief string, fix bool, sc Scope) (Report, error) {
 	before := e.head
 	var earlier []string
 	decision := ""
@@ -654,7 +670,7 @@ func (e *track) build(s *Story, prefix, role, brief string, fix bool) (Report, e
 		return developerEffort(s, role)
 	}
 	name := e.next(prefix)
-	r, err := e.agent(name, role, effort(), brief)
+	r, err := e.agent(name, role, effort(), brief, sc)
 	resumed := false
 	for {
 		if err == nil {
@@ -722,7 +738,7 @@ func (e *track) build(s *Story, prefix, role, brief string, fix bool) (Report, e
 			}
 		}
 		name = e.next(prefix)
-		r, err = e.agent(name, role, effort(), withEarlier(brief, earlier, decision))
+		r, err = e.agent(name, role, effort(), withEarlier(brief, earlier, decision), sc)
 		resumed = false
 	}
 }
@@ -857,7 +873,7 @@ func (e *track) gateLoop(s *Story, prefix, base string) error {
 			}
 			decision = a
 		}
-		if _, err := e.build(s, prefix+"-fix", "intermediate-dev", FixGatesBrief(e.st, s, base, e.head, res, decision), true); err != nil {
+		if _, err := e.build(s, prefix+"-fix", "intermediate-dev", FixGatesBrief(e.st, s, base, e.head, res, decision), true, e.storyScope(s, base)); err != nil {
 			return err
 		}
 	}
@@ -912,7 +928,7 @@ func (e *track) premises() error {
 	}
 	var design []PremiseVerdict
 	for _, g := range PremiseGroups(flagged, 3) {
-		r, err := e.dispatchReport("premise", "premise-check", PremiseBrief(e.st, g))
+		r, err := e.dispatchReport("premise", "premise-check", PremiseBrief(e.st, g), Scope{})
 		if err != nil {
 			return err
 		}
@@ -953,11 +969,11 @@ func (e *track) premises() error {
 
 // dispatchReport runs a non-developer agent at prefix until it reports
 // done; a BLOCKED is a failure (spec §5.3).
-func (e *track) dispatchReport(prefix, role, brief string) (Report, error) {
+func (e *track) dispatchReport(prefix, role, brief string, sc Scope) (Report, error) {
 	next := brief
 	for {
 		name := e.next(prefix)
-		r, err := e.agent(name, role, "", next)
+		r, err := e.agent(name, role, "", next, sc)
 		if err == nil {
 			r, err = e.settle(name, r)
 		}
@@ -1010,7 +1026,7 @@ func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	if !joined {
 		s.Row.Status = "developing"
 		var err error
-		if dev, err = e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false); err != nil {
+		if dev, err = e.build(s, p+"-dev", s.Developer, DeveloperBrief(e.st, s), false, Scope{Files: s.Files}); err != nil {
 			return err
 		}
 	}
@@ -1026,7 +1042,7 @@ func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	if s.Review != "vouched" || dev.Status == "DONE_WITH_CONCERNS" || len(conf.Markers) > 0 {
 		role = "code-quality-reviewer"
 	}
-	rev, rep, err := e.review(p+"-review", role, ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path))
+	rev, rep, err := e.review(p+"-review", role, ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path), e.storyScope(s, base))
 	if err != nil {
 		return err
 	}
@@ -1092,7 +1108,7 @@ func (e *track) laneDev() (Report, error) {
 	}
 	e.dir = dir
 	s.Row.Status, s.Row.Lane = "developing", dir
-	return e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, DeveloperBrief(e.st, s)+LaneNote(dir, e.lane.base), false)
+	return e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, DeveloperBrief(e.st, s)+LaneNote(dir, e.lane.base), false, Scope{Files: s.Files})
 }
 
 // join waits for l's developer phase, then picks its lane's commits onto the
@@ -1148,7 +1164,7 @@ func (e *track) join(l *laneRun) (string, Report, error) {
 			e.note("%s: its lane at %s didn't land, and is kept; its developer runs again here", storyName(s), l.t.dir)
 			base := e.head
 			s.Row.Base, s.Row.Status = base, "developing"
-			dev, err := e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, withEarlier(DeveloperBrief(e.st, s), paths(l.dev.Path), RedoDecision(l.t.dir)), false)
+			dev, err := e.build(s, storyPrefix(s.ID)+"-dev", s.Developer, withEarlier(DeveloperBrief(e.st, s), paths(l.dev.Path), RedoDecision(l.t.dir)), false, Scope{Files: s.Files})
 			return base, dev, err
 		}
 		// retry: the manager fixed the lane by hand; look at it again.
@@ -1263,13 +1279,13 @@ func (e *track) fixRound(s *Story, p, base string, findings []Finding, planFix [
 	for round := 1; ; round++ {
 		s.Row.Status = "fixing"
 		fixBase := e.head
-		if _, err := e.build(s, p+"-fix", "intermediate-dev", FixFindingsBrief(e.st, s, fixBase, e.head, findings, planFix, decision), true); err != nil {
+		if _, err := e.build(s, p+"-fix", "intermediate-dev", FixFindingsBrief(e.st, s, fixBase, e.head, findings, planFix, decision), true, e.storyScope(s, base)); err != nil {
 			return err
 		}
 		if err := e.gateLoop(s, p, base); err != nil {
 			return err
 		}
-		rev, rep, err := e.review(p+"-review", "story-reviewer", ReReviewBrief(e.st, s, fixBase, e.head, findings, planFix))
+		rev, rep, err := e.review(p+"-review", "story-reviewer", ReReviewBrief(e.st, s, fixBase, e.head, findings, planFix), e.storyScope(s, base))
 		if err != nil {
 			return err
 		}
@@ -1345,12 +1361,13 @@ func (e *track) docs(s *Story, p, base, devReport string) error {
 	s.Row.Status = "documenting"
 	before := e.head
 	brief := DocsBrief(e.st, s, base, before, devReport, e.sent)
+	sc := Scope{Base: base, Head: before}
 	next := brief
 	var found []Finding
 	var earlier []string // every attempt's report, for the next one's brief
 	for {
 		name := e.next(p + "-docs")
-		r, d, err := e.docPass(name, next)
+		r, d, err := e.docPass(name, next, sc)
 		if err != nil {
 			return err
 		}
@@ -1421,8 +1438,8 @@ func (e *track) docs(s *Story, p, base, devReport string) error {
 // docPass is doc writer run name's report and its lines, or a nil DocPass
 // when the run failed: it didn't report done, or its lines don't parse,
 // which r.Why then says.
-func (e *track) docPass(name, brief string) (Report, *DocPass, error) {
-	r, err := e.agent(name, "doc-writer", "", brief)
+func (e *track) docPass(name, brief string, sc Scope) (Report, *DocPass, error) {
+	r, err := e.agent(name, "doc-writer", "", brief, sc)
 	if err == nil {
 		r, err = e.settle(name, r)
 	}
@@ -1458,7 +1475,7 @@ func (e *track) finalRound() error {
 	if err := e.gateLoop(s, "final", e.st.Base); err != nil {
 		return err
 	}
-	rev, rep, err := e.review("final-review", "code-quality-reviewer", AntiSeamBrief(e.st, e.head))
+	rev, rep, err := e.review("final-review", "code-quality-reviewer", AntiSeamBrief(e.st, e.head), Scope{Base: e.st.Base, Head: e.head})
 	if err != nil {
 		return err
 	}
@@ -1484,14 +1501,14 @@ func (e *track) finalRound() error {
 	for round := 1; ; round++ {
 		roundBase := e.head
 		for _, group := range fixBatches(findings, finalFixBatch) {
-			if _, err := e.build(s, "final-fix", "intermediate-dev", FixFindingsBrief(e.st, s, e.st.Base, e.head, group, nil, decision), true); err != nil {
+			if _, err := e.build(s, "final-fix", "intermediate-dev", FixFindingsBrief(e.st, s, e.st.Base, e.head, group, nil, decision), true, e.storyScope(s, e.st.Base)); err != nil {
 				return err
 			}
 		}
 		if err := e.gateLoop(s, "final", e.st.Base); err != nil {
 			return err
 		}
-		rev, rep, err = e.review("final-review", "story-reviewer", ReReviewBrief(e.st, s, roundBase, e.head, findings, nil))
+		rev, rep, err = e.review("final-review", "story-reviewer", ReReviewBrief(e.st, s, roundBase, e.head, findings, nil), Scope{Base: e.st.Base, Head: e.head})
 		if err != nil {
 			return err
 		}
