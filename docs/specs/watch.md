@@ -139,7 +139,7 @@ Called for the one issue a tick is about to start, and only in a tick whose `git
  "prs": [{"number": 101, "issue": 94, "branch": "…", "body": "…", "vars": {"spec": "kalshi", "row": "r32"}}]}
 ```
 
-`pr` is set (number, issue, branch, body, vars) for a resume (rule 6). A PR's `vars` are the title variables its head branch encodes, read back by the branch pattern and spelled as the branch spells them (lower case), so a resume's hook need not re-parse loom's branch names. `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs. Out:
+`pr` is set (number, issue, branch, body, vars) for a resume (rule 6). A PR's `vars` are the title variables its head branch encodes, read back by the branch pattern and spelled as the branch spells them, so a resume's hook need not re-parse loom's branch names. The sanitizer lower-cases branch names, so these values are lower case (`r30` for a title's `R30`): returned unchanged, they render a lower-case title, which still makes the PR's own branch. A repository that reads anything from the title's case should re-case them in the hook before returning them. `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs. Out:
 
 ```json
 {"start": true, "vars": {"spec": "kalshi-ws", "row": "R33"}}
