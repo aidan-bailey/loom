@@ -294,6 +294,9 @@ func (p *watchPoll) loadConfig() error {
 	if err != nil {
 		return fmt.Errorf("%s: title: %w", watch.ConfigFile, err)
 	}
+	if vars := tmpl.Vars(); len(vars) > 0 && !hasHook(cfg) {
+		return fmt.Errorf("%s: title uses {%s} but the config names no hook to supply it", watch.ConfigFile, vars[0])
+	}
 	prompt, err := p.readPrompt(cfg.Session.Prompt)
 	if err != nil {
 		return err

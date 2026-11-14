@@ -278,6 +278,17 @@ func TestWatchPoll_AMissingOrInvalidConfigDecidesNothing(t *testing.T) {
 		assert.False(t, res.cfgOK)
 		assert.Empty(t, rig.gh.calls)
 	})
+	t.Run("a variable title with no hook", func(t *testing.T) {
+		rig := newWatchRig(t, watchFiles(strings.Replace(watchTestConfig, "heal {issue}", "heal {issue} {name}", 1)))
+		res := rig.job()
+		assert.Contains(t, res.err, "title uses {name}")
+		assert.False(t, res.cfgOK)
+		assert.Empty(t, rig.gh.calls)
+	})
+	t.Run("a variable title with a hook", func(t *testing.T) {
+		rig := newWatchRig(t, watchFiles(strings.Replace(watchHookTestConfig, "heal {issue}", "heal {issue} {name}", 1)))
+		assert.True(t, rig.job().cfgOK)
+	})
 	t.Run("prompt missing", func(t *testing.T) {
 		rig := newWatchRig(t, map[string]string{"loom-watch.json": watchTestConfig})
 		res := rig.job()
