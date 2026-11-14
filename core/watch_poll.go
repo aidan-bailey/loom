@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -31,9 +32,10 @@ const watchReadBudget = 45 * time.Second
 // only so a test can spend it at once.
 var watchHookBudget = 5 * time.Minute
 
-// watchViewLimit is how many closed issues a poll views through gh: the
-// lowest-numbered ones a watcher session or PR names; the rest wait for a
-// later tick (spec 7.1).
+// watchViewLimit is how many issues a poll views through gh besides the
+// labelled ones: those a watcher session names first, then the lowest-numbered
+// of those an open or an unsettled closed watcher PR names; the rest wait for
+// a later tick (spec 7.1).
 const watchViewLimit = 10
 
 // watchFileLimit is the largest prompt template a poll reads from origin.
@@ -71,6 +73,10 @@ type watchPollRequest struct {
 	loadMem bool
 	// sessions are the workspace's sessions as of dispatch.
 	sessions []watch.Session
+	// settled holds the numbers of the PRs memory has settled, as of
+	// dispatch; nil before the memory is loaded (the poll's own read then
+	// stands in, loadMem).
+	settled map[int]bool
 }
 
 // watchResult is one poll's reads, delivered to deliverWatch. err is why
@@ -157,6 +163,16 @@ func (m *Model) watchRequest(ws *Workspace, dry bool, req ReqID) watchPollReques
 		slug:      st.repo,
 		loadMem:   !st.memLoaded,
 		sessions:  m.watchSessions(ws),
+	}
+	if st.memLoaded {
+		for n, p := range st.mem.PRs {
+			if p.Settled {
+				if rq.settled == nil {
+					rq.settled = map[int]bool{}
+				}
+				rq.settled[n] = true
+			}
+		}
 	}
 	if ws.cfg != nil {
 		rq.configured = ws.cfg.GetBaseBranch()
@@ -368,8 +384,8 @@ func (p *watchPoll) ownPR(pr github.WatchPR, n int) bool {
 }
 
 // readGitHub is the poll's gh half: the viewer (once), the PRs, the
-// labelled issues, and the views of the closed issues the watcher's
-// sessions and PRs name. The first failed read ends the poll: ownership or
+// labelled issues, and the views of the issues the watcher's sessions and
+// live PRs name (viewNamed). The first failed read ends the poll: ownership or
 // the issue set is unknown, so nothing is decided.
 func (p *watchPoll) readGitHub(ctx context.Context) error {
 	if p.res.viewer == "" {
@@ -400,33 +416,60 @@ func (p *watchPoll) readGitHub(ctx context.Context) error {
 	return nil
 }
 
-// viewNamed views the issues a watcher session or PR names that the label
-// query did not return: at most watchViewLimit, lowest number first. A failed
-// view skips that issue for this tick.
+// prSettled reports whether memory holds PR number as settled: the memory
+// this poll read, else the loop's as of dispatch.
+func (p *watchPoll) prSettled(number int) bool {
+	if p.res.mem != nil {
+		return p.res.mem.PRs[number].Settled
+	}
+	return p.rq.settled[number]
+}
+
+// viewNamed views the issues the label query did not return that still have
+// something to act on (spec 4.1): one a watcher session names, one an open
+// watcher PR names, or one a closed-unmerged watcher PR not yet settled in
+// memory names. An issue named only by merged or settled PRs has nothing left
+// and is not viewed, so old merged PRs never crowd out a newer issue. At most
+// watchViewLimit: issues with a watcher session first, then lowest number
+// first. A failed view skips that issue for this tick.
 func (p *watchPoll) viewNamed(ctx context.Context, prs []github.WatchPR, have []github.WatchIssue) []github.WatchIssue {
 	listed := map[int]bool{}
 	for _, is := range have {
 		listed[is.Number] = true
 	}
-	var named []int
+	withSession := map[int]bool{}
+	named := map[int]bool{}
 	for _, s := range p.rq.sessions {
 		if s.Issue > 0 && watch.OwnSession(s, p.res.tmpl) {
-			named = append(named, s.Issue)
+			withSession[s.Issue] = true
+			named[s.Issue] = true
 		}
 	}
 	for _, pr := range prs {
+		live := pr.State == "OPEN" || (pr.State == "CLOSED" && !p.prSettled(pr.Number))
+		if !live {
+			continue
+		}
 		for _, n := range pr.Closes {
 			if p.ownPR(pr, n) {
-				named = append(named, n)
+				named[n] = true
 			}
 		}
 	}
-	slices.Sort(named)
-	named = slices.Compact(named)
+	order := slices.Sorted(maps.Keys(named))
+	slices.SortStableFunc(order, func(a, b int) int {
+		switch {
+		case withSession[a] && !withSession[b]:
+			return -1
+		case !withSession[a] && withSession[b]:
+			return 1
+		}
+		return cmp.Compare(a, b)
+	})
 
 	var out []github.WatchIssue
 	views := 0
-	for _, n := range named {
+	for _, n := range order {
 		if listed[n] {
 			continue
 		}

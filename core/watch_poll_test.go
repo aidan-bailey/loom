@@ -388,7 +388,10 @@ func TestWatchRequest_CopiesWhatTheJobNeedsOffTheLoop(t *testing.T) {
 	assert.Equal(t, "heal 7", rq.sessions[0].Title)
 
 	st.memLoaded = true
-	assert.False(t, rig.m.watchRequest(rig.ws, false, 0).loadMem)
+	st.mem.Settle([]int{5})
+	rq = rig.m.watchRequest(rig.ws, false, 0)
+	assert.False(t, rq.loadMem)
+	assert.Equal(t, map[int]bool{5: true}, rq.settled)
 }
 
 func TestWatchSessions(t *testing.T) {
@@ -505,13 +508,13 @@ func TestWatchPoll_KeepsFiftyIssuesAndCountsTheFiftyFirst(t *testing.T) {
 func TestWatchPoll_ViewsOnlyTheClosedIssuesItsOwnSessionsAndPRsName(t *testing.T) {
 	rig := newWatchRig(t, watchFiles(watchTestConfig))
 	rig.issues = []string{ghIssueJSON(7, "OPEN")}
-	// Issue 8 is named by its session, 9 by its PR: both are viewed.
+	// Issue 8 is named by its session, 9 by its open PR: both are viewed.
 	rig.addSession("heal 8", 8, session.Paused)
 	// 12's session title is not its template's, 11's PR is another author's
 	// and 13's branch is not its pattern: none is viewed.
 	rig.addSession("other 12", 12, session.Ready)
 	rig.prs = []string{
-		ghPRJSON(41, "MERGED", "loom/heal-9", "bot", 9),
+		ghPRJSON(41, "OPEN", "loom/heal-9", "bot", 9),
 		ghPRJSON(42, "MERGED", "loom/heal-11", "someone", 11),
 		ghPRJSON(43, "MERGED", "other/branch", "bot", 13),
 	}
@@ -527,6 +530,72 @@ func TestWatchPoll_ViewsOnlyTheClosedIssuesItsOwnSessionsAndPRsName(t *testing.T
 	assert.Contains(t, views[0], "issue view 8")
 	assert.Contains(t, views[1], "issue view 9")
 	assert.True(t, res.snap.Issues[1].Closed)
+}
+
+func TestWatchPoll_ViewsNothingForIssuesOnlyMergedOrSettledPRsName(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	st := rig.m.watchFor(rig.ws)
+	st.memLoaded = true
+	st.mem.Settle([]int{52})
+	rig.prs = []string{
+		ghPRJSON(51, "MERGED", "loom/heal-1", "bot", 1),
+		ghPRJSON(52, "CLOSED", "loom/heal-2", "bot", 2), // settled in memory
+		ghPRJSON(53, "CLOSED", "loom/heal-3", "bot", 3), // not settled yet
+	}
+	rig.views = map[int]string{3: ghIssueJSON(3, "OPEN")}
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	views := rig.gh.callsTo("issue view")
+	require.Len(t, views, 1, "only the closed PR memory has not settled names an issue worth viewing")
+	assert.Contains(t, views[0], "issue view 3")
+	assert.Equal(t, []int{3}, issueNumbers(res.snap.Issues))
+}
+
+func TestWatchPoll_SettledIsReadFromThePollsOwnMemoryBeforeTheLoopHoldsIt(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	mem := watch.Memory{Version: 1}
+	mem.Settle([]int{53})
+	require.NoError(t, watch.SaveMemory(filepath.Join(rig.ws.ctx.ConfigDir, watch.MemoryFile), mem))
+	rig.prs = []string{ghPRJSON(53, "CLOSED", "loom/heal-3", "bot", 3)}
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	require.NotNil(t, res.mem, "this poll loaded the memory")
+	assert.Empty(t, rig.gh.callsTo("issue view"))
+}
+
+func TestWatchPoll_OldMergedIssuesDoNotCrowdOutALaterIssueWithASession(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	for n := 1; n <= 12; n++ {
+		rig.prs = append(rig.prs, ghPRJSON(100+n, "MERGED", fmt.Sprintf("loom/heal-%d", n), "bot", n))
+	}
+	rig.prs = append(rig.prs, ghPRJSON(200, "MERGED", "loom/heal-90", "bot", 90))
+	rig.addSession("heal 90", 90, session.Ready)
+	rig.views[90] = ghIssueJSON(90, "CLOSED")
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Equal(t, []int{90}, issueNumbers(res.snap.Issues), "the merged issue with a live session is viewed, the twelve old ones are not")
+	assert.Len(t, rig.gh.callsTo("issue view"), 1)
+}
+
+func TestWatchPoll_SessionsAreViewedBeforeThePRsOfIssuesWithoutOne(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	for n := 1; n <= 10; n++ {
+		rig.prs = append(rig.prs, ghPRJSON(100+n, "OPEN", fmt.Sprintf("loom/heal-%d", n), "bot", n))
+		rig.views[n] = ghIssueJSON(n, "CLOSED")
+	}
+	rig.addSession("heal 90", 90, session.Paused)
+	rig.views[90] = ghIssueJSON(90, "CLOSED")
+
+	res := rig.job()
+
+	require.Empty(t, res.err)
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 90}, issueNumbers(res.snap.Issues), "the session's issue takes a place, then the lowest nine")
 }
 
 func TestWatchPoll_ViewsAtMostTenClosedIssuesLowestFirst(t *testing.T) {
