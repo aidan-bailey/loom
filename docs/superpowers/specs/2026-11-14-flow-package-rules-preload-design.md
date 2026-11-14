@@ -59,9 +59,9 @@ A file's rules directories are every directory from the file's own up to, but no
 
 ### 2.3 The record
 
-The run's record (`flowrun.Record`, `flow/plugin/docs/records.md`) gains a line after `- Ended:`:
+The run's record (`flowrun.Record`, `flow/plugin/docs/records.md`) gains a line after `- Engine:`:
 
-`- Package rules: <n> of <m> agent runs pre-loaded rules, <avg> KB a run, most <max> KB (<role>, Story <id>)`
+`- Package rules: <n> of <m> agent runs pre-loaded rules, <avg> KB a run, most <max> KB (<agent run>, <role>)`
 
 Here `<avg>` is over the `<n>` runs that pre-loaded rules. With none, the line reads `- Package rules: none pre-loaded`.
 
@@ -77,9 +77,10 @@ Here `<avg>` is over the `<n>` runs that pre-loaded rules. With none, the line r
 | `internal/cli/flow_run_fx.go` | the scope resolved, recorded and passed on |
 | `internal/cli/flow_agent_exec.go`, `internal/cli/flow_agent.go` | `--add-dir` per directory, the variable, resume from the record |
 | `internal/flowrun/CLAUDE.md` | a rule: every dispatch carries its scope per §2.1 |
-| `internal/cli/CLAUDE.md` | the headless-agent rule gains the pre-load and its failing closed. The file is 34 bytes under its budget, so the room comes from rewording that rule. |
+| `internal/cli/CLAUDE.md` | the pins rule gains the pre-load and its failing closed. The file is 34 bytes under its budget, so the room comes from moving the two flow-agent rules' evidence into a new guide. |
+| `docs/claude/flow-agent-jobs.md` (new), `docs/claude/INDEX.md` | what `--agent` leaves out of a flow agent job, what the job adds back, and each probe |
 | `internal/flowrun/README.md`, `flow/plugin/docs/records.md` | `Scope`; the record line |
-| `flow/PROVENANCE.md` | dated entries under junior-dev, intermediate-dev, senior-dev, story-reviewer, code-quality-reviewer and doc-writer, with no pin changes |
+| `flow/PROVENANCE.md` | one dated entry under **All agents** naming the six engine agents; no pin changes |
 
 ## 4. Testing
 

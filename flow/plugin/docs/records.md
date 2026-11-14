@@ -58,6 +58,12 @@ A record has four parts.
      line giving the lowest free space at a gate run's end. The Cost section's
      agent table has an **Effort** column, read from each transcript: compare
      it with the agent's pin.
+   - `- Package rules:`, in a record the run engine wrote from 2026-11-14 on:
+     how many of its agent runs pre-loaded the package rules their scope
+     covers (an `--add-dir` for each directory holding a `CLAUDE.md` above
+     the story's **Files** paths or the files its diff changed), their
+     average size, and the largest with its agent run and role; `none
+     pre-loaded` when none did. An older record has no such line.
 
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.

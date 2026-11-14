@@ -265,6 +265,12 @@ func TestFlowRun_AgentsPreloadTheirPackageRules(t *testing.T) {
 		assert.Contains(t, string(env), "\n"+envRulesFromDirs+"=1\n")
 	}
 	assert.True(t, found, "the developer's job ran")
+
+	st, err := flowrun.Load(filepath.Join(state, "runs", id+".json"))
+	require.NoError(t, err)
+	record, err := os.ReadFile(st.Record)
+	require.NoError(t, err)
+	assert.Contains(t, string(record), "\n- Package rules: 4 of 6 agent runs pre-loaded rules, 2.0 KB a run, most 2.0 KB ("+id+"-s1-dev1, intermediate-dev)\n")
 }
 
 // gitIn runs git args in dir, failing the test on an error.

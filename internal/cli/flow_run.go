@@ -489,6 +489,13 @@ func (fx *runFX) record(st *flowrun.State) error {
 		cost = "The cost couldn't be read: " + err.Error()
 	}
 	in := flowrun.RecordInputs{Cost: cost, Models: managerModels(cost)}
+	for _, name := range st.Agents {
+		run, err := readAgentRun(agentPath(fx.agents, name))
+		if err != nil {
+			continue // a step that failed before it started has no record
+		}
+		in.Rules = append(in.Rules, flowrun.AgentRules{Name: name, Role: run.Role, Bytes: run.RulesBytes})
+	}
 	if b, err := os.ReadFile(filepath.Join(fx.root, flow.RosterFile)); err == nil {
 		in.RosterEnd = strings.TrimSpace(string(b))
 	}

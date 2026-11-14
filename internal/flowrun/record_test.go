@@ -2,6 +2,8 @@ package flowrun
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRecord(t *testing.T) {
@@ -21,4 +23,21 @@ func TestRecord(t *testing.T) {
 		Head:      "h7abcdef1234",
 	})
 	golden(t, "record.golden", got)
+}
+
+// The Package rules line (package rules spec §2.3) follows the Engine
+// line: absent when the record knows no agent run's rules.
+func TestRecord_PackageRulesLine(t *testing.T) {
+	st := newState(story("1", "intermediate-dev", "vouched"))
+	st.Status = Done
+	assert.NotContains(t, Record(st, RecordInputs{}), "Package rules")
+	assert.Contains(t, Record(st, RecordInputs{Rules: []AgentRules{{Name: "r-s1-dev1", Role: "intermediate-dev"}}}),
+		"\n- Package rules: none pre-loaded\n\n## Cost")
+	got := Record(st, RecordInputs{Rules: []AgentRules{
+		{Name: "r-s1-dev1", Role: "intermediate-dev", Bytes: 2048},
+		{Name: "r-s1-review1", Role: "code-quality-reviewer", Bytes: 4096},
+		{Name: "r-s1-docs1", Role: "doc-writer"},
+	}})
+	assert.Contains(t, got, "- Engine: loom flow run (flow in loom part 3b)\n"+
+		"- Package rules: 2 of 3 agent runs pre-loaded rules, 3.0 KB a run, most 4.0 KB (r-s1-review1, code-quality-reviewer)\n\n## Cost")
 }

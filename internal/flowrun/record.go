@@ -15,6 +15,17 @@ type RecordInputs struct {
 	RosterEnd string
 	Commits   int
 	Head      string
+	// Rules is each agent run's package rules as its record holds them
+	// (package rules spec §2.3); nil leaves the line out.
+	Rules []AgentRules
+}
+
+// AgentRules is one agent run's package rules for the record: its name,
+// role and the bytes of CLAUDE.md it pre-loaded (0 for none).
+type AgentRules struct {
+	Name  string
+	Role  string
+	Bytes int
 }
 
 // Record is the run's record (spec §5.7, flow/plugin/docs/records.md).
@@ -44,7 +55,11 @@ func Record(st *State, in RecordInputs) string {
 	if st.Part != "" {
 		fmt.Fprintf(&b, "- Part: %s of %s\n", st.Part, st.Spec)
 	}
-	fmt.Fprintf(&b, "- Ended: %s\n- Engine: loom flow run (flow in loom part 3b)\n\n", st.Status)
+	fmt.Fprintf(&b, "- Ended: %s\n- Engine: loom flow run (flow in loom part 3b)\n", st.Status)
+	if line := rulesLine(in.Rules); line != "" {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "## Cost\n\n%s\n\n## Stories\n\n", strings.TrimSpace(in.Cost))
 	b.WriteString("| Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
@@ -160,3 +175,28 @@ func short(sha string) string {
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// rulesLine is the record's Package rules line (package rules spec §2.3),
+// "" when the record knows no agent run's rules.
+func rulesLine(rules []AgentRules) string {
+	if len(rules) == 0 {
+		return ""
+	}
+	n, total := 0, 0
+	var most AgentRules
+	for _, r := range rules {
+		if r.Bytes == 0 {
+			continue
+		}
+		n, total = n+1, total+r.Bytes
+		if r.Bytes > most.Bytes {
+			most = r
+		}
+	}
+	if n == 0 {
+		return "- Package rules: none pre-loaded"
+	}
+	kb := func(b float64) string { return strconv.FormatFloat(b/1024, 'f', 1, 64) }
+	return fmt.Sprintf("- Package rules: %d of %d agent runs pre-loaded rules, %s KB a run, most %s KB (%s, %s)",
+		n, len(rules), kb(float64(total)/float64(n)), kb(float64(most.Bytes)), most.Name, most.Role)
+}
