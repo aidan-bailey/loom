@@ -85,19 +85,23 @@ func (fx *runFX) Agent(dir, name, role, effort, brief string, sc flowrun.Scope) 
 		return flowrun.Report{}, err
 	}
 	if !started {
-		argv, err := agentArgv(fx.root, role, effort, cwd, []byte(brief))
+		rules, size, err := agentRules(cwd, sc)
+		if err != nil {
+			return flowrun.Report{Status: agentFailed, Why: "its package rules: " + err.Error()}, nil
+		}
+		argv, err := agentArgv(fx.root, role, effort, cwd, []byte(brief), rules)
 		if msg, ok := refused(err); ok {
 			return flowrun.Report{Status: agentFailed, Why: msg}, nil
 		}
 		if err != nil {
 			return flowrun.Report{}, err
 		}
-		fx.logf("start %s: flow:%s %s", name, role, effort)
+		fx.logf("start %s: flow:%s %s, %d package rules dirs", name, role, effort, len(rules))
 		err = fx.daemon(func(d *client) error {
 			if ok, err := fx.AgentStarted(name); err != nil || ok {
 				return err // a start the lost daemon took after all
 			}
-			return d.startAgent(io.Discard, fx.agents, fx.root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd}, argv, []byte(brief))
+			return d.startAgent(io.Discard, fx.agents, fx.root, &agentRun{Schema: agentRunSchema, ID: name, Role: role, Effort: effort, Cwd: cwd, Rules: rules, RulesBytes: size}, argv, []byte(brief))
 		})
 		if msg, ok := refused(err); ok {
 			return flowrun.Report{Status: agentFailed, Why: msg}, nil

@@ -87,7 +87,7 @@ func newFlowAgentRunCmd() *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: the working directory: %v", err)}
 			}
-			argv, err := agentArgv(root, role, effort, cwd, brief)
+			argv, err := agentArgv(root, role, effort, cwd, brief, nil)
 			if err != nil {
 				return err
 			}
@@ -154,7 +154,7 @@ func (d *client) startAgent(out io.Writer, dir, root string, run *agentRun, argv
 func (d *client) queueAgent(root string, run *agentRun, argv []string) (sched.JobID, error) {
 	definition, _ := agentDefinition(root, run.Role)
 	sub := flowJob(argv, fmt.Sprintf("agent %s: flow:%s", run.ID, run.Role), run.Cwd, 0)
-	sub.Env, sub.Kind = agentEnv(sub.Env, run.Role, frontmatterCacheTTL(definition)), sched.KindAgent
+	sub.Env, sub.Kind = agentEnv(sub.Env, run.Role, frontmatterCacheTTL(definition), len(run.Rules) > 0), sched.KindAgent
 	id, err := submitFlowJob(d, sub)
 	if err != nil {
 		return 0, &ExitError{Code: exitNotRun, Msg: "loom flow agent: nothing was queued: " + err.Error()}
@@ -351,14 +351,14 @@ func answerArgv(run *agentRun, root, answer string) ([]string, error) {
 		if err != nil {
 			return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %s has no session to resume, and its brief can't be read: %v", run.ID, err)}
 		}
-		return agentArgv(root, run.Role, run.Effort, run.Cwd, brief)
+		return agentArgv(root, run.Role, run.Effort, run.Cwd, brief, run.Rules)
 	}
 	settings, err := runSettings(run.Cwd)
 	if err != nil {
 		return nil, err
 	}
 	definition, _ := agentDefinition(root, run.Role)
-	return agentCommand(agentProgram(), run.Role, agentEffort(run.Effort, definition), frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session), nil
+	return agentCommand(agentProgram(), run.Role, agentEffort(run.Effort, definition), frontmatterMaxTurns(definition), agentPermissionMode(), root, settings, answer, run.Session, run.Rules), nil
 }
 
 // answerAgent queues a job resuming run id's session with answer.

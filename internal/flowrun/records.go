@@ -52,6 +52,12 @@ type AgentRecord struct {
 	Turns    int              `json:"turns,omitempty"`
 	Why      string           `json:"why,omitempty"`
 	Limit    *Limit           `json:"limit,omitempty"` // set at AgentUsageLimit
+
+	// Rules are the package rules directories the run pre-loads, and
+	// RulesBytes their CLAUDE.md files' size (package rules spec §2.2): a
+	// resume passes the same.
+	Rules      []string `json:"rules,omitempty"`
+	RulesBytes int      `json:"rules_bytes,omitempty"`
 }
 
 // Limit is the usage limit an agent run stopped on (usage-limit hold spec

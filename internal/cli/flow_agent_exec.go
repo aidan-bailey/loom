@@ -79,10 +79,14 @@ var agentStatuses = []string{"DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLO
 // session is "", else a resume of it with prompt as the answer. settings is
 // agentSettings' JSON. maxTurns, when positive, is passed as --max-turns:
 // `--agent` doesn't apply a definition's maxTurns (part 3b's probe,
-// 2026-11-06), so each job carries it.
-func agentCommand(program, role, effort string, maxTurns int, mode, root, settings, prompt, session string) []string {
+// 2026-11-06), so each job carries it. rules are the package rules
+// directories it pre-loads, one --add-dir each (package rules spec §2.2).
+func agentCommand(program, role, effort string, maxTurns int, mode, root, settings, prompt, session string, rules []string) []string {
 	argv := []string{program, "-p", prompt, "--agent", "flow:" + role,
 		"--plugin-dir", filepath.Join(root, "plugin"), "--settings", settings}
+	for _, d := range rules {
+		argv = append(argv, "--add-dir", d)
+	}
 	if session != "" {
 		argv = append(argv, "--resume", session)
 	}
@@ -173,16 +177,17 @@ func scrubbedVar(name string) bool {
 const envCache5m = "FORCE_PROMPT_CACHING_5M"
 
 // agentEnv is an agent job's environment: env without the scrubbed
-// variables, with LOOM_FLOW_AGENT set to role and, for a definition that
-// pins `cacheTtl: 5m`, the five-minute switch on. `--agent`'s main thread
+// variables, with LOOM_FLOW_AGENT set to role, for a definition that pins
+// `cacheTtl: 5m` the five-minute switch on, and with rules the switch that
+// loads each --add-dir directory's CLAUDE.md. `--agent`'s main thread
 // writes at the session's lifetime, one hour on a subscription, whatever
 // the definition pins (the 2026-11-11 probe); any other ttl leaves the
 // submitter's choice as it is.
-func agentEnv(env []string, role, ttl string) []string {
-	out := make([]string, 0, len(env)+2)
+func agentEnv(env []string, role, ttl string, rules bool) []string {
+	out := make([]string, 0, len(env)+3)
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if scrubbedVar(name) || name == envAgentRole || (ttl == "5m" && name == envCache5m) {
+		if scrubbedVar(name) || name == envAgentRole || (ttl == "5m" && name == envCache5m) || (rules && name == envRulesFromDirs) {
 			continue
 		}
 		out = append(out, kv)
@@ -190,6 +195,9 @@ func agentEnv(env []string, role, ttl string) []string {
 	out = append(out, envAgentRole+"="+role)
 	if ttl == "5m" {
 		out = append(out, envCache5m+"=1")
+	}
+	if rules {
+		out = append(out, envRulesFromDirs+"=1")
 	}
 	return out
 }
@@ -374,10 +382,11 @@ func cacheTTLValue(entry string) string {
 }
 
 // agentArgv is the argv of a first agent job of role with brief, run in cwd
-// from the flow root root (spec §5.4), or an *ExitError saying why not: an
+// from the flow root root with the package rules directories rules (spec
+// §5.4), or an *ExitError saying why not: an
 // unknown role, an empty or oversized brief, a preloaded skill or the
 // settings it can't read.
-func agentArgv(root, role, effort, cwd string, brief []byte) ([]string, error) {
+func agentArgv(root, role, effort, cwd string, brief []byte, rules []string) ([]string, error) {
 	definition, ok := agentDefinition(root, role)
 	if !ok {
 		return nil, &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: the flow plugin has no agent %s", role)}
@@ -397,7 +406,7 @@ func agentArgv(root, role, effort, cwd string, brief []byte) ([]string, error) {
 		return nil, err
 	}
 	return agentCommand(agentProgram(), role, agentEffort(effort, definition), frontmatterMaxTurns(definition), agentPermissionMode(), root, settings,
-		rolePreamble(role)+"\n\n"+skills+string(brief), ""), nil
+		rolePreamble(role)+"\n\n"+skills+string(brief), "", rules), nil
 }
 
 // frontmatter is the text between a file's opening `---` line and the next.

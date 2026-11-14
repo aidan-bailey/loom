@@ -210,6 +210,63 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Equal(t, flowrun.FromOwner, st.Answers[0].From)
 }
 
+// Each engine agent pre-loads the package rules its scope covers (package
+// rules spec §2): Story 1's developer, fixer and reviewers get pkg's from
+// its Files line; its doc writer and the final review, whose diffs (the
+// fake's empty commits) name no file, get none.
+func TestFlowRun_AgentsPreloadTheirPackageRules(t *testing.T) {
+	s := runStory("1", "intermediate-dev")
+	s.Files = []string{"pkg/a.go"}
+	_, state, logDir := runFixture(t, s)
+	repo, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "pkg"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "pkg", "CLAUDE.md"), []byte(strings.Repeat("r", 2047)+"\n"), 0o600))
+	gitIn(t, repo, "add", "pkg")
+	gitIn(t, repo, "commit", "-q", "-m", "pkg rules")
+	id := "2026-11-06-the-plan"
+	out, _, err := runRun(t, "", "start", "docs/2026-11-06-the-plan.md")
+	require.NoError(t, err, out)
+	out, _, err = runRun(t, "", "engine", id)
+	require.NoError(t, err, out)
+	out, _, err = runRun(t, "", "wait", id)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "ended "+id+": done")
+
+	read := func(name string) *agentRun {
+		t.Helper()
+		r, err := readAgentRun(agentPath(filepath.Join(state, "agents"), id+"-"+name))
+		require.NoError(t, err)
+		return r
+	}
+	dev := read("s1-dev1")
+	pkg := filepath.Join(dev.Cwd, "pkg")
+	assert.Equal(t, []string{pkg}, dev.Rules)
+	assert.Equal(t, 2048, dev.RulesBytes)
+	for _, name := range []string{"s1-review1", "s1-fix1", "s1-review2"} {
+		assert.Equal(t, []string{pkg}, read(name).Rules, name)
+	}
+	assert.Empty(t, read("s1-docs1").Rules, "the doc writer's diff names no file")
+	assert.Empty(t, read("final-review1").Rules, "nor does the run's")
+
+	argFiles, err := filepath.Glob(filepath.Join(logDir, "*.args"))
+	require.NoError(t, err)
+	found := false
+	for _, f := range argFiles {
+		args, err := os.ReadFile(f)
+		require.NoError(t, err)
+		if !strings.Contains(string(args), "Build Story 1") {
+			continue
+		}
+		found = true
+		assert.Contains(t, string(args), "\n--add-dir\n"+pkg+"\n")
+		env, err := os.ReadFile(strings.TrimSuffix(f, ".args") + ".env")
+		require.NoError(t, err)
+		assert.Contains(t, string(env), "\n"+envRulesFromDirs+"=1\n")
+	}
+	assert.True(t, found, "the developer's job ran")
+}
+
 // gitIn runs git args in dir, failing the test on an error.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()

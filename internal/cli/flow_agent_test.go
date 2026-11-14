@@ -427,10 +427,12 @@ func TestFrontmatterCacheTTL(t *testing.T) {
 
 func TestAgentEnv_AFiveMinutePinSetsTheSwitchOnce(t *testing.T) {
 	env := []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=old", "CLAUDECODE=1"}
-	assert.Equal(t, []string{"PATH=/bin", "LOOM_FLOW_AGENT=recon", "FORCE_PROMPT_CACHING_5M=1"}, agentEnv(env, "recon", "5m"))
+	assert.Equal(t, []string{"PATH=/bin", "LOOM_FLOW_AGENT=recon", "FORCE_PROMPT_CACHING_5M=1"}, agentEnv(env, "recon", "5m", false))
 	// Any other pin, or none, leaves the submitter's choice as it is.
-	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=verifier"}, agentEnv(env, "verifier", "1h"))
-	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=x"}, agentEnv(env, "x", ""))
+	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=verifier"}, agentEnv(env, "verifier", "1h", false))
+	assert.Equal(t, []string{"PATH=/bin", "FORCE_PROMPT_CACHING_5M=0", "LOOM_FLOW_AGENT=x"}, agentEnv(env, "x", "", false))
+	assert.Equal(t, []string{"PATH=/bin", "LOOM_FLOW_AGENT=x", envRulesFromDirs + "=1"},
+		agentEnv([]string{"PATH=/bin", envRulesFromDirs + "=0"}, "x", "", true), "package rules turn the variable on, once")
 }
 
 func TestScrubbedVar(t *testing.T) {
@@ -509,7 +511,7 @@ func TestAgentArgv_RolePreamblesAndMaxTurns(t *testing.T) {
 	write("doc-writer", "model: sonnet\nmaxTurns: 100\n")
 	cwd := t.TempDir()
 	argvOf := func(role string) string {
-		argv, err := agentArgv(root, role, "", cwd, []byte("Go."))
+		argv, err := agentArgv(root, role, "", cwd, []byte("Go."), nil)
 		require.NoError(t, err)
 		return strings.Join(argv, "\n")
 	}
@@ -528,8 +530,8 @@ func TestAgentArgv_RolePreamblesAndMaxTurns(t *testing.T) {
 	assert.Contains(t, dev, "\n--max-turns\n250\n")
 	assert.NotContains(t, review, "--max-turns", "no maxTurns, no flag")
 
-	_, err := agentArgv(root, "nobody", "", cwd, []byte("Go."))
+	_, err := agentArgv(root, "nobody", "", cwd, []byte("Go."), nil)
 	assert.Equal(t, exitUsage, exitCode(t, err))
-	_, err = agentArgv(root, "recon", "", cwd, []byte("  "))
+	_, err = agentArgv(root, "recon", "", cwd, []byte("  "), nil)
 	assert.Equal(t, exitUsage, exitCode(t, err))
 }
