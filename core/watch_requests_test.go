@@ -34,7 +34,8 @@ func TestReply_TheWatchViewCrossesTheWire(t *testing.T) {
 
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
-	for _, key := range []string{`"on":true`, `"considered":4`, `"unconsidered":1`, `"escalations"`, `"waiting"`, `"failed":"start: the hook said no"`, `"escalated":true`, `"issue":12`} {
+	for _, key := range []string{`"on":true`, `"considered":4`, `"unconsidered":1`, `"escalations"`, `"waiting"`, `"failed":"start: the hook said no"`, `"escalated":true`, `"issue":12`,
+		`"number":12`, `"state":"open"`, `"session":"heal 12"`, `"at":`} {
 		assert.Contains(t, string(data), key, "the views' keys are snake_case")
 	}
 
@@ -433,10 +434,12 @@ func TestSetWatch_WritesTheSwitchToTheWorkspaceConfig(t *testing.T) {
 	assert.True(t, v.Watch.On)
 
 	ws.watch.polling = false
+	m.gate(gateWatch).last = time.Now() // not due: only an expedite would make it so
 	m.SetWatch(id, false, 2)
 
 	require.NoError(t, requestReply(t, m, 2).Err)
 	assert.False(t, ws.watch.polling, "switching off starts no poll")
+	assert.False(t, m.gateDue(gateWatch, time.Now()), "switching off does not expedite the poll gate, as switching on does")
 	assert.False(t, ws.cfg.GetWatchEnabled())
 	assert.False(t, config.LoadConfigFrom(ws.ctx.ConfigDir).WatchEnabled(), "off is written too, not left unset")
 }
@@ -532,6 +535,21 @@ func TestReadWatch_ADryRunWaitsForItsPollAndIsRefusedWhileOneIsOut(t *testing.T)
 	r := requestReply(t, m, 6)
 	assert.ErrorIs(t, r.Err, ErrRefused)
 	assert.Contains(t, r.Err.Error(), "already running")
+}
+
+// TestReadWatch_ADryRunOfARepoLessWorkspaceSaysSo: no poll can start for a
+// workspace with no repository, and the refusal names that, not a poll
+// already running.
+func TestReadWatch_ADryRunOfARepoLessWorkspaceSaysSo(t *testing.T) {
+	m, ws, id := watchWS(t, true)
+	ws.ctx.RepoPath = ""
+
+	m.ReadWatch(id, true, 1)
+
+	r := requestReply(t, m, 1)
+	assert.ErrorIs(t, r.Err, ErrRefused)
+	assert.Contains(t, r.Err.Error(), "no repository")
+	assert.NotContains(t, r.Err.Error(), "already running")
 }
 
 // TestReadWatch_RefusesAnUnservedWorkspace: the request names a workspace

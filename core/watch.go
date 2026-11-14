@@ -193,7 +193,7 @@ func (m *Model) deliverWatch(res watchResult) {
 	if res.dry {
 		var snap watch.Snapshot
 		var actions []watch.Action
-		if res.err == "" {
+		if res.err == "" && m.watchOf(res.ws) != nil {
 			snap, actions = m.decideWatch(res)
 		}
 		m.answerWatchDry(res, snap, actions, res.err)
@@ -510,6 +510,14 @@ func (m *Model) ReadWatch(id WorkspaceID, dryRun bool, req ReqID) {
 			actions = st.actions
 		}
 		m.reply(req, Reply{Watch: m.watchViewOf(ws, actions)})
+		return
+	}
+	if !m.isLoadedWS(ws) {
+		m.refuse(req, 0, fmt.Errorf("dry run: workspace %s is not loaded", ws.Label()))
+		return
+	}
+	if ws.ctx == nil || ws.ctx.RepoPath == "" {
+		m.refuse(req, 0, fmt.Errorf("dry run: workspace %s has no repository to watch", ws.Label()))
 		return
 	}
 	if !m.startWatchPoll(ws, true, req) {
