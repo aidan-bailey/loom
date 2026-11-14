@@ -191,7 +191,7 @@ A missing file is empty memory. A file that cannot be read or decoded, or whose 
 
 ## What it calls
 
-Each outside call has a timeout and a per-tick budget; the `gh` and `git` reads of one tick share 45 seconds, and the hook runs after them under its own timeout.
+Each outside call has a timeout and a per-tick budget; the `gh` reads of one tick share 45 seconds (`watchReadBudget`); the base's fetch (60 seconds) and the checkout's refresh (5 minutes) have their own timeouts, and the hook calls run after the reads, each under `hook.timeout` and all together within 5 minutes (`watchHookBudget`).
 
 | Call | Per tick and workspace |
 |---|---|
