@@ -28,7 +28,8 @@ const watchPRLimit = "100"
 // WatchPR is one pull request as the watcher reads it. State is OPEN,
 // CLOSED or MERGED, and Mergeable is MERGEABLE, CONFLICTING or UNKNOWN,
 // both as gh reports them. Closes holds the numbers of the issues the
-// PR closes, Author the author's login.
+// PR closes in this repository only (references to other repositories'
+// issues are dropped), Author the author's login.
 type WatchPR struct {
 	Number      int
 	State       string

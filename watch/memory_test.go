@@ -203,6 +203,27 @@ func TestMemory_UnknownTopLevelKeysSurviveASave(t *testing.T) {
 	assert.Equal(t, 1, again.PRs[3].Nudges["ci"].N)
 }
 
+func TestSaveMemory_ADifferentlyCasedMemoryKeyIsNotKeptAsAnUnknownOne(t *testing.T) {
+	// encoding/json matches keys without regard to case, so "PRS" is the
+	// memory's own key: kept as an unknown one it would be written back
+	// beside the real "prs".
+	path := writeMemoryFile(t, `{"version": 1, "PRS": {"3": {"settled": true}}, "Issues": {}, "note": "kept"}`)
+	m, err := LoadMemory(path)
+	require.NoError(t, err)
+	assert.True(t, m.PRs[3].Settled)
+
+	require.NoError(t, SaveMemory(path, m))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var top map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &top))
+	assert.NotContains(t, top, "PRS")
+	assert.NotContains(t, top, "Issues")
+	assert.Contains(t, top, "prs")
+	assert.Contains(t, top, "note")
+}
+
 func TestMemory_RecordNudge(t *testing.T) {
 	at1 := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 	at2 := at1.Add(time.Hour)

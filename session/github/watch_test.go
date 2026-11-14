@@ -95,9 +95,6 @@ func TestWatchPRs_ParsesTheFixture(t *testing.T) {
 	assert.Empty(t, closed.Failing, "a null rollup is no failing check")
 }
 
-// scriptedExec-style substring matching hides the flags, so pin them:
-// --author @me and --state all are what make the watcher's own merged
-// PRs visible, and the field list is what fills every WatchPR field.
 func TestWatchPRs_ClosesHoldsOnlyThisReposIssues(t *testing.T) {
 	ref := func(n int, owner, repo string) string {
 		return fmt.Sprintf(`{"number": %d, "repository": {"name": %q, "owner": {"login": %q}}}`, n, repo, owner)
@@ -118,6 +115,9 @@ func TestWatchPRs_ClosesHoldsOnlyThisReposIssues(t *testing.T) {
 	}
 }
 
+// scriptedExec-style substring matching hides the flags, so pin them:
+// --author @me and --state all are what make the watcher's own merged
+// PRs visible, and the field list is what fills every WatchPR field.
 func TestWatchPRs_PassesLoadBearingFlagsInTheRepoDir(t *testing.T) {
 	ex := &watchExec{fn: answer(`[]`)}
 	prs, err := WatchPRs(context.Background(), "/repo", ex)
