@@ -88,6 +88,10 @@ type Story struct {
 	Landmines  []string `json:"landmines,omitempty"`
 	Interfaces string   `json:"interfaces,omitempty"`
 	Verify     string   `json:"verify,omitempty"`
+	// Files is the story's **Files** line's paths (check-plan's `files`):
+	// what its developers' and reviewers' package rules cover (package
+	// rules spec §2.1). A run an older build started has none.
+	Files []string `json:"files,omitempty"`
 	// BaseLine and BaseEnd are its range in the plan at the base, kept once
 	// Restory has moved Line and End: premise flags are numbered by it.
 	BaseLine int `json:"base_line,omitempty"`
@@ -259,7 +263,7 @@ func (st *State) Restory(fresh []Story) (kept []string, err error) {
 		if s.BaseLine == 0 {
 			s.BaseLine, s.BaseEnd = s.Line, s.End
 		}
-		s.Line, s.End, s.Verify, s.Interfaces, s.Landmines = f.Line, f.End, f.Verify, f.Interfaces, f.Landmines
+		s.Line, s.End, s.Verify, s.Interfaces, s.Landmines, s.Files = f.Line, f.End, f.Verify, f.Interfaces, f.Landmines, f.Files
 		if f.Developer != s.Developer || f.Tier != s.Tier || f.Review != s.Review {
 			kept = append(kept, fmt.Sprintf("Story %s's developer, tier and review stay %s, %s and %s (the plan now says %s, %s and %s)",
 				s.ID, s.Developer, s.Tier, s.Review, f.Developer, f.Tier, f.Review))

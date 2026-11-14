@@ -638,6 +638,7 @@ def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str], lan
         "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full",
         "landmines": [marker for marker, _ in markers_in(story, markers)],
         "interfaces": story.fields.get("Interfaces", ""), "verify": story.fields.get("Verify", ""),
+        "files": sorted(story.files),
     }
     if lane:
         out["lane"] = True

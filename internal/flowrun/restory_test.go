@@ -23,6 +23,7 @@ func TestRestory(t *testing.T) {
 		fresh[1].End += 34
 		fresh[2].Line, fresh[2].End = fresh[2].Line+34, fresh[2].End+34
 		fresh[2].Verify, fresh[2].Interfaces, fresh[2].Landmines = "go test ./y", "Exports Y.", []string{"a landmine"}
+		fresh[2].Files = []string{"y/y.go"}
 		fresh[2].Developer, fresh[2].Tier, fresh[2].Review = "senior-dev", "light", "full"
 		kept, err := st.Restory(fresh)
 		require.NoError(t, err)
@@ -32,6 +33,7 @@ func TestRestory(t *testing.T) {
 		assert.Equal(t, "go test ./y", s3.Verify)
 		assert.Equal(t, "Exports Y.", s3.Interfaces)
 		assert.Equal(t, []string{"a landmine"}, s3.Landmines)
+		assert.Equal(t, []string{"y/y.go"}, s3.Files, "a plan edit moves the Files line too")
 		assert.Equal(t, []string{"intermediate-dev", "deep", "vouched"}, []string{s3.Developer, s3.Tier, s3.Review}, "the roles stay as the run started")
 		assert.Equal(t, []string{"Story 3's developer, tier and review stay intermediate-dev, deep and vouched (the plan now says senior-dev, light and full)"}, kept)
 		assert.Equal(t, memo, st.Memo)

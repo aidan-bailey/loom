@@ -274,6 +274,8 @@ class JsonTest(unittest.TestCase):
         self.assertEqual(stories[0]["verify"], "`cargo nextest run -p a store`")
         self.assertEqual(stories[1]["interfaces"], "uses `Store::get` from Story 1")
         self.assertEqual(stories[0]["landmines"], [])
+        self.assertEqual(stories[0]["files"], ["a/store.rs", "a/tests/store.rs"], "the Files line's paths, sorted")
+        self.assertEqual(stories[1]["files"], ["ui/panel.ts"])
 
     def test_a_story_ends_before_a_later_h2(self):
         code, out = run(GOOD + "\n## Execution notes\n\nlater\n", as_json=True)
