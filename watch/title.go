@@ -260,8 +260,31 @@ func (t TitleTemplate) Parse(title string) (issue int, vars map[string]string, o
 // gets under prefix (the workspace's branch prefix): git.SanitizeBranchName of
 // prefix plus the template, each non-issue variable matching [a-z0-9._-]+.
 func (t TitleTemplate) BranchPattern(prefix string, issue int) *regexp.Regexp {
+	re, _ := t.branchRegexp(prefix, issue)
+	return re
+}
+
+// BranchVars reads the title variables back from branch, a branch matching
+// BranchPattern(prefix, issue), as the branch spells them (the sanitizer
+// lower-cases them). ok is false when branch does not match.
+func (t TitleTemplate) BranchVars(prefix string, issue int, branch string) (vars map[string]string, ok bool) {
+	re, names := t.branchRegexp(prefix, issue)
+	m := re.FindStringSubmatch(branch)
+	if m == nil {
+		return nil, false
+	}
+	vars = map[string]string{}
+	for i, name := range names {
+		vars[name] = m[i+1]
+	}
+	return vars, true
+}
+
+// branchRegexp is BranchPattern with each non-issue variable a capture
+// group, and the names of those variables in group order.
+func (t TitleTemplate) branchRegexp(prefix string, issue int) (*regexp.Regexp, []string) {
 	if len(t.parts) == 0 {
-		return neverMatch
+		return neverMatch, nil
 	}
 	var text strings.Builder
 	text.WriteString(prefix)
@@ -270,7 +293,7 @@ func (t TitleTemplate) BranchPattern(prefix string, issue int) *regexp.Regexp {
 	}
 	mark, ok := freeLetter(text.String())
 	if !ok {
-		return neverMatch
+		return neverMatch, nil
 	}
 
 	// Each variable becomes mark + its index + mark. mark occurs nowhere
@@ -278,38 +301,41 @@ func (t TitleTemplate) BranchPattern(prefix string, issue int) *regexp.Regexp {
 	// pieces (even indexes) and the variable indexes (odd) exactly.
 	var in strings.Builder
 	in.WriteString(prefix)
-	issueAt, n := -1, 0
+	var names []string
 	for _, p := range t.parts {
 		if p.name == "" {
 			in.WriteString(p.literal)
 			continue
 		}
-		if p.name == issueVar {
-			issueAt = n
-		}
-		in.WriteString(mark + strconv.Itoa(n) + mark)
-		n++
+		in.WriteString(mark + strconv.Itoa(len(names)) + mark)
+		names = append(names, p.name)
 	}
 	pieces := strings.Split(git.SanitizeBranchName(in.String()), mark)
 	if len(pieces)%2 == 0 {
-		return neverMatch
+		return neverMatch, nil
 	}
 
 	var re strings.Builder
+	var groups []string
 	re.WriteString(`^`)
 	for i, piece := range pieces {
 		if i%2 == 0 {
 			re.WriteString(regexp.QuoteMeta(piece))
 			continue
 		}
-		if idx, err := strconv.Atoi(piece); err == nil && idx == issueAt {
-			re.WriteString(strconv.Itoa(issue))
-		} else {
-			re.WriteString(`[a-z0-9._-]+`)
+		idx, err := strconv.Atoi(piece)
+		if err != nil || idx < 0 || idx >= len(names) {
+			return neverMatch, nil
 		}
+		if names[idx] == issueVar {
+			re.WriteString(strconv.Itoa(issue))
+			continue
+		}
+		re.WriteString(`([a-z0-9._-]+)`)
+		groups = append(groups, names[idx])
 	}
 	re.WriteString(`$`)
-	return regexp.MustCompile(re.String())
+	return regexp.MustCompile(re.String()), groups
 }
 
 // freeLetter returns a lower-case letter that text does not contain, in any

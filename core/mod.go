@@ -81,8 +81,9 @@ const (
 	// a CLI message is refused, a job's notice is recorded on its job as
 	// undelivered, and it is never pasted (withoutMod).
 	OriginJob Origin = "job"
-	// OriginWatch is an issue watcher's nudge (core/watch_actions.go): no
-	// "From" line and not the person's words. Like a job's notice it goes
+	// OriginWatch is an issue watcher's nudge (core/watch_actions.go),
+	// signed "From loom-watch:" by sendWatchNudge, and not the person's
+	// words. Like a job's notice it goes
 	// only through a live mod and only the model sends it (Send refuses it);
 	// a nudge the mod can't take is reported to the watcher's status
 	// (modMessage.onUndelivered) and never pasted.

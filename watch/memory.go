@@ -39,10 +39,19 @@ type Memory struct {
 
 // PRMemory is what the watcher did on one PR. Nudges are keyed by kind and
 // counted for the PR's life. Settled marks a PR closed unmerged that the
-// watcher has already escalated for.
+// watcher has already escalated for, or one it closed itself. ResumeFailed
+// is set while every resume of the PR has failed (spec §4.5), nil otherwise.
 type PRMemory struct {
-	Nudges  map[string]NudgeRecord `json:"nudges,omitempty"`
-	Settled bool                   `json:"settled"`
+	Nudges       map[string]NudgeRecord `json:"nudges,omitempty"`
+	Settled      bool                   `json:"settled"`
+	ResumeFailed *ResumeFailure         `json:"resume_failed,omitempty"`
+}
+
+// ResumeFailure is when a PR's resumes began failing, and why the last one
+// failed.
+type ResumeFailure struct {
+	Since  time.Time `json:"since"`
+	Reason string    `json:"reason"`
 }
 
 // NudgeRecord is the nudges of one kind on one PR: how many, and the key and
@@ -237,6 +246,33 @@ func (m *Memory) Settle(prs []int) {
 	}
 }
 
+// RecordResumeFailure records that a resume of pr failed for reason at at:
+// the first failure sets the time the failures began, a later one only
+// replaces the reason (spec §4.5).
+func (m *Memory) RecordResumeFailure(pr int, reason string, at time.Time) {
+	if m.PRs == nil {
+		m.PRs = map[int]PRMemory{}
+	}
+	p := m.PRs[pr]
+	if p.ResumeFailed == nil {
+		p.ResumeFailed = &ResumeFailure{Since: at}
+	}
+	p.ResumeFailed.Reason = reason
+	m.PRs[pr] = p
+}
+
+// ClearResumeFailure forgets pr's resume failures: a resume created its
+// session, or the issue escalated. It reports whether there was one to forget.
+func (m *Memory) ClearResumeFailure(pr int) bool {
+	p, ok := m.PRs[pr]
+	if !ok || p.ResumeFailed == nil {
+		return false
+	}
+	p.ResumeFailed = nil
+	m.PRs[pr] = p
+	return true
+}
+
 // SetSeen stores the issue-changed fingerprint (spec §4.2) the watcher has
 // acted on. An existing escalation and commented reason are kept.
 func (m *Memory) SetSeen(issue int, seen string) {
@@ -260,6 +296,10 @@ func (m Memory) Clone() Memory {
 		cp := PRMemory{Settled: p.Settled}
 		if p.Nudges != nil {
 			cp.Nudges = maps.Clone(p.Nudges)
+		}
+		if p.ResumeFailed != nil {
+			f := *p.ResumeFailed
+			cp.ResumeFailed = &f
 		}
 		c.PRs[n] = cp
 	}

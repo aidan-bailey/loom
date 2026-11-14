@@ -172,6 +172,34 @@ func TestTitleTemplate_ZeroValue(t *testing.T) {
 	assert.Empty(t, tt.Vars())
 }
 
+// TestTitleTemplate_BranchVars reads a PR branch's title variables back, so a
+// resume's hook input carries them (spec §5.2).
+func TestTitleTemplate_BranchVars(t *testing.T) {
+	tmpl, err := watch.ParseTitleTemplate("heal {spec} {issue} {row}")
+	require.NoError(t, err)
+	title, err := tmpl.Render(96, map[string]string{"spec": "Kalshi-WS", "row": "R33"})
+	require.NoError(t, err)
+	branch := git.SanitizeBranchName("aidanb/" + title)
+
+	vars, ok := tmpl.BranchVars("aidanb/", 96, branch)
+	require.True(t, ok)
+	assert.Equal(t, map[string]string{"spec": "kalshi-ws", "row": "r33"}, vars, "as the branch spells them")
+	again, err := tmpl.Render(96, vars)
+	require.NoError(t, err)
+	assert.Equal(t, branch, git.SanitizeBranchName("aidanb/"+again), "the variables render the PR's own branch back")
+
+	_, ok = tmpl.BranchVars("aidanb/", 9, branch)
+	assert.False(t, ok, "another issue's pattern")
+	_, ok = tmpl.BranchVars("other/", 96, branch)
+	assert.False(t, ok, "another prefix")
+
+	plain, err := watch.ParseTitleTemplate("fix {issue}")
+	require.NoError(t, err)
+	vars, ok = plain.BranchVars("", 5, "fix-5")
+	require.True(t, ok)
+	assert.Empty(t, vars)
+}
+
 // TestTitleTemplate_RoundTrip renders titles, parses them back, and checks
 // the branch the real sanitizer makes from prefix+title against the pattern.
 func TestTitleTemplate_RoundTrip(t *testing.T) {

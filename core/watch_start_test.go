@@ -29,10 +29,29 @@ func wactIssue(n int) github.WatchIssue {
 func wactStartModel(t *testing.T, o Options) (*Model, *Workspace, *watchState) {
 	t.Helper()
 	m, ws, st := wactModel(t, o)
+	wactGitRepo(t, ws.ctx.RepoPath)
 	st.snap.Issues = []github.WatchIssue{wactIssue(7)}
 	st.prompt = "Fix {issue_title} ({issue_url}) on {base}"
 	st.resumePrompt = "Resume #{pr} on {branch}"
 	return m, ws, st
+}
+
+// wactGitRepo makes dir a git repository with a commit on main and a bare
+// origin, so a fresh start's check for an existing branch has a real answer.
+func wactGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	gitIn := func(dir string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-c", "user.email=t@example.com", "-c", "user.name=T"}, args...)...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	gitIn(dir, "init", "-q", "-b", "main")
+	gitIn(dir, "commit", "-q", "--allow-empty", "-m", "first")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	gitIn(dir, "clone", "-q", "--bare", dir, origin)
+	gitIn(dir, "remote", "add", "origin", origin)
 }
 
 // wactHook is a hook command that saves its stdin next to itself, as in.json,
@@ -103,6 +122,118 @@ func TestWatchStart_CreatesTheSessionCutFromTheBaseWithTheRenderedPrompt(t *test
 	assert.Equal(t, st.mem.Issues[7].Seen, onDisk.Issues[7].Seen)
 	assert.Empty(t, st.inFlight)
 	assert.Empty(t, st.actErrs)
+}
+
+func TestWatchStart_AFreshStartNeverReusesABranch(t *testing.T) {
+	for _, where := range []string{"locally", "on origin"} {
+		t.Run(where, func(t *testing.T) {
+			m, ws, st := wactStartModel(t, Options{})
+			branch := git.SanitizeBranchName(st.snap.Prefix + "heal 7")
+			gitIn := func(args ...string) {
+				c := exec.Command("git", args...)
+				c.Dir = ws.ctx.RepoPath
+				out, err := c.CombinedOutput()
+				require.NoError(t, err, "%s", out)
+			}
+			gitIn("branch", branch)
+			if where == "on origin" {
+				gitIn("push", "-q", "origin", branch)
+				gitIn("branch", "-D", branch)
+			}
+
+			res := wactRunStart(t, m, ws, st, watch.Action{Kind: watch.ActStart, Issue: 7})
+			m.Deliver(res)
+
+			assert.Empty(t, ws.insts, "nothing was started on the old branch")
+			assert.Contains(t, st.actErrs[7], "branch "+branch+" already exists "+where)
+			_, failed := st.mem.PRs[0]
+			assert.False(t, failed, "a fresh start's failure is no resume's")
+		})
+	}
+}
+
+func TestWatchStart_AFailedBranchCheckRefusesTheStart(t *testing.T) {
+	m, ws, st := wactStartModel(t, Options{})
+	c := exec.Command("git", "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	c.Dir = ws.ctx.RepoPath
+	require.NoError(t, c.Run())
+
+	res := wactRunStart(t, m, ws, st, watch.Action{Kind: watch.ActStart, Issue: 7})
+	m.Deliver(res)
+
+	assert.Empty(t, ws.insts)
+	assert.Contains(t, st.actErrs[7], "the check for an existing branch")
+}
+
+func TestWatchStart_AResumesFailuresAreRecordedUntilOneSucceeds(t *testing.T) {
+	hook, _ := wactHook(t, `exit 1`)
+	m, ws, st := wactStartModel(t, Options{})
+	st.cfg.Hook = hook
+	pr := wactPR(7, 5, "OPEN")
+	st.snap.PRs = []github.WatchPR{pr}
+	a := watch.Action{Kind: watch.ActStart, Issue: 7, Resume: true, Branch: pr.HeadRefName, PR: 5}
+
+	m.Deliver(wactRunStart(t, m, ws, st, a))
+	m.Drain()
+	require.NotNil(t, st.mem.PRs[5].ResumeFailed, "the first failure is recorded")
+	since := st.mem.PRs[5].ResumeFailed.Since
+	onDisk, err := watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	require.NotNil(t, onDisk.PRs[5].ResumeFailed, "and saved")
+
+	m.Deliver(wactRunStart(t, m, ws, st, a))
+	m.Drain()
+	assert.Equal(t, since, st.mem.PRs[5].ResumeFailed.Since, "a later failure keeps the first one's time")
+
+	// A fresh start's failure is recorded nowhere.
+	m.Deliver(wactRunStart(t, m, ws, st, watch.Action{Kind: watch.ActStart, Issue: 7}))
+	m.Drain()
+	assert.Len(t, st.mem.PRs, 1)
+}
+
+func TestWatchStart_AResumeThatCreatesItsSessionClearsItsFailures(t *testing.T) {
+	do := func(c *exec.Cmd) ([]byte, error) { return []byte("deadbeef\n"), nil }
+	mock := cmd_test.MockCmdExec{
+		RunFunc:            func(c *exec.Cmd) error { _, err := do(c); return err },
+		OutputFunc:         do,
+		CombinedOutputFunc: do,
+	}
+	m, ws, st := wactStartModel(t, Options{CmdExec: mock})
+	pr := wactPR(7, 5, "OPEN")
+	st.snap.PRs = []github.WatchPR{pr}
+	st.mem.RecordResumeFailure(5, "the hook failed", time.Now().Add(-time.Hour))
+
+	m.Deliver(wactRunStart(t, m, ws, st, watch.Action{Kind: watch.ActStart, Issue: 7, Resume: true, Branch: pr.HeadRefName, PR: 5}))
+
+	require.Len(t, ws.insts, 1)
+	assert.Nil(t, st.mem.PRs[5].ResumeFailed)
+	onDisk, err := watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	assert.Nil(t, onDisk.PRs[5].ResumeFailed, "and the clearing is saved")
+}
+
+func TestWatchStart_AResumesHookInputCarriesTheBranchsVariables(t *testing.T) {
+	hook, inPath := wactHook(t, `echo '{"start": false, "reason": "just looking"}'`)
+	m, ws, st := wactStartModel(t, Options{})
+	tmpl, err := watch.ParseTitleTemplate("heal {spec} {issue}")
+	require.NoError(t, err)
+	st.tmpl, st.cfg.Hook = tmpl, hook
+	pr := wactPR(7, 5, "OPEN")
+	pr.HeadRefName = git.SanitizeBranchName(st.snap.Prefix + "heal Kalshi 7")
+	st.snap.PRs = []github.WatchPR{pr}
+
+	wactRunStart(t, m, ws, st, watch.Action{Kind: watch.ActStart, Issue: 7, Resume: true, Branch: pr.HeadRefName, PR: 5})
+
+	data, err := os.ReadFile(inPath)
+	require.NoError(t, err)
+	var in struct {
+		PR  struct{ Vars map[string]string }   `json:"pr"`
+		PRs []struct{ Vars map[string]string } `json:"prs"`
+	}
+	require.NoError(t, json.Unmarshal(data, &in))
+	assert.Equal(t, map[string]string{"spec": "kalshi"}, in.PR.Vars, "as the branch spells them")
+	require.Len(t, in.PRs, 1)
+	assert.Equal(t, map[string]string{"spec": "kalshi"}, in.PRs[0].Vars)
 }
 
 func TestWatchStart_TheHooksVarsNameTheSessionAndItsInputDescribesTheWorkspace(t *testing.T) {

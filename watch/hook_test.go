@@ -40,7 +40,7 @@ func hookTestInput() HookInput {
 			Status: "Running",
 			Vars:   map[string]string{"spec": "kalshi", "row": "R32"},
 		}},
-		PRs: []HookPR{{Number: 101, Issue: 94, Branch: "aidanb/heal-kalshi-94-r32", Body: "Closes #94"}},
+		PRs: []HookPR{{Number: 101, Issue: 94, Branch: "aidanb/heal-kalshi-94-r32", Body: "Closes #94", Vars: map[string]string{"spec": "kalshi", "row": "r32"}}},
 	}
 }
 
@@ -64,8 +64,16 @@ func TestHookInput_MarshalJSON_Start(t *testing.T) {
 		"pr": null,
 		"sessions": [{"title": "heal kalshi 94 R32", "issue": 94, "branch": "aidanb/heal-kalshi-94-r32",
 		              "status": "Running", "vars": {"spec": "kalshi", "row": "R32"}}],
-		"prs": [{"number": 101, "issue": 94, "branch": "aidanb/heal-kalshi-94-r32", "body": "Closes #94"}]
+		"prs": [{"number": 101, "issue": 94, "branch": "aidanb/heal-kalshi-94-r32", "body": "Closes #94",
+		         "vars": {"spec": "kalshi", "row": "r32"}}]
 	}`, string(got))
+}
+
+func TestHookInput_MarshalJSON_APRsVarsAreNeverNull(t *testing.T) {
+	in := HookInput{Point: "start", Issue: github.WatchIssue{Number: 7}, PR: &HookPR{Number: 5, Issue: 7, Branch: "heal-7"}}
+	got, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), `"pr":{"number":5,"issue":7,"branch":"heal-7","body":"","vars":{}}`)
 }
 
 func TestHookInput_MarshalJSON_EmptyCollections(t *testing.T) {
@@ -95,7 +103,7 @@ func TestHookInput_MarshalJSON_Nudges(t *testing.T) {
 		"point": "nudges", "workspace": "polyoxide", "repo": "owner/name", "base": "main", "base_sha": "abc123",
 		"issue": {"number": 96, "title": "drift in kalshi-ws", "labels": ["schema-drift", "spec:kalshi-ws"],
 		          "body": "the body", "url": "https://github.com/owner/name/issues/96"},
-		"pr": {"number": 101, "issue": 96, "branch": "aidanb/heal-kalshi-ws-96-r33", "body": "Closes #96"},
+		"pr": {"number": 101, "issue": 96, "branch": "aidanb/heal-kalshi-ws-96-r33", "body": "Closes #96", "vars": {}},
 		"sessions": [], "prs": [],
 		"session": {"title": "heal kalshi-ws 96 R33", "issue": 96, "branch": "aidanb/heal-kalshi-ws-96-r33",
 		            "status": "Ready", "vars": {}},

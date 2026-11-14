@@ -152,6 +152,9 @@ func (r *ruleRun) issue(is github.WatchIssue) []Action {
 	}
 	if len(sessions) == 0 {
 		if len(open) > 0 { // rule 6
+			if act, ok := r.resumeStuck(n, open[0]); ok {
+				return []Action{act}
+			}
 			return r.start(n, Action{Kind: ActStart, Issue: n, PR: open[0].Number, Branch: open[0].HeadRefName, Resume: true})
 		}
 		if hasLabel(is, r.cfg.Label) { // rule 9
@@ -236,6 +239,21 @@ func (r *ruleRun) start(n int, act Action) []Action {
 	}
 	r.started = true
 	return []Action{act}
+}
+
+// resumeStuck is rule 6's escalation (spec §4.5): every resume of pr has
+// failed for longer than the config's stuck duration.
+func (r *ruleRun) resumeStuck(n int, pr github.WatchPR) (Action, bool) {
+	f := r.mem.PRs[pr.Number].ResumeFailed
+	if f == nil || f.Since.IsZero() || r.snap.Now.Sub(f.Since) <= r.cfg.Stuck {
+		return Action{}, false
+	}
+	return Action{
+		Kind:   ActEscalate,
+		Issue:  n,
+		PR:     pr.Number,
+		Reason: fmt.Sprintf("no session could be started for PR #%d since %s: %s", pr.Number, f.Since.UTC().Format(time.RFC3339), f.Reason),
+	}, true
 }
 
 // hasForeign reports whether a session that is not the watcher's names the

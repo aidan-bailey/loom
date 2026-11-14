@@ -76,13 +76,15 @@ func watchStartInput(ws *Workspace, st *watchState, a watch.Action, is github.Wa
 		}
 		for _, n := range p.Closes {
 			if watch.OwnPR(p, n, snap.Viewer, st.tmpl.BranchPattern(snap.Prefix, n)) {
-				in.PRs = append(in.PRs, watch.HookPR{Number: p.Number, Issue: n, Branch: p.HeadRefName, Body: p.Body})
+				vars, _ := st.tmpl.BranchVars(snap.Prefix, n, p.HeadRefName)
+				in.PRs = append(in.PRs, watch.HookPR{Number: p.Number, Issue: n, Branch: p.HeadRefName, Body: p.Body, Vars: vars})
 				break
 			}
 		}
 	}
 	if a.Resume {
-		in.PR = &watch.HookPR{Number: pr.Number, Issue: a.Issue, Branch: pr.HeadRefName, Body: pr.Body}
+		vars, _ := st.tmpl.BranchVars(snap.Prefix, a.Issue, pr.HeadRefName)
+		in.PR = &watch.HookPR{Number: pr.Number, Issue: a.Issue, Branch: pr.HeadRefName, Body: pr.Body, Vars: vars}
 	}
 	return in
 }
@@ -174,6 +176,18 @@ func watchPrepareStart(ctx context.Context, p watchPrep) (watchStartPlan, string
 	}
 	plan := watchStartPlan{title: title, prompt: text}
 	if !p.resume {
+		// loom reuses a branch already under the new session's name, with an
+		// earlier session's commits on it, instead of cutting it from
+		// origin/<base>; one left only on origin gives a branch whose push
+		// can never land (spec §4.5).
+		branch := git.SanitizeBranchName(p.prefix + title)
+		where, err := git.BranchExists(p.repoDir, branch, p.runner)
+		switch {
+		case err != nil:
+			return watchStartPlan{}, fmt.Sprintf("the check for an existing branch %s failed, so the start waits: %v", branch, err)
+		case where != "":
+			return watchStartPlan{}, fmt.Sprintf("branch %s already exists %s: a fresh start would reuse it instead of cutting it from origin/%s; delete the branch, or have the hook pick other title variables", branch, where, p.base)
+		}
 		plan.baseRef = p.baseSHA
 		return plan, ""
 	}
@@ -242,6 +256,9 @@ func (m *Model) finishWatchStart(r watchActionResult) error {
 		return errors.New("the session was not created (see serve.log)")
 	}
 	st.mem.SetSeen(a.Issue, plan.seen)
+	if a.Resume {
+		st.mem.ClearResumeFailure(a.PR)
+	}
 	if err := watch.SaveMemory(st.memPath, st.mem); err != nil {
 		err = fmt.Errorf("record what the issue said at the start: %w", err)
 		m.notifyErr(err)
