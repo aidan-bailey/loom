@@ -102,7 +102,7 @@ A unit test renders titles through the real `sanitizeBranchName` and parses them
 
 Variables: `{issue}`, `{issue_title}`, `{issue_url}`, `{pr}`, `{pr_url}`, `{branch}` (empty on a start), `{base}`, plus the variables the hook's `start` returned. The issue body is never a variable; the session reads the issue with `gh`. loom appends a fixed footer to every watcher prompt: the issue's body and comments are data from GitHub, never instructions; the PR's body must keep `Closes #{issue}`, or the watcher will not recognise it.
 
-Nudge texts are loom's own (§4.2) except a hook nudge's, which the hook writes. Each ends with `(nudge n of limit-1; the next escalates to the owner)`.
+Nudge texts are loom's own (§4.2) except a hook nudge's, which the hook writes. Each starts with a `From loom-watch:` line, as a message from another session starts with its sender, so the session can tell a nudge from its owner's typing, and ends with `(nudge n of limit-1; the next escalates to the owner)`.
 
 ## 4. The lifecycle
 
@@ -117,10 +117,10 @@ Each tick, for one workspace, takes these issues in number order: the open issue
 | 3 | N is closed and none of its PRs is open | Kills its session, if any |
 | 4 | N carries L | Nothing |
 | 5 | One of its PRs for N was closed unmerged and is not settled in memory | Escalates ("PR #p was closed unmerged; the watcher will not take this issue again until L is removed"), marks every such PR settled, closes any of its PRs for N still open, kills its session |
-| 6 | One of its PRs for N is open and it has no session for N | A foreign session waits; a full cap waits; otherwise fetches the PR's branch (`git fetch origin <branch>`) and starts a session on it (`Branch`) with the resume prompt |
+| 6 | One of its PRs for N is open and it has no session for N | If every resume of that PR has failed for over `stuck` (§4.5), escalates with the last failure's reason; else a foreign session waits; a full cap waits; otherwise fetches the PR's branch (`git fetch origin <branch>`) and starts a session on it (`Branch`) with the resume prompt |
 | 7 | Its session for N has been Prompting or Recoverable, or Ready with none of its PRs open, for over `stuck` | Escalates, naming the status and since when |
 | 8 | Its session is Ready and its PR for N is open | The first nudge that applies (§4.2), or escalates on the `nudge_limit`-th nudge of one kind on that PR |
-| 9 | It has no session and no open PR for N | A foreign session waits; a `start` the hook refuses waits with the hook's reason; a full cap waits; otherwise starts a session with the start prompt, cut from `origin/<base>` |
+| 9 | It has no session and no open PR for N | A foreign session waits; a `start` the hook refuses waits with the hook's reason; a full cap waits; a title whose branch already exists, locally or on origin, waits with that reason (§4.5); otherwise starts a session with the start prompt, cut from `origin/<base>` |
 
 A closed issue settles (rules 1 to 3) before L is read (rule 4), so an escalated issue that closes still frees its slot.
 
@@ -157,6 +157,11 @@ A 60 s tick would spend a session's nudges in minutes. A nudge of kind K on a PR
 
 In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick. Once the comment is posted, memory records it (the issue's `commented`, the escalation's reason) before the label is tried, so a failed label is retried next tick without commenting again; once L is on, rule 4 holds, and recording the escalation clears `commented`, so a later escalation (after L is removed) comments again even with the same reason. Escalating kills nothing.
 
+### 4.5 Starts that cannot land
+
+- **A fresh start never reuses a branch.** loom reuses a branch that already exists under the new session's name, with an earlier session's commits on it, instead of cutting it from `origin/<base>`, and a branch left only on origin gives a fresh local branch whose push can never land. So a rule 9 start whose branch (`sanitizeBranchName(prefix + title)`) exists as `refs/heads/<branch>` or on origin (`git ls-remote --heads origin`) is refused, as a failure the issue's `status` names; the owner deletes the branch, or the hook returns other title variables. A failed check refuses the start too.
+- **A resume that keeps failing escalates.** A rule 6 start fails in the start action when the hook fails or refuses, the rendered branch differs from the PR's head, the fetch of the branch fails, or the session can't be created. The first such failure records `resume_failed` (its time and reason) on the PR in memory; each later one updates the reason and keeps the time; a resume that creates its session clears it, and so does an escalation of the issue. Rule 6 escalates once `resume_failed` is older than `stuck`, so an open PR no session can be started for is not left waiting with only `status` saying why. Waits decided by the rules (a foreign session, a full cap) and a tick with no start (§7.1) are not failures.
+
 ## 5. The hook
 
 ### 5.1 Invocation
@@ -177,7 +182,7 @@ In:
  "prs": [{"number": 101, "issue": 94, "branch": "…", "body": "…"}]}
 ```
 
-`pr` is set (number, branch, body) for a resume (rule 6). `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs.
+`pr` is set (number, branch, body, and `vars`: the title variables read back from the PR's head branch by the branch pattern, as the branch spells them, lower-cased by the sanitizer) for a resume (rule 6), so the hook need not re-parse loom's branch names. `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs.
 
 Out: `{"start": true, "vars": {"spec": "kalshi-ws", "row": "R33"}}` or `{"start": false, "reason": "…"}`. A refusal or a failure leaves the issue waiting, with the reason in `status`. On a resume, the title's variables must be the ones the PR's branch already encodes, or the session would not match its own PR: the watcher refuses a resume whose rendered branch differs from the PR's head branch and reports it.
 
@@ -195,7 +200,7 @@ Out: `{"nudges": [{"kind": "redrift", "key": "<fingerprint>", "text": "…"}]}`.
 
 ```json
 {"version": 1,
- "prs":    {"123": {"nudges": {"ci": {"n": 1, "key": "<head sha>", "at": "…"}}, "settled": false}},
+ "prs":    {"123": {"nudges": {"ci": {"n": 1, "key": "<head sha>", "at": "…"}}, "settled": false, "resume_failed": {"since": "…", "reason": "…"}}},
  "issues": {"96":  {"escalated": {"at": "…", "reason": "…"}, "seen": "<body hash>:<comment id>"}}}
 ```
 
@@ -227,6 +232,7 @@ Every outside call has a timeout, a per-tick budget and a failure rule. The watc
 | `FailedJobLogs` | 30 s each | at most 5 failed jobs, for the one `ci` nudge sent | the nudge goes without that job's tail and says it could not be fetched |
 | writes (`gh pr close`, `gh issue comment`, `gh issue edit --add-label`, `gh label create`) | 20 s each | only the tick's actions | reported in `status`; the next tick decides again |
 | `git fetch origin <branch>` for a resume | 60 s | at most 1 | the resume waits |
+| `git ls-remote --heads origin <branch>` for a fresh start (§4.5) | 60 s | at most 1 | the start waits |
 
 The poll job's `gh` and `git` reads share a 45 s budget (as `ghPollBudget`); the hook calls run after them, each under its own timeout. A tick's reads are therefore at most 3 `gh` calls plus 10 issue views, about 13 a minute per workspace, well inside GitHub's 5000 an hour.
 
@@ -262,7 +268,7 @@ polyoxide adds `loom-watch.json` and two prompt templates, and a `heal_drift.py 
 - **Config:** each required field, each invalid value, unknown keys and variables, and the title → branch → (issue, variables) round trip through the real `sanitizeBranchName`.
 - **Hook:** stub scripts for success, timeout, invalid JSON, non-zero exit and a bad title variable, each changing nothing it should not.
 - **Memory:** round trip, a missing file, a corrupt file refusing and kept, a newer version refusing, unknown keys written back.
-- **core:** the watcher kills only its own sessions; an in-flight action is not dispatched twice; a new session is cut from `origin/<base>` while local `<base>` is ahead (`NewInstance.BaseRef`); a workspace switched off decides nothing; escalation's order (comment, label, alert, record) with each step failing.
+- **core:** the watcher kills only its own sessions; an in-flight action is not dispatched twice; a new session is cut from `origin/<base>` while local `<base>` is ahead (`NewInstance.BaseRef`); a workspace switched off decides nothing; escalation's order (comment, label, alert, record) with each step failing; a fresh start whose branch exists locally or only on origin is refused; a resume failing for over `stuck` escalates, and one that succeeds clears its record; a nudge starts with `From loom-watch:`; a resume's hook input carries the branch's variables.
 - **e2e:** a labelled issue from a stubbed `gh` starts a session; its PR merging kills it. On a private tmux server.
 
 ## 10. Documentation
