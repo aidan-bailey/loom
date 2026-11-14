@@ -108,7 +108,7 @@ Nudge texts are loom's own (§4.2) except a hook nudge's, which the hook writes.
 
 ### 4.1 The rules
 
-Each tick, for one workspace, takes these issues in number order: the open issues carrying `label`, and every issue a watcher session or a watcher PR names, open or closed, labelled or not. For each, the first rule that matches wins.
+Each tick, for one workspace, takes these issues in number order: the open issues carrying `label`, and every issue a watcher session, an open watcher PR or a closed-unmerged watcher PR not yet settled in memory names, open or closed, labelled or not. An issue named only by merged or settled PRs has nothing left to act on (no session to kill, no PR to close or escalate) and is not taken, so old merged PRs never crowd out a newer issue. For each, the first rule that matches wins.
 
 | # | The watcher sees | It does |
 |---|---|---|
@@ -127,6 +127,7 @@ A closed issue settles (rules 1 to 3) before L is read (rule 4), so an escalated
 - **Cap:** every watcher session counts, Paused ones and a second one for the same issue included; foreign sessions do not.
 - **One start per tick:** at most one start (rule 6 or 9) per workspace per tick, so the hook's `start` always sees the previous start's session.
 - **Loading and Deleting** sessions are skipped for the tick. **Paused** sessions get no nudge and are never stuck; rules 1 to 3 and 5 still kill them. A Running session is left alone.
+- **Settling what it closes:** a PR the watcher closes (rules 2 and 5) is marked settled in memory, and memory saved, once the close succeeds, so it never meets rule 5 later (after L is removed, the issue is the watcher's again).
 - **Kill authority:** the watcher kills only its own sessions, and only in rules 1, 2, 3 and 5; it closes only its own PRs, only in rules 2 and 5.
 - **In flight:** an action whose Job for the same session or issue has not returned is not dispatched again.
 
@@ -154,13 +155,13 @@ A 60 s tick would spend a session's nudges in minutes. A nudge of kind K on a PR
 
 ### 4.4 Escalating
 
-In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick. Once the comment is posted, memory records it (the issue's `commented`, the escalation's reason) before the label is tried, so a failed label is retried next tick without commenting again; once L is on, rule 4 holds. Escalating kills nothing.
+In this order: a comment on N with the reason (and the session's title, the PR, the counts), add L (creating it if absent), raise a loom alert (a `Notice` to every client, and the escalation listed in the workspace's view, from which the PWA's push watch sends one push per escalation), then record it in memory. A failed comment changes nothing and is retried next tick. Once the comment is posted, memory records it (the issue's `commented`, the escalation's reason) before the label is tried, so a failed label is retried next tick without commenting again; once L is on, rule 4 holds, and recording the escalation clears `commented`, so a later escalation (after L is removed) comments again even with the same reason. Escalating kills nothing.
 
 ## 5. The hook
 
 ### 5.1 Invocation
 
-`hook.command` plus the point's name as its last argument, run in the watcher worktree, with JSON on stdin and JSON on stdout, under `hook.timeout`. Environment: the daemon's, plus `LOOM_WATCH_WORKSPACE` and `LOOM_WATCH_REPO` (`owner/name`). A timeout, a non-zero exit, or stdout that is not one JSON object of the point's shape is a **failure**; stderr is kept for `status`. Without a hook, `start` always starts with no variables and `nudges` returns none.
+`hook.command` plus the point's name as its last argument, run in the watcher worktree, with JSON on stdin and JSON on stdout, under `hook.timeout`. Environment: the daemon's, plus `LOOM_WATCH_WORKSPACE` and `LOOM_WATCH_REPO` (`owner/name`). A timeout, a non-zero exit, or stdout that is not one JSON object of the point's shape is a **failure**; stderr is kept for `status`. Without a hook, `start` always starts with no variables and `nudges` returns none; a config whose title uses any variable besides `{issue}` and names no hook is invalid (§3.1).
 
 ### 5.2 `start`
 
@@ -218,7 +219,7 @@ Every outside call has a timeout, a per-tick budget and a failure rule. The watc
 | `Viewer` | 20 s (`ghTimeout`) | once per daemon and workspace, cached; again only after a failure | no decisions: ownership is unknown |
 | `WatchPRs` | 20 s | 1, `--limit 100` | no decisions |
 | `WatchIssues` | 20 s | 1, oldest first (`--search "sort:created-asc"`) with `--limit 51`: the 50 lowest-numbered open labelled issues are considered; a 51st tells `status` that more were not considered (one call can't count them) | no decisions |
-| `View` of a closed issue a session or PR names | 20 s | at most 10, lowest number first; the rest wait for a later tick | that issue is skipped this tick |
+| `View` of a closed issue a session, an open PR or an unsettled closed PR names (§4.1) | 20 s | at most 10: issues named by a watcher session first, then lowest number first; the rest wait for a later tick | that issue is skipped this tick |
 | `git fetch origin <base>` and the worktree refresh | the fetch 60 s; the refresh git's `worktree add` timeout (5 min), since a first checkout of a large repository can outlast 60 s and the tick waits while its job is in flight | 1 | no start this tick; rules 1 to 8 run with the config at the current `origin/<base>` |
 | `git show` of the config and prompts | 10 s each | 3 | no decisions |
 | hook `nudges` | `hook.timeout` | one per Ready watcher session with an open PR, so at most `cap` | that issue gets no nudge this tick |
