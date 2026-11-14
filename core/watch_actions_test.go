@@ -456,9 +456,11 @@ func TestWatchEscalate_CommentsLabelsAlertsThenRecords(t *testing.T) {
 	assert.Equal(t, "PR #5 was closed unmerged", rec.Reason)
 	assert.False(t, rec.At.IsZero())
 	assert.True(t, st.mem.PRs[5].Settled, "rule 5 settles its PRs")
+	assert.Empty(t, st.mem.Issues[7].Commented, "recording the escalation clears the comment's record, so a later one comments again")
 	onDisk, err = watch.LoadMemory(st.memPath)
 	require.NoError(t, err)
 	require.NotNil(t, onDisk.Issues[7].Escalated)
+	assert.Empty(t, onDisk.Issues[7].Commented)
 	assert.True(t, onDisk.PRs[5].Settled)
 	assert.Empty(t, st.inFlight)
 }

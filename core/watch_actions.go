@@ -354,6 +354,7 @@ func (m *Model) finishWatchEscalate(r watchActionResult) error {
 	}
 	m.emit(Notice{Info: fmt.Sprintf("watcher (%s): issue #%d escalated to the owner: %s", r.ws.Label(), a.Issue, a.Reason)})
 	st.mem.RecordEscalation(a.Issue, a.Reason, time.Now())
+	st.mem.ClearCommented(a.Issue) // a later escalation, after L is removed, comments again
 	if len(a.Settle) > 0 {
 		st.mem.Settle(a.Settle)
 	}

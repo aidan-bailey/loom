@@ -213,6 +213,17 @@ func (m *Memory) RecordCommented(issue int, reason string) {
 	m.Issues[issue] = is
 }
 
+// ClearCommented forgets the reason of the last posted escalation comment on
+// issue, once the escalation is recorded: a later escalation, after the label
+// is removed, comments again even with the same reason. Nothing else of the
+// issue's record changes.
+func (m *Memory) ClearCommented(issue int) {
+	if is, ok := m.Issues[issue]; ok {
+		is.Commented = ""
+		m.Issues[issue] = is
+	}
+}
+
 // Settle marks each of prs settled, making a record for one the memory has
 // not seen. The nudge counts are kept.
 func (m *Memory) Settle(prs []int) {

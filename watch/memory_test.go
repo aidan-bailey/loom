@@ -259,6 +259,24 @@ func TestMemory_RecordEscalationAndSetSeen(t *testing.T) {
 	assert.Equal(t, "second", m.Issues[96].Escalated.Reason, "another issue is untouched")
 }
 
+func TestMemory_ClearCommentedKeepsTheRestOfTheIssue(t *testing.T) {
+	var m Memory
+	m.ClearCommented(96) // no record: nothing to do, and no panic on the zero Memory
+	assert.Empty(t, m.Issues)
+
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	m.RecordCommented(96, "why")
+	m.RecordEscalation(96, "why", at)
+	m.SetSeen(96, "abc:1")
+	m.RecordCommented(97, "other")
+	m.ClearCommented(96)
+
+	assert.Empty(t, m.Issues[96].Commented)
+	require.NotNil(t, m.Issues[96].Escalated)
+	assert.Equal(t, "abc:1", m.Issues[96].Seen)
+	assert.Equal(t, "other", m.Issues[97].Commented, "another issue is untouched")
+}
+
 func TestMemory_RecordCommented(t *testing.T) {
 	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 	var m Memory
