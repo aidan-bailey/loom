@@ -358,6 +358,51 @@ func TestWatchClosePR_ClosesTheWatchersOwnOpenPRWithTheCommentItWasGiven(t *test
 	assert.Contains(t, calls[0], "Closing: issue #7 is closed.")
 	assert.Empty(t, st.inFlight)
 	assert.Empty(t, st.actErrs)
+	assert.True(t, st.mem.PRs[5].Settled, "a PR the watcher closed is settled, so it never meets rule 5")
+	onDisk, err := watch.LoadMemory(st.memPath)
+	require.NoError(t, err)
+	assert.True(t, onDisk.PRs[5].Settled, "and saved")
+}
+
+func TestWatchClosePR_AFailedCloseSettlesNothing(t *testing.T) {
+	gh := &wactGH{fail: "pr close"}
+	m, ws, st := wactModel(t, Options{GHExec: gh})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+
+	m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"}})
+	run(m, m.Drain())
+
+	assert.False(t, st.mem.PRs[5].Settled)
+}
+
+func TestWatchClosePR_ASettledCloseDoesNotMeetRuleFiveWhenTheLabelIsRemoved(t *testing.T) {
+	m, ws, st := wactModel(t, Options{GHExec: &wactGH{}})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"}})
+	run(m, m.Drain())
+
+	// The PR now reads CLOSED on GitHub, and the owner removed L: the issue
+	// is open and labelled, the PR closed.
+	snap := watch.Snapshot{
+		Now: time.Now(), Viewer: "bot",
+		Issues: []github.WatchIssue{{Number: 7, Labels: []string{"drift"}}},
+		PRs:    []github.WatchPR{wactPR(7, 5, "CLOSED")},
+	}
+	acts := watch.Decide(snap, st.mem, st.cfg, st.tmpl)
+
+	require.Len(t, acts, 1)
+	assert.Equal(t, watch.ActStart, acts[0].Kind, "the issue is the watcher's again, not escalated")
+}
+
+func TestWatchClosePR_ARecordThatCannotBeSavedIsReported(t *testing.T) {
+	m, ws, st := wactModel(t, Options{GHExec: &wactGH{}})
+	st.snap.PRs = []github.WatchPR{wactPR(7, 5, "OPEN")}
+	st.memPath = t.TempDir() // a directory: the file cannot be written
+
+	m.dispatchWatchActions(ws, st, []watch.Action{{Kind: watch.ActClosePR, Issue: 7, PR: 5, Reason: "close"}})
+	run(m, m.Drain())
+
+	assert.Contains(t, st.actErrs[7], "record the closed PR #5")
 }
 
 func TestWatchClosePR_RefusesAPRThatIsNotItsOwnOpenPR(t *testing.T) {

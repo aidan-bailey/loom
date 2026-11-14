@@ -186,6 +186,8 @@ func (m *Model) deliverWatchAction(r watchActionResult) {
 	}
 	var err error
 	switch r.act.Kind {
+	case watch.ActClosePR:
+		err = m.finishWatchClose(r)
 	case watch.ActEscalate:
 		err = m.finishWatchEscalate(r)
 	case watch.ActSend:
@@ -253,6 +255,20 @@ func (m *Model) watchClosePR(ws *Workspace, st *watchState, a watch.Action) {
 		}
 		return res
 	})
+}
+
+// finishWatchClose settles a PR the watcher closed, on the loop: memory marks
+// it settled and the file is saved, so the closed PR never meets rule 5 later
+// (after L is removed, the issue is the watcher's again). A save that fails is
+// shown to the clients; the in-memory mark still stands.
+func (m *Model) finishWatchClose(r watchActionResult) error {
+	r.st.mem.Settle([]int{r.act.PR})
+	if err := watch.SaveMemory(r.st.memPath, r.st.mem); err != nil {
+		err = fmt.Errorf("record the closed PR #%d: %w", r.act.PR, err)
+		m.notifyErr(err)
+		return err
+	}
+	return nil
 }
 
 // watchEscalationComment is the comment an escalation posts on the issue: the

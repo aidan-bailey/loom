@@ -225,6 +225,23 @@ func TestDecide_Rule5_APRClosedUnmergedEscalatesOnceAndSettles(t *testing.T) {
 	assert.Empty(t, dcDecide(t, Memory{}, issues, notWatchers, sessions), "a closed PR that is not the watcher's is not rule 5's")
 }
 
+func TestDecide_Rule5_APRTheWatcherClosedNeverMeetsIt(t *testing.T) {
+	// Rules 2 and 5 close a PR and settle it in memory; the issue then loses
+	// L (the owner removed it, or it was never on), and the closed PR is
+	// read again: it must not escalate the issue a second time.
+	closed := []github.WatchPR{dcPR(120, 96, "CLOSED")}
+	settled := Memory{PRs: map[int]PRMemory{120: {Settled: true}}}
+
+	open := []github.WatchIssue{dcIssue(96, "drift")}
+	got := dcDecide(t, settled, open, closed, nil)
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96}}, got, "the issue is the watcher's again: it starts, it does not escalate")
+
+	got = dcDecide(t, settled, []github.WatchIssue{dcIssue(96, "drift", "needs-human")}, closed, nil)
+	assert.Empty(t, got, "and with L on, rule 4 holds as ever")
+
+	assert.Equal(t, ActEscalate, dcDecide(t, Memory{}, open, closed, nil)[0].Kind, "an unsettled one still meets rule 5")
+}
+
 func TestDecide_RulesOnTheSnapshotIssuesInNumberOrder(t *testing.T) {
 	issues := []github.WatchIssue{dcClosed(97, "drift"), dcClosed(96, "drift")}
 	sessions := []Session{
