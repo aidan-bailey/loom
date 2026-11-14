@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -785,6 +786,60 @@ func TestDeliverWatch_ATickWithoutAFetchWaitsInsteadOfStartingAndStillKills(t *t
 	assert.Contains(t, waits[0].Reason, "git fetch origin main failed")
 	assert.Equal(t, []watch.Action{{Kind: watch.ActKill, Issue: 8, Session: uint64(rig.m.idOf(merged))}},
 		actionsOfKind(st.actions, watch.ActKill), "rule 1 still runs: the merged PR's session is killed")
+}
+
+func TestDeliverWatch_OldMergedIssuesDoNotBlockALaterMergedIssuesKill(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	for n := 1; n <= 12; n++ {
+		rig.prs = append(rig.prs, ghPRJSON(100+n, "MERGED", fmt.Sprintf("loom/heal-%d", n), "bot", n))
+	}
+	rig.prs = append(rig.prs, ghPRJSON(200, "MERGED", "loom/heal-90", "bot", 90))
+	live := rig.addSession("heal 90", 90, session.Paused)
+	rig.views[90] = ghIssueJSON(90, "CLOSED")
+
+	rig.tick()
+
+	st := rig.ws.watch
+	require.Empty(t, st.err)
+	assert.Equal(t, []watch.Action{{Kind: watch.ActKill, Issue: 90, Session: uint64(rig.m.idOf(live))}}, actionsOfKind(st.actions, watch.ActKill),
+		"rule 1 reaches the later issue: the twelve old merged ones took no view")
+}
+
+func TestDeliverWatch_APollPrunesTheErrorsOfIssuesNothingNamesAnyMore(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.issues = []string{ghIssueJSON(7, "OPEN")}
+	rig.addSession("heal 8", 8, session.Paused)
+	rig.views[8] = ghIssueJSON(8, "OPEN")
+	st := rig.m.watchFor(rig.ws)
+	st.actErrs = map[int]string{
+		7:  "start: boom",    // in the snapshot
+		8:  "kill: busy",     // named by a session
+		9:  "close: refused", // named by an open watcher PR
+		10: "start: gone",    // nothing names it any more
+		11: "kill: not ours", // only a foreign PR names it
+		0:  "start: no issue",
+	}
+	rig.prs = []string{
+		ghPRJSON(40, "OPEN", "loom/heal-9", "bot", 9),
+		ghPRJSON(41, "OPEN", "loom/heal-11", "someone", 11),
+	}
+	rig.views[9] = ghIssueJSON(9, "OPEN")
+
+	rig.tick()
+
+	assert.Equal(t, map[int]string{7: "start: boom", 8: "kill: busy", 9: "close: refused"}, st.actErrs)
+}
+
+func TestDeliverWatch_AFailedTickKeepsTheErrorsItCannotJudge(t *testing.T) {
+	rig := newWatchRig(t, watchFiles(watchTestConfig))
+	rig.viewerErr = errors.New("gh down")
+	st := rig.m.watchFor(rig.ws)
+	st.actErrs = map[int]string{10: "start: gone"}
+
+	rig.tick()
+
+	assert.NotEmpty(t, st.err)
+	assert.Contains(t, st.actErrs, 10, "with no snapshot nothing is known to be gone")
 }
 
 func TestDeliverWatch_AFailedTickClearsWhatTheLastOneDecided(t *testing.T) {

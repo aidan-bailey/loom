@@ -9,6 +9,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/watch"
 )
 
@@ -149,6 +150,35 @@ func (m *Model) storeWatch(st *watchState, res watchResult) {
 	}
 	snap, actions := m.decideWatch(res)
 	st.snap, st.actions, st.at = &snap, actions, snap.Now
+	pruneWatchActErrs(st)
+}
+
+// pruneWatchActErrs drops the error of every issue the tick's snapshot no
+// longer holds and no watcher session or PR names: nothing is left to retry
+// there, and a stale refusal would stay in status for good. An issue still
+// named keeps its error until an action of that kind succeeds.
+func pruneWatchActErrs(st *watchState) {
+	snap := st.snap
+	for n := range st.actErrs {
+		if watchIssueNamed(st, snap, n) {
+			continue
+		}
+		delete(st.actErrs, n)
+	}
+}
+
+// watchIssueNamed reports whether snap holds issue n or a watcher session or
+// PR names it.
+func watchIssueNamed(st *watchState, snap *watch.Snapshot, n int) bool {
+	if slices.ContainsFunc(snap.Issues, func(is github.WatchIssue) bool { return is.Number == n }) {
+		return true
+	}
+	if slices.ContainsFunc(snap.Sessions, func(s watch.Session) bool { return s.Issue == n && watch.OwnSession(s, st.tmpl) }) {
+		return true
+	}
+	return slices.ContainsFunc(snap.PRs, func(pr github.WatchPR) bool {
+		return slices.Contains(pr.Closes, n) && watch.OwnPR(pr, n, snap.Viewer, st.tmpl.BranchPattern(snap.Prefix, n))
+	})
 }
 
 // deliverWatch applies a poll result. The in-flight bit clears first,
