@@ -509,6 +509,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverLaunchWatched(msg)
 	case ghResult:
 		m.deliverGH(msg)
+	case watchResult:
+		m.deliverWatch(msg)
 	case pushResult:
 		m.deliverPush(msg)
 	case accountsRefreshed:
@@ -519,6 +521,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverBuildSweep(msg)
 	case jobNoticeBuilt:
 		m.deliverJobNotice(msg)
+	case watchActionResult:
+		m.deliverWatchAction(msg)
 	case usageLimitRead:
 		m.deliverUsageLimit(msg)
 	case queuePassResult:

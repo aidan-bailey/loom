@@ -41,6 +41,9 @@ type Workspace struct {
 	// latched shut (no write can overwrite the unreadable payload), and a
 	// client opening it retries the load (Model.retryLoad).
 	loadErr error
+	// watch is the issue watcher's state for this workspace (watchFor),
+	// nil until first use. Loop-goroutine only.
+	watch *watchState
 }
 
 // WorkspaceParts are a workspace's fixed handles. Any may be nil, as in a

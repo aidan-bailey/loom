@@ -192,14 +192,7 @@ func exitText(t *testing.T, sb *devsandbox.Sandbox) string {
 // environment and returns its combined output.
 func runLoom(t *testing.T, sb *devsandbox.Sandbox, argv ...string) (string, error) {
 	t.Helper()
-	c := sb.Cmd(argv...)
-	var out bytes.Buffer
-	c.Stdout, c.Stderr = &out, &out
-	require.NoError(t, c.Start())
-	timer := time.AfterFunc(uiTimeout, func() { _ = c.Process.Kill() })
-	defer timer.Stop()
-	err := c.Wait()
-	return out.String(), err
+	return watchLoom(sb, argv...)
 }
 
 // buildLoom builds loom with ldflags into the sandbox's bin dir as name.

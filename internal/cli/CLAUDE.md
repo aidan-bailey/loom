@@ -1,6 +1,6 @@
 # internal/cli
 
-The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep`, `loom job`, `loom feedback` and `loom flow` subcommands (`WorkspaceCmd` in `workspace.go`, `AccountCmd` in `account.go`, `SessionCmd` in `session.go`, `WebCmd` in `web.go`, `SweepCmd` in `sweep.go`, `JobCmd` in `job.go`, `FeedbackCmd` in `feedback.go`, `FlowCmd` in `flow.go`) and the daemon half of `loom reset` (`Reset`, `reset.go`): clients of the loom daemon. Each joins it through `Join` (`join.go`), which `main.go` sets to the TUI's startup join (`joinCLI`), makes its request, prints the answer and exits. `workspace migrate` stays in `cmd` (`cmd.MigrateCmd`) and writes `state.json` itself, under the lock.
+The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep`, `loom job`, `loom feedback`, `loom flow` and `loom watch` subcommands (`WorkspaceCmd` in `workspace.go`, `AccountCmd` in `account.go`, `SessionCmd` in `session.go`, `WebCmd` in `web.go`, `SweepCmd` in `sweep.go`, `JobCmd` in `job.go`, `FeedbackCmd` in `feedback.go`, `FlowCmd` in `flow.go`, `WatchCmd` in `watch.go`) and the daemon half of `loom reset` (`Reset`, `reset.go`): clients of the loom daemon. Each joins it through `Join` (`join.go`), which `main.go` sets to `joinCLI`, makes its request, prints the answer and exits. `workspace migrate` stays in `cmd` (`cmd.MigrateCmd`) and writes `state.json` itself, under the lock.
 
 ## Rules when modifying this package
 

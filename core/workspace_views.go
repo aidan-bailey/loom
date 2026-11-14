@@ -71,6 +71,7 @@ func (m *Model) wsViewOf(ws *Workspace) WorkspaceView {
 	if ws.loadErr != nil {
 		v.LoadErr = ws.loadErr.Error()
 	}
+	v.Watch = watchSummaryOf(ws)
 	return v
 }
 
@@ -119,6 +120,7 @@ func cloneWorkspaceViews(views []WorkspaceView) []WorkspaceView {
 		out[i].Settings = out[i].Settings.Clone()
 		out[i].UIPrefs = out[i].UIPrefs.Clone()
 		out[i].PreservedTitles = slices.Clone(out[i].PreservedTitles)
+		out[i].Watch.Escalations = slices.Clone(out[i].Watch.Escalations)
 	}
 	return out
 }

@@ -135,6 +135,9 @@ func (p *pusher) apply(evs []core.Event) {
 		switch ev := ev.(type) {
 		case core.WorkspacesChanged:
 			p.watch.forget(ev.Views)
+			for _, job := range p.watch.observeEscalations(ev.Views) {
+				p.enqueue(job)
+			}
 		case core.ViewsChanged:
 			for _, job := range p.watch.observe(ev.WS, ev.Views) {
 				p.enqueue(job)
@@ -154,7 +157,7 @@ func (p *pusher) enqueue(job pushJob) bool {
 	case p.queue <- job:
 		return true
 	default:
-		p.log.Warn("push dropped: the queue is full", "kind", job.Kind, "session", job.Session, "limit", pushQueueMax)
+		p.log.Warn("push dropped: the queue is full", "kind", job.Kind, "session", job.Session, "workspace", job.Workspace, "issue", job.Issue, "limit", pushQueueMax)
 		return false
 	}
 }
@@ -191,12 +194,12 @@ func (p *pusher) deliver(job pushJob) {
 	}
 	key, err := p.env.host.VAPIDKey()
 	if err != nil {
-		p.log.Warn("push dropped: no VAPID key", "kind", job.Kind, "session", job.Session, "err", err)
+		p.log.Warn("push dropped: no VAPID key", "kind", job.Kind, "session", job.Session, "workspace", job.Workspace, "issue", job.Issue, "err", err)
 		return
 	}
 	payload, err := job.payload()
 	if err != nil {
-		p.log.Error("push dropped: payload", "kind", job.Kind, "session", job.Session, "err", err)
+		p.log.Error("push dropped: payload", "kind", job.Kind, "session", job.Session, "workspace", job.Workspace, "issue", job.Issue, "err", err)
 		return
 	}
 	subject := web.Origin
@@ -208,7 +211,7 @@ func (p *pusher) deliver(job pushJob) {
 			continue
 		}
 		if p.atRate(target.Device) {
-			p.log.Warn("push dropped: the device is at its rate limit", "device", target.Device, "kind", job.Kind, "session", job.Session, "limit", pushPerMinute)
+			p.log.Warn("push dropped: the device is at its rate limit", "device", target.Device, "kind", job.Kind, "session", job.Session, "workspace", job.Workspace, "issue", job.Issue, "limit", pushPerMinute)
 			continue
 		}
 		p.send(target, key, subject, job, payload)
@@ -221,7 +224,7 @@ func pushAllows(n core.NotifySettings, kind string, now time.Time) bool {
 		return false
 	}
 	switch kind {
-	case pushWaiting:
+	case pushWaiting, pushEscalated:
 		return n.Waiting
 	case pushFinished, pushDone:
 		return n.Finished

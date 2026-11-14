@@ -1,6 +1,6 @@
 # internal/cli
 
-The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep` and `loom job` subcommands, and the client half of `loom reset`: clients of the loom daemon. Each joins it as the TUI's startup join does, makes its request, prints the answer and exits. `core` imports `cmd`, so `cmd` cannot import the wire; these commands live here and `main.go` attaches them (`rootCmd.AddCommand(cli.WorkspaceCmd)`, `cli.AccountCmd`, `cli.SessionCmd`, `cli.WebCmd`, `cli.SweepCmd`, `cli.JobCmd`), with `workspace migrate` (`cmd.MigrateCmd`, direct under the lock) added under the workspace command.
+The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep`, `loom job` and `loom watch` subcommands, and the client half of `loom reset`: clients of the loom daemon. Each joins it as the TUI's startup join does, makes its request, prints the answer and exits. `core` imports `cmd`, so `cmd` cannot import the wire; these commands live here and `main.go` attaches them (`rootCmd.AddCommand(cli.WorkspaceCmd)`, `cli.AccountCmd`, `cli.SessionCmd`, `cli.WebCmd`, `cli.SweepCmd`, `cli.JobCmd`, `cli.WatchCmd`), with `workspace migrate` (`cmd.MigrateCmd`, direct under the lock) added under the workspace command.
 
 ## Files
 
@@ -16,6 +16,7 @@ The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep` a
 | `job_list.go` | `list` and `writeJobList` |
 | `job_unix.go`, `job_windows.go` | `signalExit` (the name of the signal that killed a job to the exit code 128 + its number, through `unix.SignalNum`, or the n of a `SIG<n>` name; the Windows stub maps none) |
 | `sweep.go` | `SweepCmd` (built by `newSweepCmd`, with `--dry-run`, `--after` and `--verbose`) and `writeSweepReport` |
+| `watch.go` | `WatchCmd` (built by `newWatchCmd`) and `on`, `off`, `status`, `dry-run`; `writeWatchStatus`, `writeWatchDryRun`, `writeWatchJSON`, `describeWatchAction` |
 | `reset.go` | `Reset`, the client half of `loom reset` while a daemon runs |
 
 ## How a command runs
@@ -56,6 +57,9 @@ The flow commands that wait (the run engine, `flow run wait`, `flow agent wait`,
 | `job list` | `Queue()` (read only) |
 | `job cancel` | `CancelJob` with `CancelFromCLI`, then a wait for its `Reply` (`request`) |
 | `sweep` | `SweepBuilds` (dry run with `--dry-run`, the threshold `--after` or else `build_sweep_after_hours`), then a wait for its `Reply`, whose `Sweep` report it prints |
+| `watch on`, `off` | `ReloadRegistry`, then `SetWatch` and a wait for its `Reply` (`request`); prints `watch on: <workspace>` or `watch off: <workspace>` |
+| `watch status` | `ReloadRegistry`, then `ReadWatch` and a wait for its `Reply`, whose `Watch` view it prints (`--json` for the view itself) |
+| `watch dry-run` | `ReloadRegistry`, then `ReadWatch` with `dryRun`, then a wait for its `Reply`: the actions the next tick would take, none taken (`--json` for the view) |
 
 A command waits for a round the daemon runs by its data, not by the next event, for up to `accountWait`; a request with a `ReqID` waits for its `Reply`. The daemon probes usage only once an extra account exists, so `account list` with only the default account shows no usage.
 

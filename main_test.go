@@ -571,3 +571,16 @@ func TestResetCmd_ReportsSweepCounts(t *testing.T) {
 	assert.Contains(t, out, "Worktrees have been cleaned up")
 	assert.NoDirExists(t, wt)
 }
+
+func TestRootCmd_RegistersLoomWatch(t *testing.T) {
+	found, _, err := rootCmd.Find([]string{"watch"})
+	require.NoError(t, err)
+	assert.Same(t, cli.WatchCmd, found, "main attaches the cli package's command")
+
+	for _, sub := range []string{"on", "off", "status", "dry-run"} {
+		found, rest, err := rootCmd.Find([]string{"watch", sub})
+		require.NoError(t, err, sub)
+		assert.Equal(t, sub, found.Name())
+		assert.Empty(t, rest, sub)
+	}
+}

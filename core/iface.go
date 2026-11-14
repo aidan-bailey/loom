@@ -195,6 +195,13 @@ type Core interface {
 	FileFeedback(note FeedbackNote, req ReqID)
 	CloseThread(thread feedback.ThreadID, req ReqID)
 	FixThread(thread feedback.ThreadID, workspace string, req ReqID)
+
+	// The issue watcher (spec 2026-11-13-issue-watcher): the workspace's
+	// switch, written to its own config.json, and a read of its state,
+	// the Reply's Watch (a WatchView). With dryRun the read is the
+	// actions the next tick would take, none taken.
+	SetWatch(id WorkspaceID, on bool, req ReqID)
+	ReadWatch(id WorkspaceID, dryRun bool, req ReqID)
 }
 
 var _ Core = (*Loop)(nil)
