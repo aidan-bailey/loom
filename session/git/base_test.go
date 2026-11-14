@@ -224,3 +224,68 @@ func TestSetup_ConfiguredBaseBranchMissingFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no-such-branch")
 }
+
+// newBaseRefTree builds the worktree of a new session whose branch is to be
+// cut from ref (WorktreeSpec.BaseRef), returning it with its branch name.
+func newBaseRefTree(t *testing.T, repo, ref string) (*GitWorktree, string) {
+	t.Helper()
+	tree, branch, err := NewGitWorktreeFromSpec(WorktreeSpec{
+		RepoPath:    repo,
+		SessionName: "base ref",
+		ConfigDir:   filepath.Join(t.TempDir(), "config"),
+		BaseRef:     ref,
+	})
+	require.NoError(t, err)
+	return tree, branch
+}
+
+// TestSetup_BaseRefCutsTheBranchFromIt: main is ahead of the commit the
+// caller names (the watcher's origin/<base>), and the session must start
+// at the named commit, with its branch created, and so deleted, by loom.
+func TestSetup_BaseRefCutsTheBranchFromIt(t *testing.T) {
+	repo := newRepo(t, "main")
+	first := revParse(t, repo, "refs/heads/main")
+	commitFile(t, repo, "ahead.txt", "unpushed")
+	require.NotEqual(t, first, revParse(t, repo, "refs/heads/main"), "precondition: local main is ahead")
+
+	tree, branch := newBaseRefTree(t, repo, first)
+	require.NoError(t, tree.Setup())
+
+	assert.Equal(t, first, tree.GetBaseCommitSHA(), "the diff baseline is the named commit")
+	assert.Equal(t, first, revParse(t, tree.GetWorktreePath(), "HEAD"))
+	assert.NoFileExists(t, filepath.Join(tree.GetWorktreePath(), "ahead.txt"), "the unpushed commit is not in the tree")
+	assert.False(t, tree.IsExistingBranch(), "loom created the branch")
+	require.NoError(t, tree.Cleanup())
+	_, ok := resolveRef(repo, "refs/heads/"+branch, defaultRunner(nil))
+	assert.False(t, ok, "a kill deletes the branch this setup created")
+}
+
+// TestSetup_BaseRefMustNameACommit: a ref that is not a full commit SHA, or
+// names no commit, fails the setup before anything is created. It never
+// falls back to the base branch.
+func TestSetup_BaseRefMustNameACommit(t *testing.T) {
+	repo := newRepo(t, "main")
+	first := revParse(t, repo, "refs/heads/main")
+	cases := []struct {
+		name, ref, want string
+	}{
+		{"a branch name", "main", "full commit SHA"},
+		{"an abbreviated SHA", first[:12], "full commit SHA"},
+		{"an option", "--detach", "full commit SHA"},
+		{"a SHA no commit has", strings.Repeat("0", 40), "not a commit"},
+		{"a tree's SHA", revParse(t, repo, "HEAD^{tree}"), "not a commit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tree, branch := newBaseRefTree(t, repo, tc.ref)
+
+			err := tree.Setup()
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NoDirExists(t, tree.GetWorktreePath(), "nothing was created")
+			_, ok := resolveRef(repo, "refs/heads/"+branch, defaultRunner(nil))
+			assert.False(t, ok, "no branch was created")
+		})
+	}
+}

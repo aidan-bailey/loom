@@ -403,3 +403,21 @@ func TestEventsWithErrors_RoundTripJSON(t *testing.T) {
 	assert.Equal(t, "stash forgotten", rback.Notice.Error())
 	assert.Equal(t, 5, rback.Issue.Number)
 }
+
+// TestWorkspacesView_CarriesTheWatchSummary: a replica answers Workspace
+// from the published views, the watch summary included, as the model does,
+// and hands out a copy whose escalations are its own.
+func TestWorkspacesView_CarriesTheWatchSummary(t *testing.T) {
+	m, ws, id := watchWS(t, true)
+	m.watchFor(ws).mem = watchEscalatedMemory()
+	w := WorkspacesView{Views: m.Workspaces()}
+
+	v, ok := m.Workspace(id)
+	vv, vok := w.Workspace(id)
+	require.Equal(t, [2]any{v, ok}, [2]any{vv, vok})
+	require.NotEmpty(t, vv.Watch.Escalations, "fixture: the summary is in the view")
+
+	vv.Watch.Escalations[0].Reason = "changed"
+	again, _ := w.Workspace(id)
+	assert.NotEqual(t, "changed", again.Watch.Escalations[0].Reason, "a deep copy")
+}

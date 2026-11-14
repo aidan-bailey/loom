@@ -245,6 +245,8 @@ type Reply struct {
 	Flow    FlowView
 	Flows   FlowsView
 	FlowDoc FlowDocView
+	// Watch is ReadWatch's answer.
+	Watch WatchView
 }
 
 // FlowDocView is one of a flow's documents (flowview.ReadDoc): its path,

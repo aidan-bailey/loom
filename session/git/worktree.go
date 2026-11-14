@@ -41,6 +41,8 @@ type GitWorktree struct {
 	sessionName string
 	// Branch name for the worktree
 	branchName string
+	// baseRef is WorktreeSpec.BaseRef, read once by setupNewWorktree.
+	baseRef string
 	// refMu guards baseCommitSHA and stashRef. Writers run on tea.Cmd
 	// goroutines (Setup during Start/Resume, SetStashRef during Resume)
 	// while Instance.Snapshot and diff refreshes read concurrently from
@@ -161,7 +163,7 @@ func resolveWorktreePaths(repoPath string, branchName string, configDir string, 
 		return "", "", err
 	}
 
-	worktreePath = filepath.Join(worktreeDir, sanitizeBranchName(branchName))
+	worktreePath = filepath.Join(worktreeDir, SanitizeBranchName(branchName))
 	worktreePath = worktreePath + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
 
 	return resolvedRepo, worktreePath, nil
@@ -185,6 +187,12 @@ type WorktreeSpec struct {
 	BranchPrefix *string
 	// Runner injects a CommandRunner for tests. nil uses the default.
 	Runner CommandRunner
+	// BaseRef is a full commit SHA to cut the new branch from. Empty keeps
+	// ResolveBaseCommit's answer. It is consumed by the first Setup and
+	// never persisted: a rebuild of a stored record resolves its base as
+	// before. A value that is not a full SHA of a commit in the repository
+	// fails the setup, never falls back.
+	BaseRef string
 }
 
 // NewGitWorktree creates a new GitWorktree instance using the workspace
@@ -231,7 +239,7 @@ func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname st
 	branchName := fmt.Sprintf("%s%s", prefix, spec.SessionName)
 	// Sanitize the final branch name to handle invalid characters from any source
 	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
-	branchName = sanitizeBranchName(branchName)
+	branchName = SanitizeBranchName(branchName)
 	// Reachable only since the prefix became user-controlled: with it
 	// cleared, a title that is entirely punctuation sanitizes away to
 	// nothing, and `worktree add -b ""` fails cryptically further down.
@@ -253,6 +261,7 @@ func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname st
 		forNewSession: true,
 		configDir:     configDir,
 		runner:        r,
+		baseRef:       spec.BaseRef,
 	}, branchName, nil
 }
 

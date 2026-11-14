@@ -19,9 +19,10 @@ import (
 // what it says. push.go owns the queue, the sender and the route.
 
 const (
-	pushWaiting  = "waiting"
-	pushFinished = "finished"
-	pushDone     = "done"
+	pushWaiting   = "waiting"
+	pushFinished  = "finished"
+	pushDone      = "done"
+	pushEscalated = "escalated"
 )
 
 // pushFinishedBody is what a finished push says: the session's last message
@@ -41,6 +42,10 @@ type pushJob struct {
 	Badge   int
 	// Mockup: the push opens the session's mockup tab (opensMockup).
 	Mockup bool
+	// Workspace and Issue name an escalated push's issue, which has no
+	// session: its Topic is made from them.
+	Workspace core.WorkspaceID
+	Issue     int
 }
 
 // pushPayload is the JSON the service worker reads (sw.js: data.<key>).
@@ -59,6 +64,9 @@ func (j pushJob) payload() ([]byte, error) {
 	if j.Mockup {
 		url += "/mockup"
 	}
+	if j.Kind == pushEscalated {
+		url = "/"
+	}
 	return json.Marshal(pushPayload{
 		Kind:    j.Kind,
 		Session: j.Session,
@@ -72,7 +80,7 @@ func (j pushJob) payload() ([]byte, error) {
 // urgency is the push's Urgency header: a session waiting for you is worth
 // waking the phone, a finished one can wait for its next wake.
 func (j pushJob) urgency() string {
-	if j.Kind == pushWaiting {
+	if j.Kind == pushWaiting || j.Kind == pushEscalated {
 		return "high"
 	}
 	return "normal"
@@ -83,8 +91,17 @@ func (j pushJob) urgency() string {
 // big-endian, as unpadded base64url, always 11 characters. Apple refuses a
 // Topic whose length is 1 mod 4 (spec, "Push"), so "s<id>" would fail for
 // every 4- and 8-digit ID.
+//
+// An escalated push has no session: its topic is one per workspace and issue,
+// the same 8 bytes with the top bit set (a session's ID never has it), from
+// the workspace ID's low 31 bits and the issue number, so an offline phone
+// keeps each escalation.
 func (j pushJob) topic() string {
-	return base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, uint64(j.Session)))
+	id := uint64(j.Session)
+	if j.Kind == pushEscalated {
+		id = 1<<63 | (uint64(j.Workspace)&0x7fffffff)<<32 | uint64(uint32(j.Issue))
+	}
+	return base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, id))
 }
 
 // pushSeen is what the last projection showed of one session, and what its
@@ -114,14 +131,27 @@ type pushWatch struct {
 	// turn and its verdict comes back after the baseline.
 	since map[core.WorkspaceID]time.Time
 	now   func() time.Time
+
+	// escalated is each served workspace's escalations as the last
+	// projection listed them: present once the workspace's watch has loaded
+	// (Watch.Loaded) and so has a baseline.
+	escalated map[core.WorkspaceID]map[escalationKey]bool
+}
+
+// escalationKey identifies one escalation of a workspace: its issue and the
+// moment the watcher recorded it, so an issue escalated again is a new one.
+type escalationKey struct {
+	issue int
+	at    int64
 }
 
 func newPushWatch() *pushWatch {
 	return &pushWatch{
-		seen:  map[core.WorkspaceID]map[core.InstanceID]pushSeen{},
-		needs: map[core.WorkspaceID]int{},
-		since: map[core.WorkspaceID]time.Time{},
-		now:   time.Now,
+		seen:      map[core.WorkspaceID]map[core.InstanceID]pushSeen{},
+		needs:     map[core.WorkspaceID]int{},
+		since:     map[core.WorkspaceID]time.Time{},
+		escalated: map[core.WorkspaceID]map[escalationKey]bool{},
+		now:       time.Now,
 	}
 }
 
@@ -137,6 +167,11 @@ func (w *pushWatch) forget(served []core.WorkspaceView) {
 			delete(w.seen, ws)
 			delete(w.needs, ws)
 			delete(w.since, ws)
+		}
+	}
+	for ws := range w.escalated {
+		if !keep[ws] {
+			delete(w.escalated, ws)
 		}
 	}
 }
@@ -215,10 +250,7 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		next[v.ID] = now
 	}
 	w.seen[ws], w.needs[ws] = next, needs
-	badge := 0
-	for _, n := range w.needs {
-		badge += n
-	}
+	badge := w.badge()
 	for i := range jobs {
 		jobs[i].Badge = badge
 	}
@@ -320,4 +352,71 @@ func pushPlain(s string, limit int) string {
 		return flat
 	}
 	return string([]rune(flat)[:limit-1]) + "…"
+}
+
+// badge counts the sessions that need you across every workspace, as the last
+// projections left them.
+func (w *pushWatch) badge() int {
+	badge := 0
+	for _, n := range w.needs {
+		badge += n
+	}
+	return badge
+}
+
+// observeEscalations takes every served workspace's view and returns the
+// escalated pushes it implies, one for each escalation of its watcher summary
+// (Watch.Escalations) that the workspace's previous projection did not list,
+// in the views' order and, within a workspace, the summary's. A workspace's
+// baseline is its first projection whose Watch.Loaded is true: the watcher's
+// memory loads on its first poll, so a projection before that lists nothing,
+// and a baseline taken there would push every escalation the memory holds
+// once it loads. A projection that is not loaded (the switch off, or a
+// restart before the first poll) pushes nothing and drops the baseline, so
+// the next loaded one starts over. forget drops a workspace the model no
+// longer serves, so one served again starts over. The summary holds at most
+// the 20 newest, so an escalation leaving it is never pushed again.
+func (w *pushWatch) observeEscalations(views []core.WorkspaceView) []pushJob {
+	var jobs []pushJob
+	for _, v := range views {
+		if !v.Watch.Loaded {
+			delete(w.escalated, v.ID)
+			continue
+		}
+		prev, baselined := w.escalated[v.ID]
+		next := make(map[escalationKey]bool, len(v.Watch.Escalations))
+		for _, e := range v.Watch.Escalations {
+			key := escalationKey{issue: e.Issue, at: e.At.UnixNano()}
+			next[key] = true
+			if baselined && !prev[key] {
+				jobs = append(jobs, escalationJob(v, e))
+			}
+		}
+		w.escalated[v.ID] = next
+	}
+	badge := w.badge()
+	for i := range jobs {
+		jobs[i].Badge = badge
+	}
+	return jobs
+}
+
+// escalationJob is e's escalated push: the title names the workspace and the
+// issue, the body the reason the watcher recorded, each one line.
+func escalationJob(v core.WorkspaceView, e core.WatchEscalation) pushJob {
+	label := pushPlain(v.Label, 80)
+	if label == "" {
+		label = "loom"
+	}
+	body := pushPlain(e.Reason, 200)
+	if body == "" {
+		body = "Escalated"
+	}
+	return pushJob{
+		Kind:      pushEscalated,
+		Title:     pushPlain(fmt.Sprintf("%s: issue #%d escalated", label, e.Issue), 80),
+		Body:      body,
+		Workspace: v.ID,
+		Issue:     e.Issue,
+	}
 }

@@ -285,3 +285,13 @@ func (l *Loop) FixThread(thread feedback.ThreadID, workspace string, req ReqID) 
 func (l *Loop) ForgetBelief(id sched.SignatureID, req ReqID) {
 	l.do(func(m *Model) { m.ForgetBelief(id, req) })
 }
+
+// SetWatch runs Model.SetWatch on the loop.
+func (l *Loop) SetWatch(id WorkspaceID, on bool, req ReqID) {
+	l.do(func(m *Model) { m.SetWatch(id, on, req) })
+}
+
+// ReadWatch runs Model.ReadWatch on the loop.
+func (l *Loop) ReadWatch(id WorkspaceID, dryRun bool, req ReqID) {
+	l.do(func(m *Model) { m.ReadWatch(id, dryRun, req) })
+}

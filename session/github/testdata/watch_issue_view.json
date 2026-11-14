@@ -1,0 +1,23 @@
+{
+  "body": "Parser rejects empty input.",
+  "comments": [
+    {
+      "id": "IC_kwDOA3",
+      "author": {"login": "maintainer"},
+      "authorAssociation": "MEMBER",
+      "body": "Fixed by #101.",
+      "createdAt": "2026-11-12T11:00:00Z",
+      "includesCreatedEdit": false,
+      "isMinimized": false,
+      "minimizedReason": "",
+      "reactionGroups": [],
+      "url": "https://github.com/o/r/issues/7#issuecomment-3",
+      "viewerDidAuthor": false
+    }
+  ],
+  "labels": [{"color": "0e8a16", "description": "", "id": "LA_kwDOA1", "name": "loom"}],
+  "number": 7,
+  "state": "CLOSED",
+  "title": "Fix the parser",
+  "url": "https://github.com/o/r/issues/7"
+}

@@ -49,15 +49,7 @@ func CheckCLI(r internalexec.Executor) error {
 }
 
 func gh(ctx context.Context, r internalexec.Executor, dir string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
-	defer cancel()
-	c := internalexec.GhCommand(ctx, args...)
-	c.Dir = dir
-	out, err := runner(r).Output(c)
-	if err != nil {
-		return nil, fmt.Errorf("gh %s: %w", label(args), err)
-	}
-	return out, nil
+	return ghWithTimeout(ctx, r, dir, ghTimeout, args...)
 }
 
 // label names a gh invocation for error messages by its leading

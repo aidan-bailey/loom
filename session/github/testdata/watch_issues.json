@@ -1,0 +1,56 @@
+[
+  {
+    "body": "Add a --dry-run flag.\n\nSee the design notes.",
+    "comments": [],
+    "labels": [{"color": "0e8a16", "description": "", "id": "LA_kwDOA1", "name": "loom"}],
+    "number": 14,
+    "title": "Add a flag",
+    "url": "https://github.com/o/r/issues/14"
+  },
+  {
+    "body": "Crash on empty input",
+    "comments": [],
+    "labels": [],
+    "number": 9,
+    "title": "Fix the crash",
+    "url": "https://github.com/o/r/issues/9"
+  },
+  {
+    "body": "Parser rejects empty input.\nExpected: accept it.",
+    "comments": [
+      {
+        "id": "IC_kwDOA1",
+        "author": {"login": "maintainer"},
+        "authorAssociation": "OWNER",
+        "body": "Please also cover the CRLF case.",
+        "createdAt": "2026-11-10T09:30:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/o/r/issues/12#issuecomment-1",
+        "viewerDidAuthor": false
+      },
+      {
+        "id": "IC_kwDOA2",
+        "author": {"login": "drive-by"},
+        "authorAssociation": "NONE",
+        "body": "Same here.",
+        "createdAt": "2026-11-11T08:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/o/r/issues/12#issuecomment-2",
+        "viewerDidAuthor": false
+      }
+    ],
+    "labels": [
+      {"color": "0e8a16", "description": "", "id": "LA_kwDOA1", "name": "loom"},
+      {"color": "d73a4a", "description": "Something is broken", "id": "LA_kwDOA2", "name": "bug"}
+    ],
+    "number": 12,
+    "title": "Parser rejects empty input",
+    "url": "https://github.com/o/r/issues/12"
+  }
+]

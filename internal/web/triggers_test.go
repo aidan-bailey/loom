@@ -440,3 +440,179 @@ func TestPushAllows_DoneFollowsTheFinishedToggle(t *testing.T) {
 	assert.True(t, pushAllows(core.NotifySettings{Finished: true}, pushDone, now))
 	assert.False(t, pushAllows(core.NotifySettings{Waiting: true}, pushDone, now))
 }
+
+var escalationAt = time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+
+// escalationView is a served workspace whose watcher summary is loaded and
+// lists escs.
+func escalationView(id core.WorkspaceID, label string, escs ...core.WatchEscalation) core.WorkspaceView {
+	return core.WorkspaceView{ID: id, Label: label, Watch: core.WatchSummary{On: true, Loaded: true, Escalations: escs}}
+}
+
+// unloadedView is a workspace whose watch switch is on but whose memory has
+// not loaded yet (its first poll has not run): the summary lists nothing.
+func unloadedView(id core.WorkspaceID, label string) core.WorkspaceView {
+	return core.WorkspaceView{ID: id, Label: label, Watch: core.WatchSummary{On: true}}
+}
+
+func TestPushWatch_AnEscalationPushesOnce(t *testing.T) {
+	w := newPushWatch()
+	e14 := core.WatchEscalation{Issue: 14, Reason: "PR #40: ci nudge limit (3) reached", At: escalationAt}
+	e15 := core.WatchEscalation{Issue: 15, Reason: "session heal 15 has been Recoverable since 2026-11-13T08:00:00Z", At: escalationAt.Add(time.Minute)}
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a")}), "the first loaded projection is a baseline")
+
+	jobs := w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14)})
+
+	require.Len(t, jobs, 1)
+	assert.Equal(t, pushJob{
+		Kind:      pushEscalated,
+		Title:     "ws-a: issue #14 escalated",
+		Body:      "PR #40: ci nudge limit (3) reached",
+		Workspace: 10,
+		Issue:     14,
+	}, jobs[0])
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14)}), "published again, it pushes nothing")
+
+	jobs = w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e15, e14)})
+	require.Len(t, jobs, 1, "only the new escalation, newest first in the summary")
+	assert.Equal(t, 15, jobs[0].Issue)
+}
+
+func TestPushWatch_EscalationsHeldAtTheBaselineNeverPush(t *testing.T) {
+	w := newPushWatch()
+	e14 := core.WatchEscalation{Issue: 14, Reason: "r", At: escalationAt}
+
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{unloadedView(10, "ws-a")}), "before the first poll nothing is known")
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14)}),
+		"the memory has loaded and holds an old escalation: it is the baseline, not news")
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14)}))
+
+	e15 := core.WatchEscalation{Issue: 15, Reason: "r", At: escalationAt.Add(time.Hour)}
+	require.Len(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e15, e14)}), 1,
+		"the baseline did not blind the watch to a later one")
+}
+
+func TestPushWatch_EscalationsAreReBaselinedWhenTheWatchReloads(t *testing.T) {
+	w := newPushWatch()
+	e14 := core.WatchEscalation{Issue: 14, Reason: "r", At: escalationAt}
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a")})
+
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{unloadedView(10, "ws-a")}), "the switch is off, or its memory not yet loaded")
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14)}),
+		"loaded again with an old escalation: a new baseline, not a flood")
+
+	e15 := core.WatchEscalation{Issue: 15, Reason: "r", At: escalationAt.Add(time.Hour)}
+	require.Len(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e15, e14)}), 1)
+}
+
+func TestPushWatch_AnIssueEscalatedAgainPushesAgain(t *testing.T) {
+	w := newPushWatch()
+	first := core.WatchEscalation{Issue: 14, Reason: "r1", At: escalationAt}
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a")})
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", first)})
+
+	again := core.WatchEscalation{Issue: 14, Reason: "r2", At: escalationAt.Add(48 * time.Hour)}
+	jobs := w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", again)})
+
+	require.Len(t, jobs, 1, "the same issue at another time is another escalation")
+	assert.Equal(t, "r2", jobs[0].Body)
+}
+
+func TestPushWatch_EachWorkspaceHasItsOwnEscalationBaseline(t *testing.T) {
+	w := newPushWatch()
+	e14 := core.WatchEscalation{Issue: 14, Reason: "r", At: escalationAt}
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a")})
+
+	jobs := w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14), escalationView(20, "ws-b", e14)})
+
+	require.Len(t, jobs, 1, "workspace 20 is first seen here, with the escalation already held: its baseline")
+	assert.Equal(t, core.WorkspaceID(10), jobs[0].Workspace)
+}
+
+func TestPushWatch_AWorkspaceNoLongerServedStartsOverAsAnEscalationBaseline(t *testing.T) {
+	w := newPushWatch()
+	e14 := core.WatchEscalation{Issue: 14, Reason: "r", At: escalationAt}
+	e15 := core.WatchEscalation{Issue: 15, Reason: "r", At: escalationAt.Add(time.Hour)}
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a"), escalationView(20, "ws-b")})
+
+	w.forget([]core.WorkspaceView{{ID: 20}})
+
+	assert.Empty(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e14), escalationView(20, "ws-b")}),
+		"served again, workspace 10 is a baseline, not a transition")
+	require.Len(t, w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", e15, e14), escalationView(20, "ws-b")}), 1)
+}
+
+func TestPushWatch_AnEscalationPushCarriesTheBadgeOfSessionsThatNeedYou(t *testing.T) {
+	w := newPushWatch()
+	w.observe(30, []core.InstanceView{pushTestView(1, session.Prompting), pushTestView(2, session.Prompting)})
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a")})
+
+	jobs := w.observeEscalations([]core.WorkspaceView{escalationView(10, "ws-a", core.WatchEscalation{Issue: 14, Reason: "r", At: escalationAt})})
+
+	require.Len(t, jobs, 1)
+	assert.Equal(t, 2, jobs[0].Badge, "a badge of 0 would clear the Home Screen icon of the sessions still waiting")
+}
+
+func TestPushWatch_EscalationTexts(t *testing.T) {
+	w := newPushWatch()
+	w.observeEscalations([]core.WorkspaceView{escalationView(10, ""), escalationView(11, strings.Repeat("x", 100))})
+	long := strings.Repeat("y", 300)
+
+	jobs := w.observeEscalations([]core.WorkspaceView{
+		escalationView(10, "", core.WatchEscalation{Issue: 3, Reason: "  stuck\n\tfor  hours ", At: escalationAt}),
+		escalationView(11, strings.Repeat("x", 100), core.WatchEscalation{Issue: 4, Reason: long, At: escalationAt}),
+		escalationView(12, "ws-c"),
+	})
+
+	require.Len(t, jobs, 2)
+	assert.Equal(t, "loom: issue #3 escalated", jobs[0].Title, "a workspace with no label")
+	assert.Equal(t, "stuck for hours", jobs[0].Body, "one line")
+	assert.Len(t, []rune(jobs[1].Title), 80, "the title is cut like a session's")
+	assert.Len(t, []rune(jobs[1].Body), 200, "the reason is cut to 200 runes")
+	assert.True(t, strings.HasSuffix(jobs[1].Body, "…"))
+
+	w.observeEscalations([]core.WorkspaceView{escalationView(13, "ws-d")})
+	jobs = w.observeEscalations([]core.WorkspaceView{escalationView(13, "ws-d", core.WatchEscalation{Issue: 5, At: escalationAt})})
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "Escalated", jobs[0].Body, "an escalation with no reason still says something")
+}
+
+func TestPushJob_AnEscalationOpensTheFleetAndIsUrgent(t *testing.T) {
+	job := pushJob{Kind: pushEscalated, Title: "ws-a: issue #14 escalated", Body: "PR #40: stuck", Badge: 2, Workspace: 10, Issue: 14}
+
+	raw, err := job.payload()
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"kind":"escalated","session":0,"title":"ws-a: issue #14 escalated","body":"PR #40: stuck","badge":2,"url":"/"}`, string(raw))
+	assert.Equal(t, "high", job.urgency())
+}
+
+func TestPushJob_AnEscalationTopicIsPerIssueAndNeverASessions(t *testing.T) {
+	assert.Equal(t, "gAAACgAAAA4", pushJob{Kind: pushEscalated, Workspace: 10, Issue: 14}.topic())
+
+	seen := map[string]bool{}
+	for _, ws := range []core.WorkspaceID{1, 10, 20} {
+		for _, issue := range []int{1, 14, 15, 1000} {
+			topic := pushJob{Kind: pushEscalated, Workspace: ws, Issue: issue}.topic()
+			assert.Len(t, topic, 11, "workspace %d issue %d", ws, issue)
+			raw, err := base64.RawURLEncoding.DecodeString(topic)
+			require.NoError(t, err)
+			require.Len(t, raw, 8)
+			assert.NotZero(t, raw[0]&0x80, "the top bit marks an escalation's topic")
+			assert.False(t, seen[topic], "workspace %d issue %d shares a topic", ws, issue)
+			seen[topic] = true
+		}
+	}
+	for _, id := range []core.InstanceID{0, 14, 9007199254740991} {
+		raw, err := base64.RawURLEncoding.DecodeString(pushJob{Kind: pushWaiting, Session: id}.topic())
+		require.NoError(t, err)
+		assert.Zero(t, raw[0]&0x80, "session %d: a session's topic never has it", id)
+	}
+}
+
+func TestPushAllows_EscalatedFollowsTheWaitingToggle(t *testing.T) {
+	now := time.Now()
+	assert.True(t, pushAllows(core.NotifySettings{Waiting: true}, pushEscalated, now))
+	assert.False(t, pushAllows(core.NotifySettings{Finished: true}, pushEscalated, now))
+	assert.False(t, pushAllows(core.NotifySettings{Waiting: true, PausedUntil: now.Add(time.Hour)}, pushEscalated, now), "a paused device")
+}

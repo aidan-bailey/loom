@@ -27,6 +27,9 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
 	assert.Equal(t, buildSweepInterval, gateIntervals[gateBuildSweep])
 	assert.Equal(t, queueInterval, gateIntervals[gateQueue])
+	assert.Equal(t, watchInterval, gateIntervals[gateWatch])
+	assert.Equal(t, 60*time.Second, watchInterval)
+	assert.Equal(t, "watch", gateWatch.String())
 	assert.Zero(t, gateIntervals[gateAccountsRefresh], "account refreshes run on events, not a cadence")
 }
 

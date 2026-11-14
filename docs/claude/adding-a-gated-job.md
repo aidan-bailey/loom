@@ -28,6 +28,8 @@
 - **Stale answers.** A failed query should usually clear what the last one set (the roster does: stale statuses are worse than none); display-only data may keep it, dimmed (usage samples do).
 - **The job's result is applied later**, possibly after the instance it names was killed or moved to Deleting or Loading; check `statusEligible` or look the instance up again before acting on it.
 
+- **Pin which queue a job lands on before `Drain`.** `Model.Drain` merges `m.out.Jobs` (`spawn`, a request's follow-on) and `m.bgJobs` (`spawnBackground`, the tick's own jobs), so a test that only counts drained jobs passes with the two swapped. Assert `bgJobs` holds the tick's job and `out.Jobs` is empty, and the reverse for a request's follow-on (`TestStartWatchPoll_OnePollPerWorkspaceAtATime` and `TestStartWatchPoll_ADryRunServesItsRequest` in `core/watch_poll_test.go` do both for the watcher's poll and its dry run). *Silent:* a poll spawned as a request's makes `Loop.Quiesce` wait on it at a stop; a follow-on spawned in the background loses its Reply's routing.
+
 - **Not every throttle is a gate.** The TUI's split-ratio flush tick runs in the TUI, not the model, and dedupes with a plain flag (`ratioTickArmed`); a gate is for the model's background jobs.
 
 ## What the gates won't tell you

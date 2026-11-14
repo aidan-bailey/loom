@@ -1,0 +1,65 @@
+[
+  {
+    "author": {"id": "MDQ6VXNlcjE=", "is_bot": false, "login": "loom-bot", "name": "Loom Bot"},
+    "baseRefName": "main",
+    "baseRefOid": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "body": "Fixes #7\n\nThe parser now accepts empty input.",
+    "closingIssuesReferences": [
+      {
+        "id": "I_kwDOA7",
+        "number": 7,
+        "repository": {"id": "R_kgDOA1", "name": "r", "owner": {"id": "U_kgDOA1", "login": "o"}},
+        "url": "https://github.com/o/r/issues/7"
+      }
+    ],
+    "headRefName": "loom/issue-7-fix-parser",
+    "headRefOid": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "isCrossRepository": false,
+    "mergeable": "CONFLICTING",
+    "number": 101,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {"__typename": "CheckRun", "completedAt": "2026-11-12T10:00:00Z", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/o/r/actions/runs/9001/job/7000", "name": "fmt", "startedAt": "2026-11-12T09:58:00Z", "status": "COMPLETED", "workflowName": "CI"},
+      {"__typename": "CheckRun", "completedAt": "2026-11-12T10:03:00Z", "conclusion": "FAILURE", "detailsUrl": "https://github.com/o/r/actions/runs/9001/job/7001?pr=101", "name": "build", "startedAt": "2026-11-12T09:58:00Z", "status": "COMPLETED", "workflowName": "CI"},
+      {"__typename": "CheckRun", "completedAt": "2026-11-12T10:30:00Z", "conclusion": "TIMED_OUT", "detailsUrl": "https://github.com/o/r/runs/4242", "name": "integration", "startedAt": "2026-11-12T09:58:00Z", "status": "COMPLETED", "workflowName": ""},
+      {"__typename": "CheckRun", "completedAt": "2026-11-12T10:01:00Z", "conclusion": "CANCELLED", "detailsUrl": "https://github.com/o/r/actions/runs/9001/job/7003", "name": "docs", "startedAt": "2026-11-12T09:58:00Z", "status": "COMPLETED", "workflowName": "CI"},
+      {"__typename": "CheckRun", "completedAt": "0001-01-01T00:00:00Z", "conclusion": "", "detailsUrl": "https://github.com/o/r/actions/runs/9001/job/7004", "name": "e2e", "startedAt": "2026-11-12T09:58:00Z", "status": "IN_PROGRESS", "workflowName": "CI"},
+      {"__typename": "StatusContext", "context": "ci/external", "startedAt": "2026-11-12T09:59:00Z", "state": "ERROR", "targetUrl": "https://ci.example.com/builds/5"},
+      {"__typename": "StatusContext", "context": "ci/other", "startedAt": "2026-11-12T09:59:00Z", "state": "SUCCESS", "targetUrl": "https://ci.example.com/builds/6"}
+    ],
+    "url": "https://github.com/o/r/pull/101"
+  },
+  {
+    "author": {"id": "MDQ6VXNlcjI=", "is_bot": false, "login": "someone-else", "name": ""},
+    "baseRefName": "main",
+    "baseRefOid": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "body": "",
+    "closingIssuesReferences": [
+      {"id": "I_kwDOA7", "number": 7, "repository": {"id": "R_kgDOA1", "name": "r", "owner": {"id": "U_kgDOA1", "login": "o"}}, "url": "https://github.com/o/r/issues/7"},
+      {"id": "I_kwDOA8", "number": 8, "repository": {"id": "R_kgDOA1", "name": "r", "owner": {"id": "U_kgDOA1", "login": "o"}}, "url": "https://github.com/o/r/issues/8"}
+    ],
+    "headRefName": "loom/issue-8-add-flag",
+    "headRefOid": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+    "isCrossRepository": true,
+    "mergeable": "UNKNOWN",
+    "number": 102,
+    "state": "MERGED",
+    "statusCheckRollup": [],
+    "url": "https://github.com/o/r/pull/102"
+  },
+  {
+    "author": {"id": "MDQ6VXNlcjE=", "is_bot": false, "login": "loom-bot", "name": "Loom Bot"},
+    "baseRefName": "release",
+    "baseRefOid": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+    "body": "Closing this one.",
+    "closingIssuesReferences": [],
+    "headRefName": "loom/issue-9-old",
+    "headRefOid": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+    "isCrossRepository": false,
+    "mergeable": "UNKNOWN",
+    "number": 103,
+    "state": "CLOSED",
+    "statusCheckRollup": null,
+    "url": "https://github.com/o/r/pull/103"
+  }
+]
