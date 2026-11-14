@@ -299,16 +299,11 @@ func TestWatchDryRun_TakesNoActionAndPrintsThePlan(t *testing.T) {
 	// is out: ask again until it ends, and only on that refusal.
 	var out string
 	var lastErr error
-	require.Eventually(t, func() bool {
+	assert.Eventually(t, func() bool {
 		out, _, lastErr = runWatch(t, "dry-run", "-w", "ws-a")
-		if lastErr == nil {
-			return true
-		}
-		if !strings.Contains(lastErr.Error(), "a watcher poll is already running") {
-			require.NoError(t, lastErr)
-		}
-		return false
-	}, 10*time.Second, 20*time.Millisecond, "last error: %v", lastErr)
+		return lastErr == nil || !strings.Contains(lastErr.Error(), "a watcher poll is already running")
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, lastErr)
 	assert.True(t, strings.HasPrefix(out, "Dry run for ws-a: nothing was done.\n"), out)
 
 	// A dry run polls (it asks gh); status reads the daemon's view and does not.
