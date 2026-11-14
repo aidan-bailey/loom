@@ -48,11 +48,11 @@ type watchRow struct {
 	Issue    int    `json:"issue"`
 }
 
-// watchLoom runs `loom <args>` in the sandbox and returns its combined
-// output. Unlike runLoom it never fails the test, so it can run inside
-// require.Eventually's condition.
-func watchLoom(sb *devsandbox.Sandbox, args ...string) (string, error) {
-	c := sb.Cmd(append([]string{sb.LoomBin()}, args...)...)
+// watchLoom runs argv (a loom build and its arguments) in the sandbox's
+// environment and returns its combined output. It never fails the test, so
+// it can run inside require.Eventually's condition; runLoom wraps it.
+func watchLoom(sb *devsandbox.Sandbox, argv ...string) (string, error) {
+	c := sb.Cmd(argv...)
 	var out bytes.Buffer
 	c.Stdout, c.Stderr = &out, &out
 	if err := c.Start(); err != nil {
@@ -66,7 +66,7 @@ func watchLoom(sb *devsandbox.Sandbox, args ...string) (string, error) {
 
 // watchSessions lists the workspace's sessions through the CLI.
 func watchSessions(sb *devsandbox.Sandbox) ([]watchRow, error) {
-	out, err := watchLoom(sb, "session", "list", "-w", devsandbox.WorkspaceName, "--json")
+	out, err := watchLoom(sb, sb.LoomBin(), "session", "list", "-w", devsandbox.WorkspaceName, "--json")
 	if err != nil {
 		return nil, fmt.Errorf("session list: %w: %s", err, out)
 	}
@@ -174,11 +174,11 @@ func TestE2E_Watch_StartsAndKillsByIssue(t *testing.T) {
 		}
 		calls, _ := os.ReadFile(filepath.Join(stubDir, "calls.log"))
 		t.Logf("gh calls:\n%s", calls)
-		status, _ := watchLoom(sb, "watch", "status", "-w", devsandbox.WorkspaceName)
+		status, _ := watchLoom(sb, sb.LoomBin(), "watch", "status", "-w", devsandbox.WorkspaceName)
 		t.Logf("loom watch status:\n%s", status)
 	})
 
-	out, err := watchLoom(sb, "watch", "on", "-w", devsandbox.WorkspaceName)
+	out, err := watchLoom(sb, sb.LoomBin(), "watch", "on", "-w", devsandbox.WorkspaceName)
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "watch on: "+devsandbox.WorkspaceName)
 
@@ -235,7 +235,7 @@ func TestE2E_Watch_StartsAndKillsByIssue(t *testing.T) {
 	require.Eventually(t, func() bool { return hasSession(sb, "heal 8") }, 30*time.Second, time.Second, "issue 8's agent runs in tmux")
 
 	// The watcher is on, healthy, and reached the stub rather than a real gh.
-	statusOut, err := watchLoom(sb, "watch", "status", "-w", devsandbox.WorkspaceName, "--json")
+	statusOut, err := watchLoom(sb, sb.LoomBin(), "watch", "status", "-w", devsandbox.WorkspaceName, "--json")
 	require.NoError(t, err, statusOut)
 	var view struct {
 		On          bool   `json:"on"`
