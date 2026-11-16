@@ -80,6 +80,7 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
 	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
 	m.Handle("GET /api/v1/sessions/{id}/jobs/{job}/log", l.authed(l.readJobLog))
+	m.Handle("POST /api/v1/sessions/{id}/jobs/{job}/{action}", l.authed(l.jobControl))
 	m.Handle("GET /api/v1/sessions/{id}/flow", l.authed(l.readFlow))
 	m.Handle("GET /api/v1/sessions/{id}/flow/doc", l.authed(l.readFlowDoc))
 	m.Handle("GET /api/v1/flows", l.authed(l.readFlows))

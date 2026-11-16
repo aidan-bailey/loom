@@ -55,6 +55,14 @@ type recordingBackend struct {
 	mu       sync.Mutex
 	sent     []core.Message
 	answered []answerCall
+	controls []core.JobControl
+}
+
+func (b *recordingBackend) ControlJob(c core.JobControl, req core.ReqID) {
+	b.mu.Lock()
+	b.controls = append(b.controls, c)
+	b.mu.Unlock()
+	b.Loop.ControlJob(c, req)
 }
 
 // answerCall is one Answer the web layer made.

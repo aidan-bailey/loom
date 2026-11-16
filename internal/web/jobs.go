@@ -44,6 +44,14 @@ type jobJSON struct {
 	Failure      string      `json:"failure"`
 	CancelReason string      `json:"cancel_reason"`
 	Waiting      string      `json:"waiting"`
+	// The job controls (spec 2026-11-16-job-controls §8): none moves with
+	// the samples.
+	Parked         bool   `json:"parked"`
+	Paused         bool   `json:"paused"`
+	PauseReclaimed bool   `json:"pause_reclaimed"`
+	Forced         bool   `json:"forced"`
+	Control        string `json:"control"`
+	ControlError   string `json:"control_error"`
 }
 
 // sessionJobs is one session's jobs and its badge (core.JobBadges).
@@ -72,6 +80,13 @@ func jobOf(j core.JobView) jobJSON {
 		Failure:      j.Failure,
 		CancelReason: j.CancelReason,
 		Waiting:      j.Waiting,
+
+		Parked:         j.Parked,
+		Paused:         !j.PausedAt.IsZero(),
+		PauseReclaimed: j.PauseReclaimed,
+		Forced:         j.Forced,
+		Control:        string(j.Control),
+		ControlError:   j.ControlErr,
 	}
 	if j.Exit != nil {
 		out.Exit = &exitJSON{Code: j.Exit.Code, Signal: j.Exit.Signal}
@@ -179,10 +194,9 @@ func (l *Layer) readJobLog(w http.ResponseWriter, r *http.Request, device string
 // jobLogQuery reads the log route's job (a decimal ID above 0) and after (a
 // byte offset; -1, the tail, when absent).
 func jobLogQuery(r *http.Request) (sched.JobID, int64, error) {
-	s := r.PathValue("job")
-	job, err := strconv.ParseUint(s, 10, 64)
-	if err != nil || job == 0 {
-		return 0, 0, fmt.Errorf("job %q: want a job id", s)
+	job, err := jobFromPath(r)
+	if err != nil {
+		return 0, 0, err
 	}
 	after := int64(-1)
 	if s := r.URL.Query().Get("after"); s != "" {
@@ -192,7 +206,49 @@ func jobLogQuery(r *http.Request) (sched.JobID, int64, error) {
 		}
 		after = n
 	}
-	return sched.JobID(job), after, nil
+	return job, after, nil
+}
+
+// jobFromPath reads a job route's job: a decimal ID above 0.
+func jobFromPath(r *http.Request) (sched.JobID, error) {
+	s := r.PathValue("job")
+	job, err := strconv.ParseUint(s, 10, 64)
+	if err != nil || job == 0 {
+		return 0, fmt.Errorf("job %q: want a job id", s)
+	}
+	return sched.JobID(job), nil
+}
+
+// jobActions are the job controls the app may ask for (job controls spec
+// §8); any other action is 404.
+var jobActions = map[string]core.JobAction{
+	"start": core.JobStart, "park": core.JobPark, "unpark": core.JobUnpark,
+	"pause": core.JobPause, "resume": core.JobResume,
+}
+
+// jobControl is POST /api/v1/sessions/{id}/jobs/{job}/{action}: a control
+// of one of the session's jobs. The model checks that the job is the
+// session's and refuses what the action can't do.
+func (l *Layer) jobControl(w http.ResponseWriter, r *http.Request, device string) {
+	action, ok := jobActions[r.PathValue("action")]
+	if !ok {
+		l.refuse(w, actionLog{device: device, name: "job_control"}, http.StatusNotFound, "no such action")
+		return
+	}
+	a := actionLog{device: device, name: "job_" + string(action)}
+	id, ok := l.sessionFromPath(w, r, a)
+	if !ok {
+		return
+	}
+	a.sessionID = id
+	job, err := jobFromPath(r)
+	if err != nil {
+		l.refuse(w, a, http.StatusBadRequest, err.Error())
+		return
+	}
+	l.doAction(w, r, a, func(req core.ReqID) {
+		l.client.ControlJob(core.JobControl{Job: job, Owner: id, Action: action}, req)
+	})
 }
 
 // cleanLog is a log's bytes as text the app draws: terminal escapes dropped
