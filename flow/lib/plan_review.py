@@ -29,14 +29,22 @@ concurrency, outside calls, bounds or auth, or that file is missing or is neithe
 list (so a draft from an older flow copy is reviewed). Every other story is skipped: the run reviews
 it in full, as it does every story the plan review doesn't vouch for (the owner, 2026-11-16).
 
+A mechanical or brief story (its `**Form:**` line; the plan treatment spec §4) is skipped whatever its
+markers or risk file say, `Story 2: skip (mechanical)`: the plan holds none of its code to review. But
+when its drafter's risk file lists a task its Form reason doesn't name (`Task 2.1` in the reason), the
+story hides risky logic in a form without plan code, and --select fails naming each such story and
+task: the manager takes it to the owner, who makes the story full or names the task in the reason.
+
 Exit 0 with the line on stdout; 1, with the reason on stderr and nothing on stdout, when the plan
 holds no story, D/join.json is missing (D itself, or a plan never joined), a story has no draft or,
-with --select, the repo has no usable profile; 2 on a usage error.
+with --select, the repo has no usable profile or a mechanical or brief story's drafter lists a task its
+reason doesn't name; 2 on a usage error.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -81,26 +89,53 @@ def tiers(text: str, drafts: Path) -> dict[str, list[str]]:
     return lists
 
 
-def risk_reason(path: Path) -> str | None:
-    """Why a drafter's risk file sends its story to review, or None when it says `none`.
+def risk_file(path: Path) -> tuple[str | None, list[str]]:
+    """What a drafter's risk file says: a problem that sends its story to review, else the tasks it lists.
 
     The file is the single line `none`, or one `- Task <x.y>: <what it invents>` line a task; blank
-    lines don't count. A missing file, or one that is neither, sends the story to review.
+    lines don't count. A missing file, or one that is neither, is a problem.
     """
     if not path.is_file():
-        return "no risk file"
+        return "no risk file", []
     lines = [entry.strip() for entry in path.read_text(encoding="utf-8").splitlines() if entry.strip()]
     if lines == ["none"]:
-        return None
+        return None, []
     if not lines or not all(entry.startswith("- ") for entry in lines):
-        return "risk file is neither `none` nor a list"
-    return "risk: " + ", ".join(entry[2:].split(":", 1)[0].strip() for entry in lines)
+        return "risk file is neither `none` nor a list", []
+    return None, [entry[2:].split(":", 1)[0].strip() for entry in lines]
 
 
-def selection(text: str, drafts: Path, markers: tuple[str, ...]) -> list[tuple[str, list[str]]]:
-    """Each story's id and the reasons the plan review reads it, in plan order; no reasons means skip it."""
-    chosen: list[tuple[str, list[str]]] = []
+def risk_reason(path: Path) -> str | None:
+    """Why a drafter's risk file sends its story to review, or None when it says `none`."""
+    problem, tasks = risk_file(path)
+    if problem:
+        return problem
+    return "risk: " + ", ".join(tasks) if tasks else None
+
+
+def unnamed(tasks: list[str], reason: str) -> list[str]:
+    """The tasks a Form reason doesn't name; `Task 1.1` is not named by `Task 1.10`."""
+    return [task for task in tasks if not re.search(re.escape(task) + r"(?![\w.])", reason)]
+
+
+def selection(text: str, drafts: Path, markers: tuple[str, ...]) -> list[tuple[str, list[str], str]]:
+    """Each story's id, the reasons the plan review reads it (none: skip it) and its form, in plan order.
+
+    ReviewError naming each mechanical or brief story whose drafter lists a task its Form reason doesn't name.
+    """
+    chosen: list[tuple[str, list[str], str]] = []
+    hidden: list[str] = []
     for story in drafted(text, drafts):
+        if story.form != "full":
+            _problem, tasks = risk_file(drafts / RISK_DIR / f"S{story.sid}.md")
+            left = unnamed(tasks, story.form_reason)
+            if left:
+                hidden.append(
+                    f"Story {story.sid} is {story.form} but its drafter lists {', '.join(left)} (risky logic): "
+                    "make it full, or name each task in the Form line's reason"
+                )
+            chosen.append((story.sid, [], story.form))
+            continue
         reasons = []
         found = check_plan.markers_in(story, markers)
         if found:
@@ -108,14 +143,21 @@ def selection(text: str, drafts: Path, markers: tuple[str, ...]) -> list[tuple[s
         risk = risk_reason(drafts / RISK_DIR / f"S{story.sid}.md")
         if risk:
             reasons.append(risk)
-        chosen.append((story.sid, reasons))
+        chosen.append((story.sid, reasons, story.form))
+    if hidden:
+        raise ReviewError("; ".join(hidden))
     return chosen
 
 
-def selection_lines(chosen: list[tuple[str, list[str]]]) -> list[str]:
+def selection_lines(chosen: list[tuple[str, list[str], str]]) -> list[str]:
     """--select's output: a line a story, then how many are reviewed and which."""
-    out = [f"Story {sid}: review ({'; '.join(reasons)})" if reasons else f"Story {sid}: skip" for sid, reasons in chosen]
-    reviewed = [sid for sid, reasons in chosen if reasons]
+    out = []
+    for sid, reasons, form in chosen:
+        if reasons:
+            out.append(f"Story {sid}: review ({'; '.join(reasons)})")
+        else:
+            out.append(f"Story {sid}: skip ({form})" if form != "full" else f"Story {sid}: skip")
+    reviewed = [sid for sid, reasons, _ in chosen if reasons]
     out.append(f"{len(reviewed)} of {len(chosen)} stories to review: {', '.join(reviewed) or 'none'}")
     return out
 

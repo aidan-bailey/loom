@@ -17,7 +17,7 @@ CHECK_PLAN = Path(__file__).with_name("check_plan.py")
 CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def story(sid, review=None, code=None):
+def story(sid, review=None, code=None, form=None):
     lines = [
         f"## Story {sid}: Title {sid}",
         "",
@@ -28,6 +28,8 @@ def story(sid, review=None, code=None):
     ]
     if review:
         lines.append(f"- **Review:** {review}")
+    if form:
+        lines.append(f"- **Form:** {form}")
     lines += ["", f"### Task {sid}.1: Task", "", "text", ""]
     if code:
         lines += ["```rust", *code, "```", ""]
@@ -35,10 +37,12 @@ def story(sid, review=None, code=None):
 
 
 def plan_text(*stories):
-    """A joined plan of (id, Review value or None[, its fenced code lines]) stories."""
+    """A joined plan of (id, Review value or None[, its fenced code lines[, its Form value]]) stories."""
     lines = ["# Plan", "", "**Spec:** `docs/spec.md`", "", "## Stories", ""]
-    for sid, review, *code in stories:
-        lines += story(sid, review, code[0] if code else None)
+    for sid, review, *rest in stories:
+        code = rest[0] if rest else None
+        form = rest[1] if len(rest) > 1 else None
+        lines += story(sid, review, code, form)
     return "\n".join(lines)
 
 
@@ -218,6 +222,58 @@ class PlanReviewTest(unittest.TestCase):
         result = r.run(SCRIPT, "--select")
         self.assertEqual((result.returncode, result.stdout), (1, ""))
         self.assertIn("landmines.markers", result.stderr)
+
+    def test_select_skips_a_mechanical_and_a_brief_story(self):
+        r = self.repo([("1", None, None, "mechanical (moves the limits)"), ("2", "light", None, "brief"), ("3", None)])
+        r.risk("1", "none\n")
+        r.risk("2", "none\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "Story 1: skip (mechanical)\nStory 2: skip (brief)\nStory 3: review (no risk file)\n1 of 3 stories to review: 3\n",
+        )
+
+    def test_select_fails_a_brief_story_whose_drafter_lists_a_risky_task(self):
+        r = self.repo([("1", None), ("2", None, None, "brief (a flag)")])
+        r.risk("1", "none\n")
+        r.risk("2", "- Task 2.1: retries the upload\n- Task 2.3: caps the page\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertIn(
+            "Story 2 is brief but its drafter lists Task 2.1, Task 2.3 (risky logic): "
+            "make it full, or name each task in the Form line's reason",
+            result.stderr,
+        )
+
+    def test_select_fails_a_mechanical_story_likewise(self):
+        r = self.repo([("1", None, None, "mechanical"), ("2", None, None, "brief")])
+        r.risk("1", "- Task 1.2: allocates ids\n")
+        r.risk("2", "- Task 2.1: locks the ledger\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertIn("Story 1 is mechanical but its drafter lists Task 1.2 (risky logic)", result.stderr)
+        self.assertIn("Story 2 is brief but its drafter lists Task 2.1 (risky logic)", result.stderr)
+
+    def test_select_passes_a_non_full_story_whose_reason_names_every_listed_task(self):
+        r = self.repo([("1", None, None, "brief (Task 1.1 only reads a cap the store keeps)")])
+        r.risk("1", "- Task 1.1: reads the page cap\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "Story 1: skip (brief)\n0 of 1 stories to review: none\n")
+        r = self.repo([("1", None, None, "brief (Task 1.1 only reads a cap)")])
+        r.risk("1", "- Task 1.1: reads the page cap\n- Task 1.2: writes the store\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lists Task 1.2 (risky logic)", result.stderr)
+        self.assertNotIn("Task 1.1,", result.stderr)
+
+    def test_select_skips_a_non_full_story_with_no_risk_file(self):
+        r = self.repo([("1", None, None, "mechanical"), ("2", None, None, "brief")])
+        r.risk("2", "nothing risky here\n")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "Story 1: skip (mechanical)\nStory 2: skip (brief)\n0 of 2 stories to review: none\n")
 
     def test_a_skipped_story_has_no_review_copy_so_the_line_lists_it_under_full(self):
         r = self.repo([("1", None), ("2", None)])
