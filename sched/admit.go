@@ -77,6 +77,10 @@ type fitter interface {
 	count(r Record)       // a running job
 	fits(r Record) string // why r doesn't fit what is counted; "" when it does
 	take(r Record)        // r starts: count it
+	// alone is why r would not fit even with no job running, so that no
+	// running job's end can make room for it; "" when an empty host would
+	// take it.
+	alone(r Record) string
 }
 
 // claimFit counts running jobs at their holds or claims.
@@ -89,6 +93,10 @@ type claimFit struct {
 func (f *claimFit) count(r Record)       { f.used = f.used.plus(runningNeed(r, f.p, f.holds)) }
 func (f *claimFit) fits(r Record) string { return shortfall(f.used, r.Claim.Need(f.p.Caps), f.p.Caps) }
 func (f *claimFit) take(r Record)        { f.used = f.used.plus(r.Claim.Need(f.p.Caps)) }
+
+// alone is always "": an empty host has the caps, and a claim over them is
+// the over-cap skip's.
+func (f *claimFit) alone(Record) string { return "" }
 
 // Admit decides which queued jobs start now (spec §5.2) by their claims: a
 // Running exclusive claim takes every cap as it stands, and any other
@@ -104,7 +112,10 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, limits 
 //
 //  1. A job whose claim exceeds a cap is skipped and waits "over this host's
 //     caps"; it is never the head. A job being sized (Record.Sizing) waits
-//     with Sizing.Wait and is never the head either.
+//     with Sizing.Wait and is never the head either, nor is one f says
+//     would not fit with no job running (fitter.alone): holding the rest
+//     back for it would leave the queue idle while it waits on memory
+//     outside the queue.
 //  2. The head is the first job that is not skipped. Once it has waited
 //     p.StarveAfter since it joined the queue (Record.QueuedSince: its
 //     release, for a dependent), it starts if it fits (Decision.Starved
@@ -187,6 +198,13 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter, limits AccountL
 		if why := held.blocks(r); why != "" {
 			// A running job holds its lock: it can't start until that one
 			// ends, so it is never the head either.
+			d.Waiting[r.ID] = why
+			continue
+		}
+		if why := f.alone(r); why != "" {
+			// No running job's end makes room for it, so it can't start in
+			// this pass and the guard can't help it: only memory outside
+			// the queue coming free can.
 			d.Waiting[r.ID] = why
 			continue
 		}

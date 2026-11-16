@@ -121,3 +121,20 @@ func (f *greedyFit) fits(r Record) string {
 	left := max(0, f.g.BudgetKB-PeakSum(f.preds, f.now, end)) / kbPerGB
 	return fmt.Sprintf("needs ~%d GB at its peak (forecast leaves %d)", need, left)
 }
+
+// alone is why r's predicted peak passes the budget by itself. The budget
+// counts what the running jobs use as free (Budget), so no job's end makes
+// room for r; nor can a borrow, whose fit adds to the same peak. An
+// exclusive claim waits only for the host to empty, never on memory, and
+// under the ladder's holdoff, which starts nothing, the holdoff says why.
+func (f *greedyFit) alone(r Record) string {
+	if r.Claim.Exclusive || f.g.Holdoff != "" {
+		return ""
+	}
+	cand := f.g.Predict(r, f.now)
+	peak := PeakSum([]Prediction{cand}, f.now, cand.End())
+	if peak <= f.g.BudgetKB {
+		return ""
+	}
+	return fmt.Sprintf("needs ~%d GB at its peak (the host leaves %d with no job running)", (peak+kbPerGB-1)/kbPerGB, f.g.BudgetKB/kbPerGB)
+}

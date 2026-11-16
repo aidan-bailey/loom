@@ -75,6 +75,29 @@ func TestQueueGreedy_WaitsWithTheForecastsReason(t *testing.T) {
 	assert.Contains(t, m.queue.waiting[id], "at its peak (forecast leaves")
 }
 
+func TestQueueGreedy_AJobNoEmptyQueueCouldTakeHoldsNoOneBack(t *testing.T) {
+	m, _ := wqGreedyModel(t)
+	// 10 GB available: job A's 1 GB plus 10, less the 4 GB reserve, is a
+	// 7 GB budget, which job B's 10 GB peak passes whatever A does.
+	prev := readMemAvailable
+	readMemAvailable = func() (int64, error) { return 10 << 20, nil }
+	t.Cleanup(func() { readMemAvailable = prev })
+	sub := wqJob(t, "sh", "-c", "sleep 30")
+	wqCurved(m, wqSigOf(t, sub.Argv, sub.Cwd), wqCurve(10, 100, 60, 1, 200, 120), 10)
+	b, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	rec := &m.queue.store.Jobs[m.queue.index(b)]
+	require.Equal(t, sched.Queued, rec.State)
+	rec.Submitted, rec.Ready = time.Now().Add(-11*time.Minute), time.Now().Add(-11*time.Minute)
+
+	small := wqJob(t, "sh", "-c", "sleep 31")
+	small.Claim = sched.Claim{CPUs: 1, MemoryGB: 1}
+	c, _, err := m.submitJob(small)
+	require.NoError(t, err)
+	assert.Equal(t, sched.Running, wqRecord(t, m, c).State, "job B has starved, but no job's end could make room for it: %q", m.queue.waiting[c])
+	assert.Contains(t, m.queue.waiting[b], "with no job running")
+}
+
 func TestQueueGreedy_FallbackAdmitsByClaims(t *testing.T) {
 	m, _ := wqGreedyModel(t)
 	m.queue.confiner = nil

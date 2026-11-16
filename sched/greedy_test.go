@@ -121,3 +121,74 @@ func TestAdmitGreedy_KeepsTheGuards(t *testing.T) {
 	assert.Equal(t, JobID(2), d.Starved)
 	assert.Contains(t, d.Waiting[3], "waits for job 2")
 }
+
+// starving is queued job id with claim c, queued past the starvation wait.
+func starving(id JobID, c Claim, waited time.Duration) Record {
+	r := queued(id, c)
+	r.Submitted, r.Ready = t0.Add(-waited), t0.Add(-waited)
+	return r
+}
+
+func TestAdmitGreedy_AJobTheBudgetCannotHoldAloneIsNeverTheHead(t *testing.T) {
+	p := greedyPolicy()
+	g := Greedy{BudgetKB: gb(11), Running: map[JobID]Prediction{}, Predict: flatPredict(nil)}
+
+	// The queue on 2026-11-16: nothing ran, the budget was 11 GB, and a
+	// 12 GB head that had waited past 10m held three small jobs back.
+	jobs := []Record{starving(1, Claim{CPUs: 4, MemoryGB: 12}, 36*time.Minute), queued(2, Claim{CPUs: 1, MemoryGB: 2}), queued(3, Claim{CPUs: 3, MemoryGB: 7})}
+	d := AdmitGreedy(jobs, p, t0, g)
+	assert.Equal(t, []JobID{2, 3}, d.Start, "no job's end could make room for it: the rest start first fit")
+	assert.Equal(t, JobID(0), d.Starved)
+	assert.Equal(t, "needs ~12 GB at its peak (the host leaves 11 with no job running)", d.Waiting[1])
+	assert.Empty(t, d.OnMemory, "no borrow can start a job whose peak alone passes the budget")
+
+	// The ladder's holdoff starts nothing, and its reason is the one shown,
+	// though memory short enough for it leaves every job a budget too small.
+	held := g
+	held.Holdoff, held.BudgetKB = "memory is short (job 9 squeezed)", 0
+	d = AdmitGreedy(jobs, p, t0, held)
+	assert.Empty(t, d.Start)
+	assert.Equal(t, held.Holdoff, d.Waiting[1])
+
+	g.BudgetKB = gb(12)
+	d = AdmitGreedy(jobs, p, t0, g)
+	assert.Equal(t, []JobID{1}, d.Start, "a peak at the budget fits it alone, and the guard starts it alone")
+	assert.Equal(t, JobID(1), d.Starved)
+
+	// A running job's end does make room for a head whose peak fits the
+	// budget alone: the guard holds the rest back for it, as before.
+	g.Running = map[JobID]Prediction{4: Flat(gb(2), t0, t0.Add(10*time.Minute))}
+	d = AdmitGreedy(append(jobs, running(4, Claim{CPUs: 1, MemoryGB: 2})), p, t0, g)
+	assert.Empty(t, d.Start)
+	assert.Equal(t, "needs ~12 GB at its peak (forecast leaves 10)", d.Waiting[1])
+	assert.Equal(t, "waits for job 1, which has waited past 10m", d.Waiting[2])
+}
+
+func TestAdmitGreedy_TheGuardHoldsForTheNextHead(t *testing.T) {
+	p := greedyPolicy()
+	g := Greedy{BudgetKB: gb(11), Running: map[JobID]Prediction{4: Flat(gb(6), t0, t0.Add(10*time.Minute))}, Predict: flatPredict(nil)}
+	jobs := []Record{
+		running(4, Claim{CPUs: 1, MemoryGB: 6}),
+		starving(1, Claim{CPUs: 4, MemoryGB: 12}, time.Hour),
+		starving(2, Claim{CPUs: 1, MemoryGB: 6}, 11*time.Minute),
+		queued(3, Claim{CPUs: 1, MemoryGB: 1}),
+	}
+	d := AdmitGreedy(jobs, p, t0, g)
+	assert.Empty(t, d.Start, "job 2 fits the budget alone, so job 4's end makes room for it")
+	assert.Contains(t, d.Waiting[1], "with no job running")
+	assert.Equal(t, "needs ~6 GB at its peak (forecast leaves 5)", d.Waiting[2])
+	assert.Equal(t, "waits for job 2, which has waited past 10m", d.Waiting[3])
+}
+
+func TestAdmitGreedy_AnExclusiveHeadIsNeverPassedOver(t *testing.T) {
+	p := greedyPolicy()
+	// Its prediction passes the budget, but an exclusive claim waits only
+	// for the host to empty, which the running job's end brings.
+	g := Greedy{BudgetKB: gb(11), Running: map[JobID]Prediction{4: Flat(gb(1), t0, t0.Add(10*time.Minute))},
+		Predict: flatPredict(map[JobID]func(time.Time) Prediction{1: func(s time.Time) Prediction { return Flat(gb(20), s, s.Add(time.Hour)) }})}
+	jobs := []Record{running(4, Claim{CPUs: 1, MemoryGB: 1}), starving(1, Claim{Exclusive: true}, 11*time.Minute), queued(2, Claim{CPUs: 1, MemoryGB: 1})}
+	d := AdmitGreedy(jobs, p, t0, g)
+	assert.Empty(t, d.Start)
+	assert.Equal(t, "waits for the host to empty", d.Waiting[1])
+	assert.Equal(t, "waits for job 1, which has waited past 10m", d.Waiting[2])
+}
