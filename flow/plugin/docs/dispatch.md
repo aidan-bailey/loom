@@ -369,24 +369,37 @@ of 2026-11-11 to 2026-11-13, the 53 stories with a plan-code question took 65
 fix rounds and $74.70 of fix and re-review, the 22 without one 4 rounds and
 $1.60. A per-story review loop once cost about as much as the run it planned,
 so this review is one pass that must pay for itself (the owner, 2026-11-13;
-loom's `flow/PROVENANCE.md` has the evidence). In the same batch as the seams
-recon, one `flow:plan-reviewer` (Sonnet @ high) per story checks its tests and
+loom's `flow/PROVENANCE.md` has the evidence). It reads only the stories that
+invent risky logic: on its first plan, a review of all 14 stories cost $33,
+and $45 with the fixes it sent, $3.26 a story against the $0.74 a story that
+plan-code fix rounds and re-reviews had cost over 23 runs, and about half its
+Critical and Important findings were what the compiler and lints report,
+which a developer fixes in place as a deviation (the owner, 2026-11-16). Each
+drafter writes `D/risk/S<id>.md`, the tasks whose code invents logic for store
+writes, transactions, concurrency, outside calls, bounds or auth, or `none`,
+and `loom flow plan-review --select <plan>` marks a story for review when that
+file lists a task (or is missing) or its code holds a landmine marker. Every
+other story is skipped, and the run reviews it in full, as it did every story
+before the plan review. In the same batch as the seams recon, one
+`flow:plan-reviewer` (Sonnet @ high) per marked story checks its tests and
 `Fails without:` lines, copies of code that exists and the repo's rules, and
 escalates each task whose code invents logic for store writes, transactions,
 concurrency, outside calls, bounds or auth to a `flow:risk-reviewer` (Opus @
 high), which reads only those tasks. Either may report a `SPEC` finding: code
 that follows a spec or entry that is itself wrong, settled like a DESIGN
-verdict. Findings join the story's fix job. After the fixes, a story whose
-draft changed since its review gets one re-check of the diff and of the uses
-of what it changed, never a loop.
+verdict. Findings join the story's fix job. After the fixes, a reviewed story
+whose draft changed since its review gets one re-check of the diff and of the
+uses of what it changed, never a loop.
 
-`/flow:draft` copies each draft to `D/reviewing/` as its review starts and to
+`/flow:draft` copies every draft to `D/reviewing/` as the review starts, a
+skipped story's too (the seams re-check diffs against it), each reviewed one to
 `D/reviewed/` once the review or its re-check is clean, and
 `loom flow plan-review <plan>` writes the `**Plan review:**` line from those
 copies: a deep story is listed under `deep:`, vouched, only when its draft is
-byte-identical to its `D/reviewed/` copy; every other deep story goes under
-`full:`, and every light story under `light:`. A vouched story's first run
-review is `flow:story-reviewer`'s, which reads only what departs from the plan.
+byte-identical to its `D/reviewed/` copy; every other deep story, a skipped
+one included, goes under `full:`, and every light story under `light:`. A
+vouched story's first run review is `flow:story-reviewer`'s, which reads only
+what departs from the plan.
 
 ### Fixing the plan
 
@@ -434,8 +447,8 @@ review is `flow:story-reviewer`'s, which reads only what departs from the plan.
    re-run only when a fix changed a name, and 2 to 3 of the 11 defects that
    planning's fixes introduced in the 8 drafted plans of 2026-11-10 to
    2026-11-13 were behaviour another story relied on. After the wave, join and
-   check once more, and a story whose draft changed since its plan review gets
-   its one re-check.
+   check once more, and a reviewed story whose draft changed since its plan
+   review gets its one re-check; a skipped one gets none.
 4. **One round.** A finding still open after its fix round and the wave goes
    to the owner; there is no further automatic round. Each finding a fixer
    leaves unapplied, and each clash it reports, is settled: closed with a

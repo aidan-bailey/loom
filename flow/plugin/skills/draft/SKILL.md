@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round as Opus reviews the design, then write the stories; it joins and checks them, a recon checks the seams and reviewers each story, fresh drafters fix what they find, and it commits the plan for /flow:run.
+description: Draft a supervised plan from its committed spec and skeleton with the flow roster, from a fresh session (/clear, then /flow:draft <plan>): drafters settle the names contract in a question round as Opus reviews the design, then write the stories; it joins and checks them, a recon checks the seams, reviewers the risky stories, fresh drafters fix what they find, and it commits the plan for /flow:run.
 argument-hint: <plan path>
 disable-model-invocation: true
 ---
@@ -226,11 +226,20 @@ resumes it.
    review a story's code on its own. Write its report on arrival to
    `D/findings/seams.md`.
 
-   In the same batch, dispatch one `flow:plan-reviewer` per story. Before each,
-   copy the story's draft, the text its reviewer sees:
-   `mkdir -p D/reviewing && cp D/S<id>.md D/reviewing/S<id>.md`. Its brief
-   holds the plan's path, the story's id and plan lines (its `line` and `end`
-   in `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>` and
+   In the same batch, run the plan review on the stories it reads. First copy
+   every story's draft, the text a reviewer sees and the seams re-check's
+   baseline, reviewed or not:
+   `mkdir -p D/reviewing && cp D/S<id>.md D/reviewing/S<id>.md`. Then run
+   `loom flow plan-review --select $ARGUMENTS`; on a failure, show its message
+   and stop. It marks a story `review` when its code holds a landmine marker
+   or its drafter's `D/risk/S<id>.md` lists a task that invents risky logic
+   (or is missing), else `skip`. Dispatch one `flow:plan-reviewer` per story
+   marked `review`, and write `skipped` in each other story's Plan review
+   column of `STATE.md`: the run reviews a skipped story in full. Never review
+   a skipped story on a hunch: a review of every story cost more than the fix
+   rounds it saved (the owner, 2026-11-16). A reviewer's brief holds the
+   plan's path, the story's id and plan lines (its `line` and `end` in
+   `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>` and
    the drafter's profile block. Write each report on arrival to
    `D/findings/review-S<id>.md`. When it holds `ESCALATE` lines, dispatch one
    `flow:risk-reviewer` for the story with the same brief and those lines,
@@ -241,8 +250,8 @@ resumes it.
    written under it in the review file. A story's review is clean when no
    Critical, Important or `SPEC` finding of its review or its risk review is
    open; then `mkdir -p D/reviewed && cp D/reviewing/S<id>.md D/reviewed/S<id>.md`.
-   On a resume, a story with a `D/reviewing/` copy and no review file is
-   reviewed again.
+   On a resume, a story whose row doesn't say `skipped` and that has no
+   review file is reviewed again.
 5. **Fix.** Read the findings, never the drafts.
    - Write each cross-story decision into the names contract. A design
      question the spec doesn't settle goes to the owner: write the answer into
@@ -283,7 +292,8 @@ resumes it.
      `flow:drafter` with the fix-job brief, that file, the story's `start` and
      "wave job". Then run step 3 once more. The wave runs once: what a wave
      fixer reports unapplied goes to the owner.
-   - Re-check each story whose draft differs from its review copy
+   - Re-check each reviewed story (one with `D/findings/review-S<id>.md`)
+     whose draft differs from its review copy
      (`cmp -s D/reviewing/S<id>.md D/S<id>.md` fails), whatever changed it:
      `mkdir -p D/rechecking && cp D/S<id>.md D/rechecking/S<id>.md`, then one
      fresh `flow:plan-reviewer`, or a fresh `flow:risk-reviewer` when a risk
@@ -314,7 +324,8 @@ resumes it.
      (`loom flow conf roster`).
    - Run `loom flow plan-review $ARGUMENTS`; on a failure, show its message
      and stop. Its output is the `**Plan review:**` line: a deep story is
-     vouched only when its draft is byte-identical to its `D/reviewed/` copy.
+     vouched only when its draft is byte-identical to its `D/reviewed/` copy,
+     so a skipped story goes under `full:`.
    - Write the Design stage line (below) into `STATE.md`'s **Design stage**
      slot, and it and the Plan review line into the skeleton's head, directly
      above `## Stories`. Then run
@@ -331,7 +342,8 @@ resumes it.
      re-check's line (`Seams re-check: <k> shared names changed, <n>
      findings, <m> wave jobs`, with `full recon` in place of the count when a
      fix changed the contract), which stories the
-     review vouched, its cost (the plan-reviewer and risk-reviewer rows of
+     review read and which it skipped, which it vouched, its cost (the
+     plan-reviewer and risk-reviewer rows of
      `loom flow costs session`), and anything still open, and end
      with: run `/clear`, then `/flow:run <plan>`.
 
@@ -367,7 +379,7 @@ set it off here; indented, the heredoc never terminates):
     | Story | Tier | Effort | Drafter | Deviations settled | Findings (premises, seams, review) | Plan review | Fixer |
     |---|---|---|---|---|---|---|---|
 
-    Plan review: pending, clean, findings, re-check, vouched or full.
+    Plan review: pending, skipped, clean, findings, re-check, vouched or full.
 
     ## Findings files
     - <D/findings/skeleton.md, premises.md, seams.md, review-S<id>.md, S<id>.md, seams-changed.md, seams-rerun.md or wave-S<id>.md: which agent (or the manager), and when>

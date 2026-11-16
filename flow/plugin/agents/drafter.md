@@ -227,6 +227,18 @@ a value means), as `- S<id>.md:<line>: <what that line relies on> (Story
 against that story's draft. A fix job rewrites the file only when its fixes
 change a line it cites.
 
+And write `D/risk/S<id>.md` for each draft: one line per task whose code
+invents logic for store writes or id allocation; transactions and
+atomicity; concurrency (locks, tasks, channels, ordering); calls to outside
+services (timeouts, retries, limits); bounds (caps, overflow, pagination);
+or auth and tenancy, as `- Task <x.y>: <what it invents, in one clause>`,
+or the single line `none`. A task that only moves code, renames, rewires
+imports, or calls existing code for these is not on it. The plan review
+reads only the stories whose file lists a task, or whose code holds a
+landmine marker; the run reviews every other story in full. When you are
+unsure whether a task belongs, list it. A fix job rewrites the file only
+when its fixes add or remove such a task.
+
 On a fix job, fix each finding you were given, and what your fixes make false
 in your own draft: before you report, grep the draft for each name whose code
 or behaviour you changed, and bring its uses along (a test's expected value, a
@@ -248,6 +260,7 @@ At most 15 lines (a question round's, at most 5: above):
   as a data shape or an API's behaviour (another story's go in
   `D/premises/S<id>.md`: give their count), and the `loom flow premises`
   flags you left, with why;
+- the tasks each `D/risk/S<id>.md` lists, or `none`;
 - each spec section or file range you read beyond your **Reading** line.
 
 Don't paste the draft. Your report goes back to whoever dispatched you
