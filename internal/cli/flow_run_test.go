@@ -203,7 +203,7 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, text, "- Design stage: 1 session, 20 minutes")
 	assert.Contains(t, text, "- Manager: claude-fake m1")
 	assert.Contains(t, text, "COST of "+id)
-	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | 3 | done | 1 | 0 | 0 | 1/0/0 | no | 1 | 0 |")
+	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | full | 3 | done | 1 | 0 | 0 | 1/0/0 | no | 1 | 0 |")
 	assert.Contains(t, text, "- Questions: 1; answered from the spec: 0; by the owner: 1.")
 	assert.Contains(t, text, "- Asked (needs-context, Story 2): Which colour?\n  Answered by the owner: Blue.")
 	require.Len(t, st.Answers, 1)
