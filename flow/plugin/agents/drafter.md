@@ -120,6 +120,35 @@ A draft is the story's plan text, without the opening lines the join writes:
   fit the entry's choice, say so in your report.
 - When a story's code holds one of the profile block's landmine markers,
   its paragraph says so, and that its developer runs at `effort: xhigh`.
+
+### The story's form
+
+The entry's **Form** line (none means `full`) says how its tasks are
+written. The steps above are a full story's.
+
+- **full:** the complete code and tests, as above.
+- **mechanical:** for code that changes where it lives or what it is called,
+  not what it does (moves, renames, visibility changes, import rewiring,
+  deleting dead code). Each task gives, instead of the code: a table of the
+  items it moves or renames (the item, its path now, its new path, its new
+  visibility); the command that lists the uses to rewrite (a grep, with the
+  count it prints at `<REV>`); the rewrite of each use, as a command or a
+  one-line edit per site; and the gate. Fenced code is only glue too small to
+  describe, such as a re-export or a `use` line. `loom flow check-plan` warns
+  when a task's fenced code runs long: a mechanical story lists what it moves
+  rather than copying it.
+- **brief:** for new code that is routine and well covered by the gates
+  (plumbing a flag or a field through, a message, docs, tests of existing
+  behaviour). Each task gives the behaviour, the contract names it defines
+  and uses, and each test by name with what it asserts and its
+  `Fails without:` line, and no implementation code: the developer writes
+  it.
+
+When your mechanical or brief story turns out to invent logic for store
+writes or id allocation, transactions, concurrency, outside calls, bounds or
+auth, list those tasks in your risk file (below) and report the **Form** line
+as an entry line that can't hold: the story needs full code. Never fit the
+logic into the form.
 - Commit messages follow the repo's convention, which its CLAUDE.md gives,
   else what its git log shows. They carry no `Co-Authored-By` or
   `Claude-Session` line: the developer who commits adds its own.
@@ -188,7 +217,10 @@ later request.
 - Of the spec and any recon reports, read only what your entries'
   **Reading** lines name and what those lack, never a whole file by default.
 - Read only the code your stories touch or reuse, and a precedent your
-  **Reading** line or a recon report names, by line range. Grep for a
+  **Reading** line or a recon report names, by line range. For a mechanical
+  story that is the items' signatures and their use sites, never their
+  bodies; for a brief story, the spec, the contract and the signatures it
+  calls. Grep for a
   signature before opening a file, and don't re-read what you have read.
 - Search the repo and its dependency sources, never `/` or `~`. For Cargo,
   `cargo metadata --format-version 1 --offline`, run with the profile

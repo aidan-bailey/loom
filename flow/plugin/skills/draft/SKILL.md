@@ -190,7 +190,11 @@ resumes it.
    `loom flow check-plan` finds a landmine marker in a light story, you decide: make
    the story deep,
    or keep it light with a reason in its Review line that names the marker,
-   and record which in `STATE.md`. Change the story's entry under
+   and record which in `STATE.md`. A marker in a mechanical or brief story
+   fails the check too; a story's **Form** is the owner's, so take it to the
+   owner: make the story full (amend its entry; its draft goes to a fresh
+   drafter with step 2's drafting brief), or name the marker in the Form
+   line's reason. Change the story's entry under
    `## Stories`; the next join writes it into the story. Give each
    draft one fix job for everything this step found in it. A `**Parallel:**`
    failure is yours, not a drafter's: drop the pair from the skeleton's line
@@ -233,8 +237,12 @@ resumes it.
    `loom flow plan-review --select $ARGUMENTS`; on a failure, show its message
    and stop. It marks a story `review` when its code holds a landmine marker
    or its drafter's `D/risk/S<id>.md` lists a task that invents risky logic
-   (or is missing), else `skip`. Dispatch one `flow:plan-reviewer` per story
-   marked `review`, and write `skipped` in each other story's Plan review
+   (or is missing), else `skip`; a mechanical or brief story is always
+   `skip`, since the plan holds none of its code. It fails when a mechanical
+   or brief story's risk file lists a task its Form reason doesn't name:
+   take that to the owner as for a marker in step 3. Dispatch one
+   `flow:plan-reviewer` per story marked `review`, and write `skipped` in
+   each other story's Plan review
    column of `STATE.md`: the run reviews a skipped story in full. Never review
    a skipped story on a hunch: a review of every story cost more than the fix
    rounds it saved (the owner, 2026-11-16). A reviewer's brief holds the

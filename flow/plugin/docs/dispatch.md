@@ -31,8 +31,10 @@ opens with four lines before its first `###` task, and may add a fifth:
     - **Interfaces:** what it exposes to later stories and uses from earlier ones, or none
     - **Verify:** `the command that proves the story done`
     - **Review:** deep | light, either optionally followed by a reason in parentheses
+    - **Form:** full | mechanical | brief, each optionally followed by a reason in parentheses
 
-A story without a **Review** line is deep. Each opening line is one physical
+A story without a **Review** line is deep, and one without a **Form** line is
+full ([story forms](#story-forms)). Each opening line is one physical
 line, because `loom flow check-plan` reads only a field's first line, and the plan
 holds no `###` heading outside a `## Story` section.
 
@@ -187,8 +189,8 @@ names no listed story, its own story, or a circle of stories. Story count predic
 well (r = 0.82 over 51 past plans), and plans over 15 stories mostly ran at
 $9 to $10 a story against $3 to $4 for the three parts of a split spec.
 
-Each list entry gives the story's id, a paragraph and its five opening lines
-(**Developer**, **Files**, **Interfaces**, **Verify**, **Review**), which the
+Each list entry gives the story's id, a paragraph and its six opening lines
+(**Developer**, **Files**, **Interfaces**, **Verify**, **Review**, **Form**), which the
 join writes into the story (a draft holds none of them), then a **Reading**
 line, which only the drafter reads: the spec sections the story needs, by § number or heading,
 never by line number (the spec's lines move while `/flow:draft` writes answers
@@ -212,6 +214,7 @@ its paragraph and six lines are indented below it:
       - **Interfaces:** what it exposes to later stories and uses from earlier ones, or none
       - **Verify:** `the command`
       - **Review:** deep
+      - **Form:** full
       - **Reading:** spec §4, §6.2; `lib/b.py:10-80`
 
 An entry may add a **Drafts after:** line, which, like **Reading**, only the
@@ -236,6 +239,29 @@ are not read, and the join fails with "the plan has no ## Stories section" or
 heading, and no `###` heading either: `loom flow check-plan` fails on a `###`
 heading above the first story, so the skeleton's sections are `##` or plain
 text.
+
+### Story forms
+
+An entry's **Form** line says how its story is written, and the design
+session chooses it, with the owner: a plan that moved code between crates
+paid $61 for drafters to copy 7,766 lines of existing code into it, and $45
+more to review and fix the copies, before anything ran (the owner,
+2026-11-16; the plan treatment spec has the evidence).
+
+| | full | mechanical | brief |
+|---|---|---|---|
+| For | logic for store writes or id allocation, transactions, concurrency, outside calls, bounds or auth; a landmine | where code lives or what it is called, not what it does: moves, renames, visibility, import rewiring, dead code | routine new code the gates cover: plumbing a flag or field, a message, docs, tests of existing behaviour |
+| Plan text | the complete code and tests | per task, the items it moves or renames (now, new path, new visibility), the grep that lists their uses, the rewrites, the gate; fenced code only for glue | the behaviour, the contract names, each test by name with what it asserts and its `Fails without:` line; no implementation code |
+| Plan review | when `loom flow plan-review --select` marks it | never | never |
+| First run review | `flow:story-reviewer` when vouched, else `flow:code-quality-reviewer` | `flow:code-quality-reviewer`, told to read the diff with git's moved-code detection and review only what isn't a move | `flow:code-quality-reviewer`, told the plan holds none of the code |
+
+Only a full story is vouched. `loom flow check-plan` fails a mechanical or
+brief story whose code holds a landmine marker its Form reason doesn't name,
+and warns on each mechanical task whose fenced code passes the cap in loom's
+`flow/lib/estimates.toml`. `loom flow plan-review --select` fails a
+mechanical or brief story whose drafter's risk file lists a task its Form
+reason doesn't name. Either way the owner decides: make the story full, or
+name the marker or task in the reason.
 
 ### Drafting the stories
 
@@ -378,9 +404,10 @@ which a developer fixes in place as a deviation (the owner, 2026-11-16). Each
 drafter writes `D/risk/S<id>.md`, the tasks whose code invents logic for store
 writes, transactions, concurrency, outside calls, bounds or auth, or `none`,
 and `loom flow plan-review --select <plan>` marks a story for review when that
-file lists a task (or is missing) or its code holds a landmine marker. Every
-other story is skipped, and the run reviews it in full, as it did every story
-before the plan review. In the same batch as the seams recon, one
+file lists a task (or is missing) or its code holds a landmine marker. A
+mechanical or brief story ([story forms](#story-forms)) is always skipped,
+since the plan holds none of its code. Every other story is skipped, and the
+run reviews it in full, as it did every story before the plan review. In the same batch as the seams recon, one
 `flow:plan-reviewer` (Sonnet @ high) per marked story checks its tests and
 `Fails without:` lines, copies of code that exists and the repo's rules, and
 escalates each task whose code invents logic for store writes, transactions,
@@ -774,7 +801,9 @@ covers. `loom flow check-plan` prints a `review:` column per story. For a `vouch
 story, `flow:story-reviewer` (Opus @ high) reads just those, the developer's
 deviations and tests, and the seams. For a `full` story (a light story, a deep story the plan review
 listed under `full:`, or any story of a plan without a `**Plan review:**` line), `flow:code-quality-reviewer`
-does a combined pass: the plan's code, quality and the seam. A `vouched` story
+does a combined pass: the plan's code, quality and the seam. A mechanical
+story's brief adds how to read a move diff, and a brief story's that the plan
+holds none of its code ([story forms](#story-forms)). A `vouched` story
 gets that pass too when the developer reported DONE_WITH_CONCERNS or the
 changed lines no plan block covers hold one of the profile's landmine
 markers. Neither is a downgrade of the other.

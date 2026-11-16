@@ -45,6 +45,13 @@ Ask of the spec and the contract:
 7. **Repo rules.** Does a name the contract mandates break the rules of the
    package it lands in, or clash with a name the tree or a generated file
    already holds?
+8. **Forms.** An entry's **Form** line says how its story is written: `full`
+   gives the code, `mechanical` lists the items it moves or renames without
+   copying them, `brief` describes code without writing it. Does an entry
+   marked mechanical or brief describe, in its paragraph, its Interfaces or
+   the spec sections it reads, logic for store writes or id allocation,
+   transactions, concurrency, outside calls, bounds or auth? Such a story
+   needs full code: report it as an `ENTRY` finding on its Form line.
 
 Report only what breaks, naming the interleaving, input or path. Out of
 scope: story sizes, names' exact forms and entry formats (the question round
