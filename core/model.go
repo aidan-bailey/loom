@@ -537,6 +537,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverSliceHighSet(msg)
 	case giveBackDone:
 		m.deliverGiveBackDone(msg)
+	case jobControlDone:
+		m.deliverJobControlDone(msg)
 	case advisorResult:
 		m.deliverAdvisor(msg)
 	case groupResult:

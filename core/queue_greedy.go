@@ -66,9 +66,18 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 // job using more than predicted counts flat at its use plus the margin.
 func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sched.Record) time.Duration) sched.Prediction {
 	q := m.queue
+	if rec.Paused() {
+		// Flat at its use until the owner resumes it (job controls spec
+		// §7.2); its claim before a sample.
+		used := q.usage[rec.ID].RSSKB
+		if used <= 0 {
+			used = int64(rec.Claim.MemoryGB) * kbPerGB
+		}
+		return sched.PausedPrediction(used, now)
+	}
 	// A lent job's progress stood still while it was frozen (memory
-	// borrowing spec §6.4).
-	end := rec.Started.Add(expect(rec) + rec.LentFor(now))
+	// borrowing spec §6.4), and a paused one's (job controls spec §7.3).
+	end := rec.Started.Add(expect(rec) + rec.LentFor(now) + rec.PausedFor(now))
 	if !end.After(now) {
 		end = now.Add(time.Minute)
 	}

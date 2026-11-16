@@ -181,6 +181,17 @@ type JobView struct {
 	// Named locks (--lock) it holds while it runs. A daemon from before
 	// locks sends none, which is how `loom job submit` tells it ignored them.
 	Locks []string
+	// Job controls (spec 2026-11-16-job-controls §8): started by the owner
+	// past the queue, parked, the last unpark, paused since (zero unless
+	// paused) and whether its memory went to swap, a pause or resume in
+	// flight, and the last failed one's error.
+	Forced         bool
+	Parked         bool
+	Unparked       time.Time
+	PausedAt       time.Time
+	PauseReclaimed bool
+	Control        sched.ControlKind
+	ControlErr     string
 }
 
 // StartFailed reports whether the job failed without ever running its command:
@@ -189,14 +200,10 @@ type JobView struct {
 // exited non-zero or by a signal, and a job in any other state, is not.
 func (j JobView) StartFailed() bool { return startFailed(j.State, j.Failure, j.Exit) }
 
-// QueuedSince is when the job joined the queue: Ready, or Submitted when it
-// has none (a held job, or a record from an earlier build), as
-// sched.Record.QueuedSince.
+// QueuedSince is when the job joined the queue, as
+// sched.Record.QueuedSince: Ready, else Submitted, or Unparked when later.
 func (j JobView) QueuedSince() time.Time {
-	if j.Ready.IsZero() {
-		return j.Submitted
-	}
-	return j.Ready
+	return sched.Record{Submitted: j.Submitted, Ready: j.Ready, Unparked: j.Unparked}.QueuedSince()
 }
 
 // startFailed is StartFailed over the fields a job's record and its view
@@ -463,6 +470,14 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		LentAt:       r.LentAt,
 		GaveBack:     r.GaveBack,
 		Locks:        slices.Clone(r.Locks),
+
+		Forced:         r.Forced,
+		Parked:         r.Parked,
+		Unparked:       r.Unparked,
+		PausedAt:       r.PausedAt,
+		PauseReclaimed: r.PauseReclaimed,
+		Control:        r.Control,
+		ControlErr:     r.ControlErr,
 	}
 	if r.Exit != nil {
 		e := *r.Exit
@@ -478,6 +493,10 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 	jv.UsualFromPrior, jv.UsualFromFamily = src == sched.DurationPrior, src == sched.DurationFamily
 	jv.Family = q.familyLabel(b)
 	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
+	if jv.OverdueAfter > 0 {
+		// Paused time is no running time (job controls spec §7.3).
+		jv.OverdueAfter += r.PausedFor(time.Now())
+	}
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
 	switch r.State {

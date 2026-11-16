@@ -519,6 +519,7 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	}
 	m.stepLadder(time.Now())
 	m.stepGiveBack(time.Now())
+	m.stepJobControls()
 }
 
 // noteSilent applies what a pass saw of a failed start's shim: its entry goes
@@ -658,12 +659,22 @@ func (m *Model) applyUsage(r queuePassResult) {
 				rec.LentAt, lent = time.Time{}, false
 				q.moved()
 			}
+			paused := rec.Paused()
+			if paused && !cg.Frozen && rec.Control == "" && r.at.After(rec.PausedAt) {
+				// Thawed outside loom: the pause ends as a resume's would
+				// (job controls spec §6.3).
+				rec.PausedSecs += int64(r.at.Sub(rec.PausedAt).Seconds())
+				rec.PausedAt, rec.PauseReclaimed, paused = time.Time{}, false, false
+				log.For("core").Info("queue.unpaused_by_hand", "job", int64(rec.ID))
+				q.moved()
+			}
 			// The cgroup decides the rung (cgroup spec §15, 17): frozen is
-			// paused, unless the job is lent (memory borrowing spec §7.3),
-			// a memory.high is squeezed, neither is none.
+			// paused, unless the job is lent (memory borrowing spec §7.3)
+			// or the owner paused it (job controls spec §6.3), a
+			// memory.high is squeezed, neither is none.
 			next := sched.Rung("")
 			switch {
-			case cg.Frozen && lent:
+			case cg.Frozen && (lent || paused || rec.Control == sched.ControlPause):
 			case cg.Frozen:
 				next = sched.RungPaused
 			case cg.HighKB > 0:

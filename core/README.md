@@ -37,6 +37,7 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `queue_ops.go` | the queue's operations: `submitJob`, `cancelJob`, `moveJobToFront`, `notifyJob`, `setSchedulerCaps`, `cancelOwnerJobs` |
 | `queue_notice.go` | a job's end sent to its owner's Claude: `sendJobNotice`, `noticeTarget`, `buildNoticeJob`, `deliverJobNotice`, `composeNotice`, `readLogTail` |
 | `queue_requests.go` | the queue's requests: `SubmitJob`, `CancelJob` (`CancelFrom`), `MoveJobToFront`, `NotifyJob`, `SetSchedulerCaps` |
+| `queue_control.go` | the owner's job controls ([spec](../docs/superpowers/specs/2026-11-16-job-controls-design.md)): `ControlJob` (`JobControl`, `JobAction`) and its refusals, and `stepJobControls`, which pauses (freeze, then a reclaim when swap has room) and resumes jobs one confinement call at a time with the ladder and the give-back (`laddering`) |
 | `queue_view.go` | the published queue: `QueueView`, `JobView`, `Queue`, `queueView`, `queueJobView`, published as the `QueueChanged` event (defined in `events.go`; `publishQueue` in `state_publish.go` emits it) |
 | `settings.go` | `SaveSettings`, `SetUIPrefs`, `SetHelpScreensSeen` |
 | `web.go`, `web_store.go` | the web settings and devices: `WebView`, `WebDevice`, `NotifySettings`, `Pairing`, `PushSubscription`, `PushState`, the validators (`ValidateWebListen`, `ValidateWebOrigin`, `ValidateDeviceName`, `NormalizePairingCode`, `NormalizeQuickReplies`), the requests `ConfigureWeb`, `PairDevice` and `RevokeDevice`, and `web.json` (read, atomic write, the VAPID key) |

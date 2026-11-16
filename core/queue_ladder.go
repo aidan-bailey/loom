@@ -40,8 +40,10 @@ func (m *Model) stepLadder(now time.Time) {
 	}
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		// A lent job is the give-back machine's (memory borrowing spec §7.3).
-		if rec.State != sched.Running || rec.Cgroup == "" || rec.Requeue != "" || !rec.LentAt.IsZero() {
+		// A lent job is the give-back machine's (memory borrowing spec
+		// §7.3), and a paused one, or one with a control in flight, the
+		// owner's (job controls spec §7.1).
+		if rec.State != sched.Running || rec.Cgroup == "" || rec.Requeue != "" || !rec.LentAt.IsZero() || rec.Paused() || rec.Control != "" {
 			continue
 		}
 		if rec.CancelReason != "" {
@@ -53,7 +55,7 @@ func (m *Model) stepLadder(now time.Time) {
 		}
 		in.Jobs = append(in.Jobs, sched.LadderJob{
 			ID: rec.ID, Started: rec.Started, WorkingKB: q.usage[rec.ID].RSSKB, Rung: rec.Rung, RungAt: rec.RungAt,
-			NoRequeue: rec.NoRequeue, Exclusive: rec.Claim.Exclusive, Starved: rec.Starved, Requeues: rec.Requeues,
+			NoRequeue: rec.NoRequeue, Exclusive: rec.Claim.Exclusive, Starved: rec.Starved, Forced: rec.Forced, Requeues: rec.Requeues,
 		})
 	}
 	var act *sched.Action
