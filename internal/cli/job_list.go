@@ -74,6 +74,12 @@ func writeJobList(w io.Writer, q core.QueueView, all bool, now time.Time) error 
 		if j.State == sched.Running && j.Explored {
 			waits = exploringText(j)
 		}
+		if j.State == sched.Running && !j.PausedAt.IsZero() {
+			waits = "paused by you"
+			if !j.PauseReclaimed {
+				waits += ", CPU only"
+			}
+		}
 		if j.Unsized != "" {
 			waits = strings.TrimPrefix(waits+"; not sized: "+j.Unsized, "; ")
 		}
