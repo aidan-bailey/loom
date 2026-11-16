@@ -63,7 +63,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flowconf import flow_data, repo_key  # noqa: E402
+import check_plan  # noqa: E402
 import plan_measures  # noqa: E402
+from plan_join import JoinError, entries  # noqa: E402
 
 import tomllib  # noqa: E402  (after flowconf, whose Python-version message comes first)
 
@@ -742,16 +744,81 @@ def subagent_entries(main: Path) -> list[tuple[str, str, Path, bool]]:
     return entries
 
 
-def session_report(main: Path, since: datetime | None, until: datetime | None) -> str:
-    entries = [("main", "main session", main, True), *subagent_entries(main)]
+# A story a drafter's label names: `S3`, `S10b` (`S5-S6` names both), or `Story 7`.
+STORY_TOKEN_RE = re.compile(r"\bS([0-9]\w*)\b|\bStor(?:y|ies) ([0-9]\w*)")
+# Rows the Design stage line prices in segments of their own (`skeleton review $X; plan review $Y`).
+NO_FORM_TYPES = frozenset({"skeleton-reviewer", "plan-reviewer", "risk-reviewer"})
+FORM_ORDER = ("full", "mechanical", "brief")
+
+
+def plan_forms(plan: Path) -> dict[str, str]:
+    """Each story's id and form: the joined plan's stories, else its skeleton's entries."""
+    text = plan.read_text(encoding="utf-8")
+    stories, _problems, _spec = check_plan.parse(text)
+    if stories:
+        return {story.sid: story.form for story in stories}
+    try:
+        listed = entries(text)
+    except JoinError:
+        return {}
+    forms = {}
+    for entry in listed:
+        value = check_plan.FORM_VALUE_RE.match(entry.fields.get("Form", "full"))
+        forms[entry.sid] = value.group(1) if value else "full"
+    return forms
+
+
+def forms_segment(rows: list[tuple[str, str, float]], forms: dict[str, str]) -> str:
+    """The Design stage line's `forms:` segment from a draft session's rows (type, label, USD): each drafter row
+    goes to the plan stories its label names, split evenly; the skeleton, plan and risk reviewers' rows to no form;
+    every other row, and a drafter's naming no plan story, spread evenly over the stories (part 2 settlements)."""
+    if not forms:
+        return ""
+    owned = {sid: 0.0 for sid in forms}
+    unowned = 0.0
+    for kind, label, usd in rows:
+        kind = kind.removeprefix("flow:")
+        if kind in NO_FORM_TYPES:
+            continue
+        named = [sid for m in STORY_TOKEN_RE.finditer(label) if (sid := m.group(1) or m.group(2)) in forms]
+        named = list(dict.fromkeys(named))
+        if kind == "drafter" and named:
+            for sid in named:
+                owned[sid] += usd / len(named)
+        else:
+            unowned += usd
+    share = unowned / len(forms)
+    by_form: dict[str, tuple[int, float]] = {}
+    for sid, form in forms.items():
+        count, amount = by_form.get(form, (0, 0.0))
+        by_form[form] = (count + 1, amount + owned[sid] + share)
+    return "forms: " + ", ".join(
+        f"{form} {n} {'story' if n == 1 else 'stories'} ${amount:,.2f}"
+        for form in FORM_ORDER if form in by_form for n, amount in [by_form[form]]
+    )
+
+
+def session_report(main: Path, since: datetime | None, until: datetime | None, plan: Path | None = None) -> str:
+    entries_ = [("main", "main session", main, True), *subagent_entries(main)]
     title = f"Session `{main.stem}`" + (f", {since.isoformat()} to {until.isoformat() if until else 'end'}" if since else "")
-    return agents_report(title, entries, since, until, {"session": main.stem})
+    rows: list[tuple[str, str, float]] = []
+    report = agents_report(title, entries_, since, until, {"session": main.stem}, rows=rows)
+    if plan is None:
+        return report
+    segment = forms_segment(rows, plan_forms(plan))
+    body, comment = report.rsplit("\n", 1)
+    section = ("\n### Cost by form\n\n" + (segment or f"no stories in {plan}") + "\n\nEach drafter row goes to the "
+               "stories its label names; the skeleton, plan and risk reviewers' rows to no form; every other row is spread "
+               "evenly over the plan's stories. Copy the segment into the Design stage line, summed over the draft's sessions.\n")
+    return body + "\n" + section + "\n" + comment
 
 
 def agents_report(title: str, entries: list[tuple[str, str, Path, bool]], since: datetime | None,
-                  until: datetime | None, extra: dict, models_of: dict[str, set[str]] | None = None) -> str:
+                  until: datetime | None, extra: dict, models_of: dict[str, set[str]] | None = None,
+                  rows: list[tuple[str, str, float]] | None = None) -> str:
     """The tables and the agent-costs comment over entries (type, label, transcript, kept when idle); extra
-    goes into the comment's data, and models_of, when given, gets each entry's models by label."""
+    goes into the comment's data, models_of, when given, gets each entry's models by label, and rows, when
+    given, each reported agent's type, label and USD."""
     agents: list[tuple[str, str, Usage, set[str], str]] = []
     ratios: dict[str, float] = {}
     for kind, label, path, keep in entries:
@@ -763,6 +830,8 @@ def agents_report(title: str, entries: list[tuple[str, str, Path, bool]], since:
             ratios[label] = ratio
     by_type: dict[str, tuple[int, Usage]] = {}
     total = Usage()
+    if rows is not None:
+        rows.extend((kind, label, usage.usd) for kind, label, usage, _, _ in agents)
     for kind, _, usage, _, _ in agents:
         count, summed = by_type.get(kind, (0, Usage()))
         summed.add(usage)
@@ -899,6 +968,7 @@ def main(argv: list[str]) -> int:
     session.add_argument("session", nargs="?", help="session id, transcript (.jsonl) or its directory")
     session.add_argument("--since", help="ISO time: skip requests before it")
     session.add_argument("--until", help="ISO time: skip requests after it")
+    session.add_argument("--plan", type=Path, help="a plan /flow:draft drafted: add its cost by form, for the Design stage line")
     records = sub.add_parser("records", help="total run records' costs (default: every record in the home store)")
     records.add_argument("files", nargs="*")
     run = sub.add_parser("run", help="price a loom flow run's manager sessions and agent runs")
@@ -914,7 +984,7 @@ def main(argv: list[str]) -> int:
     epic.add_argument("spec", help="the epic's spec, from the top level")
     args = parser.parse_args(argv)
     if args.command == "session":
-        print(session_report(find_session(args.session), parse_time(args.since), parse_time(args.until)))
+        print(session_report(find_session(args.session), parse_time(args.since), parse_time(args.until), args.plan))
         return 0
     if args.command == "run":
         if not args.json:

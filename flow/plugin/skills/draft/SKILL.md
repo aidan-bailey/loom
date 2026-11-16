@@ -322,11 +322,14 @@ resumes it.
    - Price the stage, unless `STATE.md`'s **Design stage** slot is already
      filled (a session died before the commit): then reuse that line and
      don't re-price. To price, run
-     `loom flow costs session <id> --since <start>` for each
+     `loom flow costs session <id> --since <start> --plan $ARGUMENTS` for each
      session id on `STATE.md`'s **Sessions** line, and add up the `USD` and
      `USD incl. est.` of each **Total** row, the `USD` of the
-     skeleton-reviewer row for the skeleton review's cost, and that of the
-     plan-reviewer and risk-reviewer rows for the plan review's. Note
+     skeleton-reviewer row for the skeleton review's cost, that of the
+     plan-reviewer and risk-reviewer rows for the plan review's, and each
+     form's stories and USD in the `forms:` segments of the **Cost by form**
+     sections (one session's segment as it stands). When the skeleton's head
+     has a `**Budget:**` line, its draft figure is the draft's budget. Note
      the end time (`date -u +%FT%TZ`), the plan's line count
      (`wc -l < $ARGUMENTS`) and this session's flow copy
      (`loom flow conf roster`).
@@ -346,7 +349,8 @@ resumes it.
      output and stop.
    - Set the **Phase** to committed. Tell the owner what was drafted, what
      the skeleton review found and how each finding was settled, what
-     the checks, the seams recon and the plan review found, the seams
+     the checks, the seams recon and the plan review found, the draft's cost
+     against its budget when the plan has one (and each form's), the seams
      re-check's line (`Seams re-check: <k> shared names changed, <n>
      findings, <m> wave jobs`, with `full recon` in place of the count when a
      fix changed the contract), which stories the
@@ -357,10 +361,12 @@ resumes it.
 
 The Design stage line is one physical line:
 
-`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; plan review $<plan-reviewer and risk-reviewer USD>; <loom flow conf roster's output>.`
+`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; plan review $<plan-reviewer and risk-reviewer USD>; budget $<the Budget line's draft figure>; forms: <form> <n> stories $<USD>, …; <loom flow conf roster's output>.`
 
 It leaves out the design session's own cost, which the owner measures by
-hand. `/flow:run`'s engine copies it into the run's record.
+hand, and `budget` when the skeleton has no Budget line. `forms:` lists each
+form the plan's stories take, in the order full, mechanical, brief, `story`
+for one; `loom flow costs records` reads both against the run. `/flow:run`'s engine copies it into the run's record.
 
 Write each findings file with the Write or Edit tool, or with a quoted heredoc
 (`<<'EOF'`): the reports are full of backticks, which an unquoted heredoc runs

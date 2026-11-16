@@ -885,3 +885,53 @@ class EpicTest(unittest.TestCase):
             result = subprocess.run([sys.executable, str(SCRIPT), "epic", "docs/y-design.md"], capture_output=True, text=True, cwd=repo, env=env)
             self.assertEqual(result.returncode, 1)
             self.assertIn("is no epic", result.stderr)
+
+
+class FormsSegmentTest(unittest.TestCase):
+    """`session --plan`: the draft session's cost by form, for the Design stage line (plan treatment part 2)."""
+
+    FORMS = {"1": "full", "2": "mechanical", "3": "full"}
+
+    def segment(self, rows):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import agent_costs
+        return agent_costs.forms_segment(rows, self.FORMS)
+
+    def test_a_drafter_naming_two_stories_splits_evenly(self):
+        rows = [("flow:drafter", "a1 Questions S1-S2", 4.0), ("flow:drafter", "a2 Fix S3", 3.0)]
+        # S1 2, S2 2, S3 3: full 2 stories $5, mechanical 1 story $2.
+        self.assertEqual(self.segment(rows), "forms: full 2 stories $5.00, mechanical 1 story $2.00")
+
+    def test_unowned_rows_spread_evenly_and_the_reviewers_go_to_no_form(self):
+        rows = [("main", "main session", 6.0), ("flow:drafter", "a1 Questions S1-S2", 4.0), ("flow:drafter", "a2 Fix S3", 3.0),
+                ("flow:plan-reviewer", "a3 Plan review S1", 9.0), ("flow:skeleton-reviewer", "a4 Skeleton review", 5.0),
+                ("flow:risk-reviewer", "a5 Risk review S3", 2.0), ("flow:recon", "a6 Seams recon A5", 3.0),
+                ("flow:drafter", "a7 Draft S9", 3.0)]
+        # Unowned: main 6, recon 3 and a drafter of no plan story 3, so 4 a story; S1 6, S2 6, S3 7.
+        self.assertEqual(self.segment(rows), "forms: full 2 stories $13.00, mechanical 1 story $6.00")
+
+    def test_story_words_and_suffixed_ids_are_read(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import agent_costs
+        rows = [("flow:drafter", "a1 Questions S10b, Story 7", 2.0)]
+        self.assertEqual(agent_costs.forms_segment(rows, {"7": "brief", "10b": "full"}), "forms: full 1 story $1.00, brief 1 story $1.00")
+
+    def test_session_plan_gives_the_forms_segment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main = root / "sess.jsonl"
+            main.write_text(record("m1", "claude-sonnet-5-5", "2026-11-16T10:00:00Z", input_tokens=100_000))  # $0.20
+            subagents = root / "sess" / "subagents"
+            subagents.mkdir(parents=True)
+            (subagents / "agent-abc1234def.jsonl").write_text(
+                record("d1", "claude-sonnet-5-5", "2026-11-16T10:05:00Z", input_tokens=150_000))  # $0.30
+            (subagents / "agent-abc1234def.meta.json").write_text(json.dumps({"agentType": "flow:drafter", "description": "Questions S2"}))
+            plan = root / "plan.md"
+            plan.write_text("# Plan\n\n## Story 1: A\n\n- **Developer:** junior-dev\n\n### Task 1.1: x\n\n"
+                            "## Story 2: B\n\n- **Developer:** junior-dev\n- **Form:** mechanical\n\n### Task 2.1: x\n")
+            code, out, err = run("session", str(main), "--plan", str(plan))
+            self.assertEqual(code, 0, err)
+            self.assertIn("### Cost by form\n\nforms: full 1 story $0.10, mechanical 1 story $0.40\n", out)
+            self.assertTrue(out.rstrip().endswith("-->"), "the agent-costs comment stays last")
+            code, out, _ = run("session", str(main))
+            self.assertNotIn("Cost by form", out)
