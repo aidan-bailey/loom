@@ -22,7 +22,7 @@ Logged USD throughout, the Design stage line's basis.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ENGINE_RE = re.compile(r"^- Engine: loom flow run\b", re.M)
 STAGE_RE = re.compile(r"^- Design stage: (.*)$", re.M)
@@ -36,6 +36,12 @@ ASKED_RE = re.compile(
     r"^- Asked \(unresolved-findings, Story ([^)]+)\): Reviews of Story \S+ found problems in the plan's own code", re.M
 )
 AGENT_RE = re.compile(r"-s([^-\s]+)-(fix|review)(\d+)$")
+# Any agent run of one story: `<run>-s<id>-<role><k>` (dev, review, fix, docs, …).
+STORY_AGENT_RE = re.compile(r"-s([^-\s]+)-[a-z]+\d+$")
+RECORD_BUDGET_RE = re.compile(r"^- Budget: (.*)$", re.M)
+BUDGET_RE = re.compile(r"draft \$([0-9][0-9,]*(?:\.[0-9]+)?); run \$([0-9][0-9,]*(?:\.[0-9]+)?)")
+FORMS_RE = re.compile(r"\bforms: ([^;]*)")
+FORM_ITEM_RE = re.compile(r"(full|mechanical|brief) (\d+) stor(?:y|ies) \$([0-9][0-9,]*(?:\.[0-9]+)?)")
 
 
 @dataclass
@@ -54,6 +60,13 @@ class RunMeasures:
     vouched: int
     review_usd: float | None
     skeleton_usd: float | None = None
+    # The plan's approved Budget line, as the run's record copied it (plan treatment spec §6).
+    budget_draft: float | None = None
+    budget_run: float | None = None
+    # By form: the stories and their USD, all-inclusive (part 2 settlements): the Design stage line's
+    # `forms:` segment for drafting, and the record's stories with an even share of the unowned rows for the run.
+    forms_draft: dict[str, tuple[int, float]] = field(default_factory=dict)
+    forms_run: dict[str, tuple[int, float]] = field(default_factory=dict)
 
 
 def number(text: str) -> float:
@@ -108,6 +121,7 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
             except ValueError:
                 pass
     stories = table_rows(text, "Story")
+    budget = BUDGET_RE.search(found(RECORD_BUDGET_RE, text) or "")
     lines, logged, review = found(PLAN_LINES_RE, stage), found(LOGGED_RE, stage), found(REVIEW_RE, stage)
     skeleton = found(SKELETON_RE, stage)
     return RunMeasures(
@@ -123,7 +137,40 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
         vouched=sum(1 for row in stories if row.get("Review") == "vouched"),
         review_usd=number(review) if review else None,
         skeleton_usd=number(skeleton) if skeleton else None,
+        budget_draft=number(budget.group(1)) if budget else None,
+        budget_run=number(budget.group(2)) if budget else None,
+        forms_draft=draft_forms(stage),
+        forms_run=run_forms(text, stories, run_usd),
     )
+
+
+def draft_forms(stage: str) -> dict[str, tuple[int, float]]:
+    """A Design stage line's `forms:` segment, form → (stories, USD); empty without one."""
+    segment = found(FORMS_RE, stage) or ""
+    return {form: (int(n), number(amount)) for form, n, amount in FORM_ITEM_RE.findall(segment)}
+
+
+def run_forms(text: str, stories: list[dict[str, str]], run_usd: float) -> dict[str, tuple[int, float]]:
+    """Each form's stories and run USD: a story's own agent rows (`…-s<id>-…`) plus an even share of every other
+    row of the run, so the forms' USD sums to the run's. A Stories table without a Form column is all full."""
+    if not stories:
+        return {}
+    owned: dict[str, float] = {}
+    for agent_row in table_rows(text, "Agent"):
+        named = STORY_AGENT_RE.search(agent_row.get("Agent", ""))
+        if named:
+            try:
+                owned[named.group(1)] = owned.get(named.group(1), 0.0) + number(agent_row.get("USD", "0"))
+            except ValueError:
+                pass
+    ids = [story.get("Story", "") for story in stories]
+    share = (run_usd - sum(owned.get(sid, 0.0) for sid in ids)) / len(ids)
+    forms: dict[str, tuple[int, float]] = {}
+    for story in stories:
+        form = story.get("Form") or "full"
+        count, amount = forms.get(form, (0, 0.0))
+        forms[form] = (count + 1, amount + owned.get(story.get("Story", ""), 0.0) + share)
+    return forms
 
 
 def usd(value: float | None) -> str:

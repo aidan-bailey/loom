@@ -36,6 +36,43 @@ RECORD = (
 )
 
 
+FORMED = (
+    RECORD.replace("; plan review $6.00; loom flow roster", "; plan review $6.00; budget $25; forms: full 2 stories $9.00, mechanical 1 story $3.00; loom flow roster")
+    .replace("- Ended: done\n", "- Budget: draft $25; run $50 (estimate 2026-11-12)\n- Ended: done\n")
+    .replace("| Story | Developer | Tier | Review | Commits |\n|---|---|---|---|---|\n",
+             "| Story | Developer | Tier | Review | Form | Commits |\n|---|---|---|---|---|---|\n")
+    .replace("| 1 | intermediate-dev | deep | vouched | 2 |", "| 1 | intermediate-dev | deep | vouched | full | 2 |")
+    .replace("| 2 | junior-dev | light | full | 1 |", "| 2 | junior-dev | light | full | mechanical | 1 |")
+    .replace("| 3 | intermediate-dev | deep | full | 4 |", "| 3 | intermediate-dev | deep | full | full | 4 |")
+)
+
+
+class FormMeasureTest(unittest.TestCase):
+    def test_a_record_gives_its_budget_and_forms(self):
+        m = plan_measures.measure("r", FORMED, 40.0)
+        self.assertEqual((m.budget_draft, m.budget_run), (25.0, 50.0))
+        self.assertEqual(m.forms_draft, {"full": (2, 9.0), "mechanical": (1, 3.0)})
+        # Rows by story: s1 2+1+3+4 = 10, s2 5, s3 7+8 = 15; the unowned 40 - 30 = 10 spreads 10/3 a story.
+        share = 10 / 3
+        self.assertEqual(set(m.forms_run), {"full", "mechanical"})
+        self.assertEqual(m.forms_run["full"][0], 2)
+        self.assertAlmostEqual(m.forms_run["full"][1], 10 + 15 + 2 * share)
+        self.assertEqual(m.forms_run["mechanical"][0], 1)
+        self.assertAlmostEqual(m.forms_run["mechanical"][1], 5 + share)
+
+    def test_a_record_without_forms_counts_every_story_full(self):
+        m = plan_measures.measure("r", RECORD, 40.0)
+        self.assertEqual((m.budget_draft, m.budget_run), (None, None))
+        self.assertEqual(m.forms_draft, {})
+        self.assertEqual(m.forms_run["full"][0], 3)
+        self.assertAlmostEqual(m.forms_run["full"][1], 40.0, msg="every row, owned or spread, lands on a full story")
+
+    def test_unowned_run_costs_spread_evenly(self):
+        text = RECORD.replace(agent("r-s2-fix1", 5), agent("r-s2-fix1", 5) + agent("manager abc", 6) + agent("r-premise1", 1))
+        m = plan_measures.measure("r", text, 37.0)
+        self.assertAlmostEqual(m.forms_run["full"][1], 37.0)
+
+
 class MeasureTest(unittest.TestCase):
     def test_an_engine_record_gives_each_figure(self):
         m = plan_measures.measure("r", RECORD, 40.0)

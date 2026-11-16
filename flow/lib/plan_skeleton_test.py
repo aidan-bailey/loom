@@ -201,6 +201,24 @@ class HeadTest(unittest.TestCase):
     def test_a_contract_line_quoted_in_a_fence_is_not_checked(self):
         self.assertEqual(lint(skeleton(["```text", "- `f(x)`", "```"])), [])
 
+    def test_a_budget_line_in_shape_passes(self):
+        head = ("# Plan", "", "**Spec:** `docs/spec.md`", "**Budget:** draft $1,240; run $95.50 (estimate 2026-11-16)", "")
+        self.assertEqual(lint(skeleton([], head=head)), [])
+
+    def test_a_budget_line_out_of_shape_fails(self):
+        for bad in ("**Budget:** $200", "**Budget:** draft $20; run $30", "**Budget:** draft 20; run 30 (estimate 2026-11-16)",
+                    "**Budget:** draft $20; run $30 (estimate 16/11/2026)"):
+            problems = lint(skeleton([], head=("# Plan", "", "**Spec:** `docs/spec.md`", bad, "")))
+            self.assertTrue(
+                any("the **Budget:** line must read draft $<X>; run $<Y> (estimate YYYY-MM-DD)" in p for p in problems),
+                (bad, problems),
+            )
+
+    def test_two_budget_lines_fail(self):
+        good = "**Budget:** draft $20; run $30 (estimate 2026-11-16)"
+        problems = lint(skeleton([], head=("# Plan", "", "**Spec:** `docs/spec.md`", good, good, "")))
+        self.assertTrue(any("2 **Budget:** lines, expected at most one" in p for p in problems), problems)
+
 
 class WaveTest(unittest.TestCase):
     def stories(self, *afters):

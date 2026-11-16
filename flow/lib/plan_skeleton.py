@@ -24,6 +24,8 @@
   them comes back to where it started;
 - the part: a `**Part:** N of M` line agreeing with the spec's `## Delivery` list (`N. **Part N: <title>.**`,
   numbered 1 to M), needed when the spec has one;
+- the Budget line: at most one `**Budget:** draft $<X>; run $<Y> (estimate YYYY-MM-DD)` in the head, the
+  owner's approved estimate (the plan treatment spec §5);
 - the story budget: more stories than the profile's `[size] plan` (15 when unset) need a `**Size:**` line with a
   reason.
 
@@ -37,7 +39,7 @@ import re
 from pathlib import Path
 
 from check_plan import (
-    CODE_RE, DEVELOPERS, FIELDS, FORM_VALUE_RE, H2_RE, PART_RE, PART_VALUE_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root,
+    BUDGET_LABEL_RE, BUDGET_VALUE_RE, CODE_RE, DEVELOPERS, FIELDS, FORM_VALUE_RE, H2_RE, PART_RE, PART_VALUE_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root,
 )
 from flowconf import DEFAULT_PLAN_SIZE, FlowError, optional_profile
 from plan_join import ENTRY_RE, MARKER, STORIES_HEADING, Entry, JoinError, entries, unfenced
@@ -335,6 +337,12 @@ def lint(text: str, plan: Path) -> tuple[list[str], int, int]:
             problems.append(f"the spec {spec[0]} cannot be read: {getattr(err, 'strerror', None) or err}")
     if spec_text is not None:
         problems += part_problems(head, spec_text)
+    budgets = [(n, line) for n, line in head if BUDGET_LABEL_RE.match(line)]
+    if len(budgets) > 1:
+        problems.append(f"{len(budgets)} **Budget:** lines, expected at most one")
+    for n, line in budgets:
+        if not BUDGET_VALUE_RE.match(line.split(":**", 1)[1].strip()):
+            problems.append(f"line {n}: the **Budget:** line must read draft $<X>; run $<Y> (estimate YYYY-MM-DD)")
     for n, line in head:
         if STORY_RE.match(line):
             problems.append(f"line {n}: a ## Story heading: the join writes the stories below the marker")

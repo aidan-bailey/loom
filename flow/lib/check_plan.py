@@ -125,6 +125,10 @@ DOC_LINK_RE = re.compile(r"\[`?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)(?:\(\))?`?\](?!
 
 REVIEW_VALUE_RE = re.compile(r"^(deep|light)(?:\s*\((.*)\))?$")
 FORM_VALUE_RE = re.compile(r"^(full|mechanical|brief)(?:\s*\((.*)\))?$")
+# The owner's approved budget, which the design session writes into the skeleton's head (plan treatment spec §5).
+BUDGET_LABEL_RE = re.compile(r"^\*\*Budget:\*\*")
+USD = r"\$([0-9][0-9,]*(?:\.[0-9]+)?)"
+BUDGET_VALUE_RE = re.compile(r"^draft " + USD + r"; run " + USD + r" \(estimate (\d{4}-\d{2}-\d{2})\)$")
 TASK_ID_RE = re.compile(r"^###\s+(Task\s+[^\s:]+)")
 # The mechanical cap's file, beside this script: loom writes lib/ whole into each session's flow copy.
 ESTIMATES = Path(__file__).resolve().with_name("estimates.toml")
@@ -253,6 +257,24 @@ def plan_review(text: str) -> str | None:
             review = REVIEW_RE.match(line)
             if review:
                 return review.group(1).strip() or None
+    return None
+
+
+def budget_line(text: str) -> tuple[float, float, str] | None:
+    """The draft and run figures and the date of the plan's `**Budget:**` line before its first story, None
+    when it has none or the line is out of shape (the skeleton check fails that)."""
+    fenced = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            if STORY_RE.match(line):
+                return None
+            if BUDGET_LABEL_RE.match(line):
+                value = BUDGET_VALUE_RE.match(line.split(":**", 1)[1].strip())
+                if not value:
+                    return None
+                return float(value.group(1).replace(",", "")), float(value.group(2).replace(",", "")), value.group(3)
     return None
 
 

@@ -1,8 +1,40 @@
-# The figures loom flow uses to judge a plan's stories by their form (the plan treatment spec,
-# docs/superpowers/specs/2026-11-16-flow-plan-treatment-design.md). Part 2 adds the cost priors here.
+# The figures loom flow uses to judge and price a plan's stories by their form (the plan treatment spec,
+# docs/superpowers/specs/2026-11-16-flow-plan-treatment-design.md). plan_estimate.py prices from the run
+# records where they hold a figure and from these priors where they don't (the spec's §5.1 and its
+# Part 2 settlements). Logged USD a story or a plan, at the flow's API list prices (prices.toml).
+
+[estimate]
+# A repo's own records are used once it has this many engine runs, else every record in the home store;
+# a form's or a review's measured figure replaces its prior once the records hold this many of them.
+min_runs = 3
+min_stories = 3
+
+[full]
+# A full story with no record to price it: the 23 engine runs to 2026-11-15, pooled (drafting $1,301.92 and
+# run $1,065.46 over 237 stories, loom flow costs records' Plan code table).
+draft = 5.49
+run = 4.50
 
 [mechanical]
 # A mechanical story lists the items it moves or renames and the grep that finds their uses; it copies
 # no code. check_plan.py warns on each of its tasks whose fenced code passes this many lines, a sign the
 # task copies what it should only list (the owner, 2026-11-16: a starting figure, for a retro to tune).
 code_cap = 40
+# Multiples of a full story's figures until 3 mechanical stories have run: its drafter reads signatures and
+# use sites, not bodies, and its review reads past the moved lines (guesses the owner approved, 2026-11-16).
+draft = 0.3
+run = 0.7
+
+[brief]
+# Multiples of a full story's: a short draft, but a developer writing the code takes more fix rounds
+# (guesses the owner approved, 2026-11-16).
+draft = 0.25
+run = 1.3
+
+[skeleton_review]
+# Its one measurement before any record held it: the workspace store part A5's, 2026-11-16.
+usd_per_plan = 5.14
+
+[plan_review]
+# A full story's plan review, from its first plan (A5, 2026-11-16, $33.18 over 14 stories, before --select).
+usd_per_full_story = 2.37

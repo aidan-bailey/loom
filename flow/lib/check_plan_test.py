@@ -1017,3 +1017,12 @@ class MechanicalCapTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("WARN [lint] ", out)
         self.assertIn("Task 1.1 has 41 fenced lines, over the mechanical cap of 40", out)
+
+
+class BudgetLineTest(unittest.TestCase):
+    def test_budget_line_reads_the_figures(self):
+        head = "# Plan\n\n**Spec:** `docs/spec.md`\n**Budget:** draft $1,240; run $95.50 (estimate 2026-11-16)\n\n"
+        self.assertEqual(check_plan.budget_line(head + "## Story 1: A\n"), (1240.0, 95.5, "2026-11-16"))
+        self.assertIsNone(check_plan.budget_line("# Plan\n\n## Story 1: A\n\n**Budget:** draft $1; run $2 (estimate 2026-11-16)\n"),
+                          "a line below the first story is no budget")
+        self.assertIsNone(check_plan.budget_line("# Plan\n\n**Budget:** $200\n"))
