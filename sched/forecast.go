@@ -63,6 +63,10 @@ func forecastWith(jobs []Record, p Policy, now time.Time, usual func(Record) (ti
 	var ends []ending
 	for _, r := range jobs {
 		switch {
+		case r.State == Running && r.Paused():
+			// A paused job never ends in the simulation (job controls spec
+			// §7.2): only the owner ends a pause.
+			sim = append(sim, r)
 		case r.State == Running:
 			at := r.Started.Add(expect(r))
 			if !at.After(now) {

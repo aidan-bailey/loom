@@ -72,7 +72,12 @@ func (f *greedyFit) take(r Record) { f.add(r, f.g.Predict(r, f.now)) }
 
 func (f *greedyFit) add(r Record, pred Prediction) {
 	f.any = true
-	if r.Claim.Exclusive {
+	switch {
+	case r.Paused():
+		// Memory only (job controls spec §7.2): pred is its use, flat.
+		f.preds = append(f.preds, pred)
+		return
+	case r.Claim.Exclusive:
 		f.exclusive = r.ID
 		return
 	}
@@ -137,4 +142,14 @@ func (f *greedyFit) alone(r Record) string {
 		return ""
 	}
 	return fmt.Sprintf("needs ~%d GB at its peak (the host leaves %d with no job running)", (peak+kbPerGB-1)/kbPerGB, f.g.BudgetKB/kbPerGB)
+}
+
+// pausedHorizon is how long a paused job's prediction lasts: longer than any
+// candidate's, since only the owner ends a pause.
+const pausedHorizon = 30 * 24 * time.Hour
+
+// PausedPrediction is a paused job's prediction from now (job controls spec
+// §7.2): flat at usedKB, its measured memory, until the owner resumes it.
+func PausedPrediction(usedKB int64, now time.Time) Prediction {
+	return Flat(usedKB, now, now.Add(pausedHorizon))
 }

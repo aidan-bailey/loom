@@ -11,6 +11,9 @@ import (
 // at these caps.
 const waitOver = "over this host's caps"
 
+// WaitParked is why a parked job waits (job controls spec §5.2).
+const WaitParked = "parked by you"
+
 // Decision is the outcome of one admission pass.
 type Decision struct {
 	Start   []JobID          // in the order to start them; nil when none
@@ -63,12 +66,17 @@ func shortfall(used, need Need, caps Caps) string {
 
 // runningNeed is what running job r takes from p's caps: its hold, when
 // holds has one and its claim is not exclusive (past-peak holds spec §6),
-// else its claim.
+// else its claim; a paused job (job controls spec §7.2) takes its memory
+// alone, using no cores and doing no I/O.
 func runningNeed(r Record, p Policy, holds map[JobID]Need) Need {
+	n := r.Claim.Need(p.Caps)
 	if h, ok := holds[r.ID]; ok && !r.Claim.Exclusive {
-		return h
+		n = h
 	}
-	return r.Claim.Need(p.Caps)
+	if r.Paused() {
+		n.CPUs, n.IOSlots = 0, 0
+	}
+	return n
 }
 
 // fitter is how admission counts what runs and decides what fits: claims
@@ -134,6 +142,11 @@ func Admit(jobs []Record, p Policy, now time.Time, holds map[JobID]Need, limits 
 // a running job holds waits "waits for lock NAME (job N)" and is never the
 // head; one naming a lock a job started earlier in the pass waits the same.
 //
+// A forced job (Record.Forced, job controls spec §5.1) starts before the
+// walk, past every fit, the guard, sizing and the over-cap skip, but not
+// past a lock a running job holds; a parked one (Record.Parked) waits
+// WaitParked and is never the head.
+//
 // Each job left waiting gets its reason in Decision.Waiting. Only Queued and
 // Running records count, so a held job is never seen. A policy without caps
 // (the zero Policy) starts nothing. The jobs slice is left as it is.
@@ -185,8 +198,32 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter, limits AccountL
 	slices.SortFunc(queued, byOrder)
 	held := lockHolders(jobs)
 
-	var line []Record // the jobs that can ever run, in queue order
+	// Forced jobs (job controls spec §5.1) start first, in queue order,
+	// whatever the fit says; f counts them and they take their locks, so the
+	// walk and the starvation guard see them. Only a lock a running job
+	// holds, or caps admission can't use, holds one back.
+	var rest []Record
 	for _, r := range queued {
+		switch {
+		case !r.Forced:
+			rest = append(rest, r)
+		case !p.usable():
+			d.Waiting[r.ID] = waitOver
+		case held.blocks(r) != "":
+			d.Waiting[r.ID] = held.blocks(r)
+		default:
+			f.take(r)
+			held.take(r)
+			d.Start = append(d.Start, r.ID)
+		}
+	}
+
+	var line []Record // the jobs that can ever run, in queue order
+	for _, r := range rest {
+		if r.Parked {
+			d.Waiting[r.ID] = WaitParked
+			continue
+		}
 		if r.Sizing != "" {
 			d.Waiting[r.ID] = r.Sizing.Wait()
 			continue
@@ -246,6 +283,10 @@ func admitWith(jobs []Record, p Policy, now time.Time, f fitter, limits AccountL
 // locks maps each lock a running job, or one a pass starts, holds to that
 // job.
 type locks map[string]JobID
+
+// LockBlock is why r can't start for a lock a running job in jobs holds,
+// "" when none of its locks is held: the walk's own text.
+func LockBlock(jobs []Record, r Record) string { return lockHolders(jobs).blocks(r) }
 
 // lockHolders is the locks the running jobs among jobs hold.
 func lockHolders(jobs []Record) locks {

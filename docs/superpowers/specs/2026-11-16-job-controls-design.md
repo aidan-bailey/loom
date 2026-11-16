@@ -59,11 +59,13 @@ Once running, a forced job is an ordinary running job but for three things: the 
 
 Parked jobs may be started: start now also clears `Parked`.
 
+A forced job a pass cannot start (caps admission can't use, a lock a running job took since the request) stays queued and forced, and the next pass starts it (amended while planning).
+
 ### 5.2 Park and unpark
 
 `ControlJob(park)` on a queued or held job sets `Parked`. `admitWith` skips a parked job like an over-cap one: it waits `parked by you` and is never the head. A held dependent that is parked stays parked when its prerequisite releases it. Parking a running job is refused: `job N is running: pause it instead`.
 
-`ControlJob(unpark)` clears `Parked` and sets `Unparked` to now, and runs an admission pass. `QueuedSince` becomes the latest of `Submitted`, `Ready` and `Unparked`, so an unparked job's starvation wait starts again; counted from its submit it would come back as a starving head at once and hold every other job back. Unparking a job that is not parked is refused: `job N is not parked`.
+`ControlJob(unpark)` clears `Parked` and sets `Unparked` to now, and runs an admission pass. `QueuedSince` becomes the later of what it was (`Ready`, else `Submitted`) and `Unparked`, so an unparked job's starvation wait starts again; counted from its submit it would come back as a starving head at once and hold every other job back. Unparking a job that is not parked is refused: `job N is not parked`.
 
 A parked job keeps its place (`Order`); `t` (move to front) still works on it.
 
@@ -75,6 +77,7 @@ Refused:
 
 - a job that is not running: `job N is not running`;
 - an uncontained job (no `Cgroup`): `job N runs uncontained: there is no scope to freeze`;
+- an exclusive job: `job N is exclusive: it holds the host until it ends` (admission keeps an exclusive job's whole-host claim whatever its state, so a pause would free nothing; amended while planning);
 - a job on a ladder rung or lent: `the ladder holds job N (squeezed)`, `… (paused)`, `job N is lent to give memory back`;
 - a job already paused or with a control in flight: `job N is already paused`, `job N is pausing`, `job N is resuming`;
 - an agent or run job: `job N is an agent job`.
@@ -133,7 +136,7 @@ A paused job's progress stands still: `predictRunning` adds `PausedFor` to its e
 
 ## 9. Logs
 
-`queue.job_started` gains `forced=true` for a forced start. New: `queue.controlled` (job, action, owner given or not) for each accepted request; `queue.paused` (job, reclaimed, the bytes reclaimed); `queue.resumed` (job, paused seconds); `queue.control_failed` (job, action, error); `queue.unpaused_by_hand` (job).
+`queue.job_started` gains `forced=true` for a forced start. New: `queue.controlled` (job, action, owner given or not) for each accepted request; `queue.paused` (job, reclaimed, the bytes reclaimed); `queue.unpaused` (job, paused seconds; the give-back logs `queue.resumed`); `queue.control_failed` (job, action, error); `queue.unpaused_by_hand` (job).
 
 ## 10. Failure handling
 

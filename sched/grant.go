@@ -88,7 +88,8 @@ func exploreStep(r Record, b *Belief, p Policy, limit, memory int) (width, extra
 // spec §5.3, exploration spec §4.2), a pure function of its arguments: dec
 // is Admit's decision over jobs under p, belief gives a record's belief
 // (nil for none), and idle is the host's idle cores. It grants nothing
-// while a queued job waits for anything but the caps; agent and run jobs
+// while a queued job waits for anything but the caps or the owner (a
+// parked job), and nothing to a forced start; agent and run jobs
 // are passed over, their waits stopping nothing and their starts granted
 // nothing (flow in loom parts 3a and 3b). The pool is the caps less the
 // running jobs' holds (holds, as Admit counts them), the starting jobs'
@@ -111,7 +112,9 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 		}
 	}
 	for id, why := range dec.Waiting {
-		if why != waitOver && !agent[id] {
+		// A parked job waits on the owner, not the caps (job controls spec
+		// §7.2), so its wait stops no grant.
+		if why != waitOver && why != WaitParked && !agent[id] {
 			return g
 		}
 	}
@@ -141,10 +144,12 @@ func Grant(dec Decision, jobs []Record, p Policy, holds map[JobID]Need, belief f
 		idleRoom = int(math.Floor(idle.Cores)) - reserve.CPUs
 	}
 	for _, id := range dec.Start {
-		if agent[id] {
+		r := starting[id]
+		if agent[id] || r.Forced {
+			// A forced start (job controls spec §5.1) gets its claim and no
+			// more.
 			continue
 		}
-		r := starting[id]
 		b := belief(r)
 		base := r.Claim.CPUs
 		if explore {

@@ -49,6 +49,7 @@ type LadderJob struct {
 	NoRequeue bool
 	Exclusive bool
 	Starved   bool // the starvation guard started it
+	Forced    bool // the owner started it (start now): it goes last, with the starved
 	Requeues  int
 }
 
@@ -141,8 +142,9 @@ func climb(in LadderInput) *Action {
 
 // victim is the job the ladder acts on: of the jobs with something left to
 // give (not exclusive, not requeued MaxRequeues times, not paused with
-// NoRequeue), one the starvation guard didn't start before one it did, then
-// the most recently started; nil for none.
+// NoRequeue), one neither the starvation guard nor the owner (start now)
+// started before one either did, then the most recently started; nil for
+// none.
 func victim(jobs []LadderJob) *LadderJob {
 	var cands []*LadderJob
 	for i := range jobs {
@@ -156,7 +158,7 @@ func victim(jobs []LadderJob) *LadderJob {
 		return nil
 	}
 	return slices.MinFunc(cands, func(a, b *LadderJob) int {
-		return cmp.Or(compareBool(a.Starved, b.Starved), b.Started.Compare(a.Started), cmp.Compare(b.ID, a.ID))
+		return cmp.Or(compareBool(a.Starved || a.Forced, b.Starved || b.Forced), b.Started.Compare(a.Started), cmp.Compare(b.ID, a.ID))
 	})
 }
 
