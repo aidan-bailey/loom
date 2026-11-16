@@ -889,3 +889,131 @@ class LintCliTest(unittest.TestCase):
         lines = out.splitlines()
         self.assertTrue(lines[0].startswith("FAIL [plan] "), out)
         self.assertTrue(lines[-1].startswith("WARN [lint] "), out)
+
+
+def formed(*stories, review=None):
+    """A plan of (id, Review value or None, Form value or None, [code of each task]) stories."""
+    lines = ["# Formed plan", "", "**Spec:** `docs/spec.md`", ""]
+    if review is not None:
+        lines += [f"**Plan review:** {review}", ""]
+    for sid, tier, form, tasks in stories:
+        lines += [
+            f"## Story {sid}: Title {sid}",
+            "",
+            "- **Developer:** junior-dev",
+            f"- **Files:** `f{sid}.py`",
+            "- **Interfaces:** none",
+            f"- **Verify:** `python3 -m unittest -q f{sid}_test.py`",
+        ]
+        if tier is not None:
+            lines.append(f"- **Review:** {tier}")
+        if form is not None:
+            lines.append(f"- **Form:** {form}")
+        for k, code in enumerate(tasks, 1):
+            lines += ["", f"### Task {sid}.{k}: Task", "", FENCE + "rust", *code.split("\n"), FENCE, ""]
+    return "\n".join(lines)
+
+
+def parsed(text):
+    stories, _problems, _spec = check_plan.parse(text)
+    return {story.sid: story for story in stories}
+
+
+class FormTest(unittest.TestCase):
+    def test_a_story_without_a_form_line_is_full(self):
+        story = parsed(formed(("1", None, None, ["x"])))["1"]
+        self.assertEqual((story.form, story.form_reason), ("full", ""))
+
+    def test_a_form_line_gives_the_form_and_its_reason(self):
+        stories = parsed(formed(("1", None, "mechanical (moves the limits)", ["x"]), ("2", None, "brief", ["x"])))
+        self.assertEqual((stories["1"].form, stories["1"].form_reason), ("mechanical", "moves the limits"))
+        self.assertEqual((stories["2"].form, stories["2"].form_reason), ("brief", ""))
+
+    def test_a_bad_form_value_fails(self):
+        text = formed(("1", None, "partial", ["x"]))
+        code, out = run(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn(
+            f"Story 1 (line {line_of(text, '## Story 1: Title 1')}): **Form:** must be full, mechanical or brief, "
+            "optionally with a reason in parentheses",
+            out,
+        )
+
+    def test_json_gives_each_storys_form(self):
+        code, out = run(formed(("1", None, None, ["x"]), ("2", None, "mechanical", ["x"]), ("3", "light", "brief (a flag)", ["x"])), as_json=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([s["form"] for s in json.loads(out)["stories"]], ["full", "mechanical", "brief"])
+
+    def test_a_mechanical_story_is_never_vouched(self):
+        text = formed(("1", None, None, ["x"]), ("2", None, "mechanical", ["x"]), review="deep: 1, 2")
+        code, out = run(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn("Story 2: the Plan review line lists it under deep:, but its Form is mechanical: only a full story is vouched", out)
+        self.assertNotIn("Story 1: the Plan review line", out)
+        stories = list(parsed(text).values())
+        self.assertEqual(check_plan.vouched("deep: 1, 2", stories), {"1": True, "2": False})
+        self.assertEqual(check_plan.vouched("every story, written before tiers", stories), {"1": True, "2": False})
+
+    def test_a_deep_mechanical_story_under_full_passes(self):
+        code, out = run(formed(("1", None, None, ["x"]), ("2", None, "brief", ["x"]), review="deep: 1; full: 2"))
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"Story 2\s+.*deep\s+review: full  form: brief")
+        self.assertNotRegex(out, r"Story 1\s+.*form:")
+
+    def test_a_mechanical_story_holding_a_marker_fails_unless_its_reason_names_it(self):
+        text = formed(("1", None, "mechanical", ["let owner = user_id;"]))
+        code, out = run(text)
+        self.assertEqual(code, 1, out)
+        self.assertIn(
+            f"Story 1 (line {line_of(text, '## Story 1: Title 1')}): mechanical, but its code has user_id "
+            f"(line {line_of(text, 'let owner = user_id;')}): make it full, or name the marker in the Form line's reason",
+            out,
+        )
+        code, out = run(formed(("1", None, "mechanical (user_id only moves)", ["let owner = user_id;"])))
+        self.assertEqual(code, 0, out)
+        code, out = run(formed(("1", None, None, ["let owner = user_id;"])))
+        self.assertEqual(code, 0, out)
+
+
+class MechanicalCapTest(unittest.TestCase):
+    def estimates(self, text):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name, "estimates.toml")
+        if text is not None:
+            path.write_text(text)
+        return path
+
+    def test_the_shipped_cap_is_read(self):
+        self.assertEqual(check_plan.mechanical_cap(check_plan.ESTIMATES), 40)
+
+    def test_a_mechanical_task_over_the_cap_warns_and_one_at_it_does_not(self):
+        cap = self.estimates("[mechanical]\ncode_cap = 3\n")
+        stories = list(parsed(formed(("1", None, "mechanical", ["a\nb\nc\nd", "a\nb\nc"]))).values())
+        self.assertEqual(
+            check_plan.cap_warnings(stories, cap),
+            ["Story 1: Task 1.1 has 4 fenced lines, over the mechanical cap of 3: "
+             "a mechanical story lists what it moves rather than copying it"],
+        )
+
+    def test_the_cap_applies_only_to_mechanical_stories(self):
+        cap = self.estimates("[mechanical]\ncode_cap = 3\n")
+        stories = list(parsed(formed(("1", None, None, ["a\nb\nc\nd"]), ("2", None, "brief", ["a\nb\nc\nd"]))).values())
+        self.assertEqual(check_plan.cap_warnings(stories, cap), [])
+
+    def test_an_unreadable_estimates_file_warns(self):
+        mechanical = list(parsed(formed(("1", None, "mechanical", ["a"]))).values())
+        for text in (None, "[mechanical\n", "[mechanical]\ncode_cap = \"forty\"\n"):
+            path = self.estimates(text)
+            warnings = check_plan.cap_warnings(mechanical, path)
+            self.assertEqual(len(warnings), 1, (text, warnings))
+            self.assertIn(f"{path}", warnings[0])
+            self.assertIn("the mechanical cap is unchecked", warnings[0])
+        full = list(parsed(formed(("1", None, None, ["a"]))).values())
+        self.assertEqual(check_plan.cap_warnings(full, self.estimates(None)), [], "no mechanical story, no read")
+
+    def test_the_lint_runs_with_the_others(self):
+        code, out = run(formed(("1", None, "mechanical", ["\n".join(f"line {n}" for n in range(41))])))
+        self.assertEqual(code, 0, out)
+        self.assertIn("WARN [lint] ", out)
+        self.assertIn("Task 1.1 has 41 fenced lines, over the mechanical cap of 40", out)

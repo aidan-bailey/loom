@@ -18,7 +18,7 @@
 - rule 3: `(Story <id> proposes)` names a listed story, and waives rule 1 on its line;
 - the entries: each gives its Developer (a developer the run knows), a Files line with a backticked
   path, Interfaces, a Verify line with a backticked command, a Review line (when present) of deep or
-  light, and a Reading line, each once; and every bold Story bullet of the list is in the grammar the
+  light, a Form line (when present) of full, mechanical or brief, and a Reading line, each once; and every bold Story bullet of the list is in the grammar the
   join reads (`- **Story <id>**` at column 0);
 - the waves: a `**Drafts after:**` line names at least one listed story, never its own, and no chain of
   them comes back to where it started;
@@ -37,7 +37,7 @@ import re
 from pathlib import Path
 
 from check_plan import (
-    CODE_RE, DEVELOPERS, FIELDS, H2_RE, PART_RE, PART_VALUE_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root,
+    CODE_RE, DEVELOPERS, FIELDS, FORM_VALUE_RE, H2_RE, PART_RE, PART_VALUE_RE, REVIEW_VALUE_RE, SPEC_RE, STORY_RE, TASK_RE, repo_root,
 )
 from flowconf import DEFAULT_PLAN_SIZE, FlowError, optional_profile
 from plan_join import ENTRY_RE, MARKER, STORIES_HEADING, Entry, JoinError, entries, unfenced
@@ -191,6 +191,8 @@ def entry_problems(entry: Entry) -> list[str]:
         problems.append(f"{where}: **Verify:** names no `backticked` command")
     if "Review" in entry.fields and not REVIEW_VALUE_RE.match(entry.fields["Review"]):
         problems.append(f"{where}: **Review:** must be deep or light, optionally with a reason in parentheses")
+    if "Form" in entry.fields and not FORM_VALUE_RE.match(entry.fields["Form"]):
+        problems.append(f"{where}: **Form:** must be full, mechanical or brief, optionally with a reason in parentheses")
     problems += [f"{where}: gives **{name}:** twice" for name in entry.repeated]
     if not entry.reading:
         problems.append(f"{where}: no **Reading:** line: the drafter reads what it names")

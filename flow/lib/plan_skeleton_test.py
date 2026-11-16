@@ -247,6 +247,19 @@ class EntryTest(unittest.TestCase):
         self.assertTrue(any("deep or light" in p for p in self.stories(entry("1", extra=["  - **Review:** shallow"]))))
         self.assertEqual(self.stories(entry("1", extra=["  - **Review:** light (a doc change)"]), [l.replace("intermediate-dev", "flow:junior-dev") for l in entry("2")]), [])
 
+    def test_an_entry_with_a_bad_form_value_fails(self):
+        problems = self.stories(entry("1", extra=["  - **Form:** partial"]))
+        self.assertTrue(
+            any("Story 1 entry (line " in p and "**Form:** must be full, mechanical or brief" in p for p in problems), problems
+        )
+
+    def test_an_entry_with_a_form_line_passes(self):
+        self.assertEqual(
+            self.stories(entry("1", extra=["  - **Form:** mechanical (moves the limits)"]), entry("2", extra=["  - **Form:** brief"])),
+            [],
+        )
+        self.assertTrue(any("gives **Form:** twice" in p for p in self.stories(entry("1", extra=["  - **Form:** full", "  - **Form:** brief"]))))
+
     def test_a_repeated_line_fails(self):
         self.assertTrue(any("gives **Files:** twice" in p for p in self.stories(entry("1", extra=["  - **Files:** `b.py`"]))))
 

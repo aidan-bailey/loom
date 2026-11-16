@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import check_plan  # noqa: E402
 import plan_join  # noqa: E402
 from plan_join import MARKER, JoinError, Span  # noqa: E402
 
@@ -363,6 +364,15 @@ class JoinTest(TreeCase):
         self.assertNotIn("The paragraph.", generated)
         self.assertIn("\n- **Review:** light\n", generated)
         self.assertEqual(notes, [])
+
+    def test_the_join_writes_an_entrys_form_line(self):
+        t = self.tree()
+        formed = SKELETON.replace("  - **Review:** light\n", "  - **Review:** light\n  - **Form:** mechanical (moves b)\n")
+        out, _, _ = plan_join.join(formed, t.drafts)
+        generated = out[len(formed):]
+        self.assertIn("\n- **Review:** light\n- **Form:** mechanical (moves b)\n", generated)
+        stories, _problems, _spec = check_plan.parse(out)
+        self.assertEqual({story.sid: story.form for story in stories}, {"1": "full", "2b": "mechanical"})
 
     def test_copied_opening_lines_are_dropped_and_reported(self):
         stale = "## Story 1: First\n\n- **Developer:** senior-dev\n- **Files:** `old.py`\n\n### Task 1.1: x\n"

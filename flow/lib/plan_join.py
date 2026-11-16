@@ -13,7 +13,7 @@ the marker in an example. The story list is read from above the marker only: a
 `## Stories` section below it is generated text.
 
 Each entry gives its story's opening lines as bullets nested under it (Developer, Files, Interfaces,
-Verify and, when the story has it, Review), and a draft holds none of them: the join writes each
+Verify and, when the story has them, Review and Form), and a draft holds none of them: the join writes each
 story as its draft's heading, a blank line, the entry's opening lines, a blank line, and the rest of
 the draft. A draft written before that rule opens with a copy, which the join drops and reports.
 An entry's **Reading** line and its optional **Drafts after** line (the stories whose drafts its
@@ -65,7 +65,7 @@ class Entry:
 
     sid: str
     line: int
-    # Each opening line (Developer, Files, Interfaces, Verify, Review), stripped, in the entry's order.
+    # Each opening line (Developer, Files, Interfaces, Verify, Review, Form), stripped, in the entry's order.
     opening: list[str] = field(default_factory=list)
     fields: dict[str, str] = field(default_factory=dict)
     repeated: list[str] = field(default_factory=list)

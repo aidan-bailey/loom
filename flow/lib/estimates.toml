@@ -1,0 +1,8 @@
+# The figures loom flow uses to judge a plan's stories by their form (the plan treatment spec,
+# docs/superpowers/specs/2026-11-16-flow-plan-treatment-design.md). Part 2 adds the cost priors here.
+
+[mechanical]
+# A mechanical story lists the items it moves or renames and the grep that finds their uses; it copies
+# no code. check_plan.py warns on each of its tasks whose fenced code passes this many lines, a sign the
+# task copies what it should only list (the owner, 2026-11-16: a starting figure, for a retro to tune).
+code_cap = 40

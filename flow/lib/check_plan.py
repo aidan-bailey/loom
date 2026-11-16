@@ -22,7 +22,13 @@ story-reviewer, which reads only what the plan doesn't vouch for; any other
 gets the full code-quality review.
 
 A story may carry a fifth opening line, `- **Review:** deep` or `- **Review:** light`, either with
-a reason in parentheses. A story without it is deep. A light story whose fenced code holds one of
+a reason in parentheses. A story without it is deep. And a sixth, `- **Form:** full`, `mechanical` or
+`brief`, each with an optional reason in parentheses (the plan treatment spec §4): a full story's plan
+gives its code, a mechanical one's lists what it moves or renames, a brief one's describes its code
+without writing it. A story without the line is full. Only a full story is vouched; a mechanical or
+brief story whose fenced code holds a landmine marker fails unless its Form reason names the marker;
+and a mechanical story's task whose fenced code passes `estimates.toml`'s `[mechanical] code_cap`
+draws a lint warning. A light story whose fenced code holds one of
 the profile's landmine markers fails the check unless its reason names the marker. A Plan review line
 may list the deep and light story ids as `deep: 1, 6; light: 2, 3`, and the deep stories the review
 didn't vouch for as `full: 4`: a story it lists under the wrong tier, under more than one list or under
@@ -69,6 +75,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import tomllib
 import posixpath
 import re
 import subprocess
@@ -86,7 +93,7 @@ DEVELOPERS = ("junior-dev", "intermediate-dev", "senior-dev")
 # senior-dev after an intermediate-dev fails a slice twice, so a plan shouldn't assign it.
 LAST_RESORT = {"senior-dev"}
 FIELDS = ("Developer", "Files", "Interfaces", "Verify")
-OPTIONAL = ("Review",)
+OPTIONAL = ("Review", "Form")
 
 STORY_RE = re.compile(r"^##\s+Story\s+([^\s:.]+)[:.]?\s*(.*)$")
 H2_RE = re.compile(r"^##\s")
@@ -117,6 +124,10 @@ DOC_LINK_RE = re.compile(r"\[`?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*)(?:\(\))?`?\](?!
 # only when the story's Review reason names it.
 
 REVIEW_VALUE_RE = re.compile(r"^(deep|light)(?:\s*\((.*)\))?$")
+FORM_VALUE_RE = re.compile(r"^(full|mechanical|brief)(?:\s*\((.*)\))?$")
+TASK_ID_RE = re.compile(r"^###\s+(Task\s+[^\s:]+)")
+# The mechanical cap's file, beside this script: loom writes lib/ whole into each session's flow copy.
+ESTIMATES = Path(__file__).resolve().with_name("estimates.toml")
 TIER_RE = re.compile(r"\b(deep|light|full):([^;]*)", re.IGNORECASE)
 # A Plan review line's lists: `deep:` the vouched deep stories, `light:` the light ones, `full:` the deep
 # stories a review didn't vouch for (/flow:draft's plan review writes it).
@@ -133,6 +144,8 @@ class Story:
     # The story's last plan line: the line before the next story or H2 heading, or the plan's last.
     end: int = 0
     tasks: int = 0
+    # Each `###` task heading: its plan line and its text.
+    task_heads: list[tuple[int, str]] = field(default_factory=list)
     # Each fenced line inside the story's section, with its plan line number.
     code: list[tuple[int, str]] = field(default_factory=list)
     # Each fenced block: its opening fence's plan line, its language word (lower case, empty when none) and its lines.
@@ -160,6 +173,18 @@ class Story:
     def reason(self) -> str:
         """The parenthesised text of the Review line, else an empty string."""
         value = REVIEW_VALUE_RE.match(self.fields.get("Review", ""))
+        return (value.group(2) or "").strip() if value else ""
+
+    @property
+    def form(self) -> str:
+        """`full`, `mechanical` or `brief`; `full` when there is no Form line or its value doesn't parse."""
+        value = FORM_VALUE_RE.match(self.fields.get("Form", ""))
+        return value.group(1) if value else "full"
+
+    @property
+    def form_reason(self) -> str:
+        """The parenthesised text of the Form line, else an empty string."""
+        value = FORM_VALUE_RE.match(self.fields.get("Form", ""))
         return (value.group(2) or "").strip() if value else ""
 
 
@@ -205,6 +230,7 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
                 problems.append(f"line {n}: task heading outside any story: {line.strip()}")
             else:
                 current.tasks += 1
+                current.task_heads.append((n, line.strip()))
                 in_header = False
         elif current is not None and in_header:
             header = FIELD_RE.match(line)
@@ -317,9 +343,9 @@ def vouched(review: str | None, stories: list[Story]) -> dict[str, bool]:
         return {story.sid: False for story in stories}
     tiers = review_tiers(review)
     if tiers is None:
-        return {story.sid: story.tier == "deep" for story in stories}
+        return {story.sid: story.tier == "deep" and story.form == "full" for story in stories}
     deep = tiers[0]
-    return {story.sid: story.sid in deep for story in stories}
+    return {story.sid: story.sid in deep and story.form == "full" for story in stories}
 
 
 def failing_names(rest: str) -> list[list[str]]:
@@ -536,7 +562,11 @@ def tier_problems(stories: list[Story], review: str | None) -> list[str]:
         if "Review" in story.fields and not REVIEW_VALUE_RE.match(story.fields["Review"]):
             continue  # its Review value already fails the check
         says = f"its Review line says {story.tier}" if "Review" in story.fields else f"its tier is {story.tier} (no Review line)"
-        if listed == ["full"]:
+        if listed == ["deep"] and story.form != "full":
+            problems.append(
+                f"Story {story.sid}: the Plan review line lists it under deep:, but its Form is {story.form}: only a full story is vouched"
+            )
+        elif listed == ["full"]:
             if story.tier != "deep":
                 problems.append(f"Story {story.sid}: the Plan review line lists it under full:, which holds only deep stories, and {says}")
         elif listed != [story.tier]:
@@ -584,6 +614,15 @@ def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], l
                         f"{where}: light, but its code has {marker} (line {at}): "
                         "make it deep, or name the marker in the Review line's reason"
                     )
+        if "Form" in story.fields and not FORM_VALUE_RE.match(story.fields["Form"]):
+            problems.append(f"{where}: **Form:** must be full, mechanical or brief, optionally with a reason in parentheses")
+        if story.form != "full":
+            for marker, at in markers_in(story, markers):
+                if marker not in story.form_reason:
+                    problems.append(
+                        f"{where}: {story.form}, but its code has {marker} (line {at}): "
+                        "make it full, or name the marker in the Form line's reason"
+                    )
     problems += tier_problems(stories, plan_review(text))
     return stories, problems, spec
 
@@ -592,7 +631,44 @@ def lint_warnings(stories: list[Story], plan: Path) -> list[str]:
     """The lints over the stories' text: a WARN each, never a FAIL, since `loom flow run` re-checks a parked run's plan
     and a heuristic must not park it for good; /flow:draft sends each to its story's fix job."""
     root = repo_root(plan)
-    return fails_without_problems(stories, root) + private_link_problems(stories, root)
+    return fails_without_problems(stories, root) + private_link_problems(stories, root) + cap_warnings(stories)
+
+
+def mechanical_cap(path: Path) -> int:
+    """`[mechanical] code_cap` of an estimates file; ValueError naming what is wrong with it."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as err:
+        raise ValueError(f"{path} cannot be read: {err}") from None
+    cap = data.get("mechanical", {}).get("code_cap") if isinstance(data.get("mechanical"), dict) else None
+    if not isinstance(cap, int) or isinstance(cap, bool) or cap < 0:
+        raise ValueError(f"{path} gives no [mechanical] code_cap as a whole number")
+    return cap
+
+
+def cap_warnings(stories: list[Story], estimates: Path = ESTIMATES) -> list[str]:
+    """A warning for each task of a mechanical story whose fenced code passes the cap: it copies what it should list."""
+    mechanical = [story for story in stories if story.form == "mechanical"]
+    if not mechanical:
+        return []
+    try:
+        cap = mechanical_cap(estimates)
+    except ValueError as err:
+        return [f"{err}: the mechanical cap is unchecked"]
+    warnings: list[str] = []
+    for story in mechanical:
+        heads = story.task_heads
+        for i, (start, heading) in enumerate(heads):
+            stop = heads[i + 1][0] if i + 1 < len(heads) else story.end + 1
+            count = sum(1 for n, _ in story.code if start < n < stop)
+            if count > cap:
+                task = TASK_ID_RE.match(heading)
+                name = task.group(1) if task else heading.lstrip("#").strip()
+                warnings.append(
+                    f"Story {story.sid}: {name} has {count} fenced lines, over the mechanical cap of {cap}: "
+                    "a mechanical story lists what it moves rather than copying it"
+                )
+    return warnings
 
 
 def parallel_safe(stories: list[Story], exclusive: Sequence[str]) -> list[tuple[str, str]]:
@@ -635,7 +711,7 @@ def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str], lan
     out = {
         "id": story.sid, "line": story.line, "end": story.end,
         "developer": story.fields["Developer"].strip("` ").removeprefix("flow:"),
-        "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full",
+        "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full", "form": story.form,
         "landmines": [marker for marker, _ in markers_in(story, markers)],
         "interfaces": story.fields.get("Interfaces", ""), "verify": story.fields.get("Verify", ""),
         "files": sorted(story.files),
@@ -751,7 +827,8 @@ def main(argv: list[str]) -> int:
             review_col = "review: vouched" if vouch[story.sid] else "review: full"
             found = ", ".join(marker for marker, _ in markers_in(story, profile.markers))
             landmines = f"  landmines: {found}" if found else ""
-            print(f"  Story {story.sid:<4} {developer:<17} {len(story.files):>3} files  {build:<8}  {story.tier:<5}  {review_col}{landmines}")
+            form = f"  form: {story.form}" if story.form != "full" else ""
+            print(f"  Story {story.sid:<4} {developer:<17} {len(story.files):>3} files  {build:<8}  {story.tier:<5}  {review_col}{form}{landmines}")
         safe = parallel_safe(stories, profile.exclusive)
         listed = ", ".join(f"{a}+{b}" for a, b in safe) if safe else "none"
         print(f"  Parallel-safe pairs (disjoint files, at most one exclusive build): {listed}")
