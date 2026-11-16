@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -159,13 +160,14 @@ def skeleton_stories(text: str) -> list[tuple[str, str]]:
     return stories
 
 
-def design_spend(text: str) -> str:
-    """The design session's spend so far, from loom flow costs design, or why it is unknown."""
+def design_spend(text: str, plan: str) -> str:
+    """The design session's spend so far, from loom flow costs design up to the plan's commit (now, before it is
+    committed), or why it is unknown."""
     spec = next((CODE_RE.findall(m.group(1)) for line in text.splitlines() if (m := SPEC_RE.match(line))), None)
     if not spec:
         return "unknown (the plan has no **Spec:** line)"
     try:
-        return plan_measures.usd(agent_costs.design_json(spec[0], None)["total"]["usd"])
+        return plan_measures.usd(agent_costs.design_json(spec[0], plan)["total"]["usd"])
     except Exception as err:  # noqa: BLE001 - the estimate stands without it; say why it's missing
         return f"unknown ({err})"
 
@@ -207,7 +209,7 @@ def estimate(plan: Path, given: list[Path] | None, date: str) -> str:
         f"Draft: {cell(draft)} (stories {cell(stories_draft)}, skeleton review {cell(skeleton.usd)}, "
         f"plan review {cell(reviews)} for {full} full {'story' if full == 1 else 'stories'})",
         f"Run: {cell(run)}",
-        f"Design so far: {design_spend(text)}, spent, not budgeted",
+        f"Design so far: {design_spend(text, os.path.relpath(plan.resolve(), top))}, spent, not budgeted",
         "Basis: " + "; ".join([*(bases[form] for form in FORMS), skeleton.basis, review.basis]),
         "",
         f"**Budget:** draft {whole(draft)}; run {whole(run)} (estimate {date})",
