@@ -46,6 +46,7 @@ type State struct {
 	Profile     string                     `json:"profile"`
 	DesignStage string                     `json:"design_stage,omitempty"`
 	Part        string                     `json:"part,omitempty"`        // the plan's **Part:** line, "N of M", "" for none
+	Budget      string                     `json:"budget,omitempty"`      // the plan's **Budget:** line after its label, "" for none
 	RecordCopy  string                     `json:"record_copy,omitempty"` // the profile's in-repo record dir, "" for none
 	Managers    []string                   `json:"managers"`
 	Blocks      Blocks                     `json:"blocks"`

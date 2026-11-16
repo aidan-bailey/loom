@@ -65,6 +65,11 @@ A record has four parts.
      average size, and the largest with its agent run and role; `none
      pre-loaded` when none did. An older record has no such line.
 
+   - `- Budget:`, when the plan's head has a `**Budget:**` line (the plan
+     treatment spec §5): its text after the label, `draft $<X>; run $<Y>
+     (estimate YYYY-MM-DD)`, the figures the owner approved, which
+     `loom flow costs records`' Estimate table measures the run against.
+
    Write the Definitions, Profile and Design stage lines in the header's label
    style, plain or bold, whichever the rest of that header uses.
 2. **Cost**: in a record a manager wrote, the output of
@@ -80,11 +85,13 @@ A record has four parts.
    `loom flow costs design <spec> --plan <plan>`; neither writes a record.
 3. **Stories**: one row per story, from the run's state:
 
-   | Story | Developer | Tier | Review | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
-   |---|---|---|---|---|---|---|---|---|---|---|---|---|
+   | Story | Developer | Tier | Review | Form | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-   **Tier** is the story's `deep` or `light` and **Review** its `vouched` or
-   `full`, as `loom flow check-plan` printed them. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
+   **Tier** is the story's `deep` or `light`, **Review** its `vouched` or
+   `full` and **Form** its `full`, `mechanical` or `brief`, as `loom flow check-plan`
+   printed them; a record written before forms has no Form column, and
+   `loom flow costs records` reads its stories as full. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
    of the story's doc pass, `—` for a run without one. Under `/flow:run`, a
    laned story's **Developer** ends `(lane)`, and the notes say how many of
    its commits were picked onto which head, and name any lane left.

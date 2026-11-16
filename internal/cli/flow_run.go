@@ -249,6 +249,7 @@ func newFlowRunStartCmd() *cobra.Command {
 				Roster:  strings.TrimSpace(string(roster)), // the file holds the whole line (flow.RosterID)
 				Profile: blockLine(blocks["supervisor"], "Profile: "), DesignStage: designStage(string(text)),
 				Part:       partLine(string(text)),
+				Budget:     budgetLine(string(text)),
 				RecordCopy: strings.TrimSuffix(blockLine(blocks["supervisor"], "Record copy in the repo: "), "none"),
 				Blocks: flowrun.Blocks{Developer: blocks["developer"], Verifier: blocks["verifier"], Reviewer: blocks["reviewer"],
 					Supervisor: blocks["supervisor"], DocWriter: blocks["doc-writer"], Services: services},
@@ -392,6 +393,21 @@ func partLine(plan string) string {
 		}
 		if v, ok := strings.CutPrefix(l, "**Part:**"); ok {
 			return strings.TrimSuffix(strings.TrimSpace(v), ".")
+		}
+	}
+	return ""
+}
+
+// budgetLine is the plan's **Budget:** line before its first story, after
+// its label ("draft $30; run $25 (estimate 2026-11-16)"), "" when it has
+// none: the record copies it (plan treatment spec §6).
+func budgetLine(plan string) string {
+	for _, l := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(l, "## Story") {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(l, "**Budget:**"); ok {
+			return strings.TrimSpace(v)
 		}
 	}
 	return ""

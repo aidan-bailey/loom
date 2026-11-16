@@ -619,6 +619,12 @@ func TestFlowRun_TheEngineMarksItsJobs(t *testing.T) {
 	assert.Equal(t, "1", jobEnv(t, logDir, "0.env")[envFlowRun], "an agent of the run carries the run's job, which a pause spares")
 }
 
+func TestBudgetLine(t *testing.T) {
+	assert.Equal(t, "draft $30; run $25 (estimate 2026-11-16)", budgetLine("# P\n\n**Spec:** `s.md`\n**Budget:** draft $30; run $25 (estimate 2026-11-16)\n\n## Stories\n"))
+	assert.Empty(t, budgetLine("# P\n\n**Spec:** `s.md`\n"))
+	assert.Empty(t, budgetLine("# P\n\n## Story 1: x\n\n**Budget:** draft $1; run $2 (estimate 2026-11-16)\n"), "a line inside a story is not the plan's")
+}
+
 func TestPartLine(t *testing.T) {
 	assert.Equal(t, "2 of 3", partLine("# P\n\n**Spec:** `s.md`\n**Part:** 2 of 3\n\n## Stories\n"))
 	assert.Equal(t, "2 of 3", partLine("**Part:** 2 of 3.\n"))
