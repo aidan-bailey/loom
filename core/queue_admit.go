@@ -244,7 +244,7 @@ func (m *Model) startJob(i int, policy sched.Policy, now time.Time, spare sched.
 	q := m.queue
 	rec := &q.store.Jobs[i]
 	log.For("core").Info("queue.job_started", "job", int64(rec.ID), "signature", string(rec.Signature),
-		"waited_s", int64(now.Sub(rec.QueuedSince()).Seconds()))
+		"waited_s", int64(now.Sub(rec.QueuedSince()).Seconds()), "forced", rec.Forced)
 	rec.State, rec.Started, rec.PID, rec.Starved = sched.Running, now, 0, starved
 	if spare != (sched.Claim{}) {
 		rec.Claim.CPUs += spare.CPUs

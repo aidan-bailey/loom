@@ -603,3 +603,28 @@ func TestRenderWork_ShowsExplorers(t *testing.T) {
 	out := ansi.Strip(RenderWork(160, 30, WorkData{Queue: q, Now: now}))
 	assert.Contains(t, out, "exploring 4 cores (was 2)")
 }
+
+func TestRenderWork_ShowsTheOwnersControls(t *testing.T) {
+	now := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	run := func(id sched.JobID) core.JobView {
+		return core.JobView{ID: id, State: sched.Running, Description: "job", Started: now.Add(-time.Hour), Claim: sched.Claim{CPUs: 4, MemoryGB: 6}}
+	}
+	paused, cpuOnly, pausing, failed, forced := run(1), run(2), run(3), run(4), run(5)
+	paused.PausedAt, paused.PauseReclaimed = now.Add(-3*time.Minute), true
+	cpuOnly.PausedAt = now.Add(-time.Minute)
+	pausing.Control = sched.ControlPause
+	failed.ControlErr = "pause failed: no bus"
+	forced.Forced = true
+	q := core.QueueView{
+		Host:   sched.Host{Name: "fresco"},
+		Policy: sched.Policy{Caps: sched.Caps{CPUs: 14, MemoryGB: 22, IOJobs: 2}},
+		Jobs:   []core.JobView{paused, cpuOnly, pausing, failed, forced},
+	}
+	out := ansi.Strip(RenderWork(200, 30, WorkData{Queue: q, Now: now}))
+	assert.Contains(t, out, "paused 3m")
+	assert.NotContains(t, out, "paused 3m, CPU only")
+	assert.Contains(t, out, "paused 1m, CPU only")
+	assert.Contains(t, out, "pausing…")
+	assert.Contains(t, out, "pause failed: no bus")
+	assert.Contains(t, out, "forced")
+}

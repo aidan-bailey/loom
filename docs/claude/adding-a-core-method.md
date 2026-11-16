@@ -36,6 +36,7 @@ A comment in the method's doc comment instead of on its line, or an unknown `rpc
 
 ## Traps
 
+- **Never name a parameter `c` or `r`.** A generated client method's receiver is `c *Client` and its result variable `r`, so either name makes `core/rpc/methods_gen.go` fail to build (`c redeclared in this block`); since parameter names are wire field names, pick a descriptive one (`ControlJob(control JobControl, …)`).
 - **The model's own query and the view method are two implementations.** The model's stays because several run on every tick; the parity tests are the only link between them.
 - **A `time.Time` loses its monotonic reading on the wire.** Fixtures compared after the wire use `time.Now().Round(0)`.
 - **An error result crosses as a `core.WireError`**: only `ErrNoSession`, `ErrUnavailable`, `ErrRefused` and `session.ErrStorageLoadFailed` survive `errors.Is`; any other error keeps only its message.

@@ -160,3 +160,42 @@ func TestAPI_JobLogRefusesBadPathsAndTheModelsRefusals(t *testing.T) {
 	assert.Equal(t, "read a job log of fresh: job 7 is no longer in the queue", apiErrorOf(t, out))
 	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "job_log", session: env.ids["fresh"], result: "409 read a job log of fresh: job 7 is no longer in the queue"})
 }
+
+func TestJobOf_MapsTheControls(t *testing.T) {
+	j := runningJob(14, 1)
+	j.PausedAt, j.PauseReclaimed, j.Forced = jobT0, true, true
+	j.Control, j.ControlErr = sched.ControlResume, "pause failed: no bus"
+	out := jobOf(j)
+	assert.True(t, out.Paused)
+	assert.True(t, out.PauseReclaimed)
+	assert.True(t, out.Forced)
+	assert.Equal(t, "resume", out.Control)
+	assert.Equal(t, "pause failed: no bus", out.ControlError)
+	assert.False(t, out.Parked)
+	assert.True(t, jobOf(core.JobView{ID: 15, State: sched.Queued, Parked: true}).Parked)
+	assert.False(t, jobOf(runningJob(16, 1)).Paused)
+}
+
+func TestAPI_JobControlAsksTheModelForTheSessionsJob(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "fresh", session.Ready)}})
+	base := fmt.Sprintf("/api/v1/sessions/%d/jobs", env.ids["fresh"])
+
+	status, out := env.do(http.MethodPost, base+"/7/nap", nil)
+	assert.Equal(t, http.StatusNotFound, status, "an action the app may not ask for")
+	assert.Equal(t, "no such action", apiErrorOf(t, out))
+	status, out = env.do(http.MethodPost, base+"/x/park", nil)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, `job "x": want a job id`, apiErrorOf(t, out))
+	status, _ = env.do(http.MethodPost, "/api/v1/sessions/999999/jobs/7/park", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+
+	for action, want := range map[string]core.JobAction{"start": core.JobStart, "park": core.JobPark, "unpark": core.JobUnpark, "pause": core.JobPause, "resume": core.JobResume} {
+		status, out = env.do(http.MethodPost, base+"/7/"+action, nil)
+		assert.Equal(t, http.StatusConflict, status, action)
+		assert.Contains(t, apiErrorOf(t, out), "no job 7", action)
+		env.rb.mu.Lock()
+		last := env.rb.controls[len(env.rb.controls)-1]
+		env.rb.mu.Unlock()
+		assert.Equal(t, core.JobControl{Job: 7, Owner: env.ids["fresh"], Action: want}, last, "scoped to the session in the path")
+	}
+}

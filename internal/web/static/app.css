@@ -889,3 +889,10 @@ a.sc-tile { color: var(--fg); }
 .sc-h90 { height: 90%; }
 .sc-h95 { height: 95%; }
 .sc-h100 { height: 100%; }
+
+/* The job screen's controls (job controls spec §8). */
+.sc-job-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

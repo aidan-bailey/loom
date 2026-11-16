@@ -55,7 +55,9 @@ func (m *Model) stepGiveBack(now time.Time) {
 	}
 	for i := range q.store.Jobs {
 		rec := &q.store.Jobs[i]
-		if rec.State != sched.Running || !rec.Borrower || rec.Cgroup == "" || rec.Requeue != "" {
+		// A paused borrower is the owner's (job controls spec §7.2): a
+		// requeue would lose the work the pause keeps.
+		if rec.State != sched.Running || !rec.Borrower || rec.Cgroup == "" || rec.Requeue != "" || rec.Paused() || rec.Control != "" {
 			continue
 		}
 		if rec.CancelReason != "" {

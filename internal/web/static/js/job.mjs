@@ -10,6 +10,8 @@ import { call } from "./api.mjs";
 import { ago, sessionOf } from "./fleet.mjs";
 import { ContextRow, FLEET_BACK, SessionTabs } from "./chrome.mjs";
 import { actionsFor, elapsed, jobEnd, jobGlyph } from "./session.mjs";
+import { useRun } from "./reply.mjs";
+import { ConfirmSheet } from "./sheets.mjs";
 
 // POLL is how often a live job's log is read again.
 const POLL = 2000;
@@ -59,7 +61,10 @@ function atBottom() {
 // stateText is the job's state line: how long it has run, why it waits, or
 // how it ended, how long it ran and when.
 function stateText(j, now) {
-  if (j.state === "running") return ["running", elapsed(j.started, now)].filter(Boolean).join(" · ");
+  if (j.state === "running") {
+    const paused = j.paused ? (j.pause_reclaimed ? "paused" : "paused, CPU only") : "";
+    return ["running", elapsed(j.started, now), paused, j.forced ? "forced" : ""].filter(Boolean).join(" · ");
+  }
   if (live(j)) return [j.state, j.waiting].filter(Boolean).join(" · ");
   const ran = j.started && j.ended ? "ran " + elapsed(j.started, j.ended) : "";
   const when = j.ended ? ago(j.ended, now) : "";
@@ -79,7 +84,34 @@ export function JobHead({ snap, route, pending }) {
   `;
 }
 
-export function Job({ snap, route }) {
+// controls are the buttons job j's state allows (job controls spec §8):
+// start now and park or unpark while it is queued, park or unpark while it
+// is held, pause or resume while it runs. A control in flight shows as text,
+// and the last failed one's error under the buttons.
+function controls(j, off, control, askStart) {
+  if (j.control) return html`<div class="sc-dim sc-small">${j.control === "pause" ? "Pausing…" : "Resuming…"}</div>`;
+  const buttons = [];
+  if (j.state === "queued") {
+    buttons.push(html`<button class="sc-btn sc-primary" type="button" disabled=${off} onClick=${askStart}>Start now</button>`);
+  }
+  if (j.state === "queued" || j.state === "held") {
+    buttons.push(j.parked
+      ? html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => control("unpark")}>Unpark</button>`
+      : html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => control("park")}>Park</button>`);
+  }
+  if (j.state === "running") {
+    buttons.push(j.paused
+      ? html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => control("resume")}>Resume</button>`
+      : html`<button class="sc-btn" type="button" disabled=${off} onClick=${() => control("pause")}>Pause</button>`);
+  }
+  if (!buttons.length) return null;
+  return html`
+    <div class="sc-job-controls">${buttons}</div>
+    ${j.control_error ? html`<div class="sc-dim sc-small">${j.control_error}</div>` : null}
+  `;
+}
+
+export function Job({ snap, stale, route, act, toast }) {
   const key = route.id + "/" + route.job;
   const s = sessionOf(snap, route.id);
   const j = jobOf(s, route.job);
@@ -91,6 +123,9 @@ export function Job({ snap, route }) {
   const busy = useRef(false);
   const follow = useRef(true);
   const wasLive = useRef(live(j));
+  const { busy: acting, run } = useRun(act, toast, route.id);
+  const [asking, setAsking] = useState(false);
+  const control = (action) => run("jobs/" + route.job + "/" + action);
   logRef.current = log;
   keyRef.current = key;
 
@@ -186,9 +221,24 @@ export function Job({ snap, route }) {
             <div><span class=${"sc-glyph sc-job-" + j.state} aria-hidden="true">${jobGlyph(j)}</span> job ${j.id} · ${stateText(j, now)}</div>
             ${j.description ? html`<div class="sc-mono">${j.command}</div>` : null}
             ${j.agent ? html`<div class="sc-dim sc-small">submitted by subagent ${j.agent}</div>` : null}
+            ${controls(j, stale || acting, control, () => setAsking(true))}
           </div>`
         : null}
       ${body}
+      ${asking && j
+        ? html`<${ConfirmSheet}
+            title=${"Start job " + j.id + " now?"}
+            body=${j.waiting
+              ? "It waits: " + j.waiting + ". It starts past the queue's fit; the ladder takes it last if memory runs short."
+              : "It starts past the queue's fit; the ladder takes it last if memory runs short."}
+            confirm="Start now"
+            onConfirm=${async () => {
+              await control("start");
+              setAsking(false);
+            }}
+            onCancel=${() => setAsking(false)}
+          />`
+        : null}
     </section>
   `;
 }

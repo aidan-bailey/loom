@@ -605,11 +605,12 @@ func TestWorkPager_NeedsAJob(t *testing.T) {
 // of sending them.
 type workWatch struct {
 	core.Core
-	cancels []workCancel
-	fronts  []sched.JobID
-	caps    []config.SchedulerSettings
-	beliefs []sched.BeliefQuery
-	reqs    []core.ReqID
+	cancels  []workCancel
+	fronts   []sched.JobID
+	caps     []config.SchedulerSettings
+	beliefs  []sched.BeliefQuery
+	controls []core.JobControl
+	reqs     []core.ReqID
 }
 
 // workCancel is a CancelJob the work view sent.
@@ -640,6 +641,11 @@ func (w *workWatch) CancelJob(id sched.JobID, from core.CancelFrom, req core.Req
 
 func (w *workWatch) MoveJobToFront(id sched.JobID, req core.ReqID) {
 	w.fronts = append(w.fronts, id)
+	w.reqs = append(w.reqs, req)
+}
+
+func (w *workWatch) ControlJob(c core.JobControl, req core.ReqID) {
+	w.controls = append(w.controls, c)
 	w.reqs = append(w.reqs, req)
 }
 
@@ -998,7 +1004,7 @@ func TestWorkActions_OfflineRefusesTheKeysThatNeedTheModel(t *testing.T) {
 	w := watchWork(t, m)
 	pressWork(t, m, "j") // job 16: t and x would both act
 	m.link.state = linkWaiting
-	for _, key := range []string{"x", "t", "o", "e"} {
+	for _, key := range []string{"x", "t", "o", "e", "s", "h", "p"} {
 		m.errBox.Clear()
 		cmd := pressWork(t, m, key)
 		assert.Nil(t, cmd, key)
@@ -1008,6 +1014,7 @@ func TestWorkActions_OfflineRefusesTheKeysThatNeedTheModel(t *testing.T) {
 	assert.Empty(t, w.cancels)
 	assert.Empty(t, w.fronts)
 	assert.Empty(t, w.caps)
+	assert.Empty(t, w.controls)
 
 	m.link.state = linkConnected
 	m.errBox.Clear()
@@ -1017,7 +1024,7 @@ func TestWorkActions_OfflineRefusesTheKeysThatNeedTheModel(t *testing.T) {
 
 func TestWorkView_TheStatusLineListsTheKeys(t *testing.T) {
 	m := workHome(t, queueJob(14, sched.Running, "a"))
-	assert.Contains(t, ansi.Strip(m.View().Content), "w/esc back · enter log · b belief · x cancel · t to front · o open session · e caps · q quit")
+	assert.Contains(t, ansi.Strip(m.View().Content), "w/esc back · enter log · b belief · x cancel · t to front · s start now · h park · p pause · o open session · e caps · q quit")
 }
 
 func TestFocusSlotInstance_FocusesByIdentity(t *testing.T) {
@@ -1408,4 +1415,67 @@ func TestWorkFront_AHeldJobCanMoveToo(t *testing.T) {
 	pressWork(t, m, "j") // job 16, held
 	assert.Nil(t, pressWork(t, m, "t"))
 	assert.Equal(t, []sched.JobID{16}, w.fronts)
+}
+
+func TestWorkStartNow_AsksWithTheWaitThenSendsTheJobNamed(t *testing.T) {
+	waiting := queueJob(16, sched.Queued, "big build")
+	waiting.Waiting = "needs ~12 GB at its peak (the host leaves 11 with no job running)"
+	bench := queueJob(14, sched.Running, "bench")
+	bench.Claim = sched.Claim{Exclusive: true}
+	m := workHome(t, bench, waiting)
+	w := watchWork(t, m)
+	pressWork(t, m, "j") // job 16
+	assert.Nil(t, pressWork(t, m, "s"))
+	require.Equal(t, stateConfirm, m.state)
+	// The dialog wraps its text: read it with its borders and breaks flattened.
+	prompt := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(m.confirmation().Render()), "│", " ")), " ")
+	assert.Contains(t, prompt, `Start job 16 "big build" now?`)
+	assert.Contains(t, prompt, "It waits: needs ~12 GB at its peak (the host leaves 11 with no job running).")
+	assert.Contains(t, prompt, "Exclusive job 14 is running.")
+	assert.Empty(t, w.controls, "nothing is sent before the answer")
+
+	setQueue(t, m, testQueue(bench))
+	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
+	require.Len(t, w.controls, 1)
+	assert.Equal(t, core.JobControl{Job: 16, Action: core.JobStart}, w.controls[0], "the job the dialog named")
+	assert.NotZero(t, w.reqs[0])
+
+	pressWork(t, m, "k") // job 14, running
+	assert.Nil(t, pressWork(t, m, "s"))
+	assert.Equal(t, stateDefault, m.state, "a running job is not asked about")
+	assert.Contains(t, m.errBox.String(), "job 14 isn't queued")
+}
+
+func TestWorkPark_ParksOrUnparksAWaitingJob(t *testing.T) {
+	parked := queueJob(17, sched.Queued, "c")
+	parked.Parked = true
+	m := workHome(t, queueJob(14, sched.Running, "a"), queueJob(16, sched.Queued, "b"), parked)
+	w := watchWork(t, m)
+	pressWork(t, m, "j") // job 16
+	pressWork(t, m, "h")
+	pressWork(t, m, "j") // job 17, parked
+	pressWork(t, m, "h")
+	assert.Equal(t, []core.JobControl{{Job: 16, Action: core.JobPark}, {Job: 17, Action: core.JobUnpark}}, w.controls)
+
+	pressWork(t, m, "k")
+	pressWork(t, m, "k") // job 14, running
+	pressWork(t, m, "h")
+	assert.Len(t, w.controls, 2, "a running job is not parked")
+	assert.Contains(t, m.errBox.String(), "job 14 isn't waiting")
+}
+
+func TestWorkPause_PausesOrResumesARunningJob(t *testing.T) {
+	paused := queueJob(15, sched.Running, "b")
+	paused.PausedAt = time.Now().Add(-time.Minute)
+	m := workHome(t, queueJob(14, sched.Running, "a"), paused, queueJob(16, sched.Queued, "c"))
+	w := watchWork(t, m)
+	pressWork(t, m, "p") // job 14
+	pressWork(t, m, "j") // job 15, paused
+	pressWork(t, m, "p")
+	assert.Equal(t, []core.JobControl{{Job: 14, Action: core.JobPause}, {Job: 15, Action: core.JobResume}}, w.controls)
+
+	pressWork(t, m, "j") // job 16, queued
+	pressWork(t, m, "p")
+	assert.Len(t, w.controls, 2, "a queued job is not paused")
+	assert.Contains(t, m.errBox.String(), "job 16 isn't running")
 }

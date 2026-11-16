@@ -780,6 +780,16 @@ type MoveJobToFrontParams struct {
 type MoveJobToFrontResult struct {
 }
 
+// ControlJobParams are ControlJob's parameters on the wire.
+type ControlJobParams struct {
+	Control core.JobControl `json:"control"`
+	Req     core.ReqID      `json:"req"`
+}
+
+// ControlJobResult is ControlJob's result on the wire; an error travels in the reply.
+type ControlJobResult struct {
+}
+
 // NotifyJobParams are NotifyJob's parameters on the wire.
 type NotifyJobParams struct {
 	ID  sched.JobID `json:"id"`
@@ -982,6 +992,7 @@ var methods = []methodInfo{
 	{Name: "SubmitJob", Kind: kindRequest, Params: SubmitJobParams{}, Result: SubmitJobResult{}},
 	{Name: "CancelJob", Kind: kindRequest, Params: CancelJobParams{}, Result: CancelJobResult{}},
 	{Name: "MoveJobToFront", Kind: kindRequest, Params: MoveJobToFrontParams{}, Result: MoveJobToFrontResult{}},
+	{Name: "ControlJob", Kind: kindRequest, Params: ControlJobParams{}, Result: ControlJobResult{}},
 	{Name: "NotifyJob", Kind: kindRequest, Params: NotifyJobParams{}, Result: NotifyJobResult{}},
 	{Name: "SetSchedulerCaps", Kind: kindRequest, Params: SetSchedulerCapsParams{}, Result: SetSchedulerCapsResult{}},
 	{Name: "ConfigureBorrow", Kind: kindRequest, Params: ConfigureBorrowParams{}, Result: ConfigureBorrowResult{}},
@@ -1602,6 +1613,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.MoveJobToFront(p.ID, p.Req)
 		return MoveJobToFrontResult{}, nil, true
+	case "ControlJob":
+		var p ControlJobParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ControlJob(p.Control, p.Req)
+		return ControlJobResult{}, nil, true
 	case "NotifyJob":
 		var p NotifyJobParams
 		if err := decodeParams(params, &p); err != nil {
@@ -2215,6 +2236,12 @@ func (c *Client) CancelJob(id sched.JobID, from core.CancelFrom, req core.ReqID)
 func (c *Client) MoveJobToFront(id sched.JobID, req core.ReqID) {
 	var r MoveJobToFrontResult
 	c.noteRefused(c.requestNoErr("MoveJobToFront", MoveJobToFrontParams{ID: id, Req: req}, &r), req)
+}
+
+// ControlJob is core.Core's ControlJob (request).
+func (c *Client) ControlJob(control core.JobControl, req core.ReqID) {
+	var r ControlJobResult
+	c.noteRefused(c.requestNoErr("ControlJob", ControlJobParams{Control: control, Req: req}, &r), req)
 }
 
 // NotifyJob is core.Core's NotifyJob (request).

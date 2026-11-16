@@ -199,7 +199,7 @@ func (m *home) workHint() string {
 	if m.work.pager != nil {
 		return "esc back · j/k scroll · pgup/pgdn page · g/G top/bottom"
 	}
-	return "w/esc back · enter log · b belief · x cancel · t to front · o open session · e caps · q quit"
+	return "w/esc back · enter log · b belief · x cancel · t to front · s start now · h park · p pause · o open session · e caps · q quit"
 }
 
 // handleWorkKey is the work view's keys: j/k and the arrows move the
@@ -232,6 +232,12 @@ func (m *home) handleWorkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.askCancelWorkJob()
 	case "t":
 		m.frontWorkJob()
+	case "s":
+		return m, m.askStartWorkJob()
+	case "h":
+		m.parkWorkJob()
+	case "p":
+		m.pauseWorkJob()
 	case "o":
 		return m, m.focusWorkOwner()
 	case "e":
@@ -307,7 +313,7 @@ func (m *home) handleWorkPagerKey(key string) {
 // workModelKeys are the work view's keys that need the model. Offline they
 // are refused with the info line the offline gate uses: the gate lets t and
 // e through, being TUI-only keys in the focus layout.
-var workModelKeys = map[string]bool{"x": true, "t": true, "o": true, "e": true, "b": true}
+var workModelKeys = map[string]bool{"x": true, "t": true, "o": true, "e": true, "b": true, "s": true, "h": true, "p": true}
 
 // workOfflineRefused refuses a key that needs the model while the TUI is
 // offline, saying so on the info line.
@@ -387,6 +393,78 @@ func (m *home) frontWorkJob() {
 		return
 	}
 	m.core.MoveJobToFront(job.ID, m.newReq(pendingReq{work: &pendingWork{}}))
+}
+
+// askStartWorkJob is s: a confirm for starting the selected queued job now,
+// past the fit (job controls spec §8). The prompt names why it waits and an
+// exclusive job it would share the host with; the start goes to the job's
+// ID whatever is selected when the answer comes, and the model
+// re-validates.
+func (m *home) askStartWorkJob() tea.Cmd {
+	job, ok := m.workSelected()
+	if !ok {
+		return nil
+	}
+	if job.State != sched.Queued {
+		m.errBox.SetInfo(fmt.Sprintf("job %d isn't queued", job.ID))
+		return nil
+	}
+	id := job.ID
+	return m.confirmTask(startPrompt(job, m.queue.Jobs), overlay.ConfirmationTask{Sync: func() {
+		m.core.ControlJob(core.JobControl{Job: id, Action: core.JobStart}, m.newReq(pendingReq{work: &pendingWork{}}))
+	}})
+}
+
+// startPrompt is s's question for job: why it waits, and the exclusive job
+// running beside it in jobs, if one is.
+func startPrompt(job core.JobView, jobs []core.JobView) string {
+	q := "Start " + ui.JobLabel(job) + " now?"
+	if job.Waiting != "" {
+		q += " It waits: " + job.Waiting + "."
+	}
+	for _, j := range jobs {
+		if j.State == sched.Running && j.Claim.Exclusive {
+			q += fmt.Sprintf(" Exclusive job %d is running.", j.ID)
+			break
+		}
+	}
+	return q
+}
+
+// parkWorkJob is h: park the selected waiting job, or unpark a parked one.
+// The model re-validates.
+func (m *home) parkWorkJob() {
+	job, ok := m.workSelected()
+	if !ok {
+		return
+	}
+	if !job.State.Waiting() {
+		m.errBox.SetInfo(fmt.Sprintf("job %d isn't waiting", job.ID))
+		return
+	}
+	action := core.JobPark
+	if job.Parked {
+		action = core.JobUnpark
+	}
+	m.core.ControlJob(core.JobControl{Job: job.ID, Action: action}, m.newReq(pendingReq{work: &pendingWork{}}))
+}
+
+// pauseWorkJob is p: pause the selected running job, or resume a paused
+// one. The model re-validates.
+func (m *home) pauseWorkJob() {
+	job, ok := m.workSelected()
+	if !ok {
+		return
+	}
+	if job.State != sched.Running {
+		m.errBox.SetInfo(fmt.Sprintf("job %d isn't running", job.ID))
+		return
+	}
+	action := core.JobPause
+	if !job.PausedAt.IsZero() {
+		action = core.JobResume
+	}
+	m.core.ControlJob(core.JobControl{Job: job.ID, Action: action}, m.newReq(pendingReq{work: &pendingWork{}}))
 }
 
 // focusWorkOwner is o: it leaves the view for the focus layout on the

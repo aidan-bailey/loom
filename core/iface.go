@@ -173,6 +173,9 @@ type Core interface {
 	SubmitJob(spec sched.Submit, req ReqID)
 	CancelJob(id sched.JobID, from CancelFrom, req ReqID)
 	MoveJobToFront(id sched.JobID, req ReqID)
+	// ControlJob starts a queued job now, parks or unparks a waiting one,
+	// or pauses or resumes a running one (job controls spec).
+	ControlJob(control JobControl, req ReqID)
 	NotifyJob(id sched.JobID, req ReqID)
 	SetSchedulerCaps(s config.SchedulerSettings, req ReqID)
 	// Turn job borrowing (scheduler.borrow) on or off in the global

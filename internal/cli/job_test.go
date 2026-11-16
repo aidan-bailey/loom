@@ -1246,3 +1246,29 @@ func TestJobList_SaysWhichJobsExplore(t *testing.T) {
 	require.NoError(t, writeJobList(&out, q, false, now))
 	assert.Contains(t, out.String(), "exploring 4 cores (was 2)")
 }
+
+func TestJobList_SaysWhichJobsTheOwnerPaused(t *testing.T) {
+	now := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	q := core.QueueView{Jobs: []core.JobView{
+		{ID: 7, State: sched.Running, Description: "nextest", Started: now.Add(-time.Hour), Claim: sched.Claim{CPUs: 4, MemoryGB: 4},
+			PausedAt: now.Add(-time.Minute), PauseReclaimed: true},
+		{ID: 8, State: sched.Running, Description: "clippy", Started: now.Add(-time.Hour), Claim: sched.Claim{CPUs: 4, MemoryGB: 4},
+			PausedAt: now.Add(-time.Minute)},
+		{ID: 9, State: sched.Queued, Description: "build", Submitted: now.Add(-time.Minute), Claim: sched.Claim{CPUs: 4, MemoryGB: 4},
+			Parked: true, Waiting: sched.WaitParked},
+	}}
+	var out strings.Builder
+	require.NoError(t, writeJobList(&out, q, false, now))
+	lines := strings.Split(out.String(), "\n")
+	find := func(id string) string {
+		for _, l := range lines {
+			if strings.HasPrefix(l, id+" ") {
+				return l
+			}
+		}
+		return ""
+	}
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(find("7")), "paused by you"), find("7"))
+	assert.Contains(t, find("8"), "paused by you, CPU only")
+	assert.Contains(t, find("9"), "parked by you")
+}

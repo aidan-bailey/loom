@@ -558,6 +558,12 @@ Params: `{"id":0,"req":0}`
 
 Result: `{}`
 
+### ControlJob (request)
+
+Params: `{"control":{"Job":0,"Owner":0,"Action":""},"req":0}`
+
+Result: `{}`
+
 ### NotifyJob (request)
 
 Params: `{"id":0,"req":0}`

@@ -155,6 +155,16 @@ const (
 	NoticeCarried     Notice = "carried"
 )
 
+// ControlKind is a pause or resume the owner asked for (job controls spec
+// §4), "" for none.
+type ControlKind string
+
+// The control step's actions.
+const (
+	ControlPause  ControlKind = "pause"
+	ControlResume ControlKind = "resume"
+)
+
 // Record is a job as jobs.json holds it: everything but its environment,
 // which is in the job's spec.json.
 type Record struct {
@@ -265,15 +275,49 @@ type Record struct {
 
 	// Key is the submission's idempotency key (Submit.Key), "" for none.
 	Key string `json:"key,omitempty"`
+
+	// Job controls (spec 2026-11-16-job-controls §4): the owner started it
+	// past the queue (start now), parked it, or paused it. Unparked is its
+	// last unpark (QueuedSince); PausedAt is set while it is paused and
+	// PausedSecs sums this attempt's earlier pauses; Control is a pause or
+	// resume asked for and not yet carried out, ControlErr the last failed
+	// one's error.
+	Forced         bool        `json:"forced,omitempty"`
+	Parked         bool        `json:"parked,omitempty"`
+	Unparked       time.Time   `json:"unparked,omitzero"`
+	PausedAt       time.Time   `json:"paused_at,omitzero"`
+	PausedSecs     int64       `json:"paused_secs,omitempty"`
+	PauseReclaimed bool        `json:"pause_reclaimed,omitempty"`
+	Control        ControlKind `json:"control,omitempty"`
+	ControlErr     string      `json:"control_err,omitempty"`
 }
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
-// with none (a held job, or one from a build before dependent jobs).
+// with none (a held job, or one from a build before dependent jobs), or
+// Unparked when that is later (job controls spec §5.2), so an unparked job's
+// starvation wait starts again.
 func (r Record) QueuedSince() time.Time {
-	if r.Ready.IsZero() {
-		return r.Submitted
+	at := r.Ready
+	if at.IsZero() {
+		at = r.Submitted
 	}
-	return r.Ready
+	if r.Unparked.After(at) {
+		at = r.Unparked
+	}
+	return at
+}
+
+// Paused reports whether the owner has r paused (job controls spec §5.3).
+func (r Record) Paused() bool { return !r.PausedAt.IsZero() }
+
+// PausedFor is how long r has been paused in this attempt as of now: its
+// PausedSecs, plus the current pause while it is paused.
+func (r Record) PausedFor(now time.Time) time.Duration {
+	d := time.Duration(r.PausedSecs) * time.Second
+	if r.Paused() {
+		d += now.Sub(r.PausedAt)
+	}
+	return d
 }
 
 // LentFor is how long r has been lent in this attempt as of now: its

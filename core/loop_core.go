@@ -243,6 +243,11 @@ func (l *Loop) MoveJobToFront(id sched.JobID, req ReqID) {
 	l.do(func(m *Model) { m.MoveJobToFront(id, req) })
 }
 
+// ControlJob runs Model.ControlJob on the loop.
+func (l *Loop) ControlJob(control JobControl, req ReqID) {
+	l.do(func(m *Model) { m.ControlJob(control, req) })
+}
+
 // NotifyJob runs Model.NotifyJob on the loop.
 func (l *Loop) NotifyJob(id sched.JobID, req ReqID) {
 	l.do(func(m *Model) { m.NotifyJob(id, req) })

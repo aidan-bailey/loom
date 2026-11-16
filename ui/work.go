@@ -579,6 +579,23 @@ func workRowFacts(j core.JobView, now time.Time) (claim string, claimStyle lipgl
 		case j.Borrower:
 			extra += "  borrowing"
 		}
+		switch {
+		case j.Control == sched.ControlPause:
+			extra += "  pausing…"
+		case j.Control == sched.ControlResume:
+			extra += "  resuming…"
+		case !j.PausedAt.IsZero():
+			extra += "  paused " + sched.RoughDuration(now.Sub(j.PausedAt))
+			if !j.PauseReclaimed {
+				extra += ", CPU only"
+			}
+		}
+		if j.ControlErr != "" {
+			extra += "  " + j.ControlErr
+		}
+		if j.Forced {
+			extra += "  forced"
+		}
 		if j.Explored {
 			extra += fmt.Sprintf("  exploring %d cores (was %d)", j.Claim.CPUs, j.Claim.CPUs-j.Spare.CPUs)
 		}

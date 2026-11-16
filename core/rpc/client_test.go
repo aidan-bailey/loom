@@ -842,6 +842,8 @@ func TestQueueRequests_ThroughTheClient(t *testing.T) {
 		{"a cancel from an unknown source", func(req core.ReqID) { c.CancelJob(2, core.CancelFrom("web"), req) }, `cancel job 2: unknown source "web"`},
 		{"a move of a job that isn't waiting", func(req core.ReqID) { c.MoveJobToFront(4, req) }, "job 4 isn't waiting"},
 		{"a move of a job that doesn't exist", func(req core.ReqID) { c.MoveJobToFront(99, req) }, "there is no job 99"},
+		{"a control of a job that doesn't exist", func(req core.ReqID) { c.ControlJob(core.JobControl{Job: 99, Action: core.JobPark}, req) }, "there is no job 99"},
+		{"a pause of a job that isn't running", func(req core.ReqID) { c.ControlJob(core.JobControl{Job: 3, Action: core.JobPause}, req) }, "job 3 is not running"},
 		{"a notice for a job with no owner", func(req core.ReqID) { c.NotifyJob(2, req) }, "job 2 has no owner"},
 		{"caps outside the bounds", func(req core.ReqID) { c.SetSchedulerCaps(config.SchedulerSettings{CPUs: -1}, req) }, "scheduler.cpus is -1"},
 	} {
