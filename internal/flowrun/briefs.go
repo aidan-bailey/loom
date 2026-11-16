@@ -114,8 +114,27 @@ func ReviewBrief(st *State, s *Story, base, head, conformance, devReport string)
 	fmt.Fprintf(&b, "The output of loom flow conformance for it is in %s.\n", conformance)
 	fmt.Fprintf(&b, "The developer's report, with its deviations, is %s.\n", devReport)
 	fmt.Fprintf(&b, "Its Interfaces line: %s\nThe Interfaces lines of the earlier stories it uses are in the plan.\n", s.Interfaces)
+	b.WriteString(formNote(s, base, head))
 	fmt.Fprintf(&b, "\n[reviewer]\n%s\n", st.Blocks.Reviewer)
 	return b.String()
+}
+
+// formNote is what a review brief adds for a story whose plan holds no
+// code of its own (plan treatment spec §4.2): how to read a mechanical
+// story's move diff, or that a brief story's code is judged against its
+// text. A full story, or one from before forms, gets nothing.
+func formNote(s *Story, base, head string) string {
+	switch s.Form {
+	case "mechanical":
+		return fmt.Sprintf("\nIts Form is mechanical: it moves, renames or rewires code and invents none. Read its diff with "+
+			"`git diff --color-moved=plain --color-moved-ws=allow-indentation-change %s..%s`; check that each item its "+
+			"tasks' tables name arrived unchanged except for the paths and visibility the table gives; review only the "+
+			"lines that are not moves.\n", base, head)
+	case "brief":
+		return "\nIts Form is brief: the plan gives its behaviour and its tests, not its code, so loom flow conformance " +
+			"covers none of it. Judge the code against the story's text, the names contract and the spec.\n"
+	}
+	return ""
 }
 
 // ReReviewBrief is the brief of a re-review of a fix round.

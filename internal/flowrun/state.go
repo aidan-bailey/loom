@@ -85,6 +85,7 @@ type Story struct {
 	Developer  string   `json:"developer"`
 	Tier       string   `json:"tier"`
 	Review     string   `json:"review"`
+	Form       string   `json:"form,omitempty"` // full, mechanical or brief (plan treatment spec §4); empty reads as full; Restory never moves it
 	Landmines  []string `json:"landmines,omitempty"`
 	Interfaces string   `json:"interfaces,omitempty"`
 	Verify     string   `json:"verify,omitempty"`
@@ -242,8 +243,9 @@ func (st *State) Answer(text, session, from, head string) error {
 // Restory takes a parked run's stories from check-plan's fresh reading of
 // an edited plan (feedback thread 14): by story ID, each story's range and
 // the fields only its briefs read (Verify, Interfaces, Landmines). Its
-// developer, tier and review stay as the run started, since they choose
-// the roles a replay follows; kept says where the plan now differs. It
+// developer, tier, review and form stay as the run started, since they
+// choose the roles a replay follows and the briefs it compares; kept says
+// where the plan now differs. It
 // refuses, changing nothing, when the plan's stories aren't the run's in
 // the same order. Rows and the memo are left as they are.
 func (st *State) Restory(fresh []Story) (kept []string, err error) {
@@ -268,11 +270,22 @@ func (st *State) Restory(fresh []Story) (kept []string, err error) {
 			kept = append(kept, fmt.Sprintf("Story %s's developer, tier and review stay %s, %s and %s (the plan now says %s, %s and %s)",
 				s.ID, s.Developer, s.Tier, s.Review, f.Developer, f.Tier, f.Review))
 		}
+		if formOf(f) != formOf(*s) {
+			kept = append(kept, fmt.Sprintf("Story %s's form stays %s (the plan now says %s)", s.ID, formOf(*s), formOf(f)))
+		}
 		if f.Lane != s.Lane {
 			kept = append(kept, fmt.Sprintf("Story %s %s, as the run started (the plan now says it %s)", s.ID, laneWords(s.Lane), laneWords(f.Lane)))
 		}
 	}
 	return kept, nil
+}
+
+// formOf is a story's form, full when its plan or run gave none.
+func formOf(s Story) string {
+	if s.Form == "" {
+		return "full"
+	}
+	return s.Form
 }
 
 // laneWords is how a story runs, for Restory's kept lines.

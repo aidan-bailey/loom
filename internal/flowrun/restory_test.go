@@ -46,6 +46,15 @@ func TestRestory(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, [][2]int{{100, 199}, {200, 299}, {300, 399}}, baseRanges(st), "a second edit keeps the base's ranges")
 	})
+	t.Run("a plan that changes a story's form keeps the run's", func(t *testing.T) {
+		st := parked()
+		fresh := []Story{story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"), story("3", "intermediate-dev", "vouched")}
+		fresh[1].Form = "mechanical"
+		kept, err := st.Restory(fresh)
+		require.NoError(t, err)
+		assert.Equal(t, "", st.Stories[1].Form, "the form stays as the run started")
+		assert.Equal(t, []string{"Story 2's form stays full (the plan now says mechanical)"}, kept)
+	})
 	t.Run("a plan that pairs differently keeps the run's lanes", func(t *testing.T) {
 		st := parked()
 		fresh := []Story{story("1", "intermediate-dev", "vouched"), laned(story("2", "junior-dev", "full")), story("3", "intermediate-dev", "vouched")}

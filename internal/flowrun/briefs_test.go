@@ -1,6 +1,7 @@
 package flowrun
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -52,6 +53,27 @@ func TestBriefs(t *testing.T) {
 	golden(t, "premise.golden", PremiseBrief(st, PremiseGroup{Stories: []string{"2"}, Text: "Story 2 (plan:200): 3 premises, 1 flagged\n  plan:212  missing  a.go\n"}))
 	final := Story{ID: finalStory}
 	assert.Contains(t, FixFindingsBrief(st, &final, "h0", "h9", findings, nil, ""), "Fix these review findings in the whole implementation.")
+}
+
+func TestReviewBrief_SaysHowToReadAMechanicalOrBriefStory(t *testing.T) {
+	for _, form := range []string{"mechanical", "brief"} {
+		st, s := briefState()
+		s.Form = form
+		golden(t, "review-"+form+".golden", ReviewBrief(st, s, "h1", "h4", "/state/runs/r/conformance-2-h4.txt", "/state/agents/r-s2-dev1/report.md"))
+	}
+	for _, form := range []string{"full", ""} {
+		st, s := briefState()
+		s.Form = form
+		golden(t, "review.golden", ReviewBrief(st, s, "h1", "h4", "/state/runs/r/conformance-2-h4.txt", "/state/agents/r-s2-dev1/report.md"))
+	}
+}
+
+func TestStory_FormDecodesAndDefaults(t *testing.T) {
+	var formed, plain Story
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"1","tier":"deep","review":"full","form":"mechanical"}`), &formed))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"1","tier":"deep","review":"full"}`), &plain))
+	assert.Equal(t, "mechanical", formed.Form)
+	assert.Equal(t, "", plain.Form, "a plan from before forms gives none, which the briefs read as full")
 }
 
 func TestDeveloperBlock_ALightStoryLosesItsLandmineNotes(t *testing.T) {
