@@ -904,6 +904,8 @@ def records_report(paths: list[str]) -> tuple[str, int]:
     if not runs:
         return "agent_costs: no run records with an agent-costs comment", 1
     plan_code = "\n\n" + plan_measures.table(measures) if measures else ""
+    estimate = plan_measures.estimate_table(measures)
+    plan_code += "\n\n" + estimate if estimate else ""
     groups: dict[Path, list[tuple[str, dict]]] = {}
     for path, data in runs:
         groups.setdefault(Path(path).resolve().parent, []).append((path, data))

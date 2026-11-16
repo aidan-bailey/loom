@@ -86,20 +86,11 @@ def chosen_runs(top: Path, given: list[Path] | None, min_runs: int) -> tuple[lis
     return pooled, f"{len(pooled)} engine runs, pooled"
 
 
-def draft_by_form(run: plan_measures.RunMeasures) -> dict[str, tuple[int, float]]:
-    """A run's drafting by form: its Design stage line's forms, else all its stories full at its drafting less its reviews."""
-    if run.forms_draft:
-        return run.forms_draft
-    if run.draft_usd is None or not run.stories:
-        return {}
-    return {"full": (run.stories, run.draft_usd - (run.skeleton_usd or 0.0) - (run.review_usd or 0.0))}
-
-
 def pooled_form(runs: list[plan_measures.RunMeasures], form: str, stage: str) -> tuple[int, float]:
     """A form's stories and USD at a stage ("draft" or "run") over the runs."""
     stories, usd = 0, 0.0
     for run in runs:
-        by_form = draft_by_form(run) if stage == "draft" else run.forms_run
+        by_form = plan_measures.draft_by_form(run) if stage == "draft" else run.forms_run
         n, amount = by_form.get(form, (0, 0.0))
         stories, usd = stories + n, usd + amount
     return stories, usd
@@ -110,7 +101,7 @@ def form_figures(runs: list[plan_measures.RunMeasures], priors: dict) -> tuple[d
     min_stories = priors["estimate"]["min_stories"]
     figures: dict[str, dict[str, float]] = {}
     bases: dict[str, str] = {}
-    full_runs = sum(1 for run in runs if draft_by_form(run).get("full") or run.forms_run.get("full"))
+    full_runs = sum(1 for run in runs if plan_measures.draft_by_form(run).get("full") or run.forms_run.get("full"))
     full: dict[str, float] = {}
     for stage in ("draft", "run"):
         n, usd = pooled_form(runs, "full", stage)

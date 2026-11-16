@@ -87,7 +87,19 @@ skeleton, and the owner clears twice: once before `/flow:draft`, once before
    until it passes: the names contract's rules and the story list
    ([the skeleton](#the-skeleton)). When the spec splits into an epic, it
    writes only the next part's skeleton ([epics](#epics)).
-3. Commits the spec and the skeleton by pathspec and hands over: the owner
+3. Proposes how the plan is written and what it will cost. It writes each
+   entry's **Form** line with a one-line reason ([story forms](#story-forms)),
+   runs `loom flow estimate <plan>`, and shows the owner the forms, their
+   reasons and the estimate: a row a story with what a full story would cost
+   as mechanical or brief, the draft and run totals, the design session's
+   spend so far, and each figure's basis (the records, or a prior from loom's
+   `flow/lib/estimates.toml`). It changes the forms the owner changes and runs
+   the estimate again until the owner approves, then writes the `**Budget:**`
+   line the estimate prints into the skeleton's head, beside the `**Spec:**`
+   line, and runs the skeleton check again. A plan that moved code between
+   crates once cost $171 before anything ran, a figure no one saw coming (the
+   owner, 2026-11-16).
+4. Commits the spec and the skeleton by pathspec and hands over: the owner
    types `/clear`, then `/flow:draft <plan>`. The design session doesn't
    draft, check or review.
 
@@ -151,7 +163,10 @@ It holds, in order:
   `**Spec:**` line, and, when stories may overlap under `/flow:run`, a
   `**Parallel:**` line ([parallel pairs](#parallel-pairs)); for a part of an
   epic, a `**Part:** N of M` line ([epics](#epics)); for a plan over the
-  story budget, a `**Size:**` line with its reason;
+  story budget, a `**Size:**` line with its reason; and the owner's
+  approved `**Budget:** draft $<X>; run $<Y> (estimate YYYY-MM-DD)` line,
+  which `/flow:draft`'s Design stage line and the run's record measure each
+  stage against;
 - the file structure;
 - the names contract: every name, type and signature one story defines for
   another, such as functions and their signatures, types and their fields,

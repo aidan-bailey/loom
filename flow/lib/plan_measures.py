@@ -173,6 +173,52 @@ def run_forms(text: str, stories: list[dict[str, str]], run_usd: float) -> dict[
     return forms
 
 
+def draft_by_form(run: RunMeasures) -> dict[str, tuple[int, float]]:
+    """A run's drafting by form: its Design stage line's forms, else all its stories full at its drafting less its
+    skeleton and plan reviews (the plan treatment spec's Part 2 settlements); empty when it has no drafting figure."""
+    if run.forms_draft:
+        return run.forms_draft
+    if run.draft_usd is None or not run.stories:
+        return {}
+    return {"full": (run.stories, run.draft_usd - (run.skeleton_usd or 0.0) - (run.review_usd or 0.0))}
+
+
+def signed(actual: float | None, budget: float | None) -> str:
+    """How far actual ran from budget, as a signed whole percentage."""
+    if actual is None or not budget:
+        return "n/a"
+    return f"{(actual - budget) * 100 / budget:+.0f}%"
+
+
+def estimate_table(runs: list[RunMeasures]) -> str:
+    """The Estimate section: each budgeted run against its budget, then each form's cost a story; "" when no run
+    has a budget or a form other than full (the plan treatment spec §6)."""
+    budgeted = [r for r in runs if r.budget_draft is not None or r.budget_run is not None]
+    formed = any(r.forms_draft or set(r.forms_run) - {"full"} for r in runs)
+    if not budgeted and not formed:
+        return ""
+    lines = [
+        "## Estimate", "",
+        "Each run with a Budget line against the budget the owner approved, then each form's cost a story over every "
+        "engine run. Every figure is all-inclusive: a stage's cost no story owns is spread evenly over its stories, and "
+        "the drafting excludes the skeleton and plan reviews. Logged USD.", "",
+        "| Run | Draft budget | Draft | Draft error | Run budget | Run | Run error |", "|---|" + "---:|" * 6,
+    ]
+    for r in budgeted:
+        lines.append(f"| {r.name} | {usd(r.budget_draft)} | {usd(r.draft_usd)} | {signed(r.draft_usd, r.budget_draft)} | "
+                     f"{usd(r.budget_run)} | {usd(r.run_usd)} | {signed(r.run_usd, r.budget_run)} |")
+    lines += ["", "| Form | Stories drafted | Draft a story | Stories run | Run a story |", "|---|" + "---:|" * 4]
+    for form in ("full", "mechanical", "brief"):
+        drafted = [draft_by_form(r).get(form, (0, 0.0)) for r in runs]
+        ran = [r.forms_run.get(form, (0, 0.0)) for r in runs]
+        n_draft, usd_draft = sum(n for n, _ in drafted), sum(u for _, u in drafted)
+        n_run, usd_run = sum(n for n, _ in ran), sum(u for _, u in ran)
+        if n_draft or n_run:
+            lines.append(f"| {form} | {n_draft} | {usd(usd_draft / n_draft if n_draft else None)} | {n_run} | "
+                         f"{usd(usd_run / n_run if n_run else None)} |")
+    return "\n".join(lines)
+
+
 def usd(value: float | None) -> str:
     return "n/a" if value is None else f"${value:,.2f}"
 

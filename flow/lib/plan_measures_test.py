@@ -136,3 +136,21 @@ class TableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EstimateTableTest(unittest.TestCase):
+    def test_the_estimate_table_gives_each_budgeted_run_and_each_form(self):
+        budgeted = plan_measures.measure("budgeted", FORMED, 40.0)
+        older = plan_measures.measure("older", RECORD, 40.0)
+        out = plan_measures.estimate_table([budgeted, older])
+        self.assertIn("## Estimate", out)
+        # Draft $20 against $25, run $40 against $50.
+        self.assertIn("| budgeted | $25.00 | $20.00 | -20% | $50.00 | $40.00 | -20% |", out)
+        self.assertNotIn("| older |", out, "a run without a budget has no row")
+        # Drafting: budgeted's forms (full 2 $9, mechanical 1 $3) and older's 3 full at $20 less its $6 plan review.
+        # Run: budgeted's full 2 and mechanical 1 (5 + 10/3), and older's 3 full at $40.
+        self.assertIn("| full | 5 | $4.60 | 5 |", out)
+        self.assertIn("| mechanical | 1 | $3.00 | 1 | $8.33 |", out)
+
+    def test_no_budget_no_table(self):
+        self.assertEqual(plan_measures.estimate_table([plan_measures.measure("older", RECORD, 40.0)]), "")
