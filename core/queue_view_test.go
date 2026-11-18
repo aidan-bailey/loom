@@ -212,6 +212,8 @@ func TestJobView_StartFailed(t *testing.T) {
 		{"failed with the reason and an exec error", JobView{State: sched.Failed, Failure: "x", Exit: &sched.Exit{Code: 127, Error: "y"}}, true},
 		{"failed with a non-zero exit", JobView{State: sched.Failed, Exit: &sched.Exit{Code: 2}}, false},
 		{"failed by a signal", JobView{State: sched.Failed, Exit: &sched.Exit{Code: -1, Signal: "SIGKILL"}}, false},
+		{"killed for memory: the reason beside a signal", JobView{State: sched.Failed, Failure: "the kernel killed it: out of memory",
+			Exit: &sched.Exit{Code: -1, Signal: "SIGKILL"}}, false},
 		{"done", JobView{State: sched.Done, Exit: &sched.Exit{}}, false},
 		{"cancelled with no exit record", JobView{State: sched.Cancelled}, false},
 		{"lost with no exit record", JobView{State: sched.Lost, Failure: "gone"}, false},

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -253,6 +255,31 @@ func TestJobQueue_ACancelledJobThatIgnoresSIGTERMGetsSIGKILLAfterTheEscalation(t
 
 	assert.Equal(t, sched.Cancelled, rec.State)
 	assert.Nil(t, rec.Exit, "SIGKILL took the shim with it, so nothing reported")
+}
+
+// A cancel reaches what left the job's group but not its session: coreutils
+// timeout runs in a group of its own, so the group's SIGTERM and SIGKILL
+// alone end only the shim, and the command runs on, unwatched, past a job
+// that settled cancelled. Linux, whose sample knows each process's session.
+func TestJobQueue_ACancelReachesWhatLeftTheJobsGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux's sample knows a process's session")
+	}
+	timeout, err := exec.LookPath("timeout")
+	if err != nil {
+		t.Skip("no coreutils timeout")
+	}
+	m := wqLiveModel(t)
+	m.queue.escalation = 300 * time.Millisecond
+	beat := filepath.Join(t.TempDir(), "beat")
+	id := wqLaunch(t, m, timeout, "600", "sh", "-c", wqBeatScript, "sh", beat)
+	wqWait(t, "the first beat", func() bool { _, err := os.Stat(beat); return err == nil })
+	m.queue.store.Jobs[m.queue.index(id)].CancelReason = "from the work view"
+
+	rec := wqSettle(t, m, id)
+
+	assert.Equal(t, sched.Cancelled, rec.State)
+	assert.False(t, wqBeats(beat), "the command that left the shim's group stopped")
 }
 
 // A shim that vanished without writing its result leaves a lost job, and its

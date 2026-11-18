@@ -106,6 +106,9 @@ func jobOutcome(v core.JobView) (line string, code int) {
 	case sched.Failed:
 		sig, exit, ran := ranAs(v)
 		switch {
+		case ran && sig != "" && v.Failure != "":
+			// Killed for memory: the reason is loom's or the kernel's.
+			return fmt.Sprintf("job %d was killed by %s after %s (%s)", v.ID, sig, took, v.Failure), signalExit(sig)
 		case ran && sig != "":
 			return fmt.Sprintf("job %d was killed by %s after %s", v.ID, sig, took), signalExit(sig)
 		case ran:

@@ -251,6 +251,9 @@ func noticeHead(rec sched.Record, after string) string {
 		what = "could not start: " + startFailReason(rec)
 	case rec.Exit != nil && rec.Exit.Signal != "":
 		what = "was killed by " + rec.Exit.Signal
+		if rec.Failure != "" {
+			what += " (" + rec.Failure + ")" // killed for memory
+		}
 	case rec.Exit != nil:
 		what = fmt.Sprintf("finished: exit %d", rec.Exit.Code)
 	default:

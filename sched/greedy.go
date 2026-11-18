@@ -58,6 +58,8 @@ type greedyFit struct {
 	exclusive JobID   // a running or started exclusive job
 	any       bool    // a job runs or has started
 	onMemory  []JobID // the jobs fits failed on memory alone
+	paused    JobID   // a paused job, 0 for none
+	pausedUse []Prediction
 }
 
 func (f *greedyFit) count(r Record) {
@@ -76,6 +78,10 @@ func (f *greedyFit) add(r Record, pred Prediction) {
 	case r.Paused():
 		// Memory only (job controls spec §7.2): pred is its use, flat.
 		f.preds = append(f.preds, pred)
+		f.pausedUse = append(f.pausedUse, pred)
+		if f.paused == 0 {
+			f.paused = r.ID
+		}
 		return
 	case r.Claim.Exclusive:
 		f.exclusive = r.ID
@@ -127,21 +133,34 @@ func (f *greedyFit) fits(r Record) string {
 	return fmt.Sprintf("needs ~%d GB at its peak (forecast leaves %d)", need, left)
 }
 
-// alone is why r's predicted peak passes the budget by itself. The budget
-// counts what the running jobs use as free (Budget), so no job's end makes
-// room for r; nor can a borrow, whose fit adds to the same peak. An
-// exclusive claim waits only for the host to empty, never on memory, and
-// under the ladder's holdoff, which starts nothing, the holdoff says why.
+// alone is why r's predicted peak passes the budget by itself, or beside
+// the paused jobs' use, which only the owner's resume ends (job controls
+// spec §7.2). The budget counts what the running jobs use as free (Budget),
+// so no job's end makes room for r; nor can a borrow, whose fit adds to the
+// same peak. An exclusive claim waits only for the host to empty, never on
+// memory, so only while no job is paused; and under the ladder's holdoff,
+// which starts nothing, the holdoff says why.
 func (f *greedyFit) alone(r Record) string {
-	if r.Claim.Exclusive || f.g.Holdoff != "" {
+	switch {
+	case f.g.Holdoff != "":
+		return ""
+	case r.Claim.Exclusive && f.paused != 0:
+		return fmt.Sprintf("waits for job %d, which you paused", f.paused)
+	case r.Claim.Exclusive:
 		return ""
 	}
 	cand := f.g.Predict(r, f.now)
-	peak := PeakSum([]Prediction{cand}, f.now, cand.End())
-	if peak <= f.g.BudgetKB {
-		return ""
+	end := cand.End()
+	peak := PeakSum([]Prediction{cand}, f.now, end)
+	need := (peak + kbPerGB - 1) / kbPerGB
+	switch {
+	case peak > f.g.BudgetKB:
+		return fmt.Sprintf("needs ~%d GB at its peak (the host leaves %d with no job running)", need, f.g.BudgetKB/kbPerGB)
+	case len(f.pausedUse) > 0 && PeakSum(append(slices.Clone(f.pausedUse), cand), f.now, end) > f.g.BudgetKB:
+		left := max(0, f.g.BudgetKB-PeakSum(f.pausedUse, f.now, end)) / kbPerGB
+		return fmt.Sprintf("needs ~%d GB at its peak (the host leaves %d beside the jobs you paused)", need, left)
 	}
-	return fmt.Sprintf("needs ~%d GB at its peak (the host leaves %d with no job running)", (peak+kbPerGB-1)/kbPerGB, f.g.BudgetKB/kbPerGB)
+	return ""
 }
 
 // pausedHorizon is how long a paused job's prediction lasts: longer than any
