@@ -544,6 +544,29 @@ func (l *Layer) routeStream(m *http.ServeMux) {
 	}))
 }
 
+// streamEvent is one event of the stream: its SSE name and its payload's type.
+type streamEvent struct {
+	name string
+	data reflect.Type
+}
+
+// streamEvents is the stream's events table, which the generator reads for
+// the app's event map: every event the stream sends, with its payload's type.
+// ping and bye carry {}.
+func streamEvents() []streamEvent {
+	return []streamEvent{
+		{"snapshot", reflect.TypeFor[snapshotJSON]()},
+		{"sessions", reflect.TypeFor[sessionsJSON]()},
+		{"workspaces", reflect.TypeFor[workspacesJSON]()},
+		{"usage", reflect.TypeFor[usageEventJSON]()},
+		{"quick_replies", reflect.TypeFor[quickRepliesJSON]()},
+		{"device", reflect.TypeFor[deviceJSON]()},
+		{"notice", reflect.TypeFor[noticeJSON]()},
+		{"ping", reflect.TypeFor[struct{}]()},
+		{"bye", reflect.TypeFor[struct{}]()},
+	}
+}
+
 // serveStream writes device's stream until the client leaves, the hub ends
 // it, or a write fails. It sets the device cookie again first, so a device in
 // use never expires, and answers 503 when the limits refuse it.

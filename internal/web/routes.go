@@ -264,8 +264,7 @@ func lifecycleDoc(request string) string {
 	return "The " + request + " request of the session: 200 with its notices, 409 with the model's own words when it refuses, and 202 `{\"pending\": true}` when it is still running after 30 s, its outcome then arriving on the stream."
 }
 
-// routes is the table, in registration order. Story 2 of the web foundation
-// moves the other routes onto it.
+// routes is the table, in registration order.
 func (l *Layer) routes() []route {
 	return []route{
 		typed(l, spec{
@@ -356,6 +355,18 @@ func (l *Layer) routes() []route {
 			method: http.MethodDelete, path: "/api/v1/device", log: "unpair", client: "deleteDevice", ok: http.StatusNoContent,
 			doc: "Unpairs this phone: the model forgets the device, which ends its streams and drops its subscription, and the cookie is cleared. 204, a device already gone included.",
 		}, l.deleteDevice),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/pair", open: true, client: "pair", ok: http.StatusOK,
+			doc: "`{code}`: trades a pairing code for the device cookie and answers `{\"device\": \"<name>\"}`. The one route served without a cookie. A wrong or used code is 400, too many wrong ones 429, a name taken or 16 devices paired 409, the web off 503, and any other failure a fixed 500.",
+		}, l.pair),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/push-key", client: "pushKey", ok: http.StatusOK,
+			doc: "The VAPID public key the app subscribes with, as unpadded base64url: `{key}`. 503 when push is not available.",
+		}, l.pushKey),
+		page(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/mockup", log: "mockup", client: "mockup", ok: http.StatusOK,
+			doc: "The page the session's brainstorm companion serves now, as HTML under `mockupCSP` with `Cache-Control: no-store`, for the app's iframe. A refusal (409: no companion, or a page refused) or a timeout (504) is a small HTML page that says why, under the same policy.",
+		}, l.readMockup),
 	}
 }
 

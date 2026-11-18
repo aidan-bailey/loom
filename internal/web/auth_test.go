@@ -267,7 +267,7 @@ func TestPair_AnswersWhatTheHostSays(t *testing.T) {
 		{"a failure it does not name", code, errors.New("disk on fire"), http.StatusInternalServerError, []string{"AAAA-AAAA"}, nil, "pairing failed"},
 		{"a field the route does not take", `{"code": "AAAA-AAAA", "name": "x"}`, nil, http.StatusBadRequest, nil, nil, "unknown field"},
 		{"a code of the wrong type", `{"code": 7}`, nil, http.StatusBadRequest, nil, nil, "not the JSON"},
-		{"no body", ``, nil, http.StatusBadRequest, nil, nil, "empty"},
+		{"no body", ``, nil, http.StatusBadRequest, nil, nil, "bad request: the body is empty"},
 		{"a code far too long", `{"code": "` + strings.Repeat("A", maxCodeLen+1) + `"}`, nil, http.StatusBadRequest, nil, nil, "too long"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

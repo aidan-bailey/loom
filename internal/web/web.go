@@ -86,15 +86,12 @@ func (l *Layer) addSink(s sink) {
 	l.sinks = append(l.sinks, s)
 }
 
-// mux is the layer's routes, one registrar per part.
+// mux is the layer's routes, the table's routes, the stream and the static files.
 func (l *Layer) mux() *http.ServeMux {
 	m := http.NewServeMux()
-	l.routePair(m)
-	l.routeStream(m)
-	l.routeAPI(m)
 	l.registerRoutes(m)
+	l.routeStream(m)
 	l.routeStatic(m)
-	l.routePush(m)
 	return m
 }
 

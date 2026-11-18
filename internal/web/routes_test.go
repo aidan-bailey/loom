@@ -533,12 +533,13 @@ func concretePath(path string) string {
 }
 
 func TestRoutes_OnlyPairIsOpen(t *testing.T) {
+	var open []string
 	for _, rt := range (&Layer{}).routes() {
-		key := rt.spec.method + " " + rt.spec.path
 		if rt.spec.open {
-			assert.Equal(t, "POST /api/v1/pair", key, "an open route is served to anyone: only the pairing route may be")
+			open = append(open, rt.spec.method+" "+rt.spec.path)
 		}
 	}
+	assert.Equal(t, []string{"POST /api/v1/pair"}, open, "an open route is served to anyone: the pairing route, and only it, must be")
 }
 
 func TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice(t *testing.T) {
@@ -808,4 +809,96 @@ func TestRoutes_TheDeviceRoutesAreOnTheTable(t *testing.T) {
 		{http.MethodDelete, "/api/v1/device/push", "deletePush", http.StatusNoContent, nil, nil, nil},
 		{http.MethodDelete, "/api/v1/device", "deleteDevice", http.StatusNoContent, nil, nil, nil},
 	})
+}
+
+// typeProblem says what is wrong with t as a route's query, body or response
+// type, "" when nothing is: Story 5's generator takes JSON names from named
+// types, so only struct{} (no data) may be unnamed.
+func typeProblem(t reflect.Type) string {
+	if t == nil || t == reflect.TypeFor[struct{}]() {
+		return ""
+	}
+	if t.Name() == "" {
+		return "unnamed type " + t.String()
+	}
+	return ""
+}
+
+func TestRoutes_TypesAreNamed(t *testing.T) {
+	assert.Empty(t, typeProblem(nil))
+	assert.Empty(t, typeProblem(reflect.TypeFor[struct{}]()))
+	assert.Empty(t, typeProblem(reflect.TypeFor[echoBody]()))
+	assert.NotEmpty(t, typeProblem(reflect.TypeFor[struct{ Code string }]()), "an unnamed struct is refused")
+
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		assert.Empty(t, typeProblem(rt.query), "%s: query", key)
+		assert.Empty(t, typeProblem(rt.body), "%s: body", key)
+		assert.Empty(t, typeProblem(rt.resp), "%s: resp", key)
+	}
+}
+
+func TestRoutes_TheTableHoldsExactlyTheRoutesOfTheAPI(t *testing.T) {
+	want := []string{
+		"POST /api/v1/pair pair",
+		"GET /api/v1/push-key pushKey",
+		"POST /api/v1/sessions create",
+		"GET /api/v1/launch-defaults launchDefaults",
+		"POST /api/v1/sessions/{id}/send send",
+		"POST /api/v1/sessions/{id}/asks/{ask}/answer answer",
+		"POST /api/v1/sessions/{id}/merge merge",
+		"POST /api/v1/sessions/{id}/pause pause",
+		"POST /api/v1/sessions/{id}/resume resume",
+		"POST /api/v1/sessions/{id}/kill kill",
+		"POST /api/v1/sessions/{id}/push push",
+		"GET /api/v1/sessions/{id}/message message",
+		"GET /api/v1/sessions/{id}/turns turns",
+		"GET /api/v1/sessions/{id}/diff diff",
+		"GET /api/v1/sessions/{id}/mockup mockup",
+		"GET /api/v1/sessions/{id}/jobs/{job}/log jobLog",
+		"POST /api/v1/sessions/{id}/jobs/{job}/{action} jobControl",
+		"GET /api/v1/sessions/{id}/flow flow",
+		"GET /api/v1/sessions/{id}/flow/doc flowDoc",
+		"GET /api/v1/flows flows",
+		"PUT /api/v1/device putDevice",
+		"PUT /api/v1/quick-replies putQuickReplies",
+		"POST /api/v1/device/push postPush",
+		"DELETE /api/v1/device/push deletePush",
+		"DELETE /api/v1/device deleteDevice",
+	}
+	var got []string
+	for _, rt := range (&Layer{}).routes() {
+		got = append(got, rt.spec.method+" "+rt.spec.path+" "+rt.spec.client)
+	}
+	assert.ElementsMatch(t, want, got, "every route under /api/v1 but the stream is declared once, in the table")
+}
+
+func TestRoutes_PairAndPushKeyAndTheMockup(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPost, "/api/v1/pair", "pair", http.StatusOK, nil, reflect.TypeFor[pairBody](), reflect.TypeFor[pairJSON]()},
+		{http.MethodGet, "/api/v1/push-key", "pushKey", http.StatusOK, nil, nil, reflect.TypeFor[pushKeyJSON]()},
+	})
+	assert.Empty(t, routeOf(t, &Layer{}, http.MethodPost, "/api/v1/pair").spec.log, "pair logs for itself")
+	assert.Empty(t, routeOf(t, &Layer{}, http.MethodGet, "/api/v1/push-key").spec.log, "so does the push key")
+
+	mockup := routeOf(t, &Layer{}, http.MethodGet, "/api/v1/sessions/{id}/mockup")
+	assert.True(t, mockup.page, "the mockup is a page the generated client only builds the URL of")
+	assert.Equal(t, "mockup", mockup.spec.client)
+	assert.Nil(t, mockup.resp)
+	assert.Nil(t, mockup.query)
+	assert.Nil(t, mockup.body)
+}
+
+func TestRoutes_TheOpenEntryIsServedToARequestWithNoCookie(t *testing.T) {
+	host := &scriptedHost{name: "iPhone", token: deviceToken(7)}
+	l := &Layer{host: host}
+	m := http.NewServeMux()
+	l.registerRoutes(m)
+	rec := httptest.NewRecorder()
+
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pair", strings.NewReader(`{"code": "k7qm-2xpa"}`)))
+
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"k7qm-2xpa"}, host.redeemed, "the pair handler ran, with no cookie and so no device")
+	assert.JSONEq(t, `{"device":"iPhone"}`, rec.Body.String())
 }

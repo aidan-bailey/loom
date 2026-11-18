@@ -1160,3 +1160,74 @@ func TestStream_TheWorkspacesFollowTheOpenTabs(t *testing.T) {
 		assert.False(t, w.Shown, "%q is no tab and has no live session", w.Label)
 	}
 }
+
+func TestStreamEvents_NameThePayloadOfEveryEventTheStreamSends(t *testing.T) {
+	var names []string
+	types := map[string]reflect.Type{}
+	for _, e := range streamEvents() {
+		names = append(names, e.name)
+		types[e.name] = e.data
+	}
+
+	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "device", "notice", "ping", "bye"}, names)
+	assert.Equal(t, reflect.TypeFor[snapshotJSON](), types["snapshot"])
+	assert.Equal(t, reflect.TypeFor[sessionsJSON](), types["sessions"])
+	assert.Equal(t, reflect.TypeFor[workspacesJSON](), types["workspaces"])
+	assert.Equal(t, reflect.TypeFor[usageEventJSON](), types["usage"])
+	assert.Equal(t, reflect.TypeFor[quickRepliesJSON](), types["quick_replies"])
+	assert.Equal(t, reflect.TypeFor[deviceJSON](), types["device"])
+	assert.Equal(t, reflect.TypeFor[noticeJSON](), types["notice"])
+	assert.Equal(t, reflect.TypeFor[struct{}](), types["ping"], "a ping carries {}")
+	assert.Equal(t, reflect.TypeFor[struct{}](), types["bye"])
+	assert.Contains(t, names, pingFrame.event, "the frame the stream writes for a ping is in the table")
+	assert.Contains(t, names, byeFrame.event)
+}
+
+func TestStreamEvents_EveryFrameTheHubSendsIsInTheTableWithItsPayloadType(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	e.tune(func(h *hub) { h.ping = 30 * time.Millisecond })
+	s := e.open(t, e.cookie)
+	table := map[string]reflect.Type{}
+	for _, ev := range streamEvents() {
+		table[ev.name] = ev.data
+	}
+	seen := map[string]bool{}
+	check := func(f streamFrame) {
+		t.Helper()
+		typ, ok := table[f.Event]
+		if !assert.True(t, ok, "the hub sent %q, which streamEvents() does not name", f.Event) {
+			return
+		}
+		dec := json.NewDecoder(strings.NewReader(string(f.Data)))
+		dec.DisallowUnknownFields()
+		assert.NoError(t, dec.Decode(reflect.New(typ).Interface()), "%s: its data does not fit the table's type %s: %s", f.Event, typ, f.Data)
+		seen[f.Event] = true
+	}
+
+	check(s.next()) // the snapshot, which opens a stream
+	e.change(t, func() { require.NoError(t, e.insts["one"].TransitionTo(session.Prompting)) })
+	require.NoError(t, e.tui.RenameWorkspace("toy", "renamed"))
+	_, err := e.loop.SetQuickReplies([]string{"ship it"})
+	require.NoError(t, err)
+	e.layer.hub.apply([]core.Event{core.AccountsChanged{View: core.AccountsView{
+		Names: core.AccountNames{Present: true, Default: "default", Names: []string{"default"}},
+		Usage: map[string]account.Usage{"default": {Available: true, Plan: "max", FiveHour: &account.Window{Pct: 62}, At: time.Now()}},
+	}}})
+	off := false
+	_, err = e.loop.SetNotify("iPhone", core.NotifyChange{Finished: &off})
+	require.NoError(t, err)
+	e.loop.WebServing("", errors.New("push failed"))
+	for _, ev := range streamEvents() {
+		for ev.name != "bye" && !seen[ev.name] {
+			check(s.next())
+		}
+	}
+	e.layer.Close()
+	for _, f := range s.ended() {
+		check(f)
+	}
+
+	for _, ev := range streamEvents() {
+		assert.True(t, seen[ev.name], "the table names %q, which the hub never sent", ev.name)
+	}
+}

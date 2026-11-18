@@ -65,12 +65,6 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 	writeError(w, status, msg)
 }
 
-// routeAPI registers the sessions' actions under /api/v1. Every route needs
-// a paired device (authed); /pair, /stream and /push-key are other stories'.
-func (l *Layer) routeAPI(m *http.ServeMux) {
-	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
-}
-
 // modelStatus is the HTTP status a failed request earns: the session or the
 // device is not there (404, 401), the daemon can't take the request (503), or
 // the model refused or failed it, in words of its own (409).

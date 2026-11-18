@@ -368,18 +368,17 @@ func pushSleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// routePush adds the push key route to the layer's mux.
-func (l *Layer) routePush(m *http.ServeMux) {
-	m.Handle("GET /api/v1/push-key", l.authed(l.pushKey))
+// pushKeyJSON is the push key route's answer: the VAPID public key.
+type pushKeyJSON struct {
+	Key string `json:"key"`
 }
 
 // pushKey answers the VAPID public key the app subscribes with
 // (pushManager.subscribe's applicationServerKey), as unpadded base64url.
-func (l *Layer) pushKey(w http.ResponseWriter, _ *http.Request, _ string) {
+func (l *Layer) pushKey(_ *call, _ struct{}) (pushKeyJSON, error) {
 	key, err := l.host.VAPIDKey()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "push is not available")
-		return
+		return pushKeyJSON{}, &statusError{http.StatusServiceUnavailable, "push is not available"}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"key": base64.RawURLEncoding.EncodeToString(key.Public)})
+	return pushKeyJSON{Key: base64.RawURLEncoding.EncodeToString(key.Public)}, nil
 }

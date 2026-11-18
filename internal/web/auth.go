@@ -97,11 +97,6 @@ func (l *Layer) deviceByCookie(r *http.Request) (string, bool) {
 	return l.host.DeviceByToken(hash)
 }
 
-// routePair registers the one route a phone can call before it is paired.
-func (l *Layer) routePair(m *http.ServeMux) {
-	m.Handle("POST /api/v1/pair", http.HandlerFunc(l.pair))
-}
-
 // pairRefusals are the host's refusals of a pairing code, with the status
 // the app keys on, tried in order with errors.Is. A wrong code is a 400 and
 // never a 401: the app reads every 401 as "this phone is not paired" and
@@ -117,38 +112,38 @@ var pairRefusals = []struct {
 	{core.ErrWebOff, http.StatusServiceUnavailable},
 }
 
+// pairBody is POST /api/v1/pair.
+type pairBody struct {
+	Code string `json:"code"`
+}
+
+// pairJSON is the pair route's answer: the name the model gave the device.
+type pairJSON struct {
+	Device string `json:"device"`
+}
+
 // pair trades a pairing code for the device cookie. The model decides
 // whether the code is right (it consumes it, counts the misses and makes the
 // device); this maps its answer: a refusal in pairRefusals answers
 // {"error": <the sentinel's own text>}, never the text of what the host
 // wrapped around it, and any other error is a fixed 500, since an error can
 // carry paths or names.
-func (l *Layer) pair(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Code string `json:"code"`
-	}
-	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+func (l *Layer) pair(c *call, body pairBody) (pairJSON, error) {
 	if len(body.Code) > maxCodeLen {
-		writeError(w, http.StatusBadRequest, "the code is too long")
-		return
+		return pairJSON{}, &statusError{http.StatusBadRequest, "the code is too long"}
 	}
 	name, token, err := l.host.RedeemPairing(body.Code)
 	if err == nil {
-		setDeviceCookie(w, token)
+		setDeviceCookie(c.w, token)
 		log.For("web").Info("web.paired", "device", name)
-		writeJSON(w, http.StatusOK, map[string]string{"device": name})
-		return
+		return pairJSON{Device: name}, nil
 	}
 	for _, refusal := range pairRefusals {
 		if errors.Is(err, refusal.err) {
 			log.For("web").Warn("web.pair_refused", "reason", refusal.err.Error())
-			writeError(w, refusal.status, refusal.err.Error())
-			return
+			return pairJSON{}, &statusError{refusal.status, refusal.err.Error()}
 		}
 	}
 	log.For("web").Error("web.pair_failed", "err", err)
-	writeError(w, http.StatusInternalServerError, "pairing failed; the daemon's log says why")
+	return pairJSON{}, &statusError{http.StatusInternalServerError, "pairing failed; the daemon's log says why"}
 }
