@@ -75,7 +75,13 @@
             "exit": null,
             "failure": "",
             "cancel_reason": "",
-            "waiting": ""
+            "waiting": "",
+            "parked": false,
+            "paused": false,
+            "pause_reclaimed": false,
+            "forced": false,
+            "control": "",
+            "control_error": ""
           },
           {
             "id": 215,
@@ -89,7 +95,13 @@
             "exit": null,
             "failure": "",
             "cancel_reason": "",
-            "waiting": "after job 214"
+            "waiting": "after job 214",
+            "parked": false,
+            "paused": false,
+            "pause_reclaimed": false,
+            "forced": false,
+            "control": "",
+            "control_error": ""
           },
           {
             "id": 212,
@@ -105,7 +117,13 @@
             },
             "failure": "",
             "cancel_reason": "",
-            "waiting": ""
+            "waiting": "",
+            "parked": false,
+            "paused": false,
+            "pause_reclaimed": false,
+            "forced": false,
+            "control": "",
+            "control_error": ""
           },
           {
             "id": 209,
@@ -121,11 +139,19 @@
             },
             "failure": "",
             "cancel_reason": "",
-            "waiting": ""
+            "waiting": "",
+            "parked": false,
+            "paused": false,
+            "pause_reclaimed": false,
+            "forced": false,
+            "control": "",
+            "control_error": ""
           }
         ],
         "jobs_label": "⚙ job 214",
-        "jobs_focus": 214
+        "jobs_focus": 214,
+        "asks": [],
+        "flows": []
       },
       {
         "id": 2,
@@ -156,7 +182,9 @@
         "mockup": null,
         "jobs": [],
         "jobs_label": "",
-        "jobs_focus": 0
+        "jobs_focus": 0,
+        "asks": [],
+        "flows": []
       },
       {
         "id": 3,
@@ -187,7 +215,9 @@
         "mockup": null,
         "jobs": [],
         "jobs_label": "",
-        "jobs_focus": 0
+        "jobs_focus": 0,
+        "asks": [],
+        "flows": []
       },
       {
         "id": 7,
@@ -222,7 +252,9 @@
         },
         "jobs": [],
         "jobs_label": "",
-        "jobs_focus": 0
+        "jobs_focus": 0,
+        "asks": [],
+        "flows": []
       }
     ],
     "2": [
@@ -255,7 +287,9 @@
         "mockup": null,
         "jobs": [],
         "jobs_label": "",
-        "jobs_focus": 0
+        "jobs_focus": 0,
+        "asks": [],
+        "flows": []
       },
       {
         "id": 5,
@@ -286,7 +320,9 @@
         "mockup": null,
         "jobs": [],
         "jobs_label": "",
-        "jobs_focus": 0
+        "jobs_focus": 0,
+        "asks": [],
+        "flows": []
       },
       {
         "id": 6,
@@ -337,9 +373,11 @@
             "phase": "story 3",
             "updated": "now-4m",
             "unreadable": "",
-            "spent": 4.71
+            "spent": 4.71,
+            "part": ""
           }
-        ]
+        ],
+        "asks": []
       }
     ]
   },

@@ -17,7 +17,8 @@
         "phase": "story 3",
         "updated": "now-4m",
         "unreadable": "",
-        "spent": 4.71
+        "spent": 4.71,
+        "part": ""
       }
     },
     {
@@ -37,7 +38,8 @@
         "phase": "fix round",
         "updated": "now-20m",
         "unreadable": "",
-        "spent": null
+        "spent": null,
+        "part": ""
       }
     }
   ],

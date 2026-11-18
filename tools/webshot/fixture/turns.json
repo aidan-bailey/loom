@@ -24,25 +24,29 @@
               "tool": "Grep",
               "summary": "cursorVisible",
               "at": "now-29m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Read",
               "summary": "ui/pane.go",
               "at": "now-28m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Bash",
               "summary": "go test ./ui/...",
               "at": "now-26m",
-              "state": "failed"
+              "state": "failed",
+              "finished": false
             },
             {
               "tool": "Edit",
               "summary": "ui/pane.go",
               "at": "now-24m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Agent",
@@ -112,7 +116,8 @@
               "tool": "Bash",
               "summary": "go test ./ui/... -run TestPane",
               "at": "now-4m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Agent",
@@ -126,7 +131,8 @@
               "tool": "Bash",
               "summary": "go test ./ui/...",
               "at": "now-1m",
-              "state": "pending"
+              "state": "pending",
+              "finished": false
             }
           ]
         },

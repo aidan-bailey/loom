@@ -38,25 +38,29 @@
               "tool": "Grep",
               "summary": "drawCursor",
               "at": "now-2m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Read",
               "summary": "ui/pane.go",
               "at": "now-2m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Read",
               "summary": "ui/header.go",
               "at": "now-1m",
-              "state": "done"
+              "state": "done",
+              "finished": false
             },
             {
               "tool": "Grep",
               "summary": "cursorVisible",
               "at": "now-30s",
-              "state": "pending"
+              "state": "pending",
+              "finished": false
             }
           ]
         },
