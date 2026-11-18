@@ -6,7 +6,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { Session, Snapshot, StreamEvents } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { emitNotices, onStopping, onUnpaired } from "@/api/request";
-import { connectStream, type LinkState } from "@/api/stream";
+import { connectStream, RESTART_GRACE, type LinkState } from "@/api/stream";
 import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
 import { setBadge } from "./badge";
 import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
@@ -203,7 +203,8 @@ let running: (() => void) | undefined;
  * Starts the fleet: loads the saved snapshot (the view is stale until the stream's first one),
  * connects the stream into the store, saves at most once a second, sets the badge, and hands each
  * stream notice to the onNotices listeners. A request's 503 with the daemon's stopping text, while
- * the stream is down, keeps the link at "restarting" until the stream is live again. When the
+ * the stream is down, keeps the link at "restarting" until the stream is live again or RESTART_GRACE
+ * (30 s) has passed, then the link follows the stream. When the
  * device is no longer paired (any request's 401 or the stream's) it closes the stream and clears the
  * store, the saved snapshot, the cached queries and the badge; it never navigates. Starting again
  * stops the previous start. It returns its stop.
@@ -213,8 +214,12 @@ export function startFleet(): () => void {
   let stopped = false;
   const epoch = cleared;
   // Set by a request's stopping 503 while the stream is down: the daemon is restarting, so the link
-  // says so (not "offline") until the stream is live again.
+  // says so (not "offline") until the stream is live again, or RESTART_GRACE passes (the stream's
+  // own bye gets no longer): then the footer follows the stream's state again.
   let stopping = false;
+  let stoppingTimer: ReturnType<typeof setTimeout> | undefined;
+  // The stream's last reported state, which the link falls back to once the grace is over.
+  let streamState: LinkState = "connecting";
 
   void loadSnapshot().then((saved) => {
     // A clear since the load began is an unpairing: the saved fleet is the revoked device's.
@@ -228,7 +233,11 @@ export function startFleet(): () => void {
       afterEvent({ name, data } as unknown as AnyEvent);
     },
     onLink(state) {
-      if (state === "live") stopping = false;
+      streamState = state;
+      if (state === "live") {
+        stopping = false;
+        clearTimeout(stoppingTimer);
+      }
       useFleet.getState().setLink(stopping && state === "offline" ? "restarting" : state);
     },
   });
@@ -238,6 +247,12 @@ export function startFleet(): () => void {
     if (useFleet.getState().link === "live") return;
     stopping = true;
     useFleet.getState().setLink("restarting");
+    // A later stopping 503 starts the grace again.
+    clearTimeout(stoppingTimer);
+    stoppingTimer = setTimeout(() => {
+      stopping = false;
+      if (useFleet.getState().link === "restarting") useFleet.getState().setLink(streamState);
+    }, RESTART_GRACE);
   });
 
   const offUnpaired = onUnpaired(() => {
@@ -255,6 +270,7 @@ export function startFleet(): () => void {
     closeStream();
     offUnpaired();
     offStopping();
+    clearTimeout(stoppingTimer);
     cancelSave();
     if (running === stop) running = undefined;
   };

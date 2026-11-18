@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Notice, Snapshot } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { emitStopping, emitUnpaired, onNotices } from "@/api/request";
-import { connectStream, type StreamHandlers } from "@/api/stream";
+import { connectStream, RESTART_GRACE, type StreamHandlers } from "@/api/stream";
 import { fixtureSnapshot } from "@/fixtures";
 import { setBadge } from "./badge";
 import { startFleet, useFleet } from "./fleet";
@@ -183,6 +183,36 @@ describe("startFleet", () => {
     expect(store().link).toBe("live");
     handlers.onLink("offline");
     expect(store().link).toBe("offline");
+  });
+
+  it("says restarting for the grace after a stopping 503, then follows the stream, and a later one restarts the grace", async () => {
+    start();
+    handlers.onLink("offline");
+    emitStopping();
+    await vi.advanceTimersByTimeAsync(RESTART_GRACE - 1);
+    expect(store().link).toBe("restarting");
+    handlers.onLink("offline");
+    expect(store().link).toBe("restarting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store().link).toBe("offline");
+    handlers.onLink("offline");
+    expect(store().link).toBe("offline");
+    emitStopping();
+    expect(store().link).toBe("restarting");
+    await vi.advanceTimersByTimeAsync(RESTART_GRACE - 1);
+    emitStopping();
+    await vi.advanceTimersByTimeAsync(RESTART_GRACE - 1);
+    expect(store().link).toBe("restarting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store().link).toBe("offline");
+  });
+
+  it("follows the stream's connecting state once the grace is over", async () => {
+    start();
+    handlers.onLink("connecting");
+    emitStopping();
+    await vi.advanceTimersByTimeAsync(RESTART_GRACE);
+    expect(store().link).toBe("connecting");
   });
 
   it("leaves a live link alone when a request is answered with the stopping text", () => {

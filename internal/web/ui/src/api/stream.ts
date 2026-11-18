@@ -18,7 +18,7 @@ const MAX_DELAY = 30_000;
 const SILENCE = 45_000;
 // How long after a bye the link says "restarting": a normal restart reconnects within it, so the
 // link never flashes "offline"; a daemon that stays away longer is plainly unreachable.
-const RESTART_GRACE = 30_000;
+export const RESTART_GRACE = 30_000;
 
 // Every event the stream carries, one key per StreamEvents key (the compiler holds the two in
 // step): a name outside it is ignored, so a newer daemon's event does no harm.
