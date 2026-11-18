@@ -11,3 +11,5 @@ result
 
 # Python bytecode from flow/lib test runs
 __pycache__/
+# The new web app's dependencies (internal/web/ui, installed by pnpm)
+internal/web/ui/node_modules/
