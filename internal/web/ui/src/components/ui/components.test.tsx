@@ -1,12 +1,22 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { cn } from "@/lib/utils";
 import { Badge } from "./badge";
 import { Button } from "./button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "./drawer";
 import { Skeleton } from "./skeleton";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
+import { Toaster, toastManager } from "./toast";
 
 describe("cn", () => {
   it("cn joins its inputs, drops falsy ones and lets the last conflicting utility win", () => {
@@ -141,5 +151,96 @@ describe("Skeleton", () => {
     expect(el).toHaveAttribute("data-slot", "skeleton");
     expect(el.className).toContain("animate-pulse");
     expect(el.className).toContain("bg-muted");
+  });
+});
+
+function SampleDrawer({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>Kill fix-pane-cursor?</DrawerTitle>
+          <DrawerDescription>The worktree is stashed first.</DrawerDescription>
+        </DrawerHeader>
+        <DrawerFooter>
+          <DrawerClose>Cancel</DrawerClose>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
+describe("Drawer", () => {
+  it("Drawer: it shows its title and description while open, none while closed, and its close control reports false", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    const { unmount } = render(<SampleDrawer open onOpenChange={fn} />);
+    expect(await screen.findByRole("dialog")).toHaveAccessibleName("Kill fix-pane-cursor?");
+    expect(screen.getByText("The worktree is stashed first.")).toBeInTheDocument();
+    await user.click(screen.getByText("Cancel"));
+    expect(fn.mock.calls[0][0]).toBe(false);
+    unmount();
+
+    render(<SampleDrawer open={false} onOpenChange={vi.fn()} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("Toaster", () => {
+  it("Toaster: a toast added through toastManager shows, an error one is styled, and its close control dismisses it", async () => {
+    const user = userEvent.setup();
+    render(<Toaster />);
+    act(() => {
+      toastManager.add({
+        title: "Killed fix-pane-cursor",
+        description: "Stashed as a1b2c3d",
+        timeout: 0,
+      });
+      toastManager.add({ title: "Could not push", type: "error", timeout: 0 });
+    });
+    const killed = await screen.findByText("Killed fix-pane-cursor");
+    expect(screen.getByText("Stashed as a1b2c3d")).toBeInTheDocument();
+    const failed = await screen.findByText("Could not push");
+    expect(failed.className).toContain("text-error");
+    expect(killed.className).not.toContain("text-error");
+
+    const root = killed.closest("[data-slot='toast']") as HTMLElement;
+    await user.click(within(root).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByText("Killed fix-pane-cursor")).toBeNull());
+    expect(screen.getByText("Could not push")).toBeInTheDocument();
+  });
+});
+
+describe("no <style> element", () => {
+  it("No component injects a <style> element, on import or in use", async () => {
+    expect(document.querySelectorAll("style").length).toBe(0);
+    render(
+      <>
+        <Button>b</Button>
+        <Badge>g</Badge>
+        <ToggleGroup defaultValue={["a"]}>
+          <ToggleGroupItem value="a">a</ToggleGroupItem>
+        </ToggleGroup>
+        <Collapsible defaultOpen>
+          <CollapsibleTrigger>t</CollapsibleTrigger>
+          <CollapsibleContent>c</CollapsibleContent>
+        </Collapsible>
+        <SampleDrawer open onOpenChange={vi.fn()} />
+        <Skeleton />
+        <Toaster />
+      </>,
+    );
+    act(() => {
+      toastManager.add({ title: "hello", timeout: 0 });
+    });
+    await screen.findByText("hello");
+    await screen.findByRole("dialog", { name: "Kill fix-pane-cursor?" });
+    expect(document.querySelectorAll("style").length).toBe(0);
   });
 });
