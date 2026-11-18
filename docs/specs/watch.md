@@ -75,7 +75,7 @@ A prompt file is a template with these variables: `{issue}`, `{issue_title}`, `{
 
 ## What it does each tick
 
-Every 60 seconds, for each workspace switched on, the daemon reads GitHub and git off its main loop, then decides on the loop and carries the actions out as jobs. A tick takes, in issue-number order, the open issues carrying `label` and every issue a watcher session or watcher PR names, open or closed. For each, the first matching rule wins:
+Every 60 seconds, for each workspace switched on, the daemon reads GitHub and git off its main loop, then decides on the loop and carries the actions out as jobs. A tick takes, in issue-number order, the open issues carrying `label` and every issue a watcher session, an open watcher PR or a closed-unmerged watcher PR not yet settled names, open or closed (an issue only merged or settled PRs name has nothing left to act on). For each, the first matching rule wins:
 
 | # | The watcher sees | It does |
 |---|---|---|
@@ -84,10 +84,10 @@ Every 60 seconds, for each workspace switched on, the daemon reads GitHub and gi
 | 3 | The issue is closed and none of its PRs is open | Kills its session, if any |
 | 4 | The issue carries `escalate_label` | Nothing |
 | 5 | One of its PRs was closed unmerged and is not settled in memory | Escalates, marks every such PR settled, closes any of its PRs for the issue still open, kills its session |
-| 6 | One of its PRs is open and it has no session for the issue | Waits while a foreign session holds the issue or the cap is full; otherwise fetches the PR's branch and starts a session on it with the resume prompt |
+| 6 | One of its PRs is open and it has no session for the issue | Escalates when every resume of that PR has failed for longer than `stuck` (see [Starts that cannot land](#starts-that-cannot-land)); otherwise waits while a foreign session holds the issue or the cap is full, and else fetches the PR's branch and starts a session on it with the resume prompt |
 | 7 | Its session has been Prompting or Recoverable, or Ready with no open PR, for over `stuck` | Escalates, naming the status and since when |
 | 8 | Its session is Ready and its PR is open | Sends the first nudge that applies, or escalates on the `nudge_limit`-th nudge of one kind |
-| 9 | It has no session and no open PR for the issue | Waits while a foreign session holds the issue, the hook refuses the start or the cap is full; otherwise starts a session with the start prompt, its branch cut from `origin/<base>` |
+| 9 | It has no session and no open PR for the issue | Waits while a foreign session holds the issue, the hook refuses the start, the cap is full, or the title's branch already exists; otherwise starts a session with the start prompt, its branch cut from `origin/<base>` |
 
 A closed issue settles (rules 1 to 3) before the escalation label is read (rule 4), so an escalated issue that closes still frees its slot.
 
@@ -108,9 +108,14 @@ Tried in this order on a Ready session with an open PR:
 3. **`ci`:** a check concluded `FAILURE`, `TIMED_OUT` or `ERROR` on the head commit. The text names the failing checks, then gives the last `log_tail` lines of each failed job's log (at most 5 jobs).
 4. **`issue-changed`** (when `issue_changed` is on): the issue body's hash, or the newest comment by an owner, member or collaborator, differs from what memory last saw.
 
-Every nudge ends with `(nudge n of <limit-1>; the next escalates to the owner)`. The nudge's count is written to memory before the message is sent, so a failed send costs a count and is never left uncounted. Counts are per PR and kind, for the PR's life.
+Every nudge starts with a `From loom-watch:` line, as a message from another session starts with its sender, so the session can tell a nudge from its owner's typing, and ends with `(nudge n of <limit-1>; the next escalates to the owner)`. The nudge's count is written to memory before the message is sent, so a failed send costs a count and is never left uncounted. Counts are per PR and kind, for the PR's life.
 
 **The repeat guard.** A 60-second tick would spend a session's nudges in minutes, so a nudge of kind K on a PR fires only when no K nudge was sent on it, or its key differs from the last K nudge's, or `nudge_gap` has passed since it. The keys: `ci`, the PR's head SHA; `conflict`, the head SHA and the base SHA; `issue-changed`, the body hash and the newest trusted comment's ID; a hook kind, the key the hook returned.
+
+## Starts that cannot land
+
+- **A fresh start never reuses a branch.** loom would reuse a branch already under the new session's name, with an earlier session's commits on it, instead of cutting it from `origin/<base>`, and a branch only origin has gives a fresh local branch whose push can never land. So a fresh start (rule 9) whose branch exists locally or on origin waits, and `status` names the branch: delete it, or have the hook return other title variables. A check that fails also refuses the start.
+- **A resume that keeps failing escalates.** A resume (rule 6) fails when the hook fails or refuses, the title it renders makes another branch than the PR's, the fetch of the PR's branch fails, or the session can't be created. The PR's first failure is recorded in memory (`resume_failed`), and once its resumes have failed for longer than `stuck`, rule 6 escalates with the last failure's reason, so an open PR no session can be started for doesn't wait forever with only `status` saying why. A wait the rules decide (a foreign session, a full cap) and a tick with no start are not failures.
 
 ## Escalating
 
@@ -131,10 +136,10 @@ Called for the one issue a tick is about to start, and only in a tick whose `git
  "issue": {"number": 96, "title": "…", "labels": ["schema-drift", "spec:kalshi-ws"], "body": "…", "url": "…"},
  "pr": null,
  "sessions": [{"title": "heal kalshi 94 R32", "issue": 94, "branch": "…", "status": "Running", "vars": {"spec": "kalshi", "row": "R32"}}],
- "prs": [{"number": 101, "issue": 94, "branch": "…", "body": "…"}]}
+ "prs": [{"number": 101, "issue": 94, "branch": "…", "body": "…", "vars": {"spec": "kalshi", "row": "r32"}}]}
 ```
 
-`pr` is set (number, issue, branch, body) for a resume (rule 6). `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs. Out:
+`pr` is set (number, issue, branch, body, vars) for a resume (rule 6). A PR's `vars` are the title variables its head branch encodes, read back by the branch pattern and spelled as the branch spells them, so a resume's hook need not re-parse loom's branch names. The sanitizer lower-cases branch names, so these values are lower case (`r30` for a title's `R30`): returned unchanged, they render a lower-case title, which still makes the PR's own branch. A repository that reads anything from the title's case should re-case them in the hook before returning them. `sessions` are the watcher's sessions with their parsed title variables; `prs` its open PRs. Out:
 
 ```json
 {"start": true, "vars": {"spec": "kalshi-ws", "row": "R33"}}
@@ -172,11 +177,11 @@ A rendered prompt or nudge text is at most 64 KiB, log tails included; tails are
 
 ```json
 {"version": 1,
- "prs":    {"123": {"nudges": {"ci": {"n": 1, "key": "<head sha>", "at": "…"}}, "settled": false}},
+ "prs":    {"123": {"nudges": {"ci": {"n": 1, "key": "<head sha>", "at": "…"}}, "settled": false, "resume_failed": {"since": "…", "reason": "…"}}},
  "issues": {"96":  {"escalated": {"at": "…", "reason": "…"}, "commented": "<reason>", "seen": "<body hash>:<comment id>"}}}
 ```
 
-`commented` is the reason of an escalation whose comment is on the issue. The watcher writes it once the comment is posted, before it tries the label, so an escalation whose label failed is retried next tick without a second comment: a retry whose reason equals `commented` skips the comment. `escalated` is written last, when the escalation is complete.
+`resume_failed` is set on a PR while every resume of it has failed: when the failures began, and the last one's reason. A resume that creates its session clears it, and so does an escalation of the issue. `commented` is the reason of an escalation whose comment is on the issue. The watcher writes it once the comment is posted, before it tries the label, so an escalation whose label failed is retried next tick without a second comment: a retry whose reason equals `commented` skips the comment. `escalated` is written last, when the escalation is complete.
 
 A missing file is empty memory. A file that cannot be read or decoded, or whose `version` is newer than the binary's, stops the watcher for that workspace, is kept as it is, and is reported in `status`: acting without the counts would re-nudge and re-escalate. An unknown top-level key is written back unchanged; inside a PR or issue record, unknown keys are not kept.
 
@@ -198,7 +203,7 @@ Each outside call has a timeout and a per-tick budget; the `gh` reads of one tic
 | `gh api user --jq .login` | once, then cached until it fails |
 | `gh pr list --author @me --state all` | 1, at most 100 PRs |
 | `gh issue list --label <label> --state open` | 1, the 50 lowest-numbered issues; a 51st only tells `status` that more were not considered |
-| `gh issue view` of a closed issue a session or PR names | at most 10, lowest number first |
+| `gh issue view` of a closed issue a session, an open PR or an unsettled closed PR names | at most 10, issues with a session first, then lowest number first |
 | `git remote get-url origin` | 1, only when the config names a hook (it gives `LOOM_WATCH_REPO` and the hook's `repo`) |
 | `git fetch origin <base>` | 1, 60 seconds |
 | the refresh of `watch-checkout/` (a detached `git worktree add`, or a checkout of the fetched commit) | 1, 5 minutes |
@@ -208,5 +213,6 @@ Each outside call has a timeout and a per-tick budget; the `gh` reads of one tic
 | `gh run view --job <id> --log-failed` | at most 5, only when a `ci` nudge is sent |
 | writes (`gh pr close`, `gh issue comment`, `gh issue edit --add-label`, `gh label create`) | only the tick's actions |
 | `git fetch origin <branch>` for a resume | at most 1 |
+| `git ls-remote --heads origin <branch>` for a fresh start | at most 1, 60 seconds |
 
 That is about 13 `gh` calls a minute per workspace, well inside GitHub's 5,000 an hour.

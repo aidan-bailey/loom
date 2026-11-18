@@ -179,9 +179,11 @@ func (m *Model) deliverWatchAction(r watchActionResult) {
 	case r.err != nil:
 		log.For("core").Warn("watch.action_failed", "kind", string(r.act.Kind), "issue", r.act.Issue, "err", r.err)
 		setWatchActErr(r.st, r.act, r.err.Error())
+		m.recordResumeFailure(r, r.err.Error())
 		return
 	case r.refused != "":
 		setWatchActErr(r.st, r.act, r.refused)
+		m.recordResumeFailure(r, r.refused)
 		return
 	}
 	var err error
@@ -198,10 +200,26 @@ func (m *Model) deliverWatchAction(r watchActionResult) {
 	if err != nil {
 		log.For("core").Warn("watch.action_failed", "kind", string(r.act.Kind), "issue", r.act.Issue, "err", err)
 		setWatchActErr(r.st, r.act, err.Error())
+		m.recordResumeFailure(r, err.Error())
 		return
 	}
 	if r.act.Kind != watch.ActSend { // sendWatchNudge cleared it before queueing
 		clearWatchActErr(r.st, r.act)
+	}
+}
+
+// recordResumeFailure records a failed resume start in memory (spec §4.5),
+// so rule 6 escalates once the PR's resumes have failed for longer than
+// stuck. Any other action records nothing. A failed save is shown to the
+// clients; the record stays in the model's memory and the next save writes
+// it.
+func (m *Model) recordResumeFailure(r watchActionResult, reason string) {
+	if r.act.Kind != watch.ActStart || !r.act.Resume {
+		return
+	}
+	r.st.mem.RecordResumeFailure(r.act.PR, reason, time.Now())
+	if err := watch.SaveMemory(r.st.memPath, r.st.mem); err != nil {
+		m.notifyErr(fmt.Errorf("record the failed resume of PR #%d: %w", r.act.PR, err))
 	}
 }
 
@@ -371,6 +389,9 @@ func (m *Model) finishWatchEscalate(r watchActionResult) error {
 	m.emit(Notice{Info: fmt.Sprintf("watcher (%s): issue #%d escalated to the owner: %s", r.ws.Label(), a.Issue, a.Reason)})
 	st.mem.RecordEscalation(a.Issue, a.Reason, time.Now())
 	st.mem.ClearCommented(a.Issue) // a later escalation, after L is removed, comments again
+	if a.PR > 0 {
+		st.mem.ClearResumeFailure(a.PR) // after L is removed, resumes get stuck again before escalating
+	}
 	if len(a.Settle) > 0 {
 		st.mem.Settle(a.Settle)
 	}
@@ -402,12 +423,14 @@ func cutTop(s string, n int) string {
 	return s
 }
 
-// watchNudgeText is a nudge's message: head (Nudge.Text), each log's tail under
-// its name, cut from the top to fit watchTextCap with the suffix, then suffix.
+// watchNudgeText is a nudge's message: watchNudgeSignature, head (Nudge.Text),
+// each log's tail under its name, cut from the top to fit watchTextCap with the
+// suffix, then suffix.
 // A log that could not be fetched is named as such; once no room is left for a
 // log it and the rest are left out.
 func watchNudgeText(head string, logs []watchLog, suffix string) string {
 	var b strings.Builder
+	b.WriteString(watchNudgeSignature)
 	b.WriteString(head)
 	for _, l := range logs {
 		section := "\n\nLog of " + l.name + ":\n"
@@ -544,6 +567,11 @@ func (m *Model) finishWatchSend(r watchActionResult) error {
 // send's earlier error is forgotten first, so a refusal of a past tick does
 // not outlive a nudge that is on its way, and a report enqueue makes at once
 // (no mod) is not wiped.
+// watchNudgeSignature opens every nudge, as "From <title>:" opens another
+// session's message, so the session can tell a nudge from its owner's typing
+// (watch spec §3.3).
+const watchNudgeSignature = "From loom-watch:\n\n"
+
 func (m *Model) sendWatchNudge(st *watchState, a watch.Action, inst *session.Instance, text string) {
 	clearWatchActErr(st, a)
 	m.enqueue(inst, &modMessage{text: text, origin: OriginWatch, onUndelivered: func(why string) {

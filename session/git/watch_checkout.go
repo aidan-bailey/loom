@@ -59,6 +59,43 @@ func FetchBranch(repoPath string, branch string, runner CommandRunner) (string, 
 	return sha, nil
 }
 
+// BranchExists reports where branch already exists: "locally" when
+// refs/heads/<branch> is a ref, "on origin" when origin has the branch (asked
+// with ls-remote, so a branch the clone never fetched counts), or "" when it
+// is in neither. A failed check is an error, never an answer of "": a caller
+// about to create the branch must not take an unanswered question for
+// absence. Network-bound: watchFetchTimeout applies to the ls-remote.
+func BranchExists(repoPath string, branch string, runner CommandRunner) (string, error) {
+	r := defaultRunner(runner)
+	if branch == "" {
+		return "", fmt.Errorf("branch check: not a valid branch name %q", branch)
+	}
+	if _, err := runGitOutput(repoPath, r, "check-ref-format", "refs/heads/"+branch); err != nil {
+		return "", fmt.Errorf("branch check: not a valid branch name %q", branch)
+	}
+	// for-each-ref answers an absent ref with empty output and success, so a
+	// failure here is a real one.
+	local, err := runGitOutput(repoPath, r, "for-each-ref", "--format=%(refname)", "refs/heads/"+branch)
+	if err != nil {
+		return "", fmt.Errorf("branch check %s: %w", branch, err)
+	}
+	if strings.TrimSpace(local) == "refs/heads/"+branch {
+		return "locally", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), watchFetchTimeout)
+	defer cancel()
+	out, err := r.Output(internalexec.GitCommand(ctx, repoPath, "ls-remote", "--heads", "origin", "refs/heads/"+branch))
+	if err != nil {
+		return "", fmt.Errorf("branch check %s on origin: %w", branch, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if _, ref, ok := strings.Cut(strings.TrimSpace(line), "\t"); ok && ref == "refs/heads/"+branch {
+			return "on origin", nil
+		}
+	}
+	return "", nil
+}
+
 // ShowFile returns the bytes of path (relative to the repository root, with
 // forward slashes) as of rev. A revision that has no such file, or has a
 // directory there, is ErrNoSuchPath; every other failure (an unknown rev, a

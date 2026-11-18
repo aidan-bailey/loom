@@ -295,6 +295,43 @@ func TestDecide_Rule6_AnOpenPRWithoutASessionIsResumed(t *testing.T) {
 		"a foreign session of another issue blocks nothing")
 }
 
+func TestDecide_Rule6_AResumeFailingForLongerThanStuckEscalates(t *testing.T) {
+	labelled := []github.WatchIssue{dcIssue(96, "drift")}
+	open := []github.WatchPR{dcPR(123, 96, "OPEN")}
+	stuck := dcCfg().Stuck
+	failing := func(d time.Duration) Memory {
+		var mem Memory
+		mem.RecordResumeFailure(123, "the hook's start failed: exit status 1", dcNow.Add(-d))
+		return mem
+	}
+
+	got := dcDecide(t, failing(stuck+time.Minute), labelled, open, nil)
+	require.Len(t, got, 1)
+	assert.Equal(t, ActEscalate, got[0].Kind)
+	assert.Equal(t, 96, got[0].Issue)
+	assert.Equal(t, 123, got[0].PR)
+	assert.Contains(t, got[0].Reason, "no session could be started for PR #123")
+	assert.Contains(t, got[0].Reason, "the hook's start failed: exit status 1", "the last failure's reason")
+
+	got = dcDecide(t, failing(stuck), labelled, open, nil)
+	assert.Equal(t, []Action{{Kind: ActStart, Issue: 96, PR: 123, Branch: dcBranch(96), Resume: true}}, got,
+		"not yet over stuck: it tries again")
+
+	full := []Session{dcSess(21, 97, "Paused", time.Hour), dcSess(22, 98, "Ready", time.Minute)}
+	got = dcDecide(t, failing(stuck+time.Minute), labelled, open, full)
+	require.Len(t, got, 1)
+	assert.Equal(t, ActEscalate, got[0].Kind, "a full cap does not hide a stuck resume")
+
+	other := failing(stuck + time.Minute)
+	other.PRs[999] = other.PRs[123]
+	delete(other.PRs, 123)
+	got = dcDecide(t, other, labelled, open, nil)
+	assert.Equal(t, ActStart, got[0].Kind, "another PR's failures are not this one's")
+
+	got = dcDecide(t, failing(stuck+time.Minute), []github.WatchIssue{dcIssue(96, "drift", "needs-human")}, open, nil)
+	assert.Empty(t, got, "an issue carrying L is hands-off (rule 4)")
+}
+
 func TestDecide_Rule9_ALabelledIssueWithNothingIsStarted(t *testing.T) {
 	labelled := []github.WatchIssue{dcIssue(96, "drift")}
 

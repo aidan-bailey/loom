@@ -45,12 +45,15 @@ type HookInput struct {
 	HeadSHA   string
 }
 
-// HookPR is an open watcher PR as the hook sees it.
+// HookPR is an open watcher PR as the hook sees it, with the title variables
+// its head branch encodes (TitleTemplate.BranchVars), as the branch spells
+// them: a resume's hook need not re-parse loom's branch names.
 type HookPR struct {
 	Number int
 	Issue  int
 	Branch string
 	Body   string
+	Vars   map[string]string
 }
 
 // HookSession is a watcher session as the hook sees it, with the variables
@@ -72,10 +75,11 @@ type hookIssueWire struct {
 }
 
 type hookPRWire struct {
-	Number int    `json:"number"`
-	Issue  int    `json:"issue"`
-	Branch string `json:"branch"`
-	Body   string `json:"body"`
+	Number int               `json:"number"`
+	Issue  int               `json:"issue"`
+	Branch string            `json:"branch"`
+	Body   string            `json:"body"`
+	Vars   map[string]string `json:"vars"`
 }
 
 type hookSessionWire struct {
@@ -140,7 +144,11 @@ func (in HookInput) MarshalJSON() ([]byte, error) {
 }
 
 func wireHookPR(pr HookPR) hookPRWire {
-	return hookPRWire{Number: pr.Number, Issue: pr.Issue, Branch: pr.Branch, Body: pr.Body}
+	vars := pr.Vars
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	return hookPRWire{Number: pr.Number, Issue: pr.Issue, Branch: pr.Branch, Body: pr.Body, Vars: vars}
 }
 
 func wireHookSession(s HookSession) hookSessionWire {

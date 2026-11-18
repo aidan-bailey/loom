@@ -468,6 +468,7 @@ func TestWatchEscalate_CommentsLabelsAlertsThenRecords(t *testing.T) {
 	gh := &wactGH{}
 	m, ws, st := wactModel(t, Options{GHExec: gh})
 	a := watch.Action{Kind: watch.ActEscalate, Issue: 7, PR: 5, Reason: "PR #5 was closed unmerged", Settle: []int{5}}
+	st.mem.RecordResumeFailure(5, "the hook failed", time.Now().Add(-3*time.Hour))
 
 	m.dispatchWatchActions(ws, st, []watch.Action{a})
 	out := m.Drain()
@@ -507,6 +508,7 @@ func TestWatchEscalate_CommentsLabelsAlertsThenRecords(t *testing.T) {
 	require.NotNil(t, onDisk.Issues[7].Escalated)
 	assert.Empty(t, onDisk.Issues[7].Commented)
 	assert.True(t, onDisk.PRs[5].Settled)
+	assert.Nil(t, onDisk.PRs[5].ResumeFailed, "the escalation clears the PR's resume failures, so after L is removed they count afresh")
 	assert.Empty(t, st.inFlight)
 }
 
@@ -670,7 +672,7 @@ func TestWatchSend_CountsAndSavesThenQueuesTheNudgeThroughTheMod(t *testing.T) {
 
 	l := m.linkFor(inst)
 	require.Len(t, l.outbox, 1)
-	assert.Equal(t, "merge origin/main, never rebase\n\n(nudge 1 of 2; the next escalates to the owner)", l.outbox[0].text)
+	assert.Equal(t, "From loom-watch:\n\nmerge origin/main, never rebase\n\n(nudge 1 of 2; the next escalates to the owner)", l.outbox[0].text)
 	assert.Equal(t, OriginWatch, l.outbox[0].origin)
 	assert.False(t, l.outbox[0].asUser)
 	rec := st.mem.PRs[5].Nudges["conflict"]
@@ -834,7 +836,7 @@ func TestWatchSend_ACINudgeCarriesEachFailedJobsLogTailAfterTheCountIsSaved(t *t
 	l := m.linkFor(inst)
 	require.Len(t, l.outbox, 1)
 	text := l.outbox[0].text
-	assert.True(t, strings.HasPrefix(text, "CI failed on the head commit:"), text)
+	assert.True(t, strings.HasPrefix(text, "From loom-watch:\n\nCI failed on the head commit:"), text)
 	assert.Contains(t, text, "Log of build:\ncompiling\nerror: expected `;`")
 	assert.Contains(t, text, "Log of lint:")
 	assert.True(t, strings.HasSuffix(text, "(nudge 1 of 2; the next escalates to the owner)"), text)
@@ -891,7 +893,7 @@ func TestWatchNudgeText_CutsLogTailsFromTheTopToFitTheCap(t *testing.T) {
 	assert.True(t, strings.HasSuffix(got, suffix))
 	assert.Contains(t, got, "line 39999", "the bottom of the log is kept")
 	assert.NotContains(t, got, "line 0\n", "the top is cut")
-	assert.True(t, strings.HasPrefix(got, "CI failed\n\nLog of build:\n"))
+	assert.True(t, strings.HasPrefix(got, watchNudgeSignature+"CI failed\n\nLog of build:\n"))
 }
 
 func TestWatchNudgeText_NeverSplitsARune(t *testing.T) {
@@ -905,7 +907,7 @@ func TestWatchNudgeText_NeverSplitsARune(t *testing.T) {
 
 func TestWatchNudgeText_AnUnfetchedLogIsNamedAndNoRoomLeftDropsTheRest(t *testing.T) {
 	got := watchNudgeText("head", []watchLog{{name: "a", err: errors.New("gone")}}, "!")
-	assert.Equal(t, "head\n\nLog of a:\n(the log could not be fetched: gone)!", got)
+	assert.Equal(t, "From loom-watch:\n\nhead\n\nLog of a:\n(the log could not be fetched: gone)!", got, "signed, so the session can tell it from its owner's typing")
 
 	huge := strings.Repeat("x", watchTextCap)
 	got = watchNudgeText(huge, []watchLog{{name: "b", tail: "late"}}, "!")

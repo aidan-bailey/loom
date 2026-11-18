@@ -262,3 +262,38 @@ func TestSyncDetachedWorktree_NeedsAFullCommitSHA(t *testing.T) {
 		})
 	}
 }
+
+func TestBranchExists_LocallyOnOriginOrNeither(t *testing.T) {
+	clone := newClone(t, "main", "heal-on-origin")
+	runGit(t, clone, "branch", "heal-local")
+	// A branch only origin has, which this clone never fetched: ls-remote
+	// must still see it.
+	tmp := filepath.Dir(clone)
+	runGit(t, tmp, "--git-dir", "origin.git", "branch", "heal-never-fetched", "main")
+
+	for branch, want := range map[string]string{
+		"heal-local":         "locally",
+		"heal-on-origin":     "on origin",
+		"heal-never-fetched": "on origin",
+		"heal-nowhere":       "",
+		"heal":               "", // a prefix of real branches is not one
+	} {
+		t.Run(branch, func(t *testing.T) {
+			got, err := BranchExists(clone, branch, nil)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
+func TestBranchExists_AFailedCheckIsAnErrorNotAbsence(t *testing.T) {
+	clone := newClone(t, "main")
+	runGit(t, clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+
+	got, err := BranchExists(clone, "heal-nowhere", nil)
+	require.Error(t, err)
+	assert.Empty(t, got)
+
+	_, err = BranchExists(clone, "bad..name", nil)
+	assert.Error(t, err, "not a branch name")
+}

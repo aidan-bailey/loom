@@ -341,6 +341,32 @@ func TestMemory_RecordsSurviveASaveAndLoad(t *testing.T) {
 	assert.Equal(t, "why", got.Issues[96].Commented)
 }
 
+func TestMemory_ResumeFailures(t *testing.T) {
+	first := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	var m Memory
+	m.RecordResumeFailure(5, "the hook failed", first)
+	m.RecordResumeFailure(5, "the fetch failed", first.Add(time.Hour))
+	require.NotNil(t, m.PRs[5].ResumeFailed)
+	assert.Equal(t, first, m.PRs[5].ResumeFailed.Since, "the first failure's time is kept")
+	assert.Equal(t, "the fetch failed", m.PRs[5].ResumeFailed.Reason, "the last failure's reason")
+
+	path := filepath.Join(t.TempDir(), "watch.json")
+	require.NoError(t, SaveMemory(path, m))
+	got, err := LoadMemory(path)
+	require.NoError(t, err)
+	require.NotNil(t, got.PRs[5].ResumeFailed)
+	assert.True(t, first.Equal(got.PRs[5].ResumeFailed.Since))
+
+	c := m.Clone()
+	c.PRs[5].ResumeFailed.Reason = "changed"
+	assert.Equal(t, "the fetch failed", m.PRs[5].ResumeFailed.Reason, "a clone shares no record")
+
+	assert.True(t, m.ClearResumeFailure(5))
+	assert.Nil(t, m.PRs[5].ResumeFailed)
+	assert.False(t, m.ClearResumeFailure(5), "nothing left to clear")
+	assert.False(t, m.ClearResumeFailure(77), "a PR the memory never saw")
+}
+
 func TestMemory_CloneSharesNothing(t *testing.T) {
 	at := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 	path := writeMemoryFile(t, `{"version":1,"future":{"a":1},"prs":{},"issues":{}}`)
