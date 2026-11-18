@@ -178,7 +178,30 @@ func TestWriteWatchDryRun_SaysWhenThereIsNothingToDo(t *testing.T) {
 
 	out.Reset()
 	require.NoError(t, writeWatchDryRun(&out, "ws-a", core.WatchView{}))
-	assert.Equal(t, "Dry run for ws-a: nothing was done.\nWatch is off: the next tick would take no action.\n", out.String())
+	assert.Equal(t, "Dry run for ws-a: nothing was done.\n"+
+		"Watch is off: this is what its first tick would do once it is on.\n"+
+		"The next tick would take no action.\n", out.String())
+}
+
+// TestWriteWatchDryRun_AnOffWatchersPlanIsPrintedInFull: a dry run before
+// `loom watch on` shows the first tick's plan, under a line saying the
+// switch is off.
+func TestWriteWatchDryRun_AnOffWatchersPlanIsPrintedInFull(t *testing.T) {
+	var out bytes.Buffer
+	v := sampleWatchView()
+	v.On = false
+
+	require.NoError(t, writeWatchDryRun(&out, "ws-a", v))
+
+	assert.Equal(t, "Dry run for ws-a: nothing was done.\n"+
+		"Watch is off: this is what its first tick would do once it is on.\n"+
+		"The next tick would:\n"+
+		"  #12  nudge ci (PR #34, nudge 3)\n"+
+		"  #14  kill session 9\n"+
+		"Waiting:\n"+
+		"  #13  the cap is full\n"+
+		"Failed:\n"+
+		"  #12  send failed: pane gone\n", out.String())
 }
 
 func TestDescribeWatchAction_NamesEveryKind(t *testing.T) {
@@ -292,12 +315,21 @@ func TestWatchDryRun_TakesNoActionAndPrintsThePlan(t *testing.T) {
 	isolateWorkspaces(t)
 	ghLog := watchableRepo(t, "ws-a")
 	serveDaemon(t, "true")
-	_, _, err := runWatch(t, "on", "-w", "ws-a")
+
+	// Before the switch is on, a dry run still polls and answers On false.
+	out, _, err := runWatch(t, "dry-run", "--json", "-w", "ws-a")
+	require.NoError(t, err)
+	assert.Positive(t, ghCalls(t, ghLog), "a dry run of an off watcher polls")
+	var off core.WatchView
+	require.NoError(t, json.Unmarshal([]byte(out), &off))
+	assert.False(t, off.On)
+	assert.NotEmpty(t, off.Viewer, "the view is the poll's, not the bare switch")
+
+	_, _, err = runWatch(t, "on", "-w", "ws-a")
 	require.NoError(t, err)
 
 	// Switching on starts a poll at once, and a dry run is refused while one
 	// is out: ask again until it ends, and only on that refusal.
-	var out string
 	var lastErr error
 	assert.Eventually(t, func() bool {
 		out, _, lastErr = runWatch(t, "dry-run", "-w", "ws-a")

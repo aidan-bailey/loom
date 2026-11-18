@@ -59,7 +59,7 @@ The flow commands that wait (the run engine, `flow run wait`, `flow agent wait`,
 | `sweep` | `SweepBuilds` (dry run with `--dry-run`, the threshold `--after` or else `build_sweep_after_hours`), then a wait for its `Reply`, whose `Sweep` report it prints |
 | `watch on`, `off` | `ReloadRegistry`, then `SetWatch` and a wait for its `Reply` (`request`); prints `watch on: <workspace>` or `watch off: <workspace>` |
 | `watch status` | `ReloadRegistry`, then `ReadWatch` and a wait for its `Reply`, whose `Watch` view it prints (`--json` for the view itself) |
-| `watch dry-run` | `ReloadRegistry`, then `ReadWatch` with `dryRun`, then a wait for its `Reply`: the actions the next tick would take, none taken (`--json` for the view) |
+| `watch dry-run` | `ReloadRegistry`, then `ReadWatch` with `dryRun`, then a wait for its `Reply`: the actions the next tick would take, none taken, the switch on or off (`--json` for the view) |
 
 A command waits for a round the daemon runs by its data, not by the next event, for up to `accountWait`; a request with a `ReqID` waits for its `Reply`. The daemon probes usage only once an extra account exists, so `account list` with only the default account shows no usage.
 

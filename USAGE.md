@@ -1005,12 +1005,12 @@ Add a `loom-watch.json` to the repository root and merge it to the base branch. 
 }
 ```
 
-Then switch the watcher on for the workspace:
+Check what its first tick would do, then switch the watcher on for the workspace:
 
 ```
+loom watch dry-run -w myrepo    # what the next tick would do, nothing done (works while off)
 loom watch on -w myrepo
 loom watch status -w myrepo     # what it sees and why it waits
-loom watch dry-run -w myrepo    # what the next tick would do
 ```
 
 - **What counts as its own.** A session whose title fits the template, and a PR whose branch fits the template's branch name, whose body closes the issue (`Closes #N`), that comes from the same repository and that the `gh` login you are signed in as opened. A PR you opened by hand is never adopted, and a session you started yourself for the same issue makes the watcher wait rather than start a second one.
@@ -1305,7 +1305,7 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `watch on [-w <workspace>]` | Switch the issue watcher on for the workspace (default: the current repository's); prints `watch on: <workspace>`. The next tick, within a minute, is its first |
 | `watch off [-w <workspace>]` | Switch it off; prints `watch off: <workspace>`. The sessions it started keep running |
 | `watch status [-w <workspace>] [--json]` | Each issue the watcher knows: its state, session, open PR, the nudges sent, whether it is escalated, why it waits, what the last tick decided for it, an action that failed or was refused, and any config, memory or hook error. `--json` prints the same view as JSON |
-| `watch dry-run [-w <workspace>] [--json]` | The actions the next tick would take, then the issues that wait and why and the actions that failed or were refused; none taken |
+| `watch dry-run [-w <workspace>] [--json]` | The actions the next tick would take, then the issues that wait and why and the actions that failed or were refused; none taken. Works with the watcher off, to check a workspace before `watch on` |
 
 ### Flow Subcommands
 

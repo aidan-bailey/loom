@@ -183,7 +183,8 @@ func watchIssueNamed(st *watchState, snap *watch.Snapshot, n int) bool {
 
 // deliverWatch applies a poll result. The in-flight bit clears first,
 // whatever the result is. A dry result is handled before any check of the
-// workspace (its requester is waiting) and stores nothing. A result for a
+// switch (its requester is waiting, and a dry run of a switched-off watcher
+// is what to expect before switching it on) and stores nothing. A result for a
 // workspace the model no longer serves, or whose watcher is switched off,
 // records nothing. Otherwise the tick is kept (storeWatch).
 func (m *Model) deliverWatch(res watchResult) {
@@ -193,7 +194,7 @@ func (m *Model) deliverWatch(res watchResult) {
 	if res.dry {
 		var snap watch.Snapshot
 		var actions []watch.Action
-		if res.err == "" && m.watchOf(res.ws) != nil {
+		if res.err == "" && m.isLoadedWS(res.ws) && res.ws.watch != nil {
 			snap, actions = m.decideWatch(res)
 		}
 		m.answerWatchDry(res, snap, actions, res.err)
@@ -302,22 +303,27 @@ func watchSummaryOf(ws *Workspace) WatchSummary {
 	return sum
 }
 
-// watchViewOf is ws's WatchView, built on the loop from its watchState and
-// actions: a dry run's, or ws.watch.actions for a status read. A workspace
-// whose switch is off, or that holds no state yet, answers On alone.
+// watchViewOf is ws's WatchView for a status read, built on the loop from
+// its watchState and the last tick's actions. A workspace whose switch is
+// off, or that holds no state yet, answers On alone.
 func (m *Model) watchViewOf(ws *Workspace, actions []watch.Action) WatchView {
+	if ws.cfg == nil || !ws.cfg.GetWatchEnabled() {
+		return WatchView{}
+	}
 	return m.watchViewFrom(ws, ws.watch, actions)
 }
 
-// watchViewFrom is watchViewOf over the state st: ws.watch for a status
-// read, a dry run's copy with the fresh poll laid over it for a dry run.
+// watchViewFrom is the view of the state st and actions: ws.watch for a
+// status read, a dry run's copy with the fresh poll laid over it for a dry
+// run, whose view is whole whether or not the switch is on. On is the
+// switch's; a nil st answers On alone.
 func (m *Model) watchViewFrom(ws *Workspace, st *watchState, actions []watch.Action) WatchView {
 	on := ws.cfg != nil && ws.cfg.GetWatchEnabled()
-	if !on || st == nil {
+	if st == nil {
 		return WatchView{On: on}
 	}
 	v := WatchView{
-		On: true, Err: st.err, Viewer: st.viewer,
+		On: on, Err: st.err, Viewer: st.viewer,
 		Actions:     cloneWatchActions(actions),
 		Escalations: watchEscalations(st.mem),
 		Issues:      watchIssueViews(st, actions),
@@ -427,16 +433,18 @@ func watchIssueViews(st *watchState, actions []watch.Action) []WatchIssueView {
 // poll (its viewer, memory, config, snapshot and counts; never the stored
 // tick's err or snapshot), or with a refusal when the poll failed (failure
 // is the text a delivered non-dry result stores in watchState.err, "" when
-// it decided) or the watcher was switched off while it ran. It stores
-// nothing and dispatches nothing: a dry run takes no action.
+// it decided) or the workspace is no longer served. The switch plays no
+// part: a dry run of a switched-off watcher answers what its first tick
+// would do, with On false. It stores nothing and dispatches nothing: a dry
+// run takes no action.
 func (m *Model) answerWatchDry(res watchResult, snap watch.Snapshot, actions []watch.Action, failure string) {
 	if failure != "" {
 		m.refuse(res.req, 0, fmt.Errorf("dry run: %s", failure))
 		return
 	}
-	st := m.watchOf(res.ws)
-	if st == nil {
-		m.refuse(res.req, 0, errors.New("dry run: the watcher was switched off while the poll ran"))
+	st := res.ws.watch
+	if !m.isLoadedWS(res.ws) || st == nil {
+		m.refuse(res.req, 0, errors.New("dry run: the workspace is no longer served"))
 		return
 	}
 	// The view reads a copy of the stored state with this poll laid over it:
@@ -490,18 +498,14 @@ func (m *Model) SetWatch(id WorkspaceID, on bool, req ReqID) {
 
 // ReadWatch answers with the watcher's state for workspace id (Core.ReadWatch):
 // the Reply's Watch. A status read is answered at once from the last
-// tick's actions. A dry run starts a poll whose delivery answers it with
-// the actions the next tick would take, none taken (answerWatchDry), and
-// is refused while a poll is already out. A workspace whose switch is off
-// answers On false for either, and polls nothing.
+// tick's actions; with the switch off it answers On false. A dry run, on
+// or off, starts a poll whose delivery answers it with the actions the
+// next tick would take, none taken (answerWatchDry), and is refused while a
+// poll is already out: so the first tick can be seen before switching on.
 func (m *Model) ReadWatch(id WorkspaceID, dryRun bool, req ReqID) {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.cfg == nil {
 		m.refuse(req, 0, fmt.Errorf("read watch: workspace %d is not served", id))
-		return
-	}
-	if !ws.cfg.GetWatchEnabled() {
-		m.reply(req, Reply{Watch: m.watchViewOf(ws, nil)})
 		return
 	}
 	if !dryRun {
