@@ -423,6 +423,11 @@ func serveForTest(t *testing.T) (string, chan string, context.CancelFunc, chan e
 }
 
 func TestServeAPI_AnswersTheCannedRoutesAndNothingElse(t *testing.T) {
+	// A page in the working directory, so a fall-through to a file server
+	// would answer 200 for it.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644))
+	t.Chdir(dir)
 	addr, misses, _, _ := serveForTest(t)
 	base := "http://" + addr
 
