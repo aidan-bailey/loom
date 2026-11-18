@@ -5,6 +5,7 @@ package tmux
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -32,9 +33,22 @@ func pollable(ptmx *os.File) (*os.File, error) {
 		_ = unix.Close(dup)
 		return nil, fmt.Errorf("make the PTY non-blocking: %w", err)
 	}
-	name := ptmx.Name()
+	f := os.NewFile(uintptr(dup), ptmx.Name())
+	// NewFile registers a non-blocking fd with the poller, and a poller
+	// that refuses it (kqueue may, for a tty on Darwin) leaves a file Go
+	// reads as blocking on an fd that is not: every read of an idle pane
+	// would fail with EAGAIN, and the pump would report the pane dead.
+	// Only a polled file takes a deadline.
+	if err := f.SetReadDeadline(time.Time{}); err != nil {
+		// O_NONBLOCK is on the open file description, which ptmx shares:
+		// clear it, or the blocking file the caller falls back to has the
+		// same EAGAIN problem.
+		_ = unix.SetNonblock(dup, false)
+		_ = f.Close()
+		return nil, fmt.Errorf("the poller refused the PTY: %w", err)
+	}
 	_ = ptmx.Close()
-	return os.NewFile(uintptr(dup), name), nil
+	return f, nil
 }
 
 // setPtySize sets ptmx's window size through its SyscallConn rather than

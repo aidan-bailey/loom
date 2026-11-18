@@ -879,7 +879,10 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The promotion is the ladder's, a display overlay (setLadder),
 			// read from the row as the user sees it (v, overlaid): the
 			// status promoted is the one shown.
-			promoted := v.Status == session.Ready && !v.StatusReported
+			// A pane with no attached client is no opinion: a burst's
+			// first Output comes from its own goroutine and can land after
+			// the pane's Dead.
+			promoted := v.Status == session.Ready && !v.StatusReported && m.panes.For(v).Attached()
 			if promoted {
 				m.setLadder(v.ID, session.Running)
 				m.updateTabBarStatuses()

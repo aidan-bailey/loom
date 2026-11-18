@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
 )
 
 // ProgramClaude, ProgramAider, and ProgramGemini are the canonical

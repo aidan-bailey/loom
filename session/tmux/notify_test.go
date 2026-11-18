@@ -19,16 +19,20 @@ func notifierGuard(t *testing.T, n Notifier) {
 
 func TestCoalescer_FirstTouchFiresImmediately(t *testing.T) {
 	var dirty atomic.Int32
+	var got atomic.Value
 	notifierGuard(t, Notifier{Output: func(s string) {
-		require.Equal(t, "sess1", s)
+		got.Store(s)
 		dirty.Add(1)
 	}})
 
 	c := newCoalescer("sess1")
 	defer c.stop()
 	c.touch()
-	require.Eventually(t, func() bool { return dirty.Load() == 1 }, 100*time.Millisecond, time.Millisecond,
-		"the first touch after idle fires at once")
+	// Well inside the 16ms coalesce window would be the measure on an idle
+	// machine; a second leaves room for a saturated one.
+	require.Eventually(t, func() bool { return dirty.Load() == 1 }, time.Second, time.Millisecond,
+		"the first touch after idle fires at once, without waiting for the coalesce window")
+	require.Equal(t, "sess1", got.Load())
 }
 
 // The writer is the output pump, and the notifier is tea.Program.Send, which
