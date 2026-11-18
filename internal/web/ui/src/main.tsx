@@ -1,3 +1,4 @@
+import "./styles/app.css";
 import { createRoot } from "react-dom/client";
 
 const mount = document.getElementById("app");

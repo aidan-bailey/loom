@@ -1,0 +1,113 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+/* Test files hold class names no screen uses; keep them out of Tailwind's scan so a test-only
+   change never changes the built CSS. */
+@source not "../**/*.test.*";
+
+/* The dark token set. A later light set is a second block of the same names. */
+:root {
+  color-scheme: dark;
+
+  --background: #0f1012;
+  --foreground: #e6e7ea;
+  --card: #16181c;
+  --card-foreground: #e6e7ea;
+  --popover: #16181c;
+  --popover-foreground: #e6e7ea;
+  --primary: #e6e7ea;
+  --primary-foreground: #0f1012;
+  --secondary: #1c1f24;
+  --secondary-foreground: #e6e7ea;
+  --muted: #1c1f24;
+  --muted-foreground: #a3a8b1;
+  --accent: #1c1f24;
+  --accent-foreground: #e6e7ea;
+  --destructive: #e8836b;
+  --border: #23262b;
+  --input: #2a2d33;
+  --ring: #6ca4e0;
+  --faint: #6f747d;
+  --attention: #f0b45a;
+  --turn: #6ca4e0;
+  --working: #8fc46a;
+  --error: #e8836b;
+  --workspace: #d9a3b8;
+  --docs: #a991d4;
+  /* Background tints of a diff line's row; a count's text uses text-working and text-error. */
+  --diff-add: rgba(143, 196, 106, 0.12);
+  --diff-del: rgba(232, 131, 107, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-faint: var(--faint);
+  --color-attention: var(--attention);
+  --color-turn: var(--turn);
+  --color-working: var(--working);
+  --color-error: var(--error);
+  --color-workspace: var(--workspace);
+  --color-docs: var(--docs);
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+
+  --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font:
+      13px/1.45 "Inter Variable",
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+    margin: 0;
+    overscroll-behavior-y: none;
+  }
+
+  /* iOS zooms into anything smaller than 16px. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
