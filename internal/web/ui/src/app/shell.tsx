@@ -1,9 +1,13 @@
+import { Outlet } from "@tanstack/react-router";
 import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
 
+import type { LinkState } from "@/api/stream";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useFleet, useLink } from "@/store/fleet";
 
 import { panelFor, type PanelId, type PanelProps } from "./panels";
-import { hrefFor } from "./routes";
+import { hrefFor, panelProps, useRoute } from "./routes";
 import { switchApp } from "./switchApp";
 
 // SCREEN_NAMES is what each screen is called where the app names it: the
@@ -117,5 +121,69 @@ export function PanelHost({ panel, props }: { panel: PanelId; props: PanelProps 
     <Boundary key={resetKey(panel, props)} what={SCREEN_NAMES[panel]}>
       <entry.Body {...props} />
     </Boundary>
+  );
+}
+
+// SPLASH is what the screen says while the store holds no snapshot: the
+// link's state, in the classic app's words.
+const SPLASH: Record<LinkState, string> = {
+  connecting: "Connecting…",
+  live: "Connecting…",
+  restarting: "loom is restarting…",
+  offline: "Can't reach loom. Retrying…",
+};
+
+// AppShell is the app's frame: the pinned header (the panel's Head), main
+// (the router's outlet, or the splash while the store holds no snapshot,
+// except on pairing) and the pinned footer. Pairing and the full mockup
+// have no header or footer, and neither has a screen with no snapshot.
+export function AppShell(): ReactElement {
+  const route = useRoute();
+  const props = panelProps(route);
+  const hasSnapshot = useFleet((s) => s.snapshot !== null);
+  const { state } = useLink();
+  const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
+  const waiting = !hasSnapshot && route.panel !== "pair";
+  const Head = panelFor(route.panel)?.Head;
+
+  return (
+    <div
+      className={cn(
+        "mx-auto flex min-h-dvh w-full max-w-[40rem] flex-col bg-background text-foreground",
+        !chromed && "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
+      )}
+    >
+      {chromed ? (
+        <header
+          data-slot="header"
+          className="sticky top-0 z-30 flex-none border-b border-border bg-background pt-[calc(env(safe-area-inset-top)+8px)]"
+        >
+          {Head === undefined ? null : (
+            <Boundary
+              key={resetKey(route.panel, props)}
+              what={`The ${SCREEN_NAMES[route.panel]} header`}
+              fallback={null}
+            >
+              <Head {...props} />
+            </Boundary>
+          )}
+        </header>
+      ) : null}
+      <main className="flex flex-1 flex-col">
+        {waiting ? (
+          <div role="status" className="px-4 py-12 text-center text-muted-foreground">
+            {SPLASH[state]}
+          </div>
+        ) : (
+          <Outlet />
+        )}
+      </main>
+      {chromed ? (
+        <footer
+          data-slot="footer"
+          className="sticky bottom-0 z-30 flex-none border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
+        />
+      ) : null}
+    </div>
   );
 }

@@ -1,4 +1,13 @@
+import {
+  createHashHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
+import { useMemo, useSyncExternalStore, type ReactElement } from "react";
+
 import type { PanelId, PanelProps } from "./panels";
+import { AppShell, PanelHost } from "./shell";
 
 // RouteState is a hash resolved: the panel it opens, the path values it
 // holds (id, agent, job, story, doc) and its search (plan, at).
@@ -131,4 +140,116 @@ export function panelProps(route: RouteState): PanelProps {
     params: route.params,
     search: route.search,
   };
+}
+
+// settleHash rewrites a slashless or legacy hash in place (`#s/5/turns` is
+// `#/s/5`), so the router first reads the app's own form (spec §27). No hash
+// entry is added.
+export function settleHash(): void {
+  const next = normalizeHash(window.location.hash);
+  if (next !== window.location.hash) window.history.replaceState(null, "", next);
+}
+
+// watchHash does the same for a hash set while the app runs (a push link
+// opened in an app that is already open): `location.replace` swaps the
+// history entry and fires the `hashchange` the router follows. It returns
+// its stop.
+export function watchHash(): () => void {
+  const onChange = (): void => {
+    const next = normalizeHash(window.location.hash);
+    if (next !== window.location.hash) window.location.replace(next);
+  };
+  window.addEventListener("hashchange", onChange);
+  return () => {
+    window.removeEventListener("hashchange", onChange);
+  };
+}
+
+// goToPairing opens the pairing route: main.tsx runs it when a request or the
+// stream answers 401.
+export function goToPairing(): void {
+  window.location.hash = hrefFor("pair");
+}
+
+// PATHS is each panel's route in the router's own pattern (`$name` is a path
+// value). routeOf, not these patterns, decides which panel a hash opens;
+// they only give the router something to match.
+const PATHS: Record<PanelId, string> = {
+  fleet: "/",
+  turns: "/s/$id",
+  info: "/s/$id/info",
+  changes: "/s/$id/diff",
+  mockup: "/s/$id/mockup",
+  mockupFull: "/s/$id/mockup/full",
+  agent: "/s/$id/agent/$agent",
+  job: "/s/$id/job/$job",
+  flow: "/s/$id/flow",
+  flowStory: "/s/$id/flow/$story",
+  flowDoc: "/s/$id/flow/doc/$doc",
+  flows: "/flows",
+  new: "/new",
+  settings: "/settings",
+  pair: "/pair",
+};
+
+// Search is plain strings, written as hrefFor writes it, so a router that
+// canonicalises the URL finds nothing to change.
+function parseSearch(search: string): Record<string, string> {
+  return Object.fromEntries(new URLSearchParams(search));
+}
+
+function stringifySearch(search: Record<string, unknown>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) {
+    if (typeof value === "string" && value !== "") query.set(key, value);
+  }
+  const text = query.toString();
+  return text === "" ? "" : "?" + text;
+}
+
+// RoutedPanel is every route's screen: the panel the hash opens.
+function RoutedPanel(): ReactElement {
+  const route = useRoute();
+  return <PanelHost panel={route.panel} props={panelProps(route)} />;
+}
+
+settleHash();
+
+const rootRoute = createRootRoute({ component: () => <AppShell /> });
+
+// router is the app's router: hash history, the shell as the root route and
+// one route per panel. A hash no pattern matches draws the fleet's route,
+// which is what routeOf answers for it.
+export const router = createRouter({
+  routeTree: rootRoute.addChildren(
+    Object.values(PATHS).map((path) =>
+      createRoute({ getParentRoute: () => rootRoute, path, component: RoutedPanel }),
+    ),
+  ),
+  history: createHashHistory(),
+  parseSearch,
+  stringifySearch,
+  defaultNotFoundComponent: RoutedPanel,
+});
+
+function subscribeToHash(onChange: () => void): () => void {
+  window.addEventListener("hashchange", onChange);
+  window.addEventListener("popstate", onChange);
+  const stopHistory = router.history.subscribe(onChange);
+  return () => {
+    window.removeEventListener("hashchange", onChange);
+    window.removeEventListener("popstate", onChange);
+    stopHistory();
+  };
+}
+
+// useRoute is the current route as routeOf gives it, re-rendering on each
+// navigation.
+export function useRoute(): RouteState {
+  const hash = useSyncExternalStore(
+    subscribeToHash,
+    () => window.location.hash,
+    () => "",
+  );
+  return useMemo(() => routeOf(hash), [hash]);
 }

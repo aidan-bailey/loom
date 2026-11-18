@@ -1,7 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { PanelId } from "./panels";
-import { hrefFor, normalizeHash, panelProps, routeOf, type RouteState } from "./routes";
+import {
+  goToPairing,
+  hrefFor,
+  normalizeHash,
+  panelProps,
+  routeOf,
+  settleHash,
+  useRoute,
+  watchHash,
+  type RouteState,
+} from "./routes";
+
+afterEach(() => {
+  window.history.replaceState(null, "", window.location.pathname);
+});
 
 function route(
   panel: PanelId,
@@ -163,5 +178,68 @@ describe("panelProps", () => {
       search: {},
     });
     expect(panelProps(route("settings")).sessionId).toBeUndefined();
+  });
+});
+
+describe("settleHash", () => {
+  it("rewrites a slashless hash and the old conversation address in place", () => {
+    window.history.replaceState(null, "", "#s/5/turns");
+    settleHash();
+    expect(window.location.hash).toBe("#/s/5");
+
+    window.history.replaceState(null, "", "#flows");
+    settleHash();
+    expect(window.location.hash).toBe("#/flows");
+  });
+
+  it("leaves a hash already in the app's form, and no hash, alone", () => {
+    window.history.replaceState(null, "", "#/s/5/info");
+    settleHash();
+    expect(window.location.hash).toBe("#/s/5/info");
+
+    window.history.replaceState(null, "", window.location.pathname);
+    settleHash();
+    expect(window.location.hash).toBe("");
+  });
+});
+
+describe("watchHash", () => {
+  it("rewrites a hash set while it watches, and nothing after it stops", () => {
+    const stop = watchHash();
+    window.history.replaceState(null, "", "#s/5/turns");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(window.location.hash).toBe("#/s/5");
+
+    stop();
+    window.history.replaceState(null, "", "#s/6/turns");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(window.location.hash).toBe("#s/6/turns");
+  });
+});
+
+describe("goToPairing", () => {
+  it("opens the pairing route", () => {
+    goToPairing();
+    expect(window.location.hash).toBe("#/pair");
+  });
+});
+
+describe("useRoute", () => {
+  it("follows the hash", () => {
+    window.history.replaceState(null, "", "#/s/5/info");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current).toEqual({ panel: "info", params: { id: "5" }, search: {} });
+
+    act(() => {
+      window.history.replaceState(null, "", "#/s/6/diff");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(result.current).toEqual({ panel: "changes", params: { id: "6" }, search: {} });
+  });
+
+  it("resolves a hash in the classic form", () => {
+    window.history.replaceState(null, "", "#s/5/mockup");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current.panel).toBe("mockup");
   });
 });

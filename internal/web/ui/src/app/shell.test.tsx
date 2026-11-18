@@ -1,9 +1,21 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { fixtureSnapshot } from "@/fixtures";
+import { useFleet } from "@/store/fleet";
+
 import { definePanel, type PanelProps } from "./panels";
-import { PanelHost, Placeholder } from "./shell";
+import { router } from "./routes";
+import { AppShell, PanelHost, Placeholder } from "./shell";
 import { switchApp } from "./switchApp";
 
 vi.mock("./switchApp", () => ({ switchApp: vi.fn(() => Promise.resolve("switched")) }));
@@ -12,6 +24,8 @@ const props: PanelProps = { sessionId: 5, params: { id: "5" }, search: {} };
 
 afterEach(() => {
   vi.mocked(switchApp).mockClear();
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  window.history.replaceState(null, "", window.location.pathname);
 });
 
 describe("Placeholder", () => {
@@ -71,5 +85,108 @@ describe("PanelHost", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// shellAt draws AppShell at the hash, over a one-route router of its own
+// (memory history), whose only screen is `outlet`.
+function shellAt(hash: string, outlet: ReactElement = <p>outlet</p>) {
+  window.history.replaceState(null, "", hash);
+  const root = createRootRoute({ component: AppShell });
+  const index = createRoute({ getParentRoute: () => root, path: "/", component: () => outlet });
+  const testRouter = createRouter({
+    routeTree: root.addChildren([index]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  return render(<RouterProvider router={testRouter} />);
+}
+
+const header = () => document.querySelector('[data-slot="header"]');
+const footer = () => document.querySelector('[data-slot="footer"]');
+
+describe("AppShell", () => {
+  it.each([
+    ["connecting", "Connecting…"],
+    ["restarting", "loom is restarting…"],
+    ["offline", "Can't reach loom. Retrying…"],
+  ] as const)("while %s with no snapshot it draws the splash and no chrome", async (link, text) => {
+    useFleet.setState({ link });
+    shellAt("#/");
+
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("outlet")).toBeNull();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("draws pairing without a snapshot, and without chrome", async () => {
+    shellAt("#/pair");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("draws the panel's head in the header, the screen in main and the footer slot", async () => {
+    definePanel({
+      id: "fleet",
+      title: () => "Fleet",
+      Head: () => <p>fleet head</p>,
+      Body: () => null,
+    });
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    shellAt("#/");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(header()).toHaveTextContent("fleet head");
+    expect(document.querySelector("main")).toHaveTextContent("outlet");
+    expect(footer()).not.toBeNull();
+  });
+
+  it("draws the full mockup with neither header nor footer", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    shellAt("#/s/5/mockup/full");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("keeps the screen and the footer when the head throws", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "fleet",
+        title: () => "Fleet",
+        Head: () => {
+          throw new Error("head boom");
+        },
+        Body: () => null,
+      });
+      useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+      shellAt("#/");
+
+      expect(await screen.findByText("outlet")).toBeInTheDocument();
+      expect(header()).not.toBeNull();
+      expect(header()).not.toHaveTextContent("head boom");
+      expect(footer()).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("router", () => {
+  it("draws the placeholder of a route no panel is registered for", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate({ to: "/settings" });
+    });
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/settings");
   });
 });
