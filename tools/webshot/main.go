@@ -13,6 +13,11 @@
 // or next (internal/web/dist); -static overrides the directory. Every file
 // goes out under the web layer's Content-Security-Policy.
 //
+//	go run ./tools/webshot -serve 127.0.0.1:5670
+//
+// -serve answers the canned /api/v1 alone on that address until killed, for
+// the new app's dev server to proxy to, and renders nothing.
+//
 // It never touches a daemon, a session or the user's tmux server. Console
 // errors, uncaught exceptions and API routes the fixture can't answer are
 // printed after each screen, and any of them makes the exit status 1.
@@ -31,10 +36,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -86,8 +93,21 @@ func run(args []string) error {
 	bare := fs.Bool("bare", false, "write the viewport only: no bezel, status bar, island or home indicator")
 	guides := fs.Bool("guides", false, "tint the unsafe areas (the safe-area insets)")
 	settle := fs.Duration("settle", 1200*time.Millisecond, "how long a screen gets to fetch and draw after it loads")
+	serve := fs.String("serve", "", "serve the canned loom's /api/v1 on this address until killed, and render nothing (internal/web/ui/vite.config.ts proxies to 127.0.0.1:5670)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *serve != "" {
+		if *out != "" || *only != "" {
+			return errors.New("-serve renders nothing: drop -out and -screens")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return serveAPI(ctx, *serve,
+			func(a net.Addr) { fmt.Printf("serving the canned loom's /api/v1 on http://%s\n", a) },
+			func(route string) {
+				fmt.Fprintf(os.Stderr, "no answer for %s: add it to tools/webshot/fixture\n", route)
+			})
 	}
 	if *out == "" {
 		return errors.New("-out is required")
@@ -178,6 +198,29 @@ func appDir(app, static string) (string, error) {
 		return filepath.Join("internal", "web", "dist"), nil
 	}
 	return filepath.Join("internal", "web", "static"), nil
+}
+
+// serveAPI serves the canned /api/v1 (and no file) on addr until ctx is done,
+// telling announce the address it listens on and onMiss of each route the
+// fixture has no answer for. It stops with Close: the stream stays open for as
+// long as a client holds it, and a Shutdown would wait on it.
+func serveAPI(ctx context.Context, addr string, announce func(net.Addr), onMiss func(string)) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("serve %s: %w", addr, err)
+	}
+	announce(ln.Addr())
+	loom := newCannedAPI()
+	loom.onMiss = onMiss
+	srv := &http.Server{Handler: loom.apiHandler(), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve %s: %w", addr, err)
+	}
+	return nil
 }
 
 func screenNames() string {

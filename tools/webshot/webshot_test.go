@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -396,6 +397,100 @@ func TestRun_RendersEveryScreenInARealBrowser(t *testing.T) {
 		args = append(args, "-browser", which)
 	}
 	require.NoError(t, run(args), "every screen draws with no console error and no route the fixture lacks")
+}
+
+// serveForTest runs serveAPI on a free port and returns its address, the
+// misses it reports, a cancel and the channel its result arrives on.
+func serveForTest(t *testing.T) (string, chan string, context.CancelFunc, chan error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	addrs := make(chan string, 1)
+	misses := make(chan string, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- serveAPI(ctx, "127.0.0.1:0", func(a net.Addr) { addrs <- a.String() }, func(r string) { misses <- r })
+	}()
+	select {
+	case a := <-addrs:
+		return a, misses, cancel, done
+	case err := <-done:
+		t.Fatalf("serveAPI returned before it listened: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveAPI never announced its address")
+	}
+	return "", nil, nil, nil
+}
+
+func TestServeAPI_AnswersTheCannedRoutesAndNothingElse(t *testing.T) {
+	addr, misses, _, _ := serveForTest(t)
+	base := "http://" + addr
+
+	code, body := get(t, base+"/api/v1/sessions/1/turns")
+	assert.Equal(t, http.StatusOK, code)
+	assert.NotContains(t, body, `"now`)
+
+	code, _ = get(t, base+"/index.html")
+	assert.Equal(t, http.StatusNotFound, code, "no file is served")
+
+	code, _ = get(t, base+"/api/v1/push-key")
+	assert.Equal(t, http.StatusNotFound, code)
+	select {
+	case m := <-misses:
+		assert.Equal(t, "GET /api/v1/push-key", m)
+	case <-time.After(2 * time.Second):
+		t.Fatal("onMiss was not called")
+	}
+
+	res, err := http.Get(base + "/api/v1/stream")
+	require.NoError(t, err)
+	defer res.Body.Close()
+	line, err := bufio.NewReader(res.Body).ReadString('\n')
+	require.NoError(t, err)
+	assert.Equal(t, "event: snapshot\n", line)
+}
+
+func TestServeAPI_StopsWhenItsContextEndsEvenWithAStreamOpen(t *testing.T) {
+	addr, _, cancel, done := serveForTest(t)
+	res, err := http.Get("http://" + addr + "/api/v1/stream")
+	require.NoError(t, err)
+	defer res.Body.Close()
+	_, err = bufio.NewReader(res.Body).ReadString('\n')
+	require.NoError(t, err)
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveAPI did not stop with a stream open")
+	}
+}
+
+func TestServeAPI_AnAddressInUseIsAnError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	err = serveAPI(context.Background(), ln.Addr().String(), func(net.Addr) { t.Error("announced an address it did not listen on") }, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "serve 127.0.0.1:")
+}
+
+func TestRun_ServeRefusesWhatItWouldRender(t *testing.T) {
+	for _, args := range [][]string{
+		{"-serve", "127.0.0.1:0", "-out", t.TempDir()},
+		{"-serve", "127.0.0.1:0", "-screens", "fleet"},
+	} {
+		done := make(chan error, 1)
+		go func() { done <- run(args) }()
+		select {
+		case err := <-done:
+			require.Error(t, err, "%v", args)
+			assert.Contains(t, err.Error(), "-serve renders nothing", "%v", args)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%v: run served instead of refusing", args)
+		}
+	}
 }
 
 func TestPickScreens_TheAgentScreenIsSessionOnesRunningSubagent(t *testing.T) {

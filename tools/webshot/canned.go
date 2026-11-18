@@ -48,6 +48,11 @@ type cannedLoom struct {
 	static string
 	now    func() time.Time
 
+	// onMiss, when set, is told of a route the fixture has no answer for in
+	// place of the route being kept in misses, so a long-running -serve does
+	// not accumulate them.
+	onMiss func(route string)
+
 	mu     sync.Mutex
 	misses []string // API routes the fixture has no answer for
 }
@@ -57,6 +62,24 @@ func newCannedLoom(static string) (*cannedLoom, error) {
 		return nil, fmt.Errorf("the app's files: %w (run from the repo root, or pass -static)", err)
 	}
 	return &cannedLoom{static: static, now: time.Now}, nil
+}
+
+// newCannedAPI is a canned loom that serves no files, for -serve.
+func newCannedAPI() *cannedLoom { return &cannedLoom{now: time.Now} }
+
+// apiHandler answers the stream and the canned /api/v1 routes, and nothing
+// else: no file is served.
+func (c *cannedLoom) apiHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch p := r.URL.Path; {
+		case p == "/api/v1/stream" && r.Method == http.MethodGet:
+			c.stream(w, r)
+		case strings.HasPrefix(p, "/api/"):
+			c.api(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -141,9 +164,13 @@ func (c *cannedLoom) api(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	c.mu.Lock()
-	c.misses = append(c.misses, r.Method+" "+r.URL.Path)
-	c.mu.Unlock()
+	if c.onMiss != nil {
+		c.onMiss(r.Method + " " + r.URL.Path)
+	} else {
+		c.mu.Lock()
+		c.misses = append(c.misses, r.Method+" "+r.URL.Path)
+		c.mu.Unlock()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
 	_, _ = io.WriteString(w, `{"error":"the canned loom has no answer for this"}`)
