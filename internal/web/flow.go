@@ -27,31 +27,31 @@ const (
 // (core.FlowSummary). Status is "lost" when the run says it runs and its
 // engine has ended; Spent is null until the run has been priced.
 type flowSummaryJSON struct {
-	Plan       string   `json:"plan"`
-	Spec       string   `json:"spec"`
-	Title      string   `json:"title"`
-	Part       string   `json:"part"`
-	Stage      string   `json:"stage"`
-	Status     string   `json:"status"`
-	Run        string   `json:"run"`
-	Done       int      `json:"done"`
-	Total      int      `json:"total"`
-	Drafted    int      `json:"drafted"`
-	Asks       string   `json:"asks"`
-	Phase      string   `json:"phase"`
-	Updated    string   `json:"updated"`
-	Unreadable string   `json:"unreadable"`
-	Spent      *float64 `json:"spent"`
+	Plan       string           `json:"plan"`
+	Spec       string           `json:"spec"`
+	Title      string           `json:"title"`
+	Part       string           `json:"part"`
+	Stage      flowStageName    `json:"stage"`
+	Status     flowStatus       `json:"status"`
+	Run        string           `json:"run"`
+	Done       int              `json:"done"`
+	Total      int              `json:"total"`
+	Drafted    int              `json:"drafted"`
+	Asks       flowQuestionKind `json:"asks"`
+	Phase      string           `json:"phase"`
+	Updated    string           `json:"updated"`
+	Unreadable string           `json:"unreadable"`
+	Spent      *float64         `json:"spent"`
 }
 
 func flowSummaryOf(f core.FlowSummary) flowSummaryJSON {
 	s := flowSummaryJSON{
-		Plan: f.Plan, Spec: f.Spec, Title: f.Title, Part: f.Part, Stage: f.Stage, Status: f.Status, Run: f.Run,
-		Done: f.Done, Total: f.Total, Drafted: f.Drafted, Asks: f.Asks, Phase: f.Phase,
+		Plan: f.Plan, Spec: f.Spec, Title: f.Title, Part: f.Part, Stage: flowStageName(f.Stage), Status: flowStatus(f.Status), Run: f.Run,
+		Done: f.Done, Total: f.Total, Drafted: f.Drafted, Asks: flowQuestionKind(f.Asks), Phase: f.Phase,
 		Updated: stamp(f.Updated), Unreadable: f.Unreadable,
 	}
 	if f.Lost {
-		s.Status = "lost"
+		s.Status = flowLost
 	}
 	if f.Priced {
 		v := f.Spent
@@ -71,10 +71,10 @@ func flowsOfView(v core.InstanceView) []flowSummaryJSON {
 
 // flowStageJSON is one step of the strip (flowview.Stage).
 type flowStageJSON struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Detail string `json:"detail"`
-	Doc    string `json:"doc"`
+	Name   flowStageName  `json:"name"`
+	State  flowStageState `json:"state"`
+	Detail string         `json:"detail"`
+	Doc    string         `json:"doc"`
 }
 
 // flowGateJSON is a gate run's line.
@@ -89,7 +89,7 @@ type flowGateJSON struct {
 // doesn't).
 type flowStepJSON struct {
 	Name       string         `json:"name"`
-	Kind       string         `json:"kind"`
+	Kind       flowStepKind   `json:"kind"`
 	K          int            `json:"k"`
 	Role       string         `json:"role"`
 	Status     string         `json:"status"`
@@ -107,27 +107,27 @@ type flowStepJSON struct {
 // flowStoryJSON is a row of the board: a story, or the premise (P) or final
 // (F) row.
 type flowStoryJSON struct {
-	ID         string            `json:"id"`
-	Developer  string            `json:"developer"`
-	Tier       string            `json:"tier"`
-	Review     string            `json:"review"`
-	Line       int               `json:"line"`
-	End        int               `json:"end"`
-	Reading    string            `json:"reading"`
-	Status     string            `json:"status"`
-	Commits    int               `json:"commits"`
-	Deviations int               `json:"deviations"`
-	Findings   [3]int            `json:"findings"`
-	Cells      map[string]string `json:"cells"`
-	Steps      []flowStepJSON    `json:"steps"`
+	ID         string              `json:"id"`
+	Developer  string              `json:"developer"`
+	Tier       string              `json:"tier"`
+	Review     string              `json:"review"`
+	Line       int                 `json:"line"`
+	End        int                 `json:"end"`
+	Reading    string              `json:"reading"`
+	Status     string              `json:"status"`
+	Commits    int                 `json:"commits"`
+	Deviations int                 `json:"deviations"`
+	Findings   [3]int              `json:"findings"`
+	Cells      map[string]flowCell `json:"cells"`
+	Steps      []flowStepJSON      `json:"steps"`
 }
 
 // flowQuestionJSON is a parked run's open question.
 type flowQuestionJSON struct {
-	Key   string `json:"key"`
-	Kind  string `json:"kind"`
-	Story string `json:"story"`
-	Text  string `json:"text"`
+	Key   string           `json:"key"`
+	Kind  flowQuestionKind `json:"kind"`
+	Story string           `json:"story"`
+	Text  string           `json:"text"`
 }
 
 // flowOtherJSON is another run of the plan.
@@ -182,7 +182,7 @@ func flowOf(v core.FlowView, lost bool) flowJSON {
 		Costs: costsOf(v.Costs),
 	}
 	for _, s := range d.Stages {
-		f.Stages = append(f.Stages, flowStageJSON{Name: s.Name, State: s.State, Detail: s.Detail, Doc: s.Doc})
+		f.Stages = append(f.Stages, flowStageJSON{Name: flowStageName(s.Name), State: flowStageState(s.State), Detail: s.Detail, Doc: s.Doc})
 	}
 	for _, s := range d.Stories {
 		f.Stories = append(f.Stories, storyOf(s, v.Times))
@@ -196,7 +196,7 @@ func flowOf(v core.FlowView, lost bool) flowJSON {
 		f.Final = &p
 	}
 	if q := d.Question; q != nil {
-		f.Question = &flowQuestionJSON{Key: q.Key, Kind: q.Kind, Story: q.Story, Text: q.Text}
+		f.Question = &flowQuestionJSON{Key: q.Key, Kind: flowQuestionKind(q.Kind), Story: q.Story, Text: q.Text}
 	}
 	for _, k := range d.Kept {
 		f.Kept = append(f.Kept, k.String())
@@ -211,16 +211,16 @@ func storyOf(s flowview.StoryView, times map[sched.JobID]core.JobTimes) flowStor
 	out := flowStoryJSON{
 		ID: s.ID, Developer: s.Developer, Tier: s.Tier, Review: s.Review, Line: s.Line, End: s.End, Reading: s.Reading,
 		Status: s.Row.Status, Commits: s.Row.Commits, Deviations: s.Row.Deviations, Findings: s.Row.Findings,
-		Cells: s.Cells, Steps: make([]flowStepJSON, 0, len(s.Steps)),
+		Cells: make(map[string]flowCell, len(s.Cells)), Steps: make([]flowStepJSON, 0, len(s.Steps)),
 	}
-	if out.Cells == nil {
-		out.Cells = map[string]string{}
+	for k, v := range s.Cells {
+		out.Cells[k] = flowCell(v)
 	}
 	if out.Developer == "" {
 		out.Developer = s.Row.Developer
 	}
 	for _, st := range s.Steps {
-		step := flowStepJSON{Name: st.Name, Kind: st.Kind, K: st.K, Role: st.Role, Status: st.Status, Report: st.Report,
+		step := flowStepJSON{Name: st.Name, Kind: flowStepKind(st.Kind), K: st.K, Role: st.Role, Status: st.Status, Report: st.Report,
 			Jobs: slices.Clone(st.Jobs), Gates: make([]flowGateJSON, 0, len(st.Gates)), Unreadable: st.Unreadable}
 		if step.Jobs == nil {
 			step.Jobs = []sched.JobID{}

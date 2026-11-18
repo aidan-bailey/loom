@@ -136,12 +136,24 @@ func TestUnions_EveryFixedValueFieldIsTyped(t *testing.T) {
 		{jobJSON{}, "State", reflect.TypeFor[jobState]()},
 		{jobJSON{}, "Control", reflect.TypeFor[jobControlKind]()},
 		{askJSON{}, "Kind", reflect.TypeFor[askKind]()},
+		{flowSummaryJSON{}, "Stage", reflect.TypeFor[flowStageName]()},
+		{flowSummaryJSON{}, "Status", reflect.TypeFor[flowStatus]()},
+		{flowSummaryJSON{}, "Asks", reflect.TypeFor[flowQuestionKind]()},
+		{flowStageJSON{}, "Name", reflect.TypeFor[flowStageName]()},
+		{flowStageJSON{}, "State", reflect.TypeFor[flowStageState]()},
+		{flowStepJSON{}, "Kind", reflect.TypeFor[flowStepKind]()},
+		{flowQuestionJSON{}, "Kind", reflect.TypeFor[flowQuestionKind]()},
+		{flowStoryJSON{}, "Cells", reflect.TypeFor[map[string]flowCell]()},
 	} {
 		f, ok := reflect.TypeOf(r.of).FieldByName(r.field)
 		if assert.True(t, ok, r.field) {
 			assert.Equal(t, r.want, f.Type, "%T.%s", r.of, r.field)
 		}
-		_, listed := unions()[r.want]
+		typ := r.want
+		if typ.Kind() == reflect.Map {
+			typ = typ.Elem()
+		}
+		_, listed := unions()[typ]
 		assert.True(t, listed, "%T.%s", r.of, r.field)
 	}
 }

@@ -123,7 +123,7 @@ func TestSessionJSON_CarriesTheFlows(t *testing.T) {
 	}}
 	s := sessionOf(1, v)
 	require.Len(t, s.Flows, 2)
-	assert.Equal(t, "lost", s.Flows[0].Status)
+	assert.Equal(t, flowLost, s.Flows[0].Status)
 	require.NotNil(t, s.Flows[0].Spent)
 	assert.InDelta(t, 4.71, *s.Flows[0].Spent, 1e-9)
 	assert.Nil(t, s.Flows[1].Spent, "not priced is null, never 0")
@@ -145,4 +145,32 @@ func TestBuildTreeLimit_HeadingsCarryTheirLines(t *testing.T) {
 	assert.Zero(t, plain[0].Line, "a message's tree carries no lines")
 	_, cut = buildTreeLimit(text, 1<<20, 2, true)
 	assert.True(t, cut, "past its node bound the tree says it is cut")
+}
+
+func TestFlowOf_CellsEncodeAsStringsAndNoneAsAnEmptyObject(t *testing.T) {
+	view := core.FlowView{Detail: flowview.FlowDetail{Stories: []flowview.StoryView{
+		{ID: "1", Cells: map[string]string{"dev": flowview.CellPassed, "fix": flowview.CellSkipped}},
+		{ID: "2"},
+	}}}
+	raw, err := json.Marshal(flowOf(view, false))
+	require.NoError(t, err)
+	var got struct {
+		Stories []struct {
+			Cells json.RawMessage `json:"cells"`
+		} `json:"stories"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Len(t, got.Stories, 2)
+	assert.JSONEq(t, `{"dev":"passed","fix":"skipped"}`, string(got.Stories[0].Cells))
+	assert.Equal(t, `{}`, string(got.Stories[1].Cells), "none is an empty object, never null")
+}
+
+func TestFlowSummaryOf_ConvertsStageStatusAndAsks(t *testing.T) {
+	f := core.FlowSummary{Summary: flowview.Summary{Stage: flowview.StageRun, Status: flowrun.Parked, Asks: flowrun.KindBlocked}}
+	got := flowSummaryOf(f)
+	assert.Equal(t, flowStageName("run"), got.Stage)
+	assert.Equal(t, flowStatus("parked"), got.Status)
+	assert.Equal(t, flowQuestionKind("blocked-decision"), got.Asks)
+	f.Lost = true
+	assert.Equal(t, flowLost, flowSummaryOf(f).Status)
 }
