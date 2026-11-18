@@ -517,3 +517,153 @@ func TestCall_ReadReturnsTheModelsErrorAndA504WhenTheWaitRunsOut(t *testing.T) {
 	assert.Equal(t, http.StatusGatewayTimeout, se.status)
 	assert.Equal(t, "loom did not answer in time", se.msg)
 }
+
+// intQuery and untaggedQuery are query types readQuery cannot fill.
+type intQuery struct {
+	N int `query:"n"`
+}
+
+type untaggedQuery struct {
+	S string
+}
+
+// concretePath is a route's path with a value in each of its path values.
+func concretePath(path string) string {
+	return strings.NewReplacer("{id}", "1", "{ask}", "a", "{job}", "1", "{action}", "pause").Replace(path)
+}
+
+func TestRoutes_OnlyPairIsOpen(t *testing.T) {
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		if rt.spec.open {
+			assert.Equal(t, "POST /api/v1/pair", key, "an open route is served to anyone: only the pairing route may be")
+		}
+	}
+}
+
+func TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice(t *testing.T) {
+	host := &scriptedHost{}
+	l := &Layer{host: host}
+	m := http.NewServeMux()
+	l.registerRoutes(m)
+	cookies := []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"no cookie", nil},
+		{"a token no device holds", &http.Cookie{Name: cookieName, Value: deviceToken(9)}},
+	}
+	closed := 0
+	for _, rt := range l.routes() {
+		if rt.spec.open {
+			continue
+		}
+		closed++
+		for _, tc := range cookies {
+			req := httptest.NewRequest(rt.spec.method, concretePath(rt.spec.path), strings.NewReader(`{}`))
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			rec := httptest.NewRecorder()
+
+			// The layer has no client, so a route that is not behind authed
+			// panics on it: report that as this route's failure, not as the
+			// end of the test binary.
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						t.Errorf("%s %s with %s ran without a paired device and panicked: %v", rt.spec.method, rt.spec.path, tc.name, p)
+					}
+				}()
+				m.ServeHTTP(rec, req)
+				assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s %s with %s", rt.spec.method, rt.spec.path, tc.name)
+			}()
+		}
+	}
+	assert.NotZero(t, closed)
+	assert.Empty(t, host.touched, "no device was touched: no route ran")
+}
+
+// queryTypeProblem says what is wrong with t as a route's query type, "" when
+// nothing is: readQuery fills only string fields that carry a query tag.
+func queryTypeProblem(t reflect.Type) string {
+	if t.Kind() != reflect.Struct {
+		return "not a struct"
+	}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.Type.Kind() != reflect.String {
+			return f.Name + " is not a string"
+		}
+		if f.Tag.Get("query") == "" {
+			return f.Name + " has no query tag"
+		}
+	}
+	return ""
+}
+
+func TestRoutes_QueryTypesHoldOnlyStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  reflect.Type
+		want string
+	}{
+		{"strings with tags", reflect.TypeFor[echoQuery](), ""},
+		{"an int", reflect.TypeFor[intQuery](), "N is not a string"},
+		{"no tag", reflect.TypeFor[untaggedQuery](), "S has no query tag"},
+		{"a pointer", reflect.TypeFor[*echoQuery](), "not a struct"},
+	} {
+		assert.Equal(t, tc.want, queryTypeProblem(tc.typ), tc.name)
+	}
+
+	for _, rt := range (&Layer{}).routes() {
+		if rt.query != nil {
+			assert.Empty(t, queryTypeProblem(rt.query), "%s %s", rt.spec.method, rt.spec.path)
+		}
+	}
+}
+
+// clientProblems are the faults in the routes' client names: empty, not
+// lowerCamelCase, or used twice.
+func clientProblems(rs []route) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, rt := range rs {
+		c := rt.spec.client
+		switch {
+		case c == "":
+			out = append(out, rt.spec.method+" "+rt.spec.path+": no client name")
+		case c[:1] != strings.ToLower(c[:1]):
+			out = append(out, c+": not lowerCamelCase")
+		case seen[c]:
+			out = append(out, c+": used twice")
+		}
+		seen[c] = true
+	}
+	return out
+}
+
+func TestRoutes_ClientNamesAreUnique(t *testing.T) {
+	named := func(names ...string) []route {
+		var rs []route
+		for _, n := range names {
+			rs = append(rs, route{spec: spec{method: http.MethodGet, path: "/" + n, client: n}})
+		}
+		return rs
+	}
+	assert.Empty(t, clientProblems(named("send", "merge")))
+	assert.Equal(t, []string{"GET /: no client name"}, clientProblems(named("")))
+	assert.Equal(t, []string{"Send: not lowerCamelCase"}, clientProblems(named("Send")))
+	assert.Equal(t, []string{"send: used twice"}, clientProblems(named("send", "send")))
+
+	assert.Empty(t, clientProblems((&Layer{}).routes()))
+}
+
+func TestRoutes_EveryRouteHasADoc(t *testing.T) {
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		assert.NotEmpty(t, rt.spec.doc, key)
+		assert.True(t, strings.HasSuffix(rt.spec.doc, "."), "%s: a doc is sentences: %q", key, rt.spec.doc)
+		assert.LessOrEqual(t, len(rt.spec.doc), 700, "%s: a doc is one to three sentences", key)
+	}
+}

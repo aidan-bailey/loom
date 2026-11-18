@@ -68,13 +68,7 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 // routeAPI registers the sessions' actions under /api/v1. Every route needs
 // a paired device (authed); /pair, /stream and /push-key are other stories'.
 func (l *Layer) routeAPI(m *http.ServeMux) {
-	m.Handle("POST /api/v1/sessions/{id}/send", l.authed(l.sendReply))
 	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
-	m.Handle("POST /api/v1/sessions/{id}/merge", l.authed(l.mergeInto))
-	m.Handle("POST /api/v1/sessions/{id}/pause", l.authed(l.sessionOp("pause", core.Core.Pause)))
-	m.Handle("POST /api/v1/sessions/{id}/resume", l.authed(l.sessionOp("resume", core.Core.Resume)))
-	m.Handle("POST /api/v1/sessions/{id}/kill", l.authed(l.sessionOp("kill", core.Core.Kill)))
-	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
 	m.Handle("GET /api/v1/sessions/{id}/message", l.authed(l.message))
 	m.Handle("GET /api/v1/sessions/{id}/turns", l.authed(l.readTurns))
 	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
@@ -217,17 +211,14 @@ func nonNil(notes []noticeJSON) []noticeJSON {
 	return notes
 }
 
-// sessionOp is the handler of a lifecycle request that names only the
-// session: pause, resume, kill and push.
-func (l *Layer) sessionOp(name string, op func(core.Core, core.InstanceID, core.ReqID)) deviceHandler {
-	return func(w http.ResponseWriter, r *http.Request, device string) {
-		a := actionLog{device: device, name: name}
-		id, ok := l.sessionFromPath(w, r, a)
-		if !ok {
-			return
+// sessionOp is the typed handler of a lifecycle request that names only the session: pause, resume, kill and push.
+func (l *Layer) sessionOp(op func(core.Core, core.InstanceID, core.ReqID)) func(c *call, _ struct{}) (noticesJSON, error) {
+	return func(c *call, _ struct{}) (noticesJSON, error) {
+		id, err := c.session()
+		if err != nil {
+			return noticesJSON{}, err
 		}
-		a.sessionID = id
-		l.doAction(w, r, a, func(req core.ReqID) {
+		return c.act(func(req core.ReqID) {
 			op(l.client, id, req)
 		})
 	}
@@ -240,23 +231,16 @@ type sendBody struct {
 
 // sendReply sends the device's reply to the session through the loom mod
 // (core.OriginWeb: the person's own words, no "From" line).
-func (l *Layer) sendReply(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "send"}
-	id, ok := l.sessionFromPath(w, r, a)
-	if !ok {
-		return
-	}
-	a.sessionID = id
-	var body sendBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
+func (l *Layer) sendReply(c *call, body sendBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" || len(text) > maxReplyBytes {
-		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes))
-		return
+		return noticesJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes)}
 	}
-	l.doAction(w, r, a, func(req core.ReqID) {
+	return c.act(func(req core.ReqID) {
 		l.client.Send(id, core.Message{Text: text, Origin: core.OriginWeb}, req)
 	})
 }
@@ -268,26 +252,18 @@ type mergeBody struct {
 
 // mergeInto merges the source session into the one in the URL, as the TUI's
 // picker does; the model checks both (admit).
-func (l *Layer) mergeInto(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "merge"}
-	id, ok := l.sessionFromPath(w, r, a)
-	if !ok {
-		return
-	}
-	a.sessionID = id
-	var body mergeBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
+func (l *Layer) mergeInto(c *call, body mergeBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
 	}
 	if body.Source == 0 || body.Source > maxIDValue {
-		l.refuse(w, a, http.StatusBadRequest, "source: want a session ID")
-		return
+		return noticesJSON{}, &statusError{http.StatusBadRequest, "source: want a session ID"}
 	}
 	if _, ok := l.client.View(body.Source); !ok {
-		l.refuse(w, a, http.StatusNotFound, "source: no such session")
-		return
+		return noticesJSON{}, &statusError{http.StatusNotFound, "source: no such session"}
 	}
-	l.doAction(w, r, a, func(req core.ReqID) {
+	return c.act(func(req core.ReqID) {
 		l.client.Merge(id, body.Source, req)
 	})
 }

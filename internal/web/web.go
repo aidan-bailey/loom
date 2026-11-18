@@ -92,6 +92,7 @@ func (l *Layer) mux() *http.ServeMux {
 	l.routePair(m)
 	l.routeStream(m)
 	l.routeAPI(m)
+	l.registerRoutes(m)
 	l.routeStatic(m)
 	l.routePush(m)
 	return m

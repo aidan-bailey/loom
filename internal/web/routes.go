@@ -245,3 +245,54 @@ func readQuery(r *http.Request, v any) {
 		rv.Field(i).SetString(values.Get(name))
 	}
 }
+
+// lifecycleDoc is the doc of a lifecycle route that names only the session.
+func lifecycleDoc(request string) string {
+	return "The " + request + " request of the session: 200 with its notices, 409 with the model's own words when it refuses, and 202 `{\"pending\": true}` when it is still running after 30 s, its outcome then arriving on the stream."
+}
+
+// routes is the table, in registration order. Story 2 of the web foundation
+// moves the other routes onto it.
+func (l *Layer) routes() []route {
+	return []route{
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/send", log: "send", client: "send", ok: http.StatusOK,
+			doc: "`{text}`: sends the text to the session through its loom mod as the person's own words (`core.OriginWeb`); a reply that is an allowed slash command runs it, and its result arrives as a notice. The text is 1 byte to 64 KiB after trimming, else 400.",
+		}, l.sendReply),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/merge", log: "merge", client: "merge", ok: http.StatusOK,
+			doc: "`{source}`: merges the session `source` names into the session in the URL, as the TUI's picker does. A `source` that is no session ID is 400, one that names no session 404, and a merge the model refuses 409 with its words.",
+		}, l.mergeInto),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/pause", log: "pause", client: "pause", ok: http.StatusOK,
+			doc: lifecycleDoc("pause"),
+		}, l.sessionOp(core.Core.Pause)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/resume", log: "resume", client: "resume", ok: http.StatusOK,
+			doc: lifecycleDoc("resume"),
+		}, l.sessionOp(core.Core.Resume)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/kill", log: "kill", client: "kill", ok: http.StatusOK,
+			doc: lifecycleDoc("kill"),
+		}, l.sessionOp(core.Core.Kill)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/push", log: "push", client: "push", ok: http.StatusOK,
+			doc: lifecycleDoc("push"),
+		}, l.sessionOp(core.Core.Push)),
+	}
+}
+
+// registerRoutes mounts every entry of the table on m at its method and
+// path, wrapped in authed unless the entry is open, which is served with no
+// device.
+func (l *Layer) registerRoutes(m *http.ServeMux) {
+	for _, rt := range l.routes() {
+		var h http.Handler
+		if rt.spec.open {
+			h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rt.serve(w, r, "") })
+		} else {
+			h = l.authed(rt.serve)
+		}
+		m.Handle(rt.spec.method+" "+rt.spec.path, h)
+	}
+}
