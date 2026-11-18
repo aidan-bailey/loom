@@ -137,7 +137,7 @@ func TestStatic_NextTreeBuilds(t *testing.T) {
 
 	licenses := assets["/THIRD_PARTY.txt"]
 	require.Equal(t, "text/plain; charset=utf-8", licenses.ctype)
-	for _, pkg := range []string{"react", "react-dom"} {
+	for _, pkg := range []string{"react", "react-dom", "@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono"} {
 		require.Contains(t, string(licenses.body), "Name: "+pkg+"\n", "THIRD_PARTY.txt lacks "+pkg)
 	}
 
