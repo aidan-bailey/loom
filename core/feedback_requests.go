@@ -91,15 +91,21 @@ func (m *Model) CloseThread(t feedback.ThreadID, req ReqID) {
 
 // FixThread starts thread t's fix session (spec §7) in workspace (else
 // feedback.workspace): a Create the model composes as `loom session new`
-// does, titled feedback.FixTitle and prompted with feedback.FixPrompt. The
-// thread is marked fixing with the new instance as the Create is made; the
-// Reply and Started are the Create's. Refused: an unknown or closed thread,
+// does, titled feedback.FixTitle and prompted with feedback.FixPrompt, and
+// launched on model and effort when they are not "" (else the workspace's
+// own). The thread is marked fixing with the new instance as the Create is
+// made; the Reply and Started are the Create's. Refused: a model or effort
+// the Session Launch Options modal doesn't offer, an unknown or closed thread,
 // one whose fix session is still served, no workspace, one the model
 // doesn't serve, the checks a new session meets (CheckRoom, CheckWritable,
 // CheckNewTitle), a title the workspace holds, and blocked remote control.
-func (m *Model) FixThread(t feedback.ThreadID, workspace string, req ReqID) {
+func (m *Model) FixThread(t feedback.ThreadID, workspace, model, effort string, req ReqID) {
 	f := m.feedback
 	th, ok := f.inbox.Thread(t)
+	if err := checkLaunchChoice(model, effort); err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
 	switch {
 	case f.dir == "" || f.loadErr != nil:
 		m.refuse(req, 0, errors.New("the feedback inbox is not loaded"))
@@ -144,6 +150,8 @@ func (m *Model) FixThread(t feedback.ThreadID, workspace string, req ReqID) {
 	program := v.Settings.GetProgram()
 	m.ReloadAccounts()
 	opts, _ := ChooseLaunchAccount(m, launch.FromSettings(v.Settings), program)
+	opts.Model = cmp.Or(model, opts.Model)
+	opts.Effort = cmp.Or(effort, opts.Effort)
 	if auth := m.RCAuthFor(opts.Account); launch.RemoteControlBlocked(auth, launch.EffectiveRemoteControl(opts), program) {
 		m.refuse(req, 0, fmt.Errorf("remote control is unavailable: %s", auth.Reason))
 		return
@@ -160,4 +168,21 @@ func (m *Model) FixThread(t feedback.ThreadID, workspace string, req ReqID) {
 		m.notifyErr(fmt.Errorf("feedback inbox: %w; thread %d's fix session is kept in memory", err, t))
 	}
 	f.rev++
+}
+
+// checkLaunchChoice refuses a model or effort the Session Launch Options
+// modal doesn't offer; "" leaves the workspace's own.
+func checkLaunchChoice(model, effort string) error {
+	for _, o := range []struct {
+		name, value string
+		allowed     []string
+	}{
+		{"model", model, config.ClaudeModelAliases()},
+		{"effort", effort, config.ClaudeEfforts},
+	} {
+		if o.value != "" && !slices.Contains(o.allowed, o.value) {
+			return fmt.Errorf("%s %q: want one of %s", o.name, o.value, strings.Join(o.allowed, ", "))
+		}
+	}
+	return nil
 }

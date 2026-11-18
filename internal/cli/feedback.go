@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/feedback"
 	"github.com/aidan-bailey/loom/session/claudemod"
@@ -293,12 +294,13 @@ func writeNote(w io.Writer, n feedback.Note) {
 }
 
 func newFeedbackFixCmd() *cobra.Command {
-	var workspace string
+	var workspace, model, effort string
 	cmd := &cobra.Command{
-		Use:   "fix <thread> [-w <workspace>]",
+		Use:   "fix <thread> [-w <workspace>] [--model M] [--effort E]",
 		Short: "Start a session that fixes a thread's problem, and wait until it runs",
 		Long: "Start a session titled fb-<thread>-<slug> in the workspace (-w, else the global config.json's " +
-			"feedback.workspace), prompted with every note in the thread, and wait until it runs.",
+			"feedback.workspace), prompted with every note in the thread, on --model and --effort (else the " +
+			"workspace's own), and wait until it runs.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			t, err := parseThread(args[0])
@@ -310,7 +312,7 @@ func newFeedbackFixCmd() *cobra.Command {
 			defer stop()
 			c.SetContext(ctx)
 			return withDaemon(c, func(d *client) error {
-				d.FixThread(t, workspace, feedbackReq)
+				d.FixThread(t, workspace, model, effort, feedbackReq)
 				st, err := d.awaitStart(feedbackReq)
 				switch {
 				case errors.Is(err, context.Canceled):
@@ -332,7 +334,10 @@ func newFeedbackFixCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "The workspace to start it in (default: feedback.workspace)")
+	fl := cmd.Flags()
+	fl.StringVarP(&workspace, "workspace", "w", "", "The workspace to start it in (default: feedback.workspace)")
+	fl.StringVar(&model, "model", "", "Model: "+strings.Join(config.ClaudeModelAliases(), ", "))
+	fl.StringVar(&effort, "effort", "", "Effort: "+strings.Join(config.ClaudeEfforts, ", "))
 	return cmd
 }
 

@@ -282,8 +282,8 @@ func (l *Loop) CloseThread(thread feedback.ThreadID, req ReqID) {
 }
 
 // FixThread runs Model.FixThread on the loop.
-func (l *Loop) FixThread(thread feedback.ThreadID, workspace string, req ReqID) {
-	l.do(func(m *Model) { m.FixThread(thread, workspace, req) })
+func (l *Loop) FixThread(thread feedback.ThreadID, workspace, model, effort string, req ReqID) {
+	l.do(func(m *Model) { m.FixThread(thread, workspace, model, effort, req) })
 }
 
 // ForgetBelief runs Model.ForgetBelief on the loop.
