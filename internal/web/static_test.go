@@ -97,6 +97,61 @@ func staticAssets(t *testing.T) map[string]staticAsset {
 	return assets
 }
 
+// nextStaticAssets is the new app as routeStatic serves it.
+func nextStaticAssets(t *testing.T) map[string]staticAsset {
+	t.Helper()
+	sub, err := fs.Sub(nextFiles, "dist")
+	require.NoError(t, err)
+	assets, err := buildStaticAssets(sub, "b-test")
+	require.NoError(t, err)
+	return assets
+}
+
+func TestStatic_ContentTypesKnowTheNewTreesExtensions(t *testing.T) {
+	for ext, want := range map[string]string{
+		".svg":   "image/svg+xml",
+		".woff2": "font/woff2",
+		".txt":   "text/plain; charset=utf-8",
+	} {
+		require.Equal(t, want, staticContentTypes[ext], ext)
+	}
+}
+
+func TestStatic_NextTreeBuilds(t *testing.T) {
+	assets := nextStaticAssets(t)
+
+	index := string(assets["/index.html"].body)
+	require.NotContains(t, index, "__LOOM_", "the placeholders are filled")
+	meta := regexp.MustCompile(`<meta name="loom-build" content="([^"]*)"\s*/?>`).FindStringSubmatch(index)
+	require.NotNil(t, meta, "index.html lost its loom-build meta")
+	require.Equal(t, "b-test", html.UnescapeString(meta[1]))
+	require.Contains(t, index, `<div id="app"></div>`, "webshot waits for #app")
+	require.Equal(t, assets["/index.html"], assets["/"], "the shell is served at / too")
+
+	for _, ref := range staticAttrRef.FindAllStringSubmatch(index, -1) {
+		require.Contains(t, assets, ref[1], "index.html references a file the bundle lacks")
+	}
+	entry := regexp.MustCompile(`<script type="module"[^>]* src="(/assets/[^"]+\.js)"`).FindStringSubmatch(index)
+	require.NotNil(t, entry, "index.html names no entry script")
+	require.Equal(t, "text/javascript; charset=utf-8", assets[entry[1]].ctype)
+
+	licenses := assets["/THIRD_PARTY.txt"]
+	require.Equal(t, "text/plain; charset=utf-8", licenses.ctype)
+	for _, pkg := range []string{"react", "react-dom"} {
+		require.Contains(t, string(licenses.body), "Name: "+pkg+"\n", "THIRD_PARTY.txt lacks "+pkg)
+	}
+
+	for _, size := range []string{"180", "192", "512"} {
+		require.Contains(t, assets, "/icons/icon-"+size+".png")
+	}
+	require.Contains(t, assets, "/manifest.webmanifest")
+	require.NotContains(t, string(assets["/sw.js"].body), "__LOOM_", "the worker's placeholders are filled")
+}
+
+func TestStatic_NextIndexHasNoInlineScriptOrStyle(t *testing.T) {
+	require.Empty(t, staticInlineMarkup(string(nextStaticAssets(t)["/index.html"].body)))
+}
+
 func TestStatic_ServesEachFileWithItsType(t *testing.T) {
 	m := staticMux(t, "b-1")
 	for _, tc := range []struct{ url, ctype string }{
@@ -192,7 +247,7 @@ func TestStatic_BuildRefusesAnAppThatCannotBeServed(t *testing.T) {
 		{"service worker without SHELL", func(f fstest.MapFS) {
 			f["sw.js"] = &fstest.MapFile{Data: []byte("const BUILD = \"__LOOM_BUILD__\";\n")}
 		}, "/sw.js has no"},
-		{"a file of an unknown type", func(f fstest.MapFS) { f["notes.txt"] = &fstest.MapFile{Data: []byte("x")} }, "no content type"},
+		{"a file of an unknown type", func(f fstest.MapFS) { f["notes.pdf"] = &fstest.MapFile{Data: []byte("x")} }, "no content type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := good()

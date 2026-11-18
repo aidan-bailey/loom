@@ -15,11 +15,18 @@ import (
 	"github.com/aidan-bailey/loom/log"
 )
 
-// staticFiles is the app: the shell, its modules, the stylesheet, the service
-// worker, the manifest and the icons.
+// staticFiles is the classic app: the shell, its modules, the stylesheet, the
+// service worker, the manifest and the icons.
 //
 //go:embed static
 var staticFiles embed.FS
+
+// nextFiles is the new app: `pnpm run build` in internal/web/ui writes dist/,
+// which is committed, and `pnpm run dist:check` fails when it is stale. `all:`
+// keeps a file whose name starts with a dot or an underscore.
+//
+//go:embed all:dist
+var nextFiles embed.FS
 
 const (
 	staticBuildMark = "__LOOM_BUILD__"
@@ -36,6 +43,9 @@ var staticContentTypes = map[string]string{
 	".mjs":         "text/javascript; charset=utf-8",
 	".webmanifest": "application/manifest+json",
 	".png":         "image/png",
+	".svg":         "image/svg+xml",
+	".woff2":       "font/woff2",
+	".txt":         "text/plain; charset=utf-8",
 }
 
 // staticAsset is one served file.
