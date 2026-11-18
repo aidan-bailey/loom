@@ -16,7 +16,9 @@ func newEmulator(cols, rows int) vt.Emulator {
 	if !EmulatorEnabled() {
 		return nil
 	}
-	return vt.NewXVT(cols, rows)
+	e := vt.NewXVT(cols, rows)
+	e.SetScrollbackSize(paneScrollbackLines)
+	return e
 }
 
 // EmulatorEnabled reports whether panes render from the in-process emulator —
