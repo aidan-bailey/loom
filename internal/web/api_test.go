@@ -1181,13 +1181,15 @@ func TestAPI_AResponsesNoticesAreKeptForTheNextSnapshotAndNotSentLive(t *testing
 
 func TestAPI_ACreatesNoticesAreKeptToo(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{})
-	rec := httptest.NewRecorder()
-	now := time.Now()
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "prompt not sent", At: time.Now()})
 
-	env.layer.writeOutcome(rec, actionLog{device: "phone", name: "create"}, core.Reply{ID: 7},
-		[]noticeJSON{{Text: "prompt not sent", At: now}}, true, true)
+	out, err := c.actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 7}}
+	}))
 
-	require.Equal(t, http.StatusCreated, rec.Code)
+	require.NoError(t, err)
+	assert.Equal(t, core.InstanceID(7), out.ID)
 	_, snap := env.openStream()
 	require.Len(t, snap.Notices, 1)
 	assert.Equal(t, "prompt not sent", snap.Notices[0].Text)
@@ -1238,8 +1240,8 @@ func TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{})
 	env.layer.hub.publish("notice", noticeJSON{Text: "first", At: time.Now()})
 	for i := range recentNotices + 3 {
-		env.layer.writeOutcome(httptest.NewRecorder(), actionLog{device: "phone", name: "pause"}, core.Reply{},
-			[]noticeJSON{{Text: fmt.Sprintf("r%d", i), At: time.Now()}}, true, false)
+		_, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: fmt.Sprintf("r%d", i), At: time.Now()}}, true)
+		require.NoError(t, err)
 	}
 
 	_, snap := env.openStream()

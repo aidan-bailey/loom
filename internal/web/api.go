@@ -101,8 +101,8 @@ func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a action
 	return 0, false
 }
 
-// settle is the outcome rule of an action's request, which act, actCreated
-// and writeOutcome share: not done is errPending (the outcome follows on the
+// settle is the outcome rule of an action's request, which act and
+// actCreated share: not done is errPending (the outcome follows on the
 // device's stream), after the notices it was given, which are those raised
 // before the request, go to the device's stream; a Reply error is returned,
 // after the notices beside it that do not repeat it go to the device's
@@ -126,30 +126,6 @@ func (l *Layer) settle(device string, reply core.Reply, notes []noticeJSON, done
 	}
 	l.keepNotices(notes)
 	return nonNil(notes), nil
-}
-
-// writeOutcome answers an action from how its request ended. Not done is the
-// wait running out: 202, the outcome following on the stream. An error in the
-// Reply keeps the model's text with the status it earns, and any notice
-// beside it goes to the device's stream; otherwise the notices ride the
-// response, with the new session's ID for a create, and are also kept among
-// the recent notices the snapshot carries.
-func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
-	notes, err := l.settle(a.device, reply, notes, done)
-	switch {
-	case errors.Is(err, errPending):
-		l.record(a, http.StatusAccepted, "pending")
-		writeJSON(w, http.StatusAccepted, pendingJSON{Pending: true})
-	case err != nil:
-		l.refuse(w, a, modelStatus(err), err.Error())
-	case created:
-		a.sessionID = reply.ID
-		l.record(a, http.StatusCreated, "created")
-		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: notes})
-	default:
-		l.record(a, http.StatusOK, "ok")
-		writeJSON(w, http.StatusOK, noticesJSON{Notices: notes})
-	}
 }
 
 // keepNotices keeps the notices a response carries among the hub's recent
