@@ -123,7 +123,8 @@ func (m *Model) forceJob(rec *sched.Record) error {
 	return nil
 }
 
-// parkJob parks queued or held job rec (job controls spec §5.2).
+// parkJob parks queued or held job rec (job controls spec §5.2). An agent
+// or run job starts by its own rule, which no park would stop.
 func parkJob(rec *sched.Record) error {
 	switch {
 	case rec.State == sched.Running:
@@ -132,6 +133,9 @@ func parkJob(rec *sched.Record) error {
 		return fmt.Errorf("job %d has ended", rec.ID)
 	case rec.Parked:
 		return fmt.Errorf("job %d is parked already", rec.ID)
+	}
+	if err := unclaimedRefusal(rec); err != nil {
+		return err
 	}
 	rec.Parked = true
 	return nil

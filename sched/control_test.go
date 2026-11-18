@@ -219,6 +219,19 @@ func TestForecast_APausedJobNeverEnds(t *testing.T) {
 	assert.Contains(t, Forecast([]Record{paused, next}, p, t0, nil, nil, usual, time.Minute), JobID(1))
 }
 
+// A running job's expected end in the forecast moves by the time it was
+// paused and lent in this attempt, as greedy admission's prediction does:
+// its progress stood still meanwhile.
+func TestForecast_PausedAndLentTimeMoveARunningJobsEnd(t *testing.T) {
+	p := greedyPolicy()
+	run := running(5, Claim{CPUs: 1, MemoryGB: 10}) // started a minute ago
+	run.PausedSecs, run.LentSecs = 600, 300
+	next := queued(1, Claim{CPUs: 1, MemoryGB: 10}) // 10 + 10 GB pass the cap until it ends
+	usual := func(Record) (time.Duration, bool) { return 20 * time.Minute, true }
+	starts := Forecast([]Record{run, next}, p, t0, nil, nil, usual, time.Minute)
+	assert.Equal(t, t0.Add(-time.Minute+20*time.Minute+15*time.Minute), starts[1])
+}
+
 func TestLadder_ForcedJobsGoLast(t *testing.T) {
 	in := LadderInput{Now: t0, HeadroomKB: 0, ReserveKB: gb(4), Jobs: []LadderJob{
 		{ID: 1, Started: t0.Add(-time.Minute), WorkingKB: gb(1)},

@@ -214,8 +214,9 @@ func (m *Model) readBeliefs(query sched.BeliefQuery) (sched.BeliefsPage, error) 
 }
 
 // forgetBelief drops belief id and writes beliefs.json; a failed write
-// refuses the request and keeps the belief. Queued jobs of its signature
-// get a new, empty belief and are re-sized by the pass that follows.
+// refuses the request and keeps the belief. When a job of its signature
+// waits or runs it gets a new, empty belief: a queued job is re-sized by
+// the pass that follows, and a running one's run starts the new history.
 func (m *Model) forgetBelief(id sched.SignatureID) error {
 	q := m.queue
 	switch {
@@ -234,7 +235,7 @@ func (m *Model) forgetBelief(id sched.SignatureID) error {
 		q.beliefs.Beliefs = append(q.beliefs.Beliefs, kept)
 		return fmt.Errorf("write beliefs.json: %w", err)
 	}
-	if slices.ContainsFunc(q.store.Jobs, func(r sched.Record) bool { return r.State.Waiting() && r.Signature == id }) {
+	if slices.ContainsFunc(q.store.Jobs, func(r sched.Record) bool { return (r.State.Waiting() || r.State == sched.Running) && r.Signature == id }) {
 		q.beliefs.Ensure(kept.Signature, time.Now())
 		m.saveBeliefsQuiet("forget")
 	}
