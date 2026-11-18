@@ -282,6 +282,42 @@ describe("connectStream", () => {
     expect(links.at(-1)).toBe("offline");
   });
 
+  it("drops a connection whose fetch is still pending after 45 s, and reconnects", async () => {
+    let signal: AbortSignal | null | undefined;
+    fetchMock.mockImplementationOnce(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal = init?.signal;
+          signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal?.aborted).toBe(true);
+    expect(links.at(-1)).toBe("offline");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconnects at once when the page becomes visible during a backoff", async () => {
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("refreshes a live stream when the page becomes visible, without saying offline", async () => {
     const first = nextConnection();
     const second = nextConnection();
