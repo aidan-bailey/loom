@@ -142,8 +142,13 @@ func ApplyTheme(name string) bool {
 	for _, fn := range themeHooks {
 		fn()
 	}
+	themeGen++
 	return ok
 }
+
+// themeGen counts ApplyTheme calls, so a kept render (renderMemo) knows its
+// styles are stale. Main-goroutine only, like ApplyTheme.
+var themeGen int
 
 // CurrentThemeName returns the active theme's name.
 func CurrentThemeName() string { return current.Name }
