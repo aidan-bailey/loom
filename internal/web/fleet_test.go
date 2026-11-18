@@ -28,7 +28,7 @@ func TestGroupOf_EachStatusLandsInItsGroup(t *testing.T) {
 		name    string
 		status  session.Status
 		started bool
-		group   string
+		group   sessionGroup
 		label   string
 	}{
 		{"prompting needs you", session.Prompting, true, "needs_you", "Needs you"},
@@ -176,27 +176,27 @@ func TestSessionOf_ThePRNeedsAKnownPRInAStateWeName(t *testing.T) {
 }
 
 func TestPRWords(t *testing.T) {
-	for state, word := range map[github.PRState]string{
-		github.PRDraft:  "draft",
-		github.PROpen:   "open",
-		github.PRMerged: "merged",
-		github.PRClosed: "closed",
+	for state, word := range map[github.PRState]prState{
+		github.PRDraft:  prDraft,
+		github.PROpen:   prOpen,
+		github.PRMerged: prMerged,
+		github.PRClosed: prClosed,
 	} {
 		pr := prOf(github.State{Known: true, HasPR: true, PRNumber: 7, PRState: state})
 		require.NotNil(t, pr, word)
 		assert.Equal(t, word, pr.State)
-		assert.Equal(t, "none", pr.Checks)
+		assert.Equal(t, checksNone, pr.Checks)
 	}
-	for checks, word := range map[github.Checks]string{
-		github.ChecksNone:    "none",
-		github.ChecksPending: "pending",
-		github.ChecksPassing: "passing",
-		github.ChecksFailing: "failing",
+	for checks, word := range map[github.Checks]prChecks{
+		github.ChecksNone:    checksNone,
+		github.ChecksPending: checksPending,
+		github.ChecksPassing: checksPassing,
+		github.ChecksFailing: checksFailing,
 	} {
 		pr := prOf(github.State{Known: true, HasPR: true, PRNumber: 7, PRState: github.PROpen, Checks: checks})
 		require.NotNil(t, pr, word)
 		assert.Equal(t, word, pr.Checks)
-		assert.Equal(t, "open", pr.State)
+		assert.Equal(t, prOpen, pr.State)
 	}
 }
 
@@ -513,7 +513,9 @@ func TestSessionOf_TheMockupIsItsScreenOrNull(t *testing.T) {
 
 func TestGroupOf_Verdicts(t *testing.T) {
 	for _, tc := range []struct {
-		verdict, group, label string
+		verdict string
+		group   sessionGroup
+		label   string
 	}{
 		{attention.NeedsYou, groupNeedsYou, "Asks you"},
 		{attention.Done, groupYourTurn, "Done"},
@@ -525,4 +527,37 @@ func TestGroupOf_Verdicts(t *testing.T) {
 		assert.Equal(t, tc.group, g, tc.verdict)
 		assert.Equal(t, tc.label, l, tc.verdict)
 	}
+}
+
+func TestSessionOf_TheWireWordsAreUnchanged(t *testing.T) {
+	pr := github.State{Known: true, HasPR: true, PRNumber: 7, PRState: github.PROpen, Checks: github.ChecksPassing}
+	for _, tc := range []struct {
+		status session.Status
+		want   string
+	}{
+		{session.Prompting, "Prompting"},
+		{session.Ready, "Ready"},
+	} {
+		v := fleetView(1, "t", tc.status)
+		v.HasLastMessage = true
+		v.Verdict = attention.NeedsYou
+		v.GitHub = pr
+		raw, err := json.Marshal(sessionOf(1, v))
+		require.NoError(t, err)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(raw, &got))
+		assert.Equal(t, "needs_you", got["group"], tc.want)
+		assert.Equal(t, tc.want, got["status"])
+		assert.Equal(t, "needs_you", got["verdict"], tc.want)
+		prm, ok := got["pr"].(map[string]any)
+		require.True(t, ok, tc.want)
+		assert.Equal(t, "open", prm["state"])
+		assert.Equal(t, "passing", prm["checks"])
+	}
+}
+
+func TestSessionOf_AnUnknownStatusIsSentAsItsString(t *testing.T) {
+	got := sessionOf(1, core.InstanceView{Status: session.Status(99)})
+	assert.Equal(t, sessionStatus("Status(99)"), got.Status)
+	assert.Equal(t, groupPaused, got.Group)
 }

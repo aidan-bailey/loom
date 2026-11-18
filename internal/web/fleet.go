@@ -25,10 +25,10 @@ const remoteBase = "https://claude.ai/code/"
 
 // The groups the app lists, as the wire spells them.
 const (
-	groupNeedsYou = "needs_you"
-	groupYourTurn = "your_turn"
-	groupWorking  = "working"
-	groupPaused   = "paused"
+	groupNeedsYou sessionGroup = "needs_you"
+	groupYourTurn sessionGroup = "your_turn"
+	groupWorking  sessionGroup = "working"
+	groupPaused   sessionGroup = "paused"
 )
 
 // workspaceJSON is a served workspace. It carries no path. Shown is whether
@@ -53,10 +53,10 @@ type diffJSON struct {
 // prJSON is a session's pull request. URL is its page on GitHub, left out
 // unless gh gave an https one.
 type prJSON struct {
-	Number int    `json:"number"`
-	State  string `json:"state"`
-	Checks string `json:"checks"`
-	URL    string `json:"url,omitempty"`
+	Number int      `json:"number"`
+	State  prState  `json:"state"`
+	Checks prChecks `json:"checks"`
+	URL    string   `json:"url,omitempty"`
 }
 
 // agentJSON is one running subagent, as subagent.View has it. ID is the
@@ -98,9 +98,9 @@ type sessionJSON struct {
 	Branch      string           `json:"branch"`
 	Worktree    string           `json:"worktree,omitempty"`
 	Tmux        string           `json:"tmux,omitempty"`
-	Group       string           `json:"group"`
+	Group       sessionGroup     `json:"group"`
 	Label       string           `json:"label"`
-	Status      string           `json:"status"`
+	Status      sessionStatus    `json:"status"`
 	Since       string           `json:"since"`
 	Wait        waitJSON         `json:"wait"`
 	LastMessage string           `json:"last_message"`
@@ -131,8 +131,8 @@ type sessionJSON struct {
 	// Verdict is the stop classifier's verdict on the session's last turn
 	// ("needs_you", "done", "waiting", "stopped"), Gist its one line; empty
 	// for none.
-	Verdict string `json:"verdict,omitempty"`
-	Gist    string `json:"gist,omitempty"`
+	Verdict stopVerdict `json:"verdict,omitempty"`
+	Gist    string      `json:"gist,omitempty"`
 	// Flows are the flows of the session's worktree (flow.go), newest
 	// first: the fleet chip and the flow tab read them, GET …/flow the
 	// board of one; an empty list for none.
@@ -224,7 +224,7 @@ type quickRepliesJSON struct {
 // their turn; Running, Loading and Deleting are the agent's; the rest wait.
 // A status this build does not know is listed last under its own name, never
 // as one it might be.
-func groupOf(v core.InstanceView) (group, label string) {
+func groupOf(v core.InstanceView) (group sessionGroup, label string) {
 	switch v.Status {
 	case session.Prompting:
 		return groupNeedsYou, "Needs you"
@@ -270,7 +270,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		Tmux:        v.TmuxSession,
 		Group:       group,
 		Label:       label,
-		Status:      v.Status.String(),
+		Status:      sessionStatus(v.Status.String()),
 		Wait:        waitJSON{Reason: v.WaitReason, Detail: v.WaitDetail},
 		PR:          prOf(v.GitHub),
 		Account:     v.Account,
@@ -286,7 +286,8 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 	}
 	if v.HasLastMessage {
 		s.LastMessage = v.LastMessage
-		s.Verdict, s.Gist = v.Verdict, v.VerdictGist
+		s.Verdict = stopVerdict(v.Verdict)
+		s.Gist = v.VerdictGist
 	}
 	if v.HasDiff {
 		s.Diff = diffJSON{Added: v.Diff.Added, Removed: v.Diff.Removed}
@@ -319,28 +320,29 @@ func prOf(s github.State) *prJSON {
 	if !s.Known || !s.HasPR {
 		return nil
 	}
-	var state, checks string
+	var state prState
+	var checks prChecks
 	switch s.PRState {
 	case github.PRDraft:
-		state = "draft"
+		state = prDraft
 	case github.PROpen:
-		state = "open"
+		state = prOpen
 	case github.PRMerged:
-		state = "merged"
+		state = prMerged
 	case github.PRClosed:
-		state = "closed"
+		state = prClosed
 	default:
 		return nil
 	}
 	switch s.Checks {
 	case github.ChecksNone:
-		checks = "none"
+		checks = checksNone
 	case github.ChecksPending:
-		checks = "pending"
+		checks = checksPending
 	case github.ChecksPassing:
-		checks = "passing"
+		checks = checksPassing
 	case github.ChecksFailing:
-		checks = "failing"
+		checks = checksFailing
 	default:
 		return nil
 	}
