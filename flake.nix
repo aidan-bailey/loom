@@ -141,6 +141,9 @@
               pkgs.tmux
               pkgs.git
               pkgs.gh
+              # The new web app (internal/web/ui) builds with Node 22 and pnpm.
+              pkgs.nodejs_22
+              pkgs.pnpm
             ];
           };
         }
