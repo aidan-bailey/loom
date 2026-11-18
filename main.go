@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/cli"
 	"github.com/aidan-bailey/loom/internal/daemon"
+	"github.com/aidan-bailey/loom/internal/pprofserve"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/claudetmp"
@@ -62,6 +63,11 @@ var (
 				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
+			// Profiles on loopback when LOOM_PPROF asks, the address in this
+			// log (pprof.listening). A daemon this TUI spawns inherits the
+			// variable and serves its own, so an explicit port fits one of
+			// them only; 1 gives each a port of its own.
+			defer pprofserve.FromEnv("tui").Close()
 
 			globalDir, err := config.GetGlobalConfigDir()
 			if err != nil {
