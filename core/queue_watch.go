@@ -426,7 +426,8 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	}
 	switch {
 	case r.sampleErr != nil:
-		// ps failing leaves usage frozen at its last values: say so once per
+		// ps failing leaves an uncontained job's usage frozen at its last
+		// values (a contained one's comes from its cgroup): say so once per
 		// run of failures, not at every pass.
 		if !q.sampleFailing {
 			log.For("core").Warn("queue.sample_failed", "err", r.sampleErr)
@@ -631,7 +632,8 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 // measurement spec §5.2), the peak so far, and the cores used since the last
 // sample; adds a point to the trace of a job not adopted, and breaks a hold
 // the usage passed (past-peak holds spec §5.1, §5.4). A job with neither
-// reading keeps its last values.
+// reading keeps its last values. A cgroup reading is timed by the pass
+// (r.at), a session's by its sample (r.snap.Taken).
 func (m *Model) applyUsage(r queuePassResult) {
 	q := m.queue
 	for _, ob := range r.obs {
@@ -688,31 +690,36 @@ func (m *Model) applyUsage(r queuePassResult) {
 				q.moved()
 			}
 		}
+		// A cgroup reading is timed by its pass, which read it before the
+		// process sample (and needs none: a failed sample leaves r.snap
+		// nil); a session's usage by the sample it came from.
 		var rss int64
 		var cpu time.Duration
+		var at time.Time
 		switch {
 		case ob.cg != nil:
-			rss, cpu = ob.cg.WorkingKB, ob.cg.CPU
+			rss, cpu, at = ob.cg.WorkingKB, ob.cg.CPU, r.at
 			delete(q.cgroupLogged, ob.id)
 		case r.snap != nil && rec.PID > 1:
 			rss, cpu, _ = r.snap.Session(rec.PID)
+			at = r.snap.Taken
 		default:
 			continue
 		}
 		cores := 0.0
 		if mark, ok := q.cpuMarks[ob.id]; ok {
-			if dt := r.snap.Taken.Sub(mark.at); dt > 0 {
+			if dt := at.Sub(mark.at); dt > 0 {
 				cores = max(0, (cpu-mark.cpu).Seconds()) / dt.Seconds()
 			}
 		}
-		q.cpuMarks[ob.id] = cpuMark{cpu: cpu, at: r.snap.Taken}
+		q.cpuMarks[ob.id] = cpuMark{cpu: cpu, at: at}
 		if !rec.Adopted {
 			tr := q.traces[ob.id]
 			if tr == nil {
 				tr = &sched.Trace{}
 				q.traces[ob.id] = tr
 			}
-			tr.Add(r.snap.Taken, sched.TracePoint{X: cpu.Seconds(), RSSKB: rss, Cores: cores})
+			tr.Add(at, sched.TracePoint{X: cpu.Seconds(), RSSKB: rss, Cores: cores})
 		}
 		if what := q.holds[ob.id].Exceeded(rss, cores); what != "" {
 			m.breakHold(rec, what, rss, cores)

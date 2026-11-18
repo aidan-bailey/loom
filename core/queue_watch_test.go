@@ -829,6 +829,38 @@ func TestJobQueue_UsageFollowsTheSamplesAPassDelivers(t *testing.T) {
 	assert.Equal(t, sched.Running, wqRecord(t, m, 1).State)
 }
 
+// A contained job's usage is its cgroup's, read in the pass before the
+// process sample and timed by the pass, never by the sample: one that failed
+// (a nil snapshot, as a ps timing out on a thrashing host leaves) still
+// brings the job's memory and cores, and the loop goes on. A slow sample
+// before it skews no core reading.
+func TestJobQueue_AContainedJobsUsageNeedsNoProcessSample(t *testing.T) {
+	const pid = 4242
+	m := wqModel(t)
+	rec := wqEnded(1, 0)
+	rec.State, rec.Exit, rec.Ended, rec.PID, rec.Notify = sched.Running, nil, time.Time{}, pid, false
+	rec.Cgroup = "/t.slice/loom-ab-job-1-1.scope"
+	wqSeed(t, m, rec)
+	t0 := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	cg := func(kb int64, cpu time.Duration) []jobObs {
+		return []jobObs{{id: 1, pid: pid, cg: &sched.CgroupSample{WorkingKB: kb, CPU: cpu}}}
+	}
+
+	// A sample that took 4 s to come back.
+	m.Deliver(queuePassResult{at: t0, obs: cg(1000, 10*time.Second), snap: &sched.Snapshot{Taken: t0.Add(4 * time.Second)}})
+	require.Equal(t, jobUsage{RSSKB: 1000}, m.queue.usage[1])
+
+	require.NotPanics(t, func() {
+		m.Deliver(queuePassResult{at: t0.Add(2 * time.Second), obs: cg(3000, 13*time.Second), sampleErr: errors.New("ps timed out")})
+	})
+	assert.Equal(t, jobUsage{RSSKB: 3000, CPU: 1.5}, m.queue.usage[1], "3 s of CPU time over the 2 s between the passes")
+	assert.Equal(t, int64(3000), wqRecord(t, m, 1).PeakRSSKB)
+	assert.Equal(t, sched.Running, wqRecord(t, m, 1).State)
+	if tr := m.queue.traces[1]; assert.NotNil(t, tr) && assert.Len(t, tr.Points, 2) {
+		assert.Equal(t, t0.Add(2*time.Second), tr.Points[1].At, "the trace is timed by the pass")
+	}
+}
+
 // A failing ps is logged once per run of failures, and again after a sample
 // that worked.
 func TestJobQueue_AFailingSampleIsLoggedOncePerRun(t *testing.T) {
