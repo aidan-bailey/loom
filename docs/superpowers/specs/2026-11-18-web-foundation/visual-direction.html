@@ -1,0 +1,208 @@
+<style>
+  .vd-wrap{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start}
+  .vd-today{flex:0 0 auto;text-align:center}
+  .vd-today img{width:300px;border-radius:34px;border:8px solid #111;display:block}
+  .vd-today p{font-size:.8rem;color:var(--text-secondary);margin-top:.5rem}
+  .cards.vd{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px}
+  .cards.vd .card{background:transparent;border:2px solid transparent;border-radius:16px;padding:10px 6px}
+  .cards.vd .card.selected{border-color:var(--selected-border);background:var(--selected-bg)}
+  .cards.vd .card:hover{transform:none;box-shadow:none;border-color:var(--border)}
+  .cards.vd .card-body{padding:.75rem .5rem 0}
+  .cards.vd .card-body p{margin:.25rem 0}
+  .ph{width:316px;height:660px;border-radius:40px;border:8px solid #111;overflow:hidden;position:relative;margin:0 auto;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+  .ph .isl{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:92px;height:26px;border-radius:14px;background:#000;z-index:3}
+  .ph .sb{height:42px;display:flex;justify-content:space-between;align-items:center;padding:0 28px;font:600 13px -apple-system,system-ui,sans-serif}
+  .ph .scroll{position:absolute;top:42px;left:0;right:0;bottom:0;overflow:hidden}
+
+  /* A: refined terminal */
+  .a{background:#262626;color:#d6d6d6;font:12px/1.45 ui-monospace,Menlo,monospace}
+  .a .sb{color:#d6d6d6}
+  .a-top{display:flex;justify-content:space-between;align-items:center;padding:8px 14px 6px}
+  .a-brand{color:#fff;font-weight:700;font-size:14px}
+  .a-dim{color:#7a7a7a;font-weight:400}
+  .a-act{display:flex;gap:12px;align-items:center;color:#6c99bb}
+  .a-new{border:1px solid #6c99bb;padding:1px 7px;border-radius:2px}
+  .a-tabs{display:flex;gap:16px;padding:4px 14px 0;border-bottom:1px solid #3a3a3a;color:#8a8a8a}
+  .a-tabs span{padding-bottom:5px}
+  .a-tabs .on{color:#fff;border-bottom:2px solid #6c99bb}
+  .a-sec{display:flex;align-items:center;gap:8px;padding:12px 14px 4px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a8a}
+  .a-sec:after{content:"";flex:1;border-top:1px solid #3a3a3a}
+  .a-sec.att{color:#e5b567}.a-sec.att:after{border-color:#5a4a2c}
+  .a-row{margin:2px 10px;padding:5px 8px;border-left:2px solid #555}
+  .a-row.att{border-left-color:#e5b567}.a-row.turn{border-left-color:#6c99bb}.a-row.run{border-left-color:#b4c973}
+  .a-l1{display:flex;justify-content:space-between}
+  .a-t{color:#fff;font-weight:600}
+  .a-r{color:#7a7a7a}
+  .a-l2,.a-l3{color:#a0a0a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .a-amber{color:#e5b567}.a-ws{color:#c98aa3}.a-add{color:#b4c973}.a-del{color:#e8836b}.a-blue{color:#6c99bb}
+  .a-code{color:#d6d6d6;background:#333435;padding:0 4px}
+  .a-foot{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:8px;padding:7px 14px 22px;background:#2b2b2b;border-top:1px solid #3a3a3a}
+  .a-live{background:#b4c973;color:#262626;font-weight:700;padding:0 5px}
+  .a-cnt{margin-left:auto;display:flex;gap:10px}
+
+  /* B: modern dev tool */
+  .b{background:#0f1012;color:#e6e7ea;font:13px/1.4 -apple-system,"SF Pro Text",Inter,system-ui,sans-serif}
+  .b .sb{color:#e6e7ea}
+  .b-top{display:flex;justify-content:space-between;align-items:center;padding:6px 14px 10px}
+  .b-title{font-size:20px;font-weight:650;letter-spacing:-.01em}
+  .b-act{display:flex;gap:8px;align-items:center}
+  .b-ib{width:30px;height:30px;border-radius:8px;border:1px solid #26292f;display:flex;align-items:center;justify-content:center;color:#a3a8b1}
+  .b-btn{background:#e6e7ea;color:#0f1012;font-weight:600;font-size:12.5px;padding:6px 10px;border-radius:8px}
+  .b-seg{display:flex;margin:0 14px 6px;background:#17191d;border:1px solid #23262b;border-radius:9px;padding:2px}
+  .b-seg span{flex:1;text-align:center;padding:4px 0;border-radius:7px;color:#8b9099;font-size:12px}
+  .b-seg .on{background:#2a2d33;color:#fff}
+  .b-h{display:flex;align-items:center;gap:7px;padding:12px 16px 6px;font-size:12px;font-weight:600;color:#8b9099}
+  .b-badge{font-size:11px;padding:0 6px;border-radius:9px;background:#23262b;color:#c5c9d0}
+  .b-badge.amber{background:rgba(240,180,90,.16);color:#f0b45a}
+  .b-card{margin:0 12px;background:#16181c;border:1px solid #23262b;border-radius:12px;overflow:hidden}
+  .b-item{padding:9px 12px}
+  .b-item+.b-item{border-top:1px solid #202328}
+  .b-l1{display:flex;align-items:center;gap:8px}
+  .b-dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .amber-d{background:#f0b45a}.blue-d{background:#6ca4e0}.green-d{background:#8fc46a}
+  .b-t{font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .b-age{color:#6f747d;font-size:12px}
+  .b-l2,.b-l3{display:flex;align-items:center;gap:6px;margin:5px 0 0 15px;color:#a3a8b1;font-size:12px;white-space:nowrap;overflow:hidden}
+  .b-pill{padding:1px 7px;border-radius:6px;font-size:11.5px;font-weight:550}
+  .b-pill.amber{background:rgba(240,180,90,.14);color:#f0b45a}
+  .b-pill.blue{background:rgba(108,164,224,.14);color:#8cb8e8}
+  .b-tag{padding:1px 6px;border-radius:5px;font-size:11px;background:rgba(201,138,163,.13);color:#d9a3b8}
+  .b-mono{font:11.5px ui-monospace,Menlo,monospace}
+  .b-code{font:11px ui-monospace,Menlo,monospace;background:#0c0d0f;border:1px solid #23262b;border-radius:5px;padding:1px 5px;color:#c5c9d0;overflow:hidden;text-overflow:ellipsis}
+  .add{color:#8fc46a}.del{color:#e8836b}
+  .b-bar{width:34px;height:4px;border-radius:2px;background:#26292f;margin-left:auto;overflow:hidden}
+  .b-bar i{display:block;height:100%;background:#6f747d}
+  .b-foot{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:8px;padding:9px 16px 24px;background:rgba(15,16,18,.92);border-top:1px solid #1f2226;font-size:12px;color:#8b9099}
+  .b-live{display:flex;align-items:center;gap:5px;color:#8fc46a;font-weight:600}
+  .b-live i{width:6px;height:6px;border-radius:50%;background:#8fc46a}
+  .b-cnt{margin-left:auto;display:flex;gap:6px}
+  .b-cnt span{padding:1px 7px;border-radius:9px;font-weight:600;font-size:11.5px}
+
+  /* C: native iOS */
+  .c{background:#000;color:#fff;font:15px/1.3 -apple-system,"SF Pro Text",system-ui,sans-serif}
+  .c .sb{color:#fff}
+  .c-nav{display:flex;justify-content:space-between;padding:4px 16px 0;color:#0a84ff;font-size:16px}
+  .c-plus{width:28px;height:28px;border-radius:50%;background:#1c1c1e;display:flex;align-items:center;justify-content:center;font-size:20px;line-height:1}
+  .c-large{font-size:30px;font-weight:700;padding:2px 16px 6px;letter-spacing:.01em}
+  .c-search{margin:0 16px 8px;background:#1c1c1e;border-radius:10px;padding:6px 10px;color:#8e8e93;font-size:15px}
+  .c-seg{display:flex;margin:0 16px 4px;background:#1c1c1e;border-radius:9px;padding:2px}
+  .c-seg span{flex:1;text-align:center;padding:3px 0;border-radius:7px;color:#fff;font-size:13px}
+  .c-seg .on{background:#636366}
+  .c-gh{padding:12px 32px 5px;font-size:12px;color:#8e8e93;letter-spacing:.02em}
+  .c-group{margin:0 16px;background:#1c1c1e;border-radius:11px;overflow:hidden}
+  .c-cell{display:flex;align-items:center;gap:10px;padding:8px 12px}
+  .c-cell+.c-cell{border-top:.5px solid #38383a;margin-left:42px;padding-left:0}
+  .c-cell+.c-cell .c-ic{margin-left:-30px}
+  .c-ic{width:22px;height:22px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+  .or{background:#ff9f0a}.bl{background:#0a84ff}.gr{background:#30d158}
+  .c-txt{flex:1;min-width:0}
+  .c-t{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .c-s{font-size:13px;color:#8e8e93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .c-acc{color:#8e8e93;font-size:13px;white-space:nowrap}
+  .c-tab{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-around;padding:7px 0 24px;background:rgba(22,22,24,.94);border-top:.5px solid #38383a;font-size:10px;color:#8e8e93}
+  .c-tab span{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .c-tab .on{color:#0a84ff}
+  .c-tab b{font-size:17px;line-height:1}
+</style>
+
+<h2>What should "professional" look like?</h2>
+<p class="subtitle">The same fleet in three directions, using the webshot fixture's data. Today's app is on the left for reference. The direction also decides which component libraries fit, as noted under each.</p>
+
+<div class="vd-wrap">
+  <div class="vd-today">
+    <img src="today-fleet.png" alt="today's fleet">
+    <p>Today</p>
+  </div>
+
+  <div class="cards vd">
+    <!-- A -->
+    <div class="card" data-choice="a-refined-terminal" onclick="toggleSelect(this)">
+      <div class="ph a"><div class="isl"></div><div class="sb"><span>9:41</span><span>▂▄▆ ▮</span></div>
+        <div class="scroll">
+          <div class="a-top"><span class="a-brand">loom<span class="a-dim">@fresco</span></span><span class="a-act"><span>flows</span><span>⚙</span><span class="a-new">+ new</span></span></div>
+          <div class="a-tabs"><span class="on">all</span><span>loom</span><span>flow</span></div>
+          <div class="a-sec att"><span>needs you · 2</span></div>
+          <div class="a-row att"><div class="a-l1"><span class="a-t">flow-docs</span><span class="a-r">62% · 52m</span></div><div class="a-l2"><span class="a-amber">plan approval</span> · <span class="a-ws">flow</span></div></div>
+          <div class="a-row att"><div class="a-l1"><span class="a-t">sandbox-ask</span><span class="a-r">62% · 18m</span></div><div class="a-l2"><span class="a-amber">allow Bash</span> <span class="a-code">go test ./ui/... -run TestPane</span></div><div class="a-l3"><span class="a-add">+14</span> <span class="a-del">−2</span> · <span class="a-ws">loom</span></div></div>
+          <div class="a-sec"><span>your turn · 1</span></div>
+          <div class="a-row turn"><div class="a-l1"><span class="a-t">a-very-long-session-title…</span><span class="a-r">41m</span></div><div class="a-l2">done: the header is pinned.</div><div class="a-l3"><span class="a-add">+5</span> <span class="a-del">−5</span> · <span class="a-ws">loom</span></div></div>
+          <div class="a-sec"><span>working · 3</span></div>
+          <div class="a-row run"><div class="a-l1"><span class="a-t">fix-pane-cursor</span><span class="a-r">62% · 2m</span></div><div class="a-l2">Running the ui tests now. The cursor fix…</div><div class="a-l3">1 agent · <span class="a-add">+212</span> <span class="a-del">−40</span> · PR #482 · <span class="a-blue">⚙ job 214</span></div></div>
+          <div class="a-row run"><div class="a-l1"><span class="a-t">flow-run</span><span class="a-r">18% · 4m</span></div><div class="a-l2"><span class="a-amber">flow 2/5 · asks · $4.71</span> · <span class="a-ws">flow</span></div></div>
+          <div class="a-row run"><div class="a-l1"><span class="a-t">plain-shell</span><span class="a-r">9m</span></div><div class="a-l2"><span class="a-ws">loom</span></div></div>
+        </div>
+        <div class="a-foot"><span class="a-live">LIVE</span><span>loom@fresco</span><span class="a-cnt"><span class="a-amber">●2</span><span class="a-blue">◆1</span><span>◐3</span></span></div>
+      </div>
+      <div class="card-body">
+        <h3>A. Refined terminal</h3>
+        <p>Keeps loom's identity: monospace, the afterglow palette, and the TUI rail's accent bars, but with a real type scale, quieter chrome and tighter rows.</p>
+        <p><b>Libraries:</b> your own components on headless primitives (Radix, Ark or React Aria). No styled kit fits this look.</p>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="card" data-choice="b-modern-devtool" onclick="toggleSelect(this)">
+      <div class="ph b"><div class="isl"></div><div class="sb"><span>9:41</span><span>▂▄▆ ▮</span></div>
+        <div class="scroll">
+          <div class="b-top"><span class="b-title">Fleet</span><span class="b-act">
+            <span class="b-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 4-6 3-11 5"/></svg></span>
+            <span class="b-ib"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></span>
+            <span class="b-btn">+ New</span></span></div>
+          <div class="b-seg"><span class="on">All</span><span>loom</span><span>flow</span></div>
+          <div class="b-h"><span>Needs you</span><span class="b-badge amber">2</span></div>
+          <div class="b-card">
+            <div class="b-item"><div class="b-l1"><span class="b-dot amber-d"></span><span class="b-t">flow-docs</span><span class="b-age">52m</span></div><div class="b-l2"><span class="b-pill amber">Plan approval</span><span class="b-tag">flow</span><span class="b-bar"><i style="width:62%"></i></span></div></div>
+            <div class="b-item"><div class="b-l1"><span class="b-dot amber-d"></span><span class="b-t">sandbox-ask</span><span class="b-age">18m</span></div><div class="b-l2"><span class="b-pill amber">Allow Bash</span><span class="b-code">go test ./ui/... -run TestPane</span></div><div class="b-l3"><span class="b-tag">loom</span><span class="b-mono"><span class="add">+14</span> <span class="del">−2</span></span><span class="b-bar"><i style="width:62%"></i></span></div></div>
+          </div>
+          <div class="b-h"><span>Your turn</span><span class="b-badge">1</span></div>
+          <div class="b-card">
+            <div class="b-item"><div class="b-l1"><span class="b-dot blue-d"></span><span class="b-t">a-very-long-session-title-that-will-not-fit</span><span class="b-age">41m</span></div><div class="b-l2"><span class="b-pill blue">Done</span><span>the header is pinned.</span></div></div>
+          </div>
+          <div class="b-h"><span>Working</span><span class="b-badge">3</span></div>
+          <div class="b-card">
+            <div class="b-item"><div class="b-l1"><span class="b-dot green-d"></span><span class="b-t">fix-pane-cursor</span><span class="b-age">2m</span></div><div class="b-l2"><span>Running the ui tests now. The cursor…</span></div><div class="b-l3"><span class="b-tag">loom</span><span class="b-mono"><span class="add">+212</span> <span class="del">−40</span></span><span>PR #482</span><span>⚙ job 214</span></div></div>
+            <div class="b-item"><div class="b-l1"><span class="b-dot green-d"></span><span class="b-t">flow-run</span><span class="b-age">4m</span></div><div class="b-l2"><span class="b-pill amber">Flow 2/5 · asks</span><span>$4.71</span><span class="b-tag">flow</span></div></div>
+          </div>
+        </div>
+        <div class="b-foot"><span class="b-live"><i></i>Live</span><span>fresco</span><span class="b-cnt"><span style="background:rgba(240,180,90,.16);color:#f0b45a">2</span><span style="background:rgba(108,164,224,.16);color:#8cb8e8">1</span><span style="background:rgba(143,196,106,.14);color:#8fc46a">3</span></span></div>
+      </div>
+      <div class="card-body">
+        <h3>B. Modern dev tool</h3>
+        <p>Looks like Linear, Vercel or GitHub: a sans-serif UI, monospace kept for code, branches and diffstats, soft cards and tinted pills, with a light theme possible. Your amber still marks what needs you.</p>
+        <p><b>Libraries:</b> fits shadcn/ui (Radix + Tailwind), Mantine or Park UI best. These are desktop-strong kits, so the desktop view comes cheaply.</p>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="card" data-choice="c-native-ios" onclick="toggleSelect(this)">
+      <div class="ph c"><div class="isl"></div><div class="sb"><span>9:41</span><span>▂▄▆ ▮</span></div>
+        <div class="scroll">
+          <div class="c-nav"><span>Flows</span><span class="c-plus">+</span></div>
+          <div class="c-large">Fleet</div>
+          <div class="c-search">⌕  Search sessions</div>
+          <div class="c-seg"><span class="on">All</span><span>loom</span><span>flow</span></div>
+          <div class="c-gh">NEEDS YOU</div>
+          <div class="c-group">
+            <div class="c-cell"><span class="c-ic or">!</span><div class="c-txt"><div class="c-t">flow-docs</div><div class="c-s">Plan approval · flow</div></div><span class="c-acc">52m ›</span></div>
+            <div class="c-cell"><span class="c-ic or">!</span><div class="c-txt"><div class="c-t">sandbox-ask</div><div class="c-s">Allow Bash: go test ./ui/…</div></div><span class="c-acc">18m ›</span></div>
+          </div>
+          <div class="c-gh">YOUR TURN</div>
+          <div class="c-group">
+            <div class="c-cell"><span class="c-ic bl">◆</span><div class="c-txt"><div class="c-t">a-very-long-session-title-that…</div><div class="c-s">Done: the header is pinned.</div></div><span class="c-acc">41m ›</span></div>
+          </div>
+          <div class="c-gh">WORKING</div>
+          <div class="c-group">
+            <div class="c-cell"><span class="c-ic gr">◐</span><div class="c-txt"><div class="c-t">fix-pane-cursor</div><div class="c-s">+212 −40 · PR #482 · job 214</div></div><span class="c-acc">2m ›</span></div>
+            <div class="c-cell"><span class="c-ic gr">◐</span><div class="c-txt"><div class="c-t">flow-run</div><div class="c-s">Flow 2/5 · asks · $4.71</div></div><span class="c-acc">4m ›</span></div>
+          </div>
+        </div>
+        <div class="c-tab"><span class="on"><b>▤</b>Fleet</span><span><b>⑂</b>Flows</span><span><b>⚙︎</b>Jobs</span><span><b>☰</b>Settings</span></div>
+      </div>
+      <div class="card-body">
+        <h3>C. Native iOS</h3>
+        <p>Feels like a real iPhone app: large titles, grouped inset lists, a tab bar, sheets and swipe actions. On desktop it becomes a macOS-style sidebar app.</p>
+        <p><b>Libraries:</b> fits Ionic (iOS mode on the phone, a split pane on desktop) or Konsta UI. It's the best on the phone and the weakest for a dense desktop.</p>
+      </div>
+    </div>
+  </div>
+</div>

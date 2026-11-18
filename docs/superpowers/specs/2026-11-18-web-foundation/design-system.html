@@ -1,0 +1,136 @@
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+  .ds{--bg:#0f1012;--surface:#16181c;--raised:#1c1f24;--border:#23262b;--input:#2a2d33;--fg:#e6e7ea;--muted:#a3a8b1;--faint:#6f747d;
+      --primary:#e6e7ea;--primary-fg:#0f1012;--ring:#6ca4e0;
+      --attention:#f0b45a;--turn:#6ca4e0;--working:#8fc46a;--error:#e8836b;--workspace:#d9a3b8;--docs:#a991d4;
+      --add-bg:rgba(143,196,106,.12);--del-bg:rgba(232,131,107,.12);
+      --sans:Inter,system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+  .ds-sys{--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .ds-inter{--sans:Inter,system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+  .ds-geist{--sans:Geist,system-ui,sans-serif;--mono:"Geist Mono",ui-monospace,monospace}
+  .ds-panel{background:var(--bg);color:var(--fg);font:13px/1.45 var(--sans);border-radius:14px;padding:14px;font-feature-settings:"tnum" 1,"cv11" 1}
+  .ds-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+  .ds-l1{display:flex;align-items:center;gap:8px}
+  .ds-dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .ds-t{font-weight:600;font-size:14px;flex:1}
+  .ds-age{color:var(--faint);font-size:12px}
+  .ds-l2{display:flex;align-items:center;gap:6px;margin:6px 0 0 15px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+  .ds-pill{padding:1px 7px;border-radius:6px;font-size:11.5px;font-weight:550}
+  .p-att{background:rgba(240,180,90,.14);color:var(--attention)}
+  .p-turn{background:rgba(108,164,224,.14);color:#8cb8e8}
+  .p-work{background:rgba(143,196,106,.14);color:var(--working)}
+  .p-err{background:rgba(232,131,107,.14);color:var(--error)}
+  .p-ws{background:rgba(217,163,184,.13);color:var(--workspace)}
+  .p-docs{background:rgba(169,145,212,.14);color:var(--docs)}
+  .ds-mono{font-family:var(--mono);font-size:11.5px}
+  .add{color:var(--working)}.del{color:var(--error)}
+  .ds-text{margin:12px 2px 8px;font-size:13.5px;line-height:1.55}
+  .ds-text code{font-family:var(--mono);font-size:12px;background:var(--raised);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+  .ds-nums{display:flex;gap:14px;color:var(--muted);font-size:12px;margin:0 2px}
+  .ds-nums b{color:var(--fg);font-weight:600}
+  .cards.dsf{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .cards.dsf .card{background:transparent;border:2px solid transparent;border-radius:16px;padding:6px}
+  .cards.dsf .card.selected{border-color:var(--selected-border);background:var(--selected-bg)}
+  .cards.dsf .card:hover{transform:none;box-shadow:none;border-color:var(--border)}
+  .cards.dsf .card-body{padding:.6rem .4rem .2rem}
+  .ds-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px;margin-top:8px}
+  .ds-sw{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .ds-sw div{border-radius:8px;border:1px solid var(--border);height:46px;display:flex;align-items:flex-end;padding:4px 6px;font-size:10.5px;color:var(--muted)}
+  .ds-h{font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px}
+  .ds-h:first-child{margin-top:0}
+  .b{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font:600 12.5px var(--sans);border:1px solid transparent}
+  .b-pri{background:var(--primary);color:var(--primary-fg)}
+  .b-sec{background:var(--raised);border-color:var(--border);color:var(--fg)}
+  .b-gho{color:var(--muted)}
+  .b-des{background:rgba(232,131,107,.14);color:var(--error);border-color:rgba(232,131,107,.3)}
+  .ds-flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .seg{display:flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:2px;width:220px}
+  .seg span{flex:1;text-align:center;padding:4px 0;border-radius:7px;color:var(--faint);font-size:12px}
+  .seg .on{background:var(--input);color:#fff}
+  .tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);font-size:13px;color:var(--faint)}
+  .tabs span{padding:6px 0}
+  .tabs .on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--fg)}
+  .sw{width:34px;height:20px;border-radius:10px;background:var(--working);position:relative;flex:none}
+  .sw:after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .sw.off{background:var(--input)}.sw.off:after{right:auto;left:2px}
+  .reply{display:flex;gap:8px}
+  .reply div{flex:1;height:40px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:var(--faint);display:flex;align-items:center;padding:0 12px;font-size:15px}
+  .toast{background:var(--raised);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .toast b{display:block;font-weight:600;margin-bottom:2px}
+  .sheet{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:8px 16px 16px}
+  .grab{width:36px;height:4px;border-radius:2px;background:var(--input);margin:0 auto 12px}
+  .sheet h4{font-size:16px;font-weight:650;margin:0 0 6px}
+  .sheet p{color:var(--muted);font-size:13px;margin:0 0 12px}
+  .sheet .ds-mono{color:var(--fg)}
+  .sheet .b{width:100%;justify-content:center;height:40px;font-size:14px;margin-top:6px}
+</style>
+
+<h2>Design system: type, palette, components</h2>
+<p class="subtitle">Direction B as tokens. <b>Pick a font pairing</b> (all are self-hosted, since the CSP forbids font CDNs). The palette and components below use pairing B. Monospace is only for code, commands, branches, paths, diffstats and logs.</p>
+
+<div class="cards dsf">
+  <div class="card" data-choice="fonts-system" onclick="toggleSelect(this)">
+    <div class="ds ds-sys ds-panel">
+      <div class="ds-row"><div class="ds-l1"><span class="ds-dot" style="background:var(--attention)"></span><span class="ds-t">sandbox-ask</span><span class="ds-age">18m</span></div>
+      <div class="ds-l2"><span class="ds-pill p-att">Allow Bash</span><span class="ds-mono">go test ./ui/... -run TestPane</span></div>
+      <div class="ds-l2"><span class="ds-pill p-ws">loom</span><span class="ds-mono"><span class="add">+14</span> <span class="del">−2</span></span><span class="ds-mono">aidanb/sandbox-ask</span></div></div>
+      <p class="ds-text">The header redraw reset the cursor. It's drawn after the frame now, in <code>ui/pane.go</code>.</p>
+      <div class="ds-nums"><span>spent <b>$4.71</b></span><span>5h <b>62%</b></span><span>job <b>214</b> · <b>1m 08s</b></span></div>
+    </div>
+    <div class="card-body"><h3>A. System fonts</h3><p>SF Pro and SF Mono on the iPhone, nothing to ship. On your Linux desktop it's whatever the system has, as you're seeing now.</p></div>
+  </div>
+
+  <div class="card" data-choice="fonts-inter-jetbrains" onclick="toggleSelect(this)">
+    <div class="ds ds-inter ds-panel">
+      <div class="ds-row"><div class="ds-l1"><span class="ds-dot" style="background:var(--attention)"></span><span class="ds-t">sandbox-ask</span><span class="ds-age">18m</span></div>
+      <div class="ds-l2"><span class="ds-pill p-att">Allow Bash</span><span class="ds-mono">go test ./ui/... -run TestPane</span></div>
+      <div class="ds-l2"><span class="ds-pill p-ws">loom</span><span class="ds-mono"><span class="add">+14</span> <span class="del">−2</span></span><span class="ds-mono">aidanb/sandbox-ask</span></div></div>
+      <p class="ds-text">The header redraw reset the cursor. It's drawn after the frame now, in <code>ui/pane.go</code>.</p>
+      <div class="ds-nums"><span>spent <b>$4.71</b></span><span>5h <b>62%</b></span><span>job <b>214</b> · <b>1m 08s</b></span></div>
+    </div>
+    <div class="card-body"><h3>B. Inter + JetBrains Mono (recommended)</h3><p>The same everywhere. Linear's workhorse sans, with tabular figures for ages, costs and shares, and a very legible mono. About 150 KB, cached by the service worker.</p></div>
+  </div>
+
+  <div class="card" data-choice="fonts-geist" onclick="toggleSelect(this)">
+    <div class="ds ds-geist ds-panel">
+      <div class="ds-row"><div class="ds-l1"><span class="ds-dot" style="background:var(--attention)"></span><span class="ds-t">sandbox-ask</span><span class="ds-age">18m</span></div>
+      <div class="ds-l2"><span class="ds-pill p-att">Allow Bash</span><span class="ds-mono">go test ./ui/... -run TestPane</span></div>
+      <div class="ds-l2"><span class="ds-pill p-ws">loom</span><span class="ds-mono"><span class="add">+14</span> <span class="del">−2</span></span><span class="ds-mono">aidanb/sandbox-ask</span></div></div>
+      <p class="ds-text">The header redraw reset the cursor. It's drawn after the frame now, in <code>ui/pane.go</code>.</p>
+      <div class="ds-nums"><span>spent <b>$4.71</b></span><span>5h <b>62%</b></span><span>job <b>214</b> · <b>1m 08s</b></span></div>
+    </div>
+    <div class="card-body"><h3>C. Geist + Geist Mono</h3><p>Vercel's pair, crisper and more stylised, with a narrower mono. A similar size to B.</p></div>
+  </div>
+</div>
+
+<div class="ds-grid">
+  <div class="ds ds-inter ds-panel">
+    <div class="ds-h">Palette (dark; light comes later as a second token set)</div>
+    <div class="ds-sw">
+      <div style="background:var(--bg)">background</div><div style="background:var(--surface)">surface</div><div style="background:var(--raised)">raised</div><div style="background:var(--border)">border</div>
+      <div style="background:var(--fg);color:#0f1012">foreground</div><div style="background:var(--muted);color:#0f1012">muted</div><div style="background:var(--faint);color:#0f1012">faint</div><div style="background:var(--ring);color:#0f1012">ring</div>
+      <div style="background:var(--attention);color:#0f1012">needs you</div><div style="background:var(--turn);color:#0f1012">your turn</div><div style="background:var(--working);color:#0f1012">working</div><div style="background:var(--error);color:#0f1012">error</div>
+      <div style="background:var(--workspace);color:#0f1012">workspace</div><div style="background:var(--docs);color:#0f1012">docs</div><div style="background:var(--add-bg)">diff add</div><div style="background:var(--del-bg)">diff del</div>
+    </div>
+    <div class="ds-h">Pills (shadcn Badge)</div>
+    <div class="ds-flex"><span class="ds-pill p-att">Plan approval</span><span class="ds-pill p-turn">Done</span><span class="ds-pill p-work">Running</span><span class="ds-pill p-err">failed</span><span class="ds-pill p-ws">loom</span><span class="ds-pill p-docs">docs</span></div>
+    <div class="ds-h">Buttons</div>
+    <div class="ds-flex"><span class="b b-pri">+ New session</span><span class="b b-sec">Pause</span><span class="b b-gho">Cancel</span><span class="b b-des">Kill</span></div>
+    <div class="ds-h">Segmented filter · session tabs</div>
+    <div class="seg"><span class="on">All</span><span>loom</span><span>flow</span></div>
+    <div class="tabs" style="margin-top:12px"><span class="on">Conversation</span><span>Changes <span class="ds-mono"><span class="add">+212</span> <span class="del">−40</span></span></span><span>Info</span></div>
+  </div>
+
+  <div class="ds ds-inter ds-panel">
+    <div class="ds-h">Reply box (16px text: iOS won't zoom)</div>
+    <div class="ds-flex" style="margin-bottom:8px"><span class="b b-sec" style="height:28px">yes</span><span class="b b-sec" style="height:28px">continue</span><span class="b b-sec ds-mono" style="height:28px">/compact</span></div>
+    <div class="reply"><div>Reply, or /command…</div><span class="b b-pri" style="height:40px">Send</span></div>
+    <div class="ds-h">Settings row</div>
+    <div class="ds-flex" style="justify-content:space-between"><span>Notify when a session needs you</span><span class="sw"></span></div>
+    <div class="ds-flex" style="justify-content:space-between;margin-top:8px"><span>Notify when a session finishes</span><span class="sw off"></span></div>
+    <div class="ds-h">Toast (Sonner)</div>
+    <div class="toast"><b>Killed fix-pane-cursor</b><span style="color:var(--muted)">Stashed as <span class="ds-mono">a1b2c3d</span>, recover with <span class="ds-mono">git stash apply a1b2c3d</span></span></div>
+    <div class="ds-h">Bottom sheet (confirmation)</div>
+    <div class="sheet"><div class="grab"></div><h4>Kill fix-pane-cursor?</h4><p>Removes the worktree <span class="ds-mono">…/fix-pane-cursor</span> and ends tmux session <span class="ds-mono">loom_fix-pane-cursor</span>. Uncommitted work is stashed first.</p><span class="b b-des">Kill session</span><span class="b b-gho">Cancel</span></div>
+  </div>
+</div>
