@@ -151,8 +151,9 @@ func (m *Model) maybeSetSliceHigh() {
 	}
 	var used int64
 	for i := range q.store.Jobs {
-		if q.store.Jobs[i].State == sched.Running {
-			used += q.usage[q.store.Jobs[i].ID].RSSKB
+		// The budget greedyInputs builds: agent and run jobs aside.
+		if rec := q.store.Jobs[i]; rec.State == sched.Running && !sched.Unclaimed(rec.Kind) {
+			used += q.usage[rec.ID].RSSKB
 		}
 	}
 	kb := max(sched.Budget(used, q.availKB, q.policy), kbPerGB)

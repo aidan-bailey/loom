@@ -222,3 +222,19 @@ func TestQueueLadder_TheSliceFollowsTheBudget(t *testing.T) {
 	wqPass(t, l.m)
 	assert.Len(t, l.fake.Calls(), n, "not again until the budget moves 256 MiB")
 }
+
+// The slice's MemoryHigh follows the budget the fit uses, so an agent or run
+// job's memory, which runs outside the slice and the fit, raises it no more
+// than it raises the budget.
+func TestQueueLadder_TheSliceLeavesAgentAndRunJobsOut(t *testing.T) {
+	l := newWQLadder(t, 64, 1)
+	q := l.m.queue
+	q.availKB = 10 << 20
+	q.usage[l.ids[0]] = jobUsage{RSSKB: 1 << 20}
+	wqUnclaimedRunning(t, l.m, 3)
+	l.m.maybeSetSliceHigh()
+	wqPump(t, l.m)
+	budget := sched.Budget(1<<20, 10<<20, q.policy)
+	require.Less(t, budget+6<<20, int64(q.policy.Caps.MemoryGB)*kbPerGB, "below the cap, so 6 GB more would show")
+	assert.Contains(t, l.fake.Calls(), fmt.Sprintf("SetMemoryHigh %s %d", sched.SliceName(q.dir), uint64(budget)<<10))
+}

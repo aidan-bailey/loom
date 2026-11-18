@@ -98,6 +98,39 @@ func TestQueueGreedy_AJobNoEmptyQueueCouldTakeHoldsNoOneBack(t *testing.T) {
 	assert.Contains(t, m.queue.waiting[b], "with no job running")
 }
 
+// wqUnclaimedRunning seeds a running agent job and a running run job, each
+// sampled at gb GB: the jobs the fit never counts (sched.Unclaimed).
+func wqUnclaimedRunning(t *testing.T, m *Model, gb int64) {
+	t.Helper()
+	for i, kind := range []string{sched.KindAgent, sched.KindRun} {
+		id := m.queue.store.NextID
+		wqSeed(t, m, sched.Record{ID: id, Order: int64(id), Kind: kind, Description: kind, Argv: []string{"claude"}, Cwd: "/work",
+			State: sched.Running, Submitted: time.Now(), Started: time.Now(), PID: 5000 + i})
+		m.queue.usage[id] = jobUsage{RSSKB: gb << 20}
+	}
+}
+
+// The fit counts no agent or run job (sched.Unclaimed), so their memory is
+// no room either: the budget is the running jobs the fit counts plus what
+// the host has available, never what an agent holds.
+func TestQueueGreedy_AgentAndRunJobsMemoryIsNoRoom(t *testing.T) {
+	m, _ := wqGreedyModel(t)
+	// Job A's 1 GB plus 10 GB available, less the reserve: below the 14 GB
+	// cap, so 6 GB more would show.
+	prev := readMemAvailable
+	readMemAvailable = func() (int64, error) { return 10 << 20, nil }
+	t.Cleanup(func() { readMemAvailable = prev })
+	g, ok := m.greedyInputs(m.queue.policy, time.Now())
+	require.True(t, ok)
+	want := g.BudgetKB
+	require.Less(t, want+6<<20, int64(m.queue.policy.Caps.MemoryGB)*kbPerGB)
+
+	wqUnclaimedRunning(t, m, 3)
+	g, ok = m.greedyInputs(m.queue.policy, time.Now())
+	require.True(t, ok)
+	assert.Equal(t, want, g.BudgetKB, "the agents' 6 GB is taken, not free")
+}
+
 func TestQueueGreedy_FallbackAdmitsByClaims(t *testing.T) {
 	m, _ := wqGreedyModel(t)
 	m.queue.confiner = nil
