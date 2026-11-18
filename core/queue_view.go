@@ -165,11 +165,12 @@ type JobView struct {
 	Unit        string
 	Uncontained string
 	Attempt     int
-	// The ladder (cgroup spec §8): its rung, how often it was requeued and
-	// why last, and whether it may be.
+	// The ladder (cgroup spec §8): its rung, how often it was requeued, why
+	// and when last, and whether it may be.
 	Rung        sched.Rung
 	Requeues    int
 	LastRequeue string
+	Requeued    time.Time
 	NoRequeue   bool
 	// Memory borrowing (spec 2026-11-06 §8): whether it runs as a borrower,
 	// when it was lent (zero unless lent), and its give-back requeues.
@@ -195,21 +196,33 @@ type JobView struct {
 }
 
 // StartFailed reports whether the job failed without ever running its command:
-// its state is Failed and the daemon gave a reason (Failure), or its exit
-// record is missing or says the exec failed (Exit.Error). A job that ran and
-// exited non-zero or by a signal, and a job in any other state, is not.
+// its state is Failed and its exit record is missing or says the exec failed
+// (Exit.Error), or the daemon gave a reason (Failure) beside an exit record
+// with no signal. A job that ran and exited non-zero or by a signal (with a
+// reason: killed for memory), and a job in any other state, is not.
 func (j JobView) StartFailed() bool { return startFailed(j.State, j.Failure, j.Exit) }
 
 // QueuedSince is when the job joined the queue, as
-// sched.Record.QueuedSince: Ready, else Submitted, or Unparked when later.
+// sched.Record.QueuedSince: Ready, else Submitted, or Unparked or Requeued
+// when later.
 func (j JobView) QueuedSince() time.Time {
-	return sched.Record{Submitted: j.Submitted, Ready: j.Ready, Unparked: j.Unparked}.QueuedSince()
+	return sched.Record{Submitted: j.Submitted, Ready: j.Ready, Unparked: j.Unparked, Requeued: j.Requeued}.QueuedSince()
 }
 
 // startFailed is StartFailed over the fields a job's record and its view
 // share, so the notice (which has a record) and the view agree.
+//
+// A signal proves the command ran: a reason beside it is why loom or the
+// kernel killed it (killedForMemory), beside any other exit record the
+// daemon's.
 func startFailed(state sched.State, failure string, exit *sched.Exit) bool {
-	return state == sched.Failed && (failure != "" || exit == nil || exit.Error != "")
+	switch {
+	case state != sched.Failed:
+		return false
+	case exit == nil || exit.Error != "":
+		return true
+	}
+	return failure != "" && exit.Signal == ""
 }
 
 // Clone is v with its own copy of everything a caller could edit in place:
@@ -465,6 +478,7 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 		Rung:         r.Rung,
 		Requeues:     r.Requeues,
 		LastRequeue:  r.LastRequeue,
+		Requeued:     r.Requeued,
 		NoRequeue:    r.NoRequeue,
 		Borrower:     r.Borrower,
 		LentAt:       r.LentAt,

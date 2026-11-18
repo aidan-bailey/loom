@@ -21,6 +21,15 @@ func TestQueuedSince_TakesTheLatestOfSubmitReadyAndUnpark(t *testing.T) {
 	assert.Equal(t, t0.Add(2*time.Minute), Record{Submitted: t0, Unparked: t0.Add(2 * time.Minute)}.QueuedSince())
 }
 
+func TestQueuedSince_ARequeueStartsTheWaitAgain(t *testing.T) {
+	r := Record{Submitted: t0, Ready: t0.Add(time.Minute), Requeued: t0.Add(30 * time.Second)}
+	assert.Equal(t, t0.Add(time.Minute), r.QueuedSince(), "a requeue before the release counts from the release")
+	r.Requeued = t0.Add(25 * time.Minute)
+	assert.Equal(t, t0.Add(25*time.Minute), r.QueuedSince())
+	r.Unparked = t0.Add(30 * time.Minute)
+	assert.Equal(t, t0.Add(30*time.Minute), r.QueuedSince(), "the latest of the two")
+}
+
 func TestPausedFor(t *testing.T) {
 	r := Record{PausedSecs: 30}
 	assert.Equal(t, 30*time.Second, r.PausedFor(t0))
@@ -129,6 +138,45 @@ func TestAdmit_APausedJobCountsMemoryOnly(t *testing.T) {
 	assert.Equal(t, []JobID{1}, AdmitGreedy([]Record{paused, io, next}, p, t0, g).Start, "its 2 GB used, no cores, no slot")
 	next.Claim.MemoryGB = 12
 	assert.Contains(t, AdmitGreedy([]Record{paused, io, next}, p, t0, g).Waiting[1], "at its peak")
+}
+
+// A head that only a paused job keeps out fits once the owner resumes it,
+// which no running job's end brings: like an over-cap job it is never the
+// head, in either fit, and an exclusive job, which waits for an empty host,
+// is never the head while a job is paused. A running job's end does make
+// room, and the guard holds the rest back for the head as before.
+func TestAdmit_AJobOnlyAPausedJobKeepsOutIsNeverTheHead(t *testing.T) {
+	p := greedyPolicy() // 14 cores, 14 GB
+	paused := running(5, Claim{CPUs: 2, MemoryGB: 8})
+	paused.PausedAt = t0.Add(-time.Minute)
+	big := starvingFor(1, Claim{CPUs: 4, MemoryGB: 10}, time.Hour) // 8 + 10 GB pass the 14 GB cap
+	excl := starvingFor(3, Claim{CPUs: 1, MemoryGB: 1, Exclusive: true}, time.Hour)
+	excl.Order = 1 // ahead of the small job, as big is
+	small := queued(2, Claim{CPUs: 1, MemoryGB: 1})
+	g := Greedy{BudgetKB: gb(14), Running: map[JobID]Prediction{5: PausedPrediction(gb(8), t0)}, Predict: flatPredict(nil)}
+
+	for _, head := range []Record{big, excl} {
+		jobs := []Record{paused, head, small}
+		for name, d := range map[string]Decision{
+			"claims": Admit(jobs, p, t0, nil, nil),
+			"greedy": AdmitGreedy(jobs, p, t0, g),
+		} {
+			assert.Equal(t, []JobID{2}, d.Start, "%s, job %d: the small job starts", name, head.ID)
+			assert.Zero(t, d.Starved, name)
+			assert.Contains(t, d.Waiting[head.ID], "paused", name)
+		}
+	}
+
+	busy := running(5, Claim{CPUs: 2, MemoryGB: 8})
+	g.Running = map[JobID]Prediction{5: Flat(gb(8), t0, t0.Add(10*time.Minute))}
+	jobs := []Record{busy, big, small}
+	for name, d := range map[string]Decision{
+		"claims": Admit(jobs, p, t0, nil, nil),
+		"greedy": AdmitGreedy(jobs, p, t0, g),
+	} {
+		assert.Empty(t, d.Start, name)
+		assert.Equal(t, "waits for job 1, which has waited past 10m", d.Waiting[2], name)
+	}
 }
 
 func TestPausedPrediction_OutlastsAnyCandidate(t *testing.T) {

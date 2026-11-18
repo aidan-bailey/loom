@@ -448,6 +448,10 @@ func TestJobOutcome(t *testing.T) {
 	// a start that failed, as the notice and the TUI do, and so does the CLI.
 	reasonedWithExit := ran(sched.Failed, &sched.Exit{Code: 3})
 	reasonedWithExit.Failure = "its folder is gone"
+	// A reason beside a signal is why loom or the kernel killed a job that
+	// ran (killed for memory and not requeued).
+	oom := ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGKILL"})
+	oom.Failure = "the kernel killed it: out of memory"
 
 	for _, tc := range []struct {
 		name string
@@ -467,6 +471,7 @@ func TestJobOutcome(t *testing.T) {
 		{"lost", lost, "job 5 was lost: its runner died without a result (the host may have rebooted)", exitNotRun},
 		{"its start failed", noStart, "job 5 could not start: its folder is gone", exitNotRun},
 		{"a reason beside an exit record without an error", reasonedWithExit, "job 5 could not start: its folder is gone", exitNotRun},
+		{"killed for memory", oom, "job 5 was killed by SIGKILL after 3m10s (the kernel killed it: out of memory)", 137},
 		{"its exec failed", execFailed, `job 5 could not start: exec: "nope": executable file not found in $PATH`, exitNotRun},
 	} {
 		line, code := jobOutcome(tc.job)

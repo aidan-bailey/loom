@@ -31,7 +31,14 @@ type sliceHighSet struct {
 // paused is restored first, so it can act on its SIGTERM.
 func (m *Model) stepLadder(now time.Time) {
 	q := m.queue
-	if q.containWhy(q.policy) != "" || q.availKB <= 0 || q.laddering {
+	if q.laddering {
+		return
+	}
+	if q.containWhy(q.policy) != "" {
+		m.releaseHeld(now)
+		return
+	}
+	if q.availKB <= 0 {
 		return
 	}
 	in := sched.LadderInput{Now: now, HeadroomKB: q.availKB, ReserveKB: int64(q.policy.ReserveGB) * kbPerGB}
@@ -53,6 +60,11 @@ func (m *Model) stepLadder(now time.Time) {
 			}
 			continue
 		}
+		if _, sampled := q.usage[rec.ID]; !sampled {
+			// No working set yet (a start that landed after this pass was
+			// dispatched): squeezed at 0 it would get the floor, 64 MiB.
+			continue
+		}
 		in.Jobs = append(in.Jobs, sched.LadderJob{
 			ID: rec.ID, Started: rec.Started, WorkingKB: q.usage[rec.ID].RSSKB, Rung: rec.Rung, RungAt: rec.RungAt,
 			NoRequeue: rec.NoRequeue, Exclusive: rec.Claim.Exclusive, Starved: rec.Starved, Forced: rec.Forced, Requeues: rec.Requeues,
@@ -65,6 +77,40 @@ func (m *Model) stepLadder(now time.Time) {
 		return
 	}
 	m.maybeSetSliceHigh()
+}
+
+// heldByLadder is the first running job the ladder or the give-back
+// machine holds (a squeeze, a pause, a lend), the owner's pauses and
+// controls in flight aside; nil for none.
+func (q *queueState) heldByLadder() *sched.Record {
+	for i := range q.store.Jobs {
+		rec := &q.store.Jobs[i]
+		if rec.State == sched.Running && rec.Cgroup != "" && !rec.Paused() && rec.Control == "" &&
+			(rec.Rung != "" || !rec.LentAt.IsZero()) {
+			return rec
+		}
+	}
+	return nil
+}
+
+// releaseHeld restores, one job a pass, what the ladder and the give-back
+// machine hold once containment is gone (scheduler.contain turned off, or
+// the confiner dropped after a failed call): neither machine runs then, so
+// nothing else would thaw a frozen job, which keeps its claim for good.
+// With no confiner it probes for one (maybeProbeConfiner probes while a job
+// is held), and restores once a probe finds one.
+func (m *Model) releaseHeld(now time.Time) {
+	q := m.queue
+	rec := q.heldByLadder()
+	switch {
+	case rec == nil:
+	case q.confiner == nil:
+		m.maybeProbeConfiner(q.policy)
+	case !rec.LentAt.IsZero():
+		m.applyGiveBack(sched.Action{Kind: sched.ActResume, Job: rec.ID}, now)
+	default:
+		m.applyLadder(sched.Action{Kind: sched.ActRestore, Job: rec.ID}, now)
+	}
 }
 
 // applyLadder carries out act from a job: a squeeze, pause or restore over
@@ -151,8 +197,9 @@ func (m *Model) maybeSetSliceHigh() {
 	}
 	var used int64
 	for i := range q.store.Jobs {
-		if q.store.Jobs[i].State == sched.Running {
-			used += q.usage[q.store.Jobs[i].ID].RSSKB
+		// The budget greedyInputs builds: agent and run jobs aside.
+		if rec := q.store.Jobs[i]; rec.State == sched.Running && !sched.Unclaimed(rec.Kind) {
+			used += q.usage[rec.ID].RSSKB
 		}
 	}
 	kb := max(sched.Budget(used, q.availKB, q.policy), kbPerGB)
@@ -198,31 +245,49 @@ func (m *Model) ladderHoldoff() string {
 
 // requeueWhy is why job rec, whose shim is gone, ran out of memory: the
 // ladder's requeue, or a kernel OOM kill of a contained job (cgroup spec
-// §15, 12): it ended by a SIGKILL nobody asked for, or with no result at
-// all since OOMPolicy=kill takes the shim too, while the slice's oom_kill
-// rose within two passes; "" for neither.
+// §15, 12), while the slice's oom_kill rose within two passes; "" for
+// neither. Either way it ended by a SIGKILL, or with no result at all since
+// a kill of its scope takes the shim too: an exit.json of an end of its own
+// wins over a requeue asked for while it was ending.
 func (m *Model) requeueWhy(rec sched.Record, now time.Time) string {
 	q := m.queue
+	killed := rec.Exit == nil || rec.Exit.Signal == "SIGKILL"
 	switch {
+	case !killed:
+		return ""
 	case rec.Requeue != "":
 		return rec.Requeue
-	case rec.Cgroup != "" && rec.CancelReason == "" && (rec.Exit == nil || rec.Exit.Signal == "SIGKILL") &&
-		!q.oomAt.IsZero() && now.Sub(q.oomAt) <= 2*queueInterval:
+	case rec.Cgroup != "" && rec.CancelReason == "" && !q.oomAt.IsZero() && now.Sub(q.oomAt) <= 2*queueInterval:
 		return "the kernel killed it: out of memory"
 	}
 	return ""
 }
 
+// killedForMemory makes job rec, killed for memory and not requeued, a job
+// that ran and was killed: why is its reason, beside the exit record of the
+// SIGKILL that ended it (cgroup.kill's, or systemd's OOMPolicy=kill), which
+// stands in when the shim died with its command and wrote none. A reason
+// beside a signal is no start failure (startFailed), and the run teaches a
+// floor (sched.RunOf).
+func killedForMemory(rec *sched.Record, why string, now time.Time) {
+	rec.Failure = why
+	if rec.Exit == nil {
+		rec.Exit, rec.Ended = &sched.Exit{Code: -1, Signal: "SIGKILL", Ended: now}, now
+	}
+}
+
 // requeueJob puts job i, killed for memory, back in the queue as its next
 // attempt (cgroup spec §8.4): its run is a floor, its files go to
-// attempt-<n>, and it keeps its ID, owner, order and place; its owner is
-// told.
+// attempt-<n>, and it keeps its ID, owner, order, place and what it is (its
+// kind, flow run and key), while its starvation wait starts again; its owner
+// is told. requeueKept, requeueSet and requeueReset (queue_ladder_test.go)
+// place every field of sched.Record.
 func (m *Model) requeueJob(i int, why string, now time.Time) {
 	q := m.queue
 	rec := &q.store.Jobs[i]
 	if err := sched.ArchiveAttempt(q.jobDir(rec.ID), rec.Attempt); err != nil {
 		log.For("core").Warn("queue.requeue_failed", "job", int64(rec.ID), "err", err)
-		rec.Failure = "killed: " + why + "; its requeue failed: " + err.Error()
+		killedForMemory(rec, why+"; its requeue failed: "+err.Error(), now)
 		m.finishJob(i, sched.Failed, now)
 		return
 	}
@@ -247,8 +312,9 @@ func (m *Model) requeueJob(i int, why string, now time.Time) {
 		Submitted: rec.Submitted, Asked: rec.Asked, Signature: rec.Signature, Checkout: rec.Checkout,
 		Unsized: rec.Unsized, Sources: rec.Sources, Learned: rec.Learned, FamilyRuns: rec.FamilyRuns, AboveCap: rec.AboveCap,
 		BelowKB: rec.BelowKB, AgentWhy: rec.AgentWhy, After: rec.After, Ready: rec.Ready,
-		Attempt: rec.Attempt + 1, Requeues: requeues, LastRequeue: why, NoRequeue: rec.NoRequeue,
+		Attempt: rec.Attempt + 1, Requeues: requeues, LastRequeue: why, Requeued: now, NoRequeue: rec.NoRequeue,
 		GaveBack: gaveBack, NoBorrow: giveBack, Locks: rec.Locks,
+		Kind: rec.Kind, AccountKey: rec.AccountKey, Run: rec.Run, Key: rec.Key,
 	}
 	log.For("core").Warn("queue.requeued", "job", int64(rec.ID), "attempt", rec.Attempt, "why", why, "give_back", giveBack)
 	q.moved()

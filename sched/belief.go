@@ -66,9 +66,11 @@ func (r Run) TeachesDuration() bool {
 
 // RunOf is what finished record rec teaches its belief (spec §5.2), and
 // false for a job that taught nothing: one that never started, failed to
-// start, or was lost.
+// start, or was lost. A reason (Failure) beside a signal is why loom or the
+// kernel killed a job that ran (killed for memory), which teaches a floor;
+// beside anything else it is why the job never ran.
 func RunOf(rec Record) (Run, bool) {
-	if rec.Started.IsZero() || rec.Ended.IsZero() || rec.Failure != "" {
+	if rec.Started.IsZero() || rec.Ended.IsZero() || (rec.Failure != "" && (rec.Exit == nil || rec.Exit.Signal == "")) {
 		return Run{}, false
 	}
 	var out Outcome

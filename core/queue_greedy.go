@@ -41,7 +41,9 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 	var used int64
 	for i := range q.store.Jobs {
 		rec := q.store.Jobs[i]
-		if rec.State != sched.Running {
+		// The fit counts no agent or run job, so their memory, already gone
+		// from MemAvailable, is no room either.
+		if rec.State != sched.Running || sched.Unclaimed(rec.Kind) {
 			continue
 		}
 		used += q.usage[rec.ID].RSSKB
