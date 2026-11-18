@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -102,7 +104,7 @@ func TestSetQueue_OnlyWhatTheAppReadsWakesTheFlusher(t *testing.T) {
 
 	ended := core.QueueView{Jobs: []core.JobView{doneJob(14, 1, 0)}}
 	assert.True(t, p.setQueue(ended), "a job that ended does")
-	assert.Equal(t, "done", p.sessions[1][0].Jobs[0].State)
+	assert.Equal(t, jobState("done"), p.sessions[1][0].Jobs[0].State)
 	assert.Empty(t, p.sessions[1][0].JobsLabel, "a finished job takes the badge away")
 
 	moved := core.QueueView{Jobs: []core.JobView{doneJob(14, 2, 0)}}
@@ -169,7 +171,7 @@ func TestJobOf_MapsTheControls(t *testing.T) {
 	assert.True(t, out.Paused)
 	assert.True(t, out.PauseReclaimed)
 	assert.True(t, out.Forced)
-	assert.Equal(t, "resume", out.Control)
+	assert.Equal(t, jobControlKind("resume"), out.Control)
 	assert.Equal(t, "pause failed: no bus", out.ControlError)
 	assert.False(t, out.Parked)
 	assert.True(t, jobOf(core.JobView{ID: 15, State: sched.Queued, Parked: true}).Parked)
@@ -198,4 +200,18 @@ func TestAPI_JobControlAsksTheModelForTheSessionsJob(t *testing.T) {
 		env.rb.mu.Unlock()
 		assert.Equal(t, core.JobControl{Job: 7, Owner: env.ids["fresh"], Action: want}, last, "scoped to the session in the path")
 	}
+}
+
+func TestJobOf_EveryStateAndControlIsInItsUnion(t *testing.T) {
+	u := unions()
+	for _, st := range []sched.State{sched.Held, sched.Queued, sched.Running, sched.Done, sched.Failed, sched.Cancelled, sched.Lost} {
+		out := jobOf(core.JobView{ID: 1, State: st})
+		assert.True(t, slices.Contains(u[reflect.TypeFor[jobState]()].values, string(out.State)), "state %q", out.State)
+	}
+	for _, c := range []sched.ControlKind{sched.ControlPause, sched.ControlResume, ""} {
+		out := jobOf(core.JobView{ID: 1, State: sched.Running, Control: c})
+		assert.True(t, slices.Contains(u[reflect.TypeFor[jobControlKind]()].values, string(out.Control)), "control %q", out.Control)
+		assert.Equal(t, jobControlKind(c), out.Control)
+	}
+	assert.Equal(t, jobControlKind(""), jobOf(core.JobView{ID: 1}).Control, "an unset control is empty")
 }

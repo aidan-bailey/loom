@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -145,4 +147,12 @@ func TestAPI_AnswerChecksTheBody(t *testing.T) {
 	env.rb.mu.Lock()
 	defer env.rb.mu.Unlock()
 	assert.Empty(t, env.rb.answered, "nothing it refused reached the model")
+}
+
+func TestAskOf_BothKindsAreInTheUnion(t *testing.T) {
+	values := unions()[reflect.TypeFor[askKind]()].values
+	for _, k := range []string{core.AskKindQuestion, core.AskKindPermission} {
+		got := askOf(core.AskView{ID: "x", Kind: k})
+		assert.True(t, slices.Contains(values, string(got.Kind)), "kind %q", got.Kind)
+	}
 }

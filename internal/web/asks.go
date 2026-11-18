@@ -29,7 +29,7 @@ const (
 
 type askJSON struct {
 	ID          string            `json:"id"`
-	Kind        string            `json:"kind"`
+	Kind        askKind           `json:"kind"`
 	Agent       string            `json:"agent"`
 	Opened      string            `json:"opened"`
 	Answering   bool              `json:"answering"`
@@ -70,7 +70,7 @@ type suggestionJSON struct {
 }
 
 func askOf(a core.AskView) askJSON {
-	out := askJSON{ID: a.ID, Kind: a.Kind, Agent: a.AgentType, Answering: a.Answering, Tool: a.Tool, Summary: a.Summary}
+	out := askJSON{ID: a.ID, Kind: askKind(a.Kind), Agent: a.AgentType, Answering: a.Answering, Tool: a.Tool, Summary: a.Summary}
 	if a.AgentID != "" && out.Agent == "" {
 		out.Agent = "a subagent"
 	}

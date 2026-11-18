@@ -33,7 +33,7 @@ type exitJSON struct {
 // with the samples would republish the fleet each time.
 type jobJSON struct {
 	ID           sched.JobID `json:"id"`
-	State        string      `json:"state"`
+	State        jobState    `json:"state"`
 	Description  string      `json:"description"`
 	Command      string      `json:"command"`
 	Agent        string      `json:"agent"`
@@ -46,12 +46,12 @@ type jobJSON struct {
 	Waiting      string      `json:"waiting"`
 	// The job controls (spec 2026-11-16-job-controls §8): none moves with
 	// the samples.
-	Parked         bool   `json:"parked"`
-	Paused         bool   `json:"paused"`
-	PauseReclaimed bool   `json:"pause_reclaimed"`
-	Forced         bool   `json:"forced"`
-	Control        string `json:"control"`
-	ControlError   string `json:"control_error"`
+	Parked         bool           `json:"parked"`
+	Paused         bool           `json:"paused"`
+	PauseReclaimed bool           `json:"pause_reclaimed"`
+	Forced         bool           `json:"forced"`
+	Control        jobControlKind `json:"control"`
+	ControlError   string         `json:"control_error"`
 }
 
 // sessionJobs is one session's jobs and its badge (core.JobBadges).
@@ -70,7 +70,7 @@ func live(s sched.State) bool {
 func jobOf(j core.JobView) jobJSON {
 	out := jobJSON{
 		ID:           j.ID,
-		State:        string(j.State),
+		State:        jobState(j.State),
 		Description:  j.Description,
 		Command:      strings.Join(j.Argv, " "),
 		Agent:        j.Agent,
@@ -85,7 +85,7 @@ func jobOf(j core.JobView) jobJSON {
 		Paused:         !j.PausedAt.IsZero(),
 		PauseReclaimed: j.PauseReclaimed,
 		Forced:         j.Forced,
-		Control:        string(j.Control),
+		Control:        jobControlKind(j.Control),
 		ControlError:   j.ControlErr,
 	}
 	if j.Exit != nil {

@@ -133,6 +133,9 @@ func TestUnions_EveryFixedValueFieldIsTyped(t *testing.T) {
 		{stepJSON{}, "State", reflect.TypeFor[stepState]()},
 		{fileJSON{}, "Status", reflect.TypeFor[fileStatus]()},
 		{fileJSON{}, "Omitted", reflect.TypeFor[fileOmitted]()},
+		{jobJSON{}, "State", reflect.TypeFor[jobState]()},
+		{jobJSON{}, "Control", reflect.TypeFor[jobControlKind]()},
+		{askJSON{}, "Kind", reflect.TypeFor[askKind]()},
 	} {
 		f, ok := reflect.TypeOf(r.of).FieldByName(r.field)
 		if assert.True(t, ok, r.field) {
