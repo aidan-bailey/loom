@@ -492,6 +492,21 @@ func TestStatic_AssetsFallBackAcrossTrees(t *testing.T) {
 	require.Equal(t, classic["/app.css"].body, staticGet(mux, "/app.css", "next").Body.Bytes())
 }
 
+func TestStatic_EachWorkerFetchesItsOwnShell(t *testing.T) {
+	mux := staticMux(t, "b-test")
+	for _, tc := range []struct{ query, tree string }{
+		{"?ui=classic", "classic"},
+		{"?ui=next", "next"},
+	} {
+		sw := staticGet(mux, "/sw.js"+tc.query, "").Body.String()
+		require.Contains(t, sw, `const TREE = "`+tc.tree+`";`, tc.query)
+		require.Contains(t, sw, "?ui=${TREE}", tc.query+": the shell is fetched by its tree")
+		for _, prefix := range []string{`"loom-shell-"`, `"loom-next-"`} {
+			require.Contains(t, sw, prefix, tc.query+": both apps' caches are swept")
+		}
+	}
+}
+
 func TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe(t *testing.T) {
 	bad := fstest.MapFS{
 		"index.html":   {Data: []byte("<html>")},

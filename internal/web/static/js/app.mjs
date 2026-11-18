@@ -12,6 +12,7 @@ import { checkPush } from "./push.mjs";
 import { allSessions, fleetGroups, nextInGroup } from "./fleet.mjs";
 import { AGENT_ID } from "./session.mjs";
 import { StatusRow } from "./chrome.mjs";
+import { cookieApp } from "./switch.mjs";
 
 const buildMeta = document.querySelector('meta[name="loom-build"]');
 const shellBuild = buildMeta ? buildMeta.content : "";
@@ -111,7 +112,10 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (hadController) reload();
   });
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // The worker's URL carries the device's app, so a switch deferred offline
+  // finishes on this launch: a classic page under the new cookie installs the
+  // new app's worker, which takes over and reloads the page.
+  navigator.serviceWorker.register("/sw.js?ui=" + cookieApp()).catch(() => {});
 }
 
 // The snapshot is saved at most once a second: sessions events come up to

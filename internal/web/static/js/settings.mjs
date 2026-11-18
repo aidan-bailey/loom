@@ -6,6 +6,7 @@ import { ConfirmSheet } from "./sheets.mjs";
 import { PushButton } from "./push.mjs";
 import { ago } from "./fleet.mjs";
 import { ContextRow, FLEET_BACK } from "./chrome.mjs";
+import { switchApp } from "./switch.mjs";
 
 export function isPaused(device, now = Date.now()) {
   const until = Date.parse(device && device.notify ? device.notify.paused_until : "");
@@ -124,6 +125,13 @@ export function Settings({ snap, stale, act, toast }) {
     await act("DELETE", "/api/v1/device");
   }
 
+  // tryNewApp makes the new app this device's: the page reloads into it when
+  // its worker takes over. Offline the choice is kept and the switch happens
+  // on the next launch.
+  async function tryNewApp() {
+    if ((await switchApp("next")) === "deferred") toast("The new app opens the next time you launch loom.");
+  }
+
   return html`
     <section class="sc-screen">
       <section class="sc-section">
@@ -154,6 +162,14 @@ export function Settings({ snap, stale, act, toast }) {
         <div class="sc-row"><span>Host</span><span>${snap.host}</span></div>
         <div class="sc-row"><span>Build</span><span class="sc-mono">${snap.build}</span></div>
         <button class="sc-btn sc-danger-text sc-block" type="button" disabled=${stale} onClick=${() => setSheet(true)}>Unpair this phone</button>
+      </section>
+
+      <section class="sc-section">
+        <h2 class="sc-group-title">App</h2>
+        <div class="sc-row">
+          <span>A new look for loom</span>
+          <button class="sc-btn" type="button" onClick=${tryNewApp}>Try the new app</button>
+        </div>
       </section>
 
       <section class="sc-section">

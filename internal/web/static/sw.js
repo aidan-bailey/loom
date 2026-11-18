@@ -5,14 +5,34 @@ const BUILD = "__LOOM_BUILD__";
 const SHELL = ["__LOOM_SHELL__"];
 const PREFIX = "loom-shell-";
 const CACHE = PREFIX + BUILD;
+// TREE is this worker's app. The server answers a shell file by its ui
+// parameter before it looks at the device's cookie, so the worker asks for each
+// shell file as ?ui=TREE and stores the answer under the plain path: it never
+// caches the other app's shell, whatever cookie its requests carry.
+const TREE = "classic";
+const SHELL_FILES = ["/", "/index.html", "/sw.js", "/manifest.webmanifest"];
+// Both apps' caches are swept on activate, so a switch leaves nothing of the
+// other behind.
+const PREFIXES = ["loom-shell-", "loom-next-"];
+
+// precache stores every shell URL under its plain path; a shell file is fetched
+// as ?ui=TREE (see TREE). Any answer but 200-299 fails the install, as addAll did.
+function precache() {
+  return caches.open(CACHE).then((cache) =>
+    Promise.all(
+      SHELL.map((url) => {
+        const asked = SHELL_FILES.includes(url) ? `${url}?ui=${TREE}` : url;
+        return fetch(new Request(asked, { cache: "reload" })).then((response) => {
+          if (!response.ok) throw new Error(`${asked}: ${response.status}`);
+          return cache.put(url, response);
+        });
+      }),
+    ),
+  );
+}
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
-      .then(() => self.skipWaiting()),
-  );
+  event.waitUntil(precache().then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
@@ -20,7 +40,11 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key.startsWith(PREFIX) && key !== CACHE).map((key) => caches.delete(key))),
+        Promise.all(
+          keys
+            .filter((key) => key !== CACHE && PREFIXES.some((prefix) => key.startsWith(prefix)))
+            .map((key) => caches.delete(key)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
