@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 
 	"github.com/aidan-bailey/loom/log"
@@ -145,14 +146,13 @@ const (
 	treeNext
 )
 
-// isShellFile reports whether url is one of the four files whose answer is
-// the app's shell, which the request's tree picks.
+// shellFiles are the four URLs whose answer is the app's shell, which the
+// request's tree picks.
+var shellFiles = []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"}
+
+// isShellFile reports whether url is one of shellFiles.
 func isShellFile(url string) bool {
-	switch url {
-	case "/", "/index.html", "/sw.js", "/manifest.webmanifest":
-		return true
-	}
-	return false
+	return slices.Contains(shellFiles, url)
 }
 
 // treeOf is the tree a request is answered from. A shell file with a ui
@@ -235,7 +235,7 @@ func (l *Layer) routeStaticFrom(m *http.ServeMux, classic, next fs.FS) {
 		}
 	}
 	if broken {
-		for _, url := range []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"} {
+		for _, url := range shellFiles {
 			urls[url] = true
 		}
 	}
