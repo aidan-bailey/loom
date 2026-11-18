@@ -51,7 +51,7 @@ type feedbackWatch struct {
 	reqs   []core.ReqID
 }
 
-func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws string, req core.ReqID) {
+func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws, model, effort string, req core.ReqID) {
 	w.fixes = append(w.fixes, t)
 	w.reqs = append(w.reqs, req)
 }

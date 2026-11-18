@@ -155,7 +155,7 @@ func (m *home) askFixThread() tea.Cmd {
 	t := r.Thread
 	return m.confirmTask(fmt.Sprintf("Start fix session %s in %s?", feedback.FixTitle(t, r.Title), ws), overlay.ConfirmationTask{Sync: func() {
 		m.leaveFeedbackView()
-		m.core.FixThread(t, "", m.opReq("fix", fmt.Sprintf("thread %d", t)))
+		m.core.FixThread(t, "", "", "", m.opReq("fix", fmt.Sprintf("thread %d", t)))
 	}})
 }
 

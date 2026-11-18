@@ -1036,11 +1036,11 @@ The daemon records which session filed it (title, workspace, branch, subagent), 
 ```
 loom feedback list [--all] [--json]   # threads and loose notes, most-reported first
 loom feedback show 3                  # a thread with every note; show n12 for one note
-loom feedback fix 3 [-w loom]         # start a session that fixes it, prompted with every note
+loom feedback fix 3 [-w loom] [--model opus] [--effort high]  # start a session that fixes it, prompted with every note
 loom feedback close 3
 ```
 
-`fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix` and `close` are yours. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
+`fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would; `--model` and `--effort` override those two, with the values `session new` takes. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix` and `close` are yours. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
 
 ```json
 {
@@ -1295,7 +1295,7 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `feedback add --kind <bug\|friction\|missing\|docs> --title <t> (--text <x> \| --file <f>)` | File a note from inside a session loom launched (it reads `$LOOM_LAUNCH`, and the effort from `$CLAUDE_EFFORT`); prints `[loom] feedback n12 filed`. Refused outside a session, and for a title over 120 characters or a text over 20,000 bytes |
 | `feedback list [--all] [--json]` | The threads that aren't closed and the notes no thread holds, by how many sessions reported each, then the latest note; `--all` adds closed threads |
 | `feedback show <thread \| nN>` | A thread with every note in full, or one note |
-| `feedback fix <thread> [-w <workspace>]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there) |
+| `feedback fix <thread> [-w <workspace>] [--model M] [--effort E]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there); `--model` and `--effort` take `session new`'s values, else the workspace's own |
 | `feedback close <thread>` | Close a thread |
 
 ### Watch Subcommands
