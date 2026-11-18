@@ -172,8 +172,8 @@ function scheduleSave(): void {
 function afterEvent(event: AnyEvent): void {
   switch (event.name) {
     case "snapshot":
-      // The first snapshot of a launch is also where the launch-time checks run (the shell's
-      // upgrade, the push subscription).
+      // The launch-time checks (the shell's upgrade, the push subscription) are added here by a
+      // later story; the first snapshot of a launch is where they will run.
       setBadge(event.data.badge);
       scheduleSave();
       break;
