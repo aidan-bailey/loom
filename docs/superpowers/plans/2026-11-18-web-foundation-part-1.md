@@ -4,9 +4,9 @@
 
 **Goal:** Give the web layer one typed route table and a generated TS contract, and stand up the new React app beside the classic one behind a per-device switch, with its shell and the fleet working end to end.
 
-**Architecture:** The Go side moves every `/api/v1` route into one table of typed handlers (`internal/web/routes.go`), types the fixed-value string fields, and generates `ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` from the table by reflection. The new app (`internal/web/ui/`, Vite + React + TypeScript + Tailwind + shadcn on Base UI) builds into a committed `internal/web/dist/`, which the daemon embeds beside `static/` and serves when the device's `__Host-loom-ui` cookie (or the worker's `?ui=` URL) asks for it. The app's core is a typed request path, the event stream feeding a Zustand store, TanStack Router over hash URLs, a panel registry and a command registry; this part ports the fleet and leaves every other route as a placeholder that switches back to the classic app.
+**Architecture:** The Go side moves every `/api/v1` route into one table of typed handlers (`internal/web/routes.go`), types the fixed-value string fields, and generates `ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` from the table by reflection. The new app (`internal/web/ui/`, Vite + React + TypeScript + Tailwind + shadcn on Base UI) builds into a committed `internal/web/dist/`, which the daemon embeds beside `static/` and serves when the device's `__Host-loom-ui` cookie (or a `ui` parameter on a shell file's URL) asks for it. The app's core is a typed request path, the event stream feeding a Zustand store, TanStack Router over hash URLs, a panel registry and a command registry; this part ports the fleet and leaves every other route as a placeholder that switches back to the classic app.
 
-**Tech Stack:** Go (stdlib `net/http`, `reflect`, `embed`, testify); Node 22, pnpm, TypeScript, React 19, Vite, Tailwind CSS 4, shadcn/ui on Base UI, TanStack Router 1, TanStack Query 5, Zustand 5, lucide-react, Sonner, Vitest with happy-dom and Testing Library, ESLint (typescript-eslint, react-hooks), Prettier, `rollup-plugin-license`; `tools/webshot` (headless Chromium); GitHub Actions.
+**Tech Stack:** Go (stdlib `net/http`, `reflect`, `embed`, testify); Node 22, pnpm, TypeScript, React 19, Vite, Tailwind CSS 4, shadcn/ui on Base UI (`@base-ui/react`, its Toast and Drawer included), TanStack Router 1, TanStack Query 5, Zustand 5, lucide-react, Vitest with happy-dom and Testing Library, ESLint (typescript-eslint, react-hooks), Prettier, `rollup-plugin-license`; `tools/webshot` (headless Chromium); GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-11-18-web-foundation-design.md`
 
@@ -22,6 +22,7 @@ Go (`internal/web/`):
 - `routes_test.go` (new): the open set, the adapter's statuses and logging, `readQuery`.
 - `api.go`, `asks.go`, `reads.go`, `jobs.go`, `flow.go`, `auth.go`, `push.go`, `mockup.go`: handlers become typed handlers registered from the table; `routeAPI`, and the pair and push-key registration, go.
 - `web.go`: `mux()` registers the table, the stream and the static routes.
+- `api_test.go`, `fleet_test.go`, `stream_test.go`, `jobs_test.go`, `reads_test.go`, `flow_test.go`: tests that call a moved handler directly or compare a retyped field.
 - `stream.go`: `streamEvents()`, the events' table.
 - `unions.go` (new): the typed string types whose values the generator turns into TS unions, each with its value list; `fleet.go`, `reads.go`, `jobs.go`, `flow.go`, `asks.go` retype their fields.
 - `contract.go` (new): `Contract()`, the exported view of the route and event tables and the unions, and the `//go:generate` line.
@@ -34,7 +35,7 @@ The new app (`internal/web/ui/`, new):
 
 - `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `.prettierrc.json`, `.prettierignore`, `components.json`, `index.html`, `scripts/check-dist.mjs`.
 - `public/sw.js`, `public/manifest.webmanifest`, `public/icons/icon-180.png`, `public/icons/icon-192.png`, `public/icons/icon-512.png`.
-- `src/main.tsx`; `src/styles/app.css`, `src/styles/fonts.css`; `src/lib/utils.ts`; `src/components/ui/*.tsx` (shadcn's).
+- `src/main.tsx`, `src/test-setup.ts`, `src/fixtures.ts`; `src/styles/app.css`, `src/styles/fonts.css`; `src/lib/utils.ts`; `src/components/ui/*.tsx` (shadcn's on Base UI, `toast.tsx` included).
 - `src/api/gen.ts` (generated), `src/api/request.ts`, `src/api/stream.ts`, `src/api/queries.ts`.
 - `src/store/fleet.ts`, `src/store/persist.ts`, `src/store/badge.ts`; `src/fleet/groups.ts`, `src/fleet/usage.ts`, `src/fleet/links.ts`.
 - `src/app/switchApp.ts`, `src/app/panels.ts`, `src/app/routes.tsx`, `src/app/shell.tsx`, `src/app/commands.ts`, `src/app/CommandButton.tsx`, `src/app/ConfirmSheet.tsx`, `src/app/toasts.ts`, `src/app/worker.ts`.
@@ -43,9 +44,9 @@ The new app (`internal/web/ui/`, new):
 
 The built bundle: `internal/web/dist/` (generated by `pnpm build`, committed).
 
-The classic app (`internal/web/static/`): `js/switch.mjs` (new), `js/settings.mjs` (the "Try the new app" row), `sw.js` (cleans `loom-next-` caches too).
+The classic app (`internal/web/static/`): `js/switch.mjs` (new), `js/settings.mjs` (the "Try the new app" row), `js/app.mjs` (registers the worker by the cookie's app), `sw.js` (fetches its shell with `?ui=classic`, cleans `loom-next-` caches too).
 
-Elsewhere: `tools/webshot/main.go` and its tests (`-app`, `-serve`); `flake.nix` (dev shell); `.gitattributes`; `.gitignore`; `.github/workflows/web.yml` (new), `.github/workflows/build.yml`; `docs/specs/web-api.md` (generated); `internal/web/ui/CLAUDE.md` (new), `internal/web/CLAUDE.md`, `internal/web/README.md`, `docs/claude/web-layer.md`, `tools/CLAUDE.md`, `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`.
+Elsewhere: `tools/webshot/main.go` and its tests (`-app`, `-serve`), `tools/webshot/fixture/snapshot.json`, `internal/web/webshot_fixture_test.go`; `flake.nix` (dev shell); `.gitattributes`; `.gitignore`; `.github/workflows/web.yml` (new), `.github/workflows/build.yml`; `docs/specs/web-api.md` (generated); `internal/web/ui/CLAUDE.md` (new), `internal/web/CLAUDE.md`, `internal/web/README.md`, `docs/claude/web-layer.md`, `docs/claude/INDEX.md`, `tools/CLAUDE.md`, `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`.
 
 ## Names contract
 
@@ -60,6 +61,7 @@ Every name one story defines and another uses. A story may add names of its own;
   - `log string`: the action name its log line carries today (`"pause"`, `"launch-defaults"`, `"job_log"`), or `""` when the handler logs for itself (pair, push key)
   - `client string`: the generated TS function's name, lowerCamelCase, unique in the table
   - `ok int`: the success status, 200, 201 or 204
+  - `doc string`: what the route does and refuses, its limits included, in one to three sentences taken from the route's row of `internal/web/README.md`'s route table; `docs/specs/web-api.md` prints it beside the route, so the README's table can become a pointer (Story 15). Story 1 writes it for its six routes, Story 2 for the rest.
 - `type route struct` (Story 1): one entry of the table.
   - `spec spec`
   - `query reflect.Type`: the decoded query's type, nil for none
@@ -67,7 +69,7 @@ Every name one story defines and another uses. A story may add names of its own;
   - `resp reflect.Type`: the success body's type, nil for a 204 or a page route
   - `page bool`: an HTML page the generated client only builds the URL of (the mockup)
   - `serve deviceHandler`: what registration mounts, wrapped in `authed` unless `spec.open`
-- `func typed[In, Out any](l *Layer, s spec, h func(c *call, in In) (Out, error)) route` (Story 1): a JSON route. `In` is `struct{}` when the route takes neither query nor body; otherwise a GET decodes its query into `In` with `readQuery`, and any other method decodes its body with `readJSON` (failure: 400 `"bad request: " + err`). The adapter answers `ok` with `Out` through `writeJSON` (nothing for 204); `errPending` as 202 `pendingJSON`; a `*statusError` with its status and text; any other error with the status `modelStatus` gives it and its text; and logs every answer through `record`/`refuse` unless `s.log` is `""`.
+- `func typed[In, Out any](l *Layer, s spec, h func(c *call, in In) (Out, error)) route` (Story 1): a JSON route. When `s.path` holds `{id}`, the adapter first resolves the session with `c.session()`, answering its 404 before any decode and setting `c.a.sessionID`, so a 400 is logged with the session, as today. `In` is `struct{}` when the route takes neither query nor body; otherwise a GET decodes its query into `In` with `readQuery`, and any other method decodes its body with `readJSON` (failure: 400 `"bad request: " + err`). The adapter answers `ok` with `Out` through `writeJSON` (nothing for 204); `errPending` as 202 `pendingJSON`; a `*statusError` with its status and text; any other error with the status `modelStatus` gives it and its text; and logs every answer through `record`/`refuse` unless `s.log` is `""`. Where a handler checks another path value after the decode (answer's `{ask}`), a request that fails both that check and the decode gets the decode's 400; every other order, status and message is today's.
 - `func page(l *Layer, s spec, h deviceHandler) route` (Story 1): a hand-served route (`page` true, `resp` nil).
 - `type call struct` (Story 1): a typed handler's request.
   - `l *Layer`
@@ -75,9 +77,11 @@ Every name one story defines and another uses. A story may add names of its own;
   - `r *http.Request`
   - `device string`: the paired device's name, `""` on an open route
   - `a actionLog`: the log line's fields
-- `func (c *call) session() (core.InstanceID, error)` (Story 1): the session `{id}` names, setting `c.a.sessionID`; a `*statusError` 404 `"no such session"` when the path holds no decimal ID the model serves (as `sessionFromPath`).
-- `func (c *call) act(send func(req core.ReqID)) (noticesJSON, error)` (Story 1): `doAction`'s request and wait; the notices on success (kept among the hub's recent notices); `errPending` when the wait runs out; the Reply's error otherwise, its other notices sent to the device's stream as `writeOutcome` does.
+- `func (c *call) session() (core.InstanceID, error)` (Story 1): the session `{id}` names, setting `c.a.sessionID`; a `*statusError` 404 `"no such session"` when the path holds no decimal ID the model serves (as `sessionFromPath`); a second call returns the first one's answer.
+- `func (c *call) notice(n noticeJSON)` (Story 1): adds a notice raised before the request (create's launch-account notice), which `act` and `actCreated` put ahead of the Reply's notices: kept among the hub's recent notices with them on success, sent to the device's stream with them on a refusal, as `writeOutcome` treats `pre` today.
+- `func (c *call) act(send func(req core.ReqID)) (noticesJSON, error)` (Story 1): `doAction`'s request and wait; the notices on success (`c.notice`'s first, all kept among the hub's recent notices); `errPending` when the wait runs out; the Reply's error otherwise, its other notices sent to the device's stream as `writeOutcome` does.
 - `func (c *call) actCreated(send func(req core.ReqID)) (createdJSON, error)` (Story 1): `act` for a create, with the new session's ID.
+- `func (l *Layer) settle(device string, reply core.Reply, notes []noticeJSON, done bool) ([]noticeJSON, error)` (Story 1): the outcome rule `writeOutcome` holds today, which `act`, `actCreated` and `writeOutcome` share until Story 2 deletes `writeOutcome`: not `done` is `errPending`, the notices it was given (those raised before the request) sent to the device's stream, which keeps them; a Reply error is returned after the other notices go to the device's stream; otherwise the notices are kept and returned, never nil.
 - `func (c *call) read(send func(req core.ReqID)) (core.Reply, error)` (Story 1): `l.read`'s wait, untracked once answered; a `*statusError` 504 when `replyWait` runs out.
 - `func (c *call) setAction(name string)` (Story 1): replaces the log line's action, for a route whose action depends on the path (`"job_" + action`).
 - `var errPending error` (Story 1): `act`'s and `actCreated`'s "still running" outcome.
@@ -87,6 +91,7 @@ Every name one story defines and another uses. A story may add names of its own;
 - `func readQuery(r *http.Request, v any)` (Story 1): sets each `string` field of the struct `v` points to from the query parameter its `query:"<name>"` tag names; parameters with no field are ignored. A query type holds only `string` fields (Story 1's test checks every table entry).
 - `func (l *Layer) routes() []route` (Story 1): the table, in registration order.
 - `func (l *Layer) registerRoutes(m *http.ServeMux)` (Story 1): mounts every entry on `m` at the pattern of its method, a space and its path.
+- Tests (Story 1), in `internal/web/routes_test.go`: `TestRoutes_OnlyPairIsOpen` (no entry but `POST /api/v1/pair` is open; Story 2 also requires pair to be in the table), `TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice`, `TestRoutes_QueryTypesHoldOnlyStrings`, `TestRoutes_ClientNamesAreUnique`, `TestRoutes_EveryRouteHasADoc`.
 
 **internal/web: every route in the table (Story 2)**:
 
@@ -96,6 +101,8 @@ Every name one story defines and another uses. A story may add names of its own;
 - `type flowParams struct` (Story 2): `Plan string` with tag `query:"plan"`.
 - `type flowDocParams struct` (Story 2): `Plan string` and `Doc string` with tags `query:"plan"` and `query:"doc"`.
 - `type launchDefaultsParams struct` (Story 2): `Workspace string` with tag `query:"workspace"`.
+- `type pairBody struct` (Story 2): the pair route's body, `Code string` with tag `json:"code"`, in place of today's unnamed struct.
+- Named types only (Story 2): every entry's query, body and response type is a named type; Story 5's generator refuses an unnamed struct other than `struct{}`.
 - `type pairJSON struct` (Story 2): the pair route's answer, `Device string` with tag `json:"device"`.
 - `type pushKeyJSON struct` (Story 2): the push key route's answer, `Key string` with tag `json:"key"`.
 - `type streamEvent struct` (Story 2): `name string` (the SSE event name) and `data reflect.Type` (its payload's type).
@@ -104,24 +111,47 @@ Every name one story defines and another uses. A story may add names of its own;
 **internal/web: the unions (Story 3)**, in `internal/web/unions.go`:
 
 - `type union struct` (Story 3): `name string` (the TS union's name) and `values []string`.
-- `func unions() map[reflect.Type]union` (Story 3): each typed string type and its union.
+- `TestUnions_EveryFixedValueFieldIsTyped` (Story 3), in `internal/web/unions_test.go`; Story 15 cites it.
+- `func unions() map[reflect.Type]union` (Story 3): each typed string type and its union, keyed by `reflect.TypeFor[T]()`, its values in the order listed here.
 - `type sessionGroup string` (Story 3), union `SessionGroup`: `needs_you`, `your_turn`, `working`, `paused`; it types `sessionJSON.Group`.
-- `type sessionStatus string` (Story 3), union `SessionStatus`: `Running`, `Ready`, `Loading`, `Paused`, `Prompting`, `Deleting`, `Recoverable`; it types `sessionJSON.Status`.
-- The other fixed-value fields, each with its union's name and values (Story 3 proposes): the stop verdict, a job's state and control, a turn's `from`, an item's kind, a step's state, a subagent page's state, a diff file's status and `omitted`, an ask's kind, a PR's state and checks, and the flow board's fixed-value fields.
+- `type sessionStatus string` (Story 3), union `SessionStatus`: `Running`, `Ready`, `Loading`, `Paused`, `Prompting`, `Deleting`, `Recoverable`; it types `sessionJSON.Status`. A status this build doesn't know is still sent as `Status.String()` writes an unknown value, outside the union; the app's fallback (spec §29) shows it.
+- The other fixed-value fields (Story 3), each a Go type, its union, its values in order, and the fields it types:
+  - `stopVerdict`, `StopVerdict`: `needs_you`, `done`, `waiting`, `stopped`; `sessionJSON.Verdict`.
+  - `jobState`, `JobState`: `held`, `queued`, `running`, `done`, `failed`, `cancelled`, `lost`; `jobJSON.State`.
+  - `jobControlKind`, `JobControl`: `pause`, `resume`, `""` (none in flight); `jobJSON.Control`.
+  - `turnFrom`, `TurnFrom`: `you`, `plugin`, `peer`, `task`, `brief`; `turnJSON.From`.
+  - `itemKind`, `ItemKind`: `text`, `thinking`, `steps`, `compacted`, `note`; `itemJSON.Kind`.
+  - `stepState`, `StepState`: `pending`, `done`, `failed`, `interrupted`; `stepJSON.State`.
+  - `agentPageState`, `AgentPageState`: `running`, `finished`, `unknown`; `agentPageJSON.State`.
+  - `fileStatus`, `FileStatus`: `A`, `M`, `D`, `R`, `C`; `fileJSON.Status`.
+  - `fileOmitted`, `FileOmitted`: `""`, `lines`, `budget`; `fileJSON.Omitted`.
+  - `askKind`, `AskKind`: `question`, `permission`; `askJSON.Kind`.
+  - `prState`, `PrState`: `draft`, `open`, `merged`, `closed`; `prJSON.State`.
+  - `prChecks`, `PrChecks`: `none`, `pending`, `passing`, `failing`; `prJSON.Checks`.
+  - `flowStageName`, `FlowStageName`: `design`, `spec`, `draft`, `run`, `record`; `flowSummaryJSON.Stage`, `flowStageJSON.Name`.
+  - `flowStageState`, `FlowStageState`: `done`, `now`, `todo`, `unreadable`; `flowStageJSON.State`.
+  - `flowStatus`, `FlowStatus`: `designing`, `designed`, `drafting`, `drafted`, `supervised`, `running`, `parked`, `done`, `stopped`, `cancelled`, `lost`, `""` (a run whose file is unreadable); `flowSummaryJSON.Status`.
+  - `flowCell`, `FlowCell`: `todo`, `running`, `passed`, `failed`, `asks`, `skipped`; the values of `flowStoryJSON.Cells` (`map[string]flowCell`).
+  - `flowStepKind`, `FlowStepKind`: `premise`, `dev`, `gates`, `review`, `fix`, `docs`; `flowStepJSON.Kind`.
+  - `flowQuestionKind`, `FlowQuestionKind`: `needs-context`, `blocked-decision`, `design-finding`, `premise-design`, `unresolved-findings`, `gate-failure`, `agent-failed`, `tree-moved`, `docs-strayed`, `usage-limit`, `lane`, `""` (none); `flowQuestionJSON.Kind`, `flowSummaryJSON.Asks`.
+  - A flow step's `status`, a gate's `verdict`, a story's `status` and a past run's `status` stay `string`: they hold report words (`DONE`, `TURN_CAP`, `USAGE_LIMIT`).
 
 **internal/web: the contract and the generator (Story 5)**:
 
-- `type ContractRoute struct` (Story 5), in `internal/web/contract.go`: `Method string`, `Path string`, `Open bool`, `Client string`, `OK int`, `Query reflect.Type`, `Body reflect.Type`, `Resp reflect.Type`, `Page bool`.
+- `type ContractRoute struct` (Story 5), in `internal/web/contract.go`: `Method string`, `Path string`, `Open bool`, `Client string`, `OK int`, `Doc string`, `Query reflect.Type`, `Body reflect.Type`, `Resp reflect.Type`, `Page bool`.
 - `type ContractEvent struct` (Story 5): `Name string`, `Data reflect.Type`.
 - `type ContractUnion struct` (Story 5): `Name string`, `Values []string`.
 - `type ContractSpec struct` (Story 5): `Routes []ContractRoute`, `Events []ContractEvent`, `Unions map[reflect.Type]ContractUnion`.
 - `func Contract() ContractSpec` (Story 5): the tables as the generator reads them, built from a `Layer` with no client.
 - `func Generate(c web.ContractSpec, fields []string) (Output, error)` (Story 5), in `internal/web/internal/gen/gen.go`, where `fields` is the committed `api.fields` lines.
 - `type Output struct` (Story 5): `GenTS []byte`, `WebAPI []byte`, `Fields []string` (the committed lines, then the new ones, sorted within the new).
+- The generator's type rules (Story 5), the TS type being what encoding/json writes (spec §18): a struct is an interface of its JSON fields (names from the tags; unexported and `json:"-"` fields skipped; an embedded struct's fields flattened as encoding/json flattens them); a field with `omitempty` is optional (`name?: T`); a pointer, slice or map without it is nullable (`T | null`), and so is a slice element or map value that is itself a pointer, slice or map; `string` is `string`, and a named string type is its union's name when `unions()` lists it, else `string`; `bool` is `boolean`; every integer and float kind, named or not (`core.InstanceID`, `core.WorkspaceID`, `sched.JobID`), is `number`; `[]T` is `T[]`, but `[]byte` is `string`; an array `[N]T` is `T[]`, never null (`flowStoryJSON.Findings` is `[3]int`); `map[K]V` is `Record<string, V>` (encoding/json writes integer keys as strings); `time.Time` is `string`; `json.RawMessage` and an empty interface are `unknown`; `struct{}` is `Record<string, never>`. Any other type that marshals itself, an unnamed struct with fields, and a channel, func or complex kind fail `Generate`, naming the type and the field. A TS name is the Go type's name without a trailing `JSON`, its first letter upper-cased; two Go types, or a type and a union, mapping to one TS name fail `Generate`.
+- `internal/web/api.fields` lines (Story 5), sorted, one each: a field `Session.status: SessionStatus`, an optional one `Session.worktree?: string`, a nullable one `Session.pr: Pr | null`; a route `<method> <path>`, then `query=<T>`, `body=<T>` and `resp=<T>` for those it has, `ok=<status>`, and `open` or `page` when it is one (`POST /api/v1/pair body=PairBody resp=Pair ok=200 open`); a union value `union SessionStatus "Running"`; an event `event snapshot data=Snapshot`.
+- `docs/specs/web-api.md` (Story 5): generated, never edited by hand; every route with its method, path, `doc`, whether it is open, its success status and its query, body and response types; every stream event and its payload type; every type's fields with their TS types; every union's values.
 - `go generate ./internal/web` (Story 5) runs `internal/web/internal/gen/cmd` and writes `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields`.
 - Tests (Story 5): `TestContract_GeneratedFilesAreFresh` and `TestContract_FieldsOnlyGrow` in `internal/web/internal/gen`.
 - `internal/web/ui/src/api/gen.ts` (Story 5) exports, with no imports:
-  - a type per JSON type, named by the spec's rule (`sessionJSON` is `Session`, `snapshotJSON` is `Snapshot`, `noticeJSON` is `Notice`, `workspaceJSON` is `Workspace`, `deviceJSON` is `Device`, `usageJSON` is `Usage`), and a union type per `ContractUnion`;
+  - a type per JSON type, named by the type rules (`sessionJSON` is `Session`, `snapshotJSON` is `Snapshot`, `noticeJSON` is `Notice`, `workspaceJSON` is `Workspace`, `deviceJSON` is `Device`, `usageJSON` is `Usage`, `subscriptionBody` is `SubscriptionBody`), and a union type per `ContractUnion`;
   - `type Method = "GET" | "POST" | "PUT" | "DELETE"`;
   - `type Outcome<T>`: `{ kind: "ok", status: number, value: T, notices: Notice[] }`, `{ kind: "pending" }`, `{ kind: "unpaired" }`, `{ kind: "refused", status: number, message: string }`, `{ kind: "stopping", message: string }`, `{ kind: "timeout", message: string }` or `{ kind: "failed", status: number, message: string }`;
   - `interface Transport { send<T>(method: Method, path: string, query: Record<string, string> | undefined, body: unknown): Promise<Outcome<T>> }`;
@@ -130,18 +160,28 @@ Every name one story defines and another uses. A story may add names of its own;
 
 **internal/web/ui: the toolchain (Story 4)**:
 
-- `internal/web/ui/package.json` scripts (Story 4): `dev`, `build`, `typecheck`, `lint`, `format:check`, `test`, `check` and `dist:check`, as spec §10 defines them.
-- `vite.config.ts` (Story 4): `build.outDir` `"../dist"`, `build.emptyOutDir` true, `build.manifest` false, the dev server proxying `/api/v1` to `http://127.0.0.1:5670`, `rollup-plugin-license` writing `THIRD_PARTY.txt` into the bundle, Vitest on happy-dom over `src/**/*.test.{ts,tsx}`, and the import alias `@` for `src`.
+- `internal/web/ui/package.json` scripts (Story 4): `dev`, `build`, `typecheck`, `lint`, `format:check`, `test`, `check` and `dist:check`, as spec §10 defines them; `test` is `vitest run --passWithNoTests`.
+- `vite.config.ts` (Story 4): `build.outDir` `"../dist"`, `build.emptyOutDir` true, `build.manifest` false, the plugins `@vitejs/plugin-react` and `@tailwindcss/vite`, the dev server proxying `/api/v1` to `http://127.0.0.1:5670`, `rollup-plugin-license` writing `THIRD_PARTY.txt` into the bundle, Vitest on happy-dom over `src/**/*.test.{ts,tsx}`, and the import alias `@` for `src`.
+- `tsconfig.json` (Story 4): `paths` maps `@/*` to `src/*` (the twin of Vite's `@`, which shadcn's CLI reads); `types` holds `vite/client` and `vitest/globals`; `resolveJsonModule` is true (Story 9's fixtures import JSON).
+- The Vitest harness (Story 4): `test.globals` true and `setupFiles: ["./src/test-setup.ts"]`, which imports `@testing-library/jest-dom/vitest` and runs Testing Library's `cleanup` after each test; test files import `describe`, `it`, `expect` and `vi` from `vitest`.
+- The ignore lists (Story 4): `.prettierignore` and `eslint.config.js`'s `ignores` hold `dist`, `node_modules` and `src/api/gen.ts` (the typecheck still covers `gen.ts`).
+- `components.json` (Story 4): shadcn on Base UI, `css` `src/styles/app.css`, aliases under `@/` (`@/components`, `@/components/ui`, `@/lib/utils`).
+- The packages Story 4 installs (Story 4): `react`, `react-dom`, `@types/react`, `@types/react-dom`, `typescript`, `vite`, `@vitejs/plugin-react`, `tailwindcss`, `@tailwindcss/vite`, `vitest`, `happy-dom`, `@testing-library/react`, `@testing-library/dom`, `@testing-library/jest-dom`, `@testing-library/user-event`, `eslint`, `typescript-eslint`, `eslint-plugin-react-hooks`, `prettier`, `rollup-plugin-license` and `rollup` (for the plugin's types). Later stories add theirs: Story 8 `@base-ui/react`, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `@fontsource-variable/inter` and `@fontsource-variable/jetbrains-mono`; Story 9 `zustand` and `@tanstack/react-query`; Story 10 `@tanstack/react-router`.
+- `internal/web/ui/index.html` (Story 4): the `loom-build` meta tag, and the app's mount point `<div id="app"></div>` (webshot's `appDrawn` waits for `#app` to hold an element, as the classic shell's does).
+- `internal/web/ui/public/sw.js` (Story 4): the classic worker whole (the shell cache, never `/api/`, each push a notification tagged by session with the classic payload, the badge, a tap opening the push's `url`, or `/` when the payload has no string `url`), with its cache `loom-next-<build>`, deleting on activate every `loom-shell-` and `loom-next-` cache but its own, and fetching its own shell files (`/`, `/index.html`, `/manifest.webmanifest`, `/sw.js`) with `?ui=next`, each stored under its plain path (spec §5). Its lines `const TREE = "next";` and the shell fetch's `?ui=${TREE}` are pinned by Story 6's `TestStatic_EachWorkerFetchesItsOwnShell` (as the classic worker's `const TREE = "classic";` is), and Story 12 keeps them.
 - `internal/web/ui/scripts/check-dist.mjs` (Story 4): builds into a fresh temporary directory with Vite's `build()` and exits 1, naming each differing, missing or extra file, unless the result equals `internal/web/dist/` byte for byte.
 - `var nextFiles embed.FS` (Story 4), in `internal/web/static.go`, with `//go:embed all:dist`.
+- `func nextStaticAssets(t *testing.T) map[string]staticAsset` (Story 4), in `internal/web/static_test.go`: `buildStaticAssets` over the new tree, as the existing `staticAssets` helper is over the classic one; Stories 8, 12 and 14 use it.
+- Tests (Story 4), in `internal/web/static_test.go`: `TestStatic_NextTreeBuilds`, `TestStatic_NextIndexHasNoInlineScriptOrStyle`.
 
 **The switch (Story 6)**:
 
 - `const appCookie = "__Host-loom-ui"` (Story 6), in `internal/web/static.go`.
 - `type staticTree int` (Story 6) with `treeClassic` and `treeNext`.
-- `func treeOf(r *http.Request) staticTree` (Story 6): for `/sw.js` with a `ui` parameter, `treeNext` when it is `next`, else `treeClassic`; otherwise `treeNext` when the cookie `appCookie` is `next`, else `treeClassic`.
-- `internal/web/static/js/switch.mjs` (Story 6) exports `switchApp(app: "next" | "classic"): Promise<"switched" | "deferred">`.
-- `internal/web/ui/src/app/switchApp.ts` (Story 6) exports `type AppName = "classic" | "next"` and `switchApp(app: AppName): Promise<"switched" | "deferred">`: sets the cookie (`Secure; Path=/; SameSite=Strict; Max-Age=31536000`), reloads on the next `controllerchange`, and registers `/sw.js?ui=<app>`; `"deferred"` when the registration fails (offline: the next launch switches).
+- `func treeOf(r *http.Request) staticTree` (Story 6): for a shell file (`/`, `/index.html`, `/sw.js`, `/manifest.webmanifest`) with a `ui` parameter, `treeNext` when it is `next`, else `treeClassic`; otherwise `treeNext` when the cookie `appCookie` is `next`, else `treeClassic` (spec §3, §5).
+- `internal/web/static/js/switch.mjs` (Story 6) exports `switchApp(app: "next" | "classic"): Promise<"switched" | "deferred">` and `cookieApp(): "next" | "classic"`; the classic `app.mjs` registers the worker at `/sw.js?ui=${cookieApp()}` at every launch, and the classic `sw.js` fetches its own shell files with `?ui=classic`, each stored under its plain path, and deletes `loom-next-` caches as well as old `loom-shell-` ones (spec §5, §6).
+- `internal/web/ui/src/app/switchApp.ts` (Story 6) exports `type AppName = "classic" | "next"`, `cookieApp(): AppName` (`"next"` when `document.cookie` holds `__Host-loom-ui=next`, else `"classic"`), and `switchApp(app: AppName): Promise<"switched" | "deferred">`: sets the cookie (`Secure; Path=/; SameSite=Strict; Max-Age=31536000`), reloads on the next `controllerchange`, and registers `/sw.js?ui=<app>`; `"deferred"` when the registration fails (offline: the next launch switches). It also exports `const page: { reload: () => void }`, the seam its own reload and Story 12's `registerWorker` and `upgradeShell` go through, so tests count reloads without navigating.
+- Tests (Story 6), in `internal/web/static_test.go`: `TestStatic_TheCookieChoosesTheTree`, `TestStatic_TheUIParameterChoosesTheTree`, `TestStatic_AssetsFallBackAcrossTrees`, `TestStatic_EachWorkerFetchesItsOwnShell`.
 
 **tools/webshot (Story 7)**:
 
@@ -150,23 +190,26 @@ Every name one story defines and another uses. A story may add names of its own;
 
 **internal/web/ui: the design system (Story 8)**:
 
-- `src/styles/app.css` (Story 8): Tailwind's entry, the tokens of spec §30 in `@theme`, and `src/styles/fonts.css`.
+- `src/styles/app.css` (Story 8): Tailwind's entry; spec §30's tokens under shadcn's names, set on `:root` and mapped into Tailwind's theme with `@theme inline` (shadcn's Tailwind 4 layout, so a light set is later a second block of the same names), where `--muted` is the raised surface `#1c1f24` and `--muted-foreground` the spec's muted text `#a3a8b1` (shadcn pairs a `--muted` background with its `--muted-foreground` text, and the mockup's `--muted` is that text), plus `--faint` `#6f747d`; `--diff-add` and `--diff-del` are the mockup's 12%-alpha line tints, backgrounds only (text that marks an added or removed count uses `text-working` and `text-error`); test files are kept out of Tailwind's sources (`@source not` over `*.test.*`), so a test-only change never changes the built CSS; each token also a Tailwind colour (`--color-<token>`), so `bg-card`, `border-border`, `text-muted-foreground`, `text-faint`, `bg-attention` and `text-turn` exist; and `src/styles/fonts.css`.
+- The stylesheet import (Story 8): `src/main.tsx` imports `./styles/app.css`; Story 10's rewrite keeps the import.
 - `function cn(inputs: ClassValue[]): string` (Story 8), in `src/lib/utils.ts`: shadcn's class joiner, whose source declares `inputs` as a rest parameter.
-- shadcn components in `src/components/ui/` (Story 8): `Button` (variants `default`, `secondary`, `ghost`, `outline`, `destructive`; sizes `default`, `sm`, `lg`, `icon`), `Badge` (variants `attention`, `turn`, `working`, `error`, `workspace`, `docs`, `neutral`), `ToggleGroup` and `ToggleGroupItem`, `Collapsible`, `CollapsibleTrigger` and `CollapsibleContent`, `Drawer`, `DrawerContent`, `DrawerHeader`, `DrawerTitle`, `DrawerDescription`, `DrawerFooter` and `DrawerClose`, `Toaster`, `Skeleton`.
+- shadcn components in `src/components/ui/` (Story 8), their source on Base UI (`@base-ui/react`): `Button` (variants `default`, `secondary`, `ghost`, `outline`, `destructive`; sizes `default`, `sm`, `lg`, `icon`), `Badge` (variants `attention`, `turn`, `working`, `error`, `workspace`, `docs`, `neutral`), `ToggleGroup` and `ToggleGroupItem` (Base UI's props: `value: string[]`, `onValueChange(value: string[])`, one item at a time unless `multiple`), `Collapsible`, `CollapsibleTrigger` and `CollapsibleContent`, `Drawer` (on Base UI's Drawer, spec §32: `open: boolean`, `onOpenChange(open: boolean)`), `DrawerContent`, `DrawerHeader`, `DrawerTitle`, `DrawerDescription`, `DrawerFooter` and `DrawerClose`, `Skeleton`.
+- `src/components/ui/toast.tsx` (Story 8): `const toastManager`, Base UI's `Toast.createToastManager()`, through which code outside React adds toasts; and `function Toaster(): ReactElement`, Base UI's `Toast.Provider` over `toastManager` with its viewport and toasts, dark only, which `AppShell` mounts once (Story 11).
+- No runtime `<style>` (Story 8): no component injects a `<style>` element (spec §33); `src/components/ui/components.test.tsx` mounts each and finds none.
 - `TestDist_TheSkinDefinesEveryToken` (Story 8), in `internal/web/static_test.go`.
 
 **internal/web/ui: the client core (Story 9)**:
 
 - `const http: Transport` (Story 9), in `src/api/request.ts`: `fetch` with `credentials: "same-origin"`; statuses 200, 201 and 204 `ok` (`notices` from the body's `notices`, else `[]`), 202 `pending`, 401 `unpaired`, 503 `stopping`, 504 `timeout`, 400, 404, 405, 409 and 429 `refused`, any other or a network failure `failed` (status 0); `message` from the body's `error`.
 - `const api: Client` (Story 9): the client `createClient` builds over `http`.
-- `function onNotices(listener: (notices: Notice[]) => void): () => void` and `function onUnpaired(listener: () => void): () => void` (Story 9): each returns its unsubscribe.
+- `function onNotices(listener: (notices: Notice[]) => void): () => void` and `function onUnpaired(listener: () => void): () => void` (Story 9): each returns its unsubscribe. `onNotices` listeners get each response's `notices` when it has any and, from `startFleet`, each stream `notice` event as `[data]`; `onUnpaired` listeners fire on any request's 401 and on the stream's.
 - `type LinkState = "connecting" | "live" | "restarting" | "offline"` (Story 9), in `src/api/stream.ts`.
 - `interface StreamHandlers { onEvent: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void, onLink: (state: LinkState) => void }` (Story 9).
 - `function connectStream(handlers: StreamHandlers): () => void` (Story 9): `GET /api/v1/stream` with the classic rules (spec §25); returns its close.
-- `interface FleetState { snapshot: Snapshot | null, stale: boolean, link: LinkState, updated: number, apply: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void, setLink: (state: LinkState) => void, load: (saved: Snapshot, updated: number) => void, clear: () => void }` (Story 9), in `src/store/fleet.ts`.
-- `const useFleet: UseBoundStore<StoreApi<FleetState>>` (Story 9).
-- `function useSession(id: number): Session | undefined`, `function useFleetGroups(): FleetGroups`, `function useLink(): { state: LinkState, stale: boolean }` (Story 9).
-- `function startFleet(): () => void` (Story 9): loads the saved snapshot, connects the stream into the store, saves at most once a second, sets the badge, clears on `unpaired`; returns its stop.
+- `interface FleetState { snapshot: Snapshot | null, stale: boolean, link: LinkState, updated: number, apply: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void, setLink: (state: LinkState) => void, load: (saved: Snapshot, updated: number) => void, clear: () => Promise<void> }` (Story 9), in `src/store/fleet.ts`. `clear` cancels a pending save, empties the store and clears IndexedDB `loom-next`; the saver writes nothing while the store holds no snapshot, so a save scheduled before a clear never lands.
+- `const useFleet: UseBoundStore<StoreApi<FleetState>>` (Story 9), read through selectors (`useFleet((s) => s.snapshot?.usage_stale_after_s)`).
+- `function useSession(id: number | undefined): Session | undefined` (undefined for an undefined `id`), `function useFleetGroups(): FleetGroups`, `function useLink(): { state: LinkState, stale: boolean }` (Story 9), in `src/store/fleet.ts` beside `useFleet`.
+- `function startFleet(): () => void` (Story 9), in `src/store/fleet.ts`: loads the saved snapshot, connects the stream into the store, saves at most once a second, sets the badge, hands each stream `notice` to the `onNotices` listeners, and on unpaired calls `clear()` (it never navigates: Story 10's `main.tsx` does); returns its stop. Its `snapshot` handler is where Story 12 adds its calls.
 - `function loadSnapshot(): Promise<{ snapshot: Snapshot, updated: number } | null>`, `function saveSnapshot(snapshot: Snapshot, updated: number): void`, `function clearSnapshot(): Promise<void>` (Story 9), in `src/store/persist.ts`: IndexedDB database `loom-next`, store `snapshot`.
 - `function setBadge(count: number): void` (Story 9), in `src/store/badge.ts`.
 - `type FleetGroups = Record<SessionGroup, Session[]>` (Story 9), in `src/fleet/groups.ts`.
@@ -175,58 +218,74 @@ Every name one story defines and another uses. A story may add names of its own;
 - `const queryClient: QueryClient` (Story 9), in `src/api/queries.ts`.
 - `class OutcomeError extends Error { outcome: Outcome<unknown> }` (Story 9).
 - `function unwrap<T>(outcome: Outcome<T>): T` (Story 9): the value of an `ok` outcome, else throws `OutcomeError`.
+- `function fixtureSnapshot(now?: number): Snapshot` (Story 9), in `src/fixtures.ts`: `tools/webshot/fixture/snapshot.json` with its relative times filled as webshot's `fillTimes` fills them; Story 13's tests use it.
+- `src/fixtures.test.ts` (Story 9): every fixture under `tools/webshot/fixture/` that answers a route `satisfies` that route's generated response type, through a test-local `Widen<T>` that turns each string union into `string` (a JSON import's strings are `string`), and a value check that each union-typed field holds one of its union's values (spec Testing).
 
 **internal/web/ui: routing and panels (Story 10)**:
 
 - `type PanelId = "fleet" | "turns" | "info" | "changes" | "mockup" | "mockupFull" | "agent" | "job" | "flow" | "flowStory" | "flowDoc" | "flows" | "new" | "settings" | "pair"` (Story 10), in `src/app/panels.ts`.
-- `interface PanelProps { sessionId: number | undefined, params: Record<string, string>, search: Record<string, string> }` (Story 10).
+- `interface PanelProps { sessionId: number | undefined, params: Record<string, string>, search: Record<string, string> }` (Story 10): `sessionId` is `Number(params.id)`, undefined without an `id`.
 - `interface Panel { id: PanelId, title: (props: PanelProps) => string, appliesTo?: (session: Session) => boolean, tab?: { order: number, label: string }, Head?: ComponentType<PanelProps>, Body: ComponentType<PanelProps> }` (Story 10).
 - `function definePanel(panel: Panel): Panel`, `function panelFor(id: PanelId): Panel | undefined`, `function sessionTabs(session: Session): Panel[]` (Story 10).
 - `function normalizeHash(hash: string): string` (Story 10), in `src/app/routes.tsx`: `#s/<id>…` becomes `#/s/<id>…`, and `#/s/<id>/turns` becomes `#/s/<id>`.
 - `function routeOf(hash: string): { panel: PanelId, params: Record<string, string>, search: Record<string, string> }` (Story 10): every classic URL to its panel; anything else is the fleet.
 - `function hrefFor(panel: PanelId, params?: Record<string, string>, search?: Record<string, string>): string` (Story 10): the app's own links, `#/…`.
+- The route keys (Story 10): `routeOf`'s and `hrefFor`'s params are `id` (a session's ID as a decimal string), `agent`, `job`, `story` and `doc`, their search `plan` and `at`. `hrefFor` gives `fleet` `#/`, `turns` `#/s/<id>`, `info` `#/s/<id>/info`, `changes` `#/s/<id>/diff`, `mockup` `#/s/<id>/mockup`, `mockupFull` `#/s/<id>/mockup/full`, `agent` `#/s/<id>/agent/<agent>`, `job` `#/s/<id>/job/<job>`, `flow` `#/s/<id>/flow?plan=<plan>`, `flowStory` `#/s/<id>/flow/<story>?plan=<plan>`, `flowDoc` `#/s/<id>/flow/doc/<doc>?plan=<plan>&at=<at>`, `flows` `#/flows`, `new` `#/new`, `settings` `#/settings` and `pair` `#/pair`.
+- `function useRoute(): { panel: PanelId, params: Record<string, string>, search: Record<string, string> }` (Story 10), in `src/app/routes.tsx`: the current route as `routeOf` gives it, re-rendering on each navigation.
+- `interface RouteState { panel: PanelId, params: Record<string, string>, search: Record<string, string> }` (Story 10), in `src/app/routes.tsx`: what `routeOf` and `useRoute` give.
+- `function panelProps(route: RouteState): PanelProps` (Story 10), in `src/app/routes.tsx`: a route's panel props (`sessionId` from `params.id`); Story 11's `useCommandContext` and `StatusRow` call it.
+- `function settleHash(): void`, `function watchHash(): () => void` and `function goToPairing(): void` (Story 10), in `src/app/routes.tsx`: the hash normalising and pairing hooks Story 10's `main.tsx` calls, which Stories 11 and 12 quote.
 - `const router` (Story 10): TanStack Router with hash history, one route per `PanelId`, each rendering `PanelHost`.
-- `function PanelHost(props: { panel: PanelId, props: PanelProps }): JSX.Element` (Story 10): the panel inside an error boundary, or `Placeholder` when no panel is registered for the id.
-- `function Placeholder(props: { panel: PanelId }): JSX.Element` (Story 10): names the screen and offers the switch back to the classic app.
-- `function AppShell(): JSX.Element` (Story 10), in `src/app/shell.tsx`: the pinned header slot, `main` and the pinned footer slot.
+- Components return `ReactElement` (Story 10), imported from `react`: React 19's types have no global `JSX` namespace.
+- `function PanelHost(props: { panel: PanelId, props: PanelProps }): ReactElement` (Story 10), in `src/app/shell.tsx`: the panel inside an error boundary, or `Placeholder` when no panel is registered for the id.
+- `function Placeholder(props: { panel: PanelId }): ReactElement` (Story 10), in `src/app/shell.tsx`: names the screen and offers the switch back to the classic app.
+- `function AppShell(): ReactElement` (Story 10), in `src/app/shell.tsx`: `<header data-slot="header">` (the panel's `Head`; none for `mockupFull`), `<main>` (the panel, or, while the store holds no snapshot, a splash naming the link state, except on `pair`) and `<footer data-slot="footer">`; Story 11 adds `SessionTabs` under the head and `StatusRow` in the footer, and mounts `ConfirmSheet` and `Toaster`.
+- `src/main.tsx` (Story 10): mounts into `#app` the app inside Base UI's `CSPProvider` with `disableStyleElements` (so Base UI's Select and ScrollArea write no `<style>` either), TanStack Query's provider over `queryClient`, and the router; calls `startFleet()`; subscribes `onUnpaired` to set `location.hash` to `hrefFor("pair")`; keeps Story 8's stylesheet import.
 - `src/panels/index.ts` (Story 10): imports each panel module for its registration; later stories and parts add lines.
 
 **internal/web/ui: commands and chrome (Story 11)**:
 
 - `interface CommandContext { session: Session | undefined, link: LinkState, stale: boolean, panel: PanelId }` (Story 11), in `src/app/commands.ts`.
 - `interface ConfirmSpec { title: string, body: string, action: string, destructive: boolean }` (Story 11).
-- `interface Command<A = void> { id: string, title: string | ((ctx: CommandContext) => string), icon?: LucideIcon, when: (ctx: CommandContext) => boolean, confirm?: (ctx: CommandContext, args: A) => ConfirmSpec, run: (ctx: CommandContext, args: A) => Promise<void> }` (Story 11).
-- `function defineCommand<A = void>(command: Command<A>): Command<A>`, `function commandById(id: string): Command<unknown> | undefined`, `function useCommandContext(): CommandContext`, `function runCommand<A>(command: Command<A>, ctx: CommandContext, args: A): Promise<void>` (Story 11): every command is off while `stale` is true; `runCommand` asks `ConfirmSheet` first when the command has `confirm`.
-- `function CommandButton(props: { id: string, args?: unknown, variant?: "default" | "secondary" | "ghost" | "outline" | "destructive", size?: "default" | "sm" | "lg" | "icon", label?: string }): JSX.Element` (Story 11), in `src/app/CommandButton.tsx`.
-- `function ConfirmSheet(): JSX.Element` (Story 11), in `src/app/ConfirmSheet.tsx`: the one confirmation drawer, mounted once by `AppShell`.
-- `function showNotices(notices: Notice[]): void` and `function showOutcome(outcome: Outcome<unknown>, what: string): void` (Story 11), in `src/app/toasts.ts`: every notice a toast, Kill's and Resume's stash notices never dropped.
-- The command `app.backToClassic` (Story 11): runs `switchApp("classic")`, on every placeholder.
-- `function ContextRow(props: { title: string, back?: string, actions?: ReactNode }): JSX.Element`, `function SessionTabs(props: { session: Session }): JSX.Element`, `function StatusRow(): JSX.Element` (Story 11), in `src/app/shell.tsx`.
+- `interface Command<A = void> { id: string, title: string | ((ctx: CommandContext) => string), icon?: LucideIcon, offline?: boolean, when: (ctx: CommandContext) => boolean, confirm?: (ctx: CommandContext, args: A) => ConfirmSpec, run: (ctx: CommandContext, args: A) => Promise<void> }` (Story 11): `offline` marks a command that runs while the snapshot is stale (cold start, offline, unpaired); only `app.backToClassic` sets it, since the switch works offline (spec §4).
+- `function defineCommand<A = void>(command: Command<A>): Command<A>`, `function commandById(id: string): Command<unknown> | undefined`, `function useCommandContext(): CommandContext`, `function runCommand<A>(command: Command<A>, ctx: CommandContext, args: A): Promise<void>` (Story 11): every command but an `offline` one is off while `stale` is true; `runCommand` asks `ConfirmSheet` first when the command has `confirm`.
+- `function CommandButton(props: { id: string, args?: unknown, variant?: "default" | "secondary" | "ghost" | "outline" | "destructive", size?: "default" | "sm" | "lg" | "icon", label?: string }): ReactElement` (Story 11), in `src/app/CommandButton.tsx`.
+- `function ConfirmSheet(): ReactElement` (Story 11), in `src/app/ConfirmSheet.tsx`: the one confirmation drawer, mounted once by `AppShell`.
+- `function showNotices(notices: Notice[]): void`, `function showOutcome(outcome: Outcome<unknown>, what: string): void` and `function showMessage(text: string, error?: boolean): void` (Story 11), in `src/app/toasts.ts`, each through Story 8's `toastManager`: every notice a toast, Kill's and Resume's stash notices never dropped (`main.tsx` calls `watchNotices()` once, which subscribes `showNotices` to `onNotices`, so the responses' and the stream's notices both arrive there); `showOutcome` toasts a non-`ok` outcome as the classic app words it, and nothing for an `ok` one, whose notices already reached `onNotices`; `showMessage` a plain toast, an error one when `error`.
+- `function watchNotices(): () => void` (Story 11), in `src/app/toasts.ts`: subscribes `showNotices` to `onNotices` until the returned stop is called; Story 11's `main.tsx` calls it once, and Story 12 quotes that line.
+- The command `app.backToClassic` (Story 11): runs `switchApp("classic")`, on every placeholder; `offline`.
+- `function ContextRow(props: { title: string, back?: string, actions?: ReactNode }): ReactElement`, `function SessionTabs(props: { session: Session }): ReactElement`, `function StatusRow(): ReactElement` (Story 11), in `src/app/shell.tsx`.
 
 **internal/web/ui: the worker (Story 12)**:
 
-- `function registerWorker(): void` (Story 12), in `src/app/worker.ts`: registers `/sw.js?ui=next` and reloads on `controllerchange` when the page was already controlled.
+- `function registerWorker(): void` (Story 12), in `src/app/worker.ts`: registers `/sw.js?ui=<cookieApp()>` at every launch (spec §5) and reloads on `controllerchange` when the page was already controlled.
 - `function shellBuild(): string` (Story 12): the `loom-build` meta tag's content.
 - `function upgradeShell(build: string): void` (Story 12): once per build (sessionStorage key `loom-next.upgrade`), asks the worker to update.
-- `function checkPushSubscription(device: Device): Promise<void>` (Story 12): the classic launch-time check (`push.mjs`).
+- `function checkPushSubscription(device: Device): Promise<void>` (Story 12): the classic launch-time check (`push.mjs`), its error toast through `showMessage`.
 
 **internal/web/ui: the fleet (Story 13)**:
 
-- `function rowShare(session: Session, usage: Usage[]): { text: string, amber: boolean } | null` (Story 13), in `src/fleet/usage.ts`: the classic `rowShare`.
+- `function rowShare(session: Session, usage: Usage[], staleAfterS?: number, now?: number): { text: string, amber: boolean } | null` (Story 13), in `src/fleet/usage.ts`: the classic `rowShare`; no staleness check when `staleAfterS` is absent or 0, and `now` defaults to `Date.now()`.
 - `function opensMockup(session: Session): boolean` and `function sessionHref(session: Session): string` (Story 13), in `src/fleet/links.ts`.
-- `function SessionRow(props: { session: Session, usage: Usage[] }): JSX.Element` (Story 13), in `src/panels/fleet/SessionRow.tsx`.
+- `function SessionRow(props: { session: Session, usage: Usage[], chip?: string }): ReactElement` (Story 13), `chip` the workspace's name, which only the panel knows, in `src/panels/fleet/SessionRow.tsx`.
+
+**Texts later stories quote** (a fixer leaves each unchanged, or reports the clash): Story 1's `settle` doc comment, `TestRoutes_OnlyPairIsOpen`'s body, the `routeAPI` lines it leaves and its `mux()` (Story 2 quotes them); Story 9's `startFleet`, its `afterEvent` and `src/store/startFleet.test.ts` (Story 12); Story 10's `src/app/shell.tsx` and `src/main.tsx` (Story 11), and Story 11's `src/main.tsx` (Story 12); Story 4's worker lines `const TREE = "next";` and its `?ui=${TREE}` fetch (Story 6's test pins them).
 
 **CI (Story 14)**: `TestDist_FirstLoadIsWithinBudget` in `internal/web/static_budget_test.go`, with `const firstLoadBudget = 250_000` (Story 14).
+
+**Design stage:** /flow:draft session 6d948dea-5601-4e0c-a4b9-d65ecedd4fed, 2026-11-18T09:33:25Z to 2026-11-18T13:38:22Z UTC: $99.04 logged, $99.50 with estimated thinking; 16,063 plan lines, $6.17 per 1,000 lines; skeleton review $2.33; plan review $19.78; budget $103; forms: full 9 stories $50.19, brief 6 stories $26.73; loom flow roster a71e5c0a4f9b.
+
+**Plan review:** /flow:draft plan review; deep: 1, 2, 9, 11, 12; light: 3, 7, 8, 14, 15; full: 4, 5, 6, 10, 13
 
 ## Stories
 
 - **Story 1** — The route table, the typed-handler adapter, and the lifecycle routes on it.
 
-  Add `internal/web/routes.go`: the table's types, the adapter that decodes, calls, answers and logs, `call` and its helpers, `readQuery`, and registration. Move the session lifecycle routes (pause, resume, kill, push, send, merge) onto it as the first users; the other routes stay registered as today until Story 2. The open set is pinned by a test from here on, and every existing route test keeps passing unchanged.
+  Add `internal/web/routes.go`: the table's types, the adapter that decodes, calls, answers and logs, `call` and its helpers, `readQuery`, and registration. Move the session lifecycle routes (pause, resume, kill, push, send, merge) onto it as the first users, each with its `doc` from its README row (`call.read` shares `readAnswering`'s wait, split out of `reads.go` as `readReply`); the other routes stay registered as today until Story 2. The open set is pinned by a test from here on, and every existing route test keeps passing unchanged.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/web.go`
-  - **Interfaces:** exposes `spec`, `route`, `typed`, `page`, `call` with `session`, `act`, `actCreated`, `read` and `setAction`, `errPending`, `pendingJSON`, `statusError.Error`, `readQuery`, `routes()`, `registerRoutes`; uses none
+  - **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/reads.go`, `internal/web/web.go`
+  - **Interfaces:** exposes `spec` (with `doc`), `route`, `typed`, `page`, `call` with `session`, `notice`, `act`, `actCreated`, `read` and `setAction`, `settle`, `errPending`, `pendingJSON`, `statusError.Error`, `readQuery`, `routes()`, `registerRoutes`, and the five `TestRoutes_` tests; uses none
   - **Verify:** `CGO_ENABLED=0 go test ./internal/web/`
   - **Review:** deep
   - **Form:** full (the auth wrapping of every route and the status mapping every answer goes through)
@@ -234,22 +293,22 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 2** — Every other route on the table, and the stream's events table.
 
-  Convert the remaining handlers (answer, message, turns, diff, job log, job control, flow, flow doc, flows, create, launch defaults, device, quick replies, push subscribe and unsubscribe, unpair, pair, push key) into typed handlers with their query and body types, register the mockup as a page route, add `streamEvents()`, and delete `routeAPI` and the pair and push-key registrars. Every check, message, status and log line stays as it is; the route tests and the web e2e pin them.
+  Convert the remaining handlers (answer, message, turns, diff, job log, job control, flow, flow doc, flows, create, launch defaults, device, quick replies, push subscribe and unsubscribe, unpair, pair, push key) into typed handlers with their query and body types (pair's a named `pairBody`) and each route's `doc` from its README row, register the mockup as a page route, add `streamEvents()`, and delete `routeAPI`, `doAction`, `writeOutcome` and the pair and push-key registrars. Every check, message, status and log line stays as it is, except where the adapter's order shows: pair's malformed-body 400 gains the `bad request: ` prefix every other route's has; since `{id}` is resolved first, a request that fails both the session and job control's `{action}` check answers "no such session", one failing both answer's `{ask}` check and the decode gets the decode's 400, an unknown job action on a known session is logged with that session, and a job control on an unknown session is logged as `job_control`, not `job_<action>`. Pair's errors other than its pairing refusals stay a fixed 500 through a `*statusError`, never the host's text, and create's launch-account notice goes through `c.notice`. The route tests and the web e2e pin the rest.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/asks.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/auth.go`, `internal/web/push.go`, `internal/web/mockup.go`, `internal/web/stream.go`, `internal/web/web.go`
-  - **Interfaces:** exposes the full table with its `client` names, `turnsParams`, `jobLogParams`, `flowParams`, `flowDocParams`, `launchDefaultsParams`, `pairJSON`, `pushKeyJSON`, `streamEvent`, `streamEvents()`; uses Story 1's table, `typed`, `page` and `call`
+  - **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/api_test.go`, `internal/web/stream_test.go`, `internal/web/auth_test.go`, `internal/web/asks.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/auth.go`, `internal/web/push.go`, `internal/web/mockup.go`, `internal/web/stream.go`, `internal/web/web.go`
+  - **Interfaces:** exposes the full table with its `client` names and `doc`s, `turnsParams`, `jobLogParams`, `flowParams`, `flowDocParams`, `launchDefaultsParams`, `pairBody`, `pairJSON`, `pushKeyJSON`, `streamEvent`, `streamEvents()`; uses Story 1's table, `typed`, `page`, `call` (with `notice`) and `settle`
   - **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/... && CGO_ENABLED=0 go test -tags e2e ./e2e/ -run TestE2E_Web_SessionLifecycleOverHTTP'`
   - **Review:** deep
-  - **Form:** brief (each handler keeps its checks, messages and statuses, which the route tests and the web e2e pin; the auth wrapper is Story 1's)
+  - **Form:** full (the open pair route, unpair, the store writes and create's bounds move onto the adapter, which changes who writes each status and log line; owner, 2026-11-18, after the skeleton review)
   - **Reading:** spec §16, §17; `internal/web/README.md` (Routes and the API, The stream); `internal/web/api.go`, `internal/web/asks.go:255-323`, `internal/web/reads.go:185-296`, `internal/web/jobs.go:165-316`, `internal/web/flow.go:300-393`, `internal/web/auth.go`, `internal/web/push.go:360-385`, `internal/web/mockup.go`, `internal/web/stream.go:30-60`, `internal/web/stream.go:536-626`
 
 - **Story 3** — The fixed-value fields as typed string types, each with its union's values.
 
-  Add `internal/web/unions.go` with a typed string type per fixed-value field and the values each may hold, and retype those fields in the JSON structs; the JSON the app reads does not change. A test checks that each type's constants and its listed values agree, so the generator's unions can't drift from what the code sends.
+  Add `internal/web/unions.go` with a typed string type per fixed-value field and the values each may hold, and retype those fields in the JSON structs, converting the existing tests' expected values; the JSON the app reads does not change. A test checks that each type's constants and its listed values agree, so the generator's unions can't drift from what the code sends.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/unions.go`, `internal/web/unions_test.go`, `internal/web/fleet.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/asks.go`
+  - **Files:** `internal/web/unions.go`, `internal/web/unions_test.go`, `internal/web/fleet.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/asks.go`, `internal/web/fleet_test.go`, `internal/web/stream_test.go`, `internal/web/jobs_test.go`, `internal/web/reads_test.go`, `internal/web/flow_test.go`, `internal/web/asks_test.go`
   - **Interfaces:** exposes `union`, `unions()`, `sessionGroup`, `sessionStatus` and the other typed string types; uses none
   - **Verify:** `CGO_ENABLED=0 go test ./internal/web/`
   - **Review:** light (the JSON is unchanged and the fleet, reads, jobs and flow tests pin it)
@@ -258,11 +317,11 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 4** — The new app's toolchain, its committed bundle, and the embed.
 
-  Create `internal/web/ui/` with its package, Vite, TypeScript, ESLint, Prettier and shadcn (`components.json`, base `base`) configuration, `index.html` with the `loom-build` meta tag, `public/` (the manifest, the icons copied from the classic app, and a worker that is the classic one with its cache prefix `loom-next-`, deleting both prefixes' old caches), a minimal `src/main.tsx`, `scripts/check-dist.mjs` and the license plugin; build it into `internal/web/dist/` and commit it; embed it in Go beside `static/`, add `.svg`, `.woff2` and `.txt` to `staticContentTypes`, mark the bundle generated in `.gitattributes`, ignore `internal/web/ui/node_modules/` in `.gitignore` (an untracked tree there would fill every session's diff), and give the dev shell Node 22 and pnpm. The daemon still serves only the classic app (Story 6 adds the switch); a Go test builds the new tree's assets.
+  Create `internal/web/ui/` with its package, Vite, TypeScript, ESLint, Prettier and shadcn (`components.json`, base `base`) configuration, `index.html` with the `loom-build` meta tag and the `#app` mount point, `public/` (the manifest, the icons copied from the classic app, and a worker that is the classic one with its cache prefix `loom-next-`, deleting both prefixes' old caches and fetching its own shell with `?ui=next`), a minimal `src/main.tsx`, the Vitest harness (`src/test-setup.ts`), `scripts/check-dist.mjs` and the license plugin; build it into `internal/web/dist/` and commit it; embed it in Go beside `static/`, add `.svg`, `.woff2` and `.txt` to `staticContentTypes`, mark the bundle generated in `.gitattributes`, ignore `internal/web/ui/node_modules/` in `.gitignore` (an untracked tree there would fill every session's diff), and give the dev shell Node 22 and pnpm. The daemon still serves only the classic app (Story 6 adds the switch); a Go test builds the new tree's assets.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/ui/vite.config.ts`, `internal/web/ui/tsconfig.json`, `internal/web/ui/eslint.config.js`, `internal/web/ui/.prettierrc.json`, `internal/web/ui/.prettierignore`, `internal/web/ui/components.json`, `internal/web/ui/index.html`, `internal/web/ui/scripts/check-dist.mjs`, `internal/web/ui/public/sw.js`, `internal/web/ui/public/manifest.webmanifest`, `internal/web/ui/public/icons/icon-180.png`, `internal/web/ui/public/icons/icon-192.png`, `internal/web/ui/public/icons/icon-512.png`, `internal/web/ui/src/main.tsx`, `internal/web/dist/`, `internal/web/static.go`, `internal/web/static_test.go`, `.gitattributes`, `.gitignore`, `flake.nix`
-  - **Interfaces:** exposes the package scripts, the Vite config, `check-dist.mjs`, `nextFiles`; uses none
+  - **Files:** `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/ui/vite.config.ts`, `internal/web/ui/tsconfig.json`, `internal/web/ui/eslint.config.js`, `internal/web/ui/.prettierrc.json`, `internal/web/ui/.prettierignore`, `internal/web/ui/components.json`, `internal/web/ui/index.html`, `internal/web/ui/scripts/check-dist.mjs`, `internal/web/ui/public/sw.js`, `internal/web/ui/public/manifest.webmanifest`, `internal/web/ui/public/icons/icon-180.png`, `internal/web/ui/public/icons/icon-192.png`, `internal/web/ui/public/icons/icon-512.png`, `internal/web/ui/src/main.tsx`, `internal/web/ui/src/test-setup.ts`, `internal/web/dist/`, `internal/web/static.go`, `internal/web/static_test.go`, `.gitattributes`, `.gitignore`, `flake.nix`
+  - **Interfaces:** exposes the package scripts, the Vite config, `tsconfig.json`'s `@/*`, the Vitest harness, the ignore lists, `components.json`, the installed packages, `index.html`'s `#app`, the worker, `check-dist.mjs`, `nextFiles`, `nextStaticAssets` and its two `TestStatic_` tests; uses none
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm install --frozen-lockfile && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
   - **Review:** deep
   - **Form:** full (the build's configuration and the embed every later story builds on, which no gate covers until this story lands)
@@ -270,11 +329,11 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 5** — The contract: `Contract()`, the generator, and its three outputs.
 
-  Add `internal/web/contract.go` (`Contract()` and the `//go:generate` line) and `internal/web/internal/gen/` (the generator, its command, and its tests), then generate `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` and commit them. The generator follows spec §18's reflection rules and names, writes `gen.ts` with no imports (its `Outcome`, `Transport` and `createClient` as the contract gives them), and appends to `api.fields` without ever removing a line; the tests fail on a stale output and on a committed field or route line that disappears or changes. Its test package isolates the loom dirs from its `TestMain`, as every package whose tests reach `config` must.
+  Add `internal/web/contract.go` (`Contract()` and the `//go:generate` line) and `internal/web/internal/gen/` (the generator, its command, and its tests), then generate `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` and commit them. The generator follows spec §18's reflection rules and names as the contract's type rules spell them out, writes `gen.ts` with no imports (its `Outcome`, `Transport` and `createClient` as the contract gives them), and appends to `api.fields` without ever removing a line; the tests fail on a stale output and on a committed field or route line that disappears or changes. Its test package isolates the loom dirs from its `TestMain`, as every package whose tests reach `config` must.
 
   - **Developer:** intermediate-dev
   - **Files:** `internal/web/contract.go`, `internal/web/internal/gen/gen.go`, `internal/web/internal/gen/gen_test.go`, `internal/web/internal/gen/testmain_test.go`, `internal/web/internal/gen/cmd/main.go`, `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md`, `internal/web/api.fields`
-  - **Interfaces:** exposes `Contract()`, `ContractSpec`, `ContractRoute`, `ContractEvent`, `ContractUnion`, `gen.Generate`, `gen.Output`, and `gen.ts`'s types, `Method`, `Outcome`, `Transport`, `StreamEvents`, `createClient` and `Client`; uses Story 2's table and `streamEvents()` and Story 3's `unions()`
+  - **Interfaces:** exposes `Contract()`, `ContractSpec`, `ContractRoute`, `ContractEvent`, `ContractUnion`, `gen.Generate`, `gen.Output`, the type rules, the `api.fields` line forms, `web-api.md`, and `gen.ts`'s types, `Method`, `Outcome`, `Transport`, `StreamEvents`, `createClient` and `Client`; uses Story 1's `spec.doc`, Story 2's table and `streamEvents()`, Story 3's `unions()` and Story 4's ignore lists
   - **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/... && cd internal/web/ui && pnpm run typecheck'`
   - **Review:** deep
   - **Form:** full (the reflection rules, the TS it emits and both freshness tests decide every later TS type)
@@ -282,35 +341,35 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 6** — The per-device switch between the classic and the new app.
 
-  `routeStatic` serves both trees: the shell files from the tree `treeOf` picks (the worker's `?ui=` for `/sw.js`, else the `__Host-loom-ui` cookie), any other path from that tree and else the other, with `Vary: Cookie` on shell answers. The classic app gains `switch.mjs` and a "Try the new app" row in Settings, and its worker also deletes `loom-next-` caches; the new app gains `switchApp.ts`. Tests pin both sides of each choice.
+  `routeStatic` serves both trees: the shell files from the tree `treeOf` picks (a `ui` parameter on any shell file, else the `__Host-loom-ui` cookie), any other path from that tree and else the other, with `Vary: Cookie` on shell answers. The classic app gains `switch.mjs` and a "Try the new app" row in Settings and registers its worker at `/sw.js?ui=<the cookie's app>` at every launch, and its worker fetches its own shell with `?ui=classic` and also deletes `loom-next-` caches (spec §5, §6); the new app gains `switchApp.ts`. Tests pin both sides of each choice.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/static.go`, `internal/web/static_test.go`, `internal/web/static/js/switch.mjs`, `internal/web/static/js/settings.mjs`, `internal/web/static/sw.js`, `internal/web/ui/src/app/switchApp.ts`, `internal/web/ui/src/app/switchApp.test.ts`, `internal/web/dist/`
-  - **Interfaces:** exposes `appCookie`, `staticTree`, `treeOf`, the classic `switchApp`, the new app's `switchApp` and `AppName`; uses Story 4's `nextFiles`
-  - **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && node --check internal/web/static/js/switch.mjs && node --check internal/web/static/js/settings.mjs && node --check internal/web/static/sw.js && cd internal/web/ui && pnpm run check && pnpm run dist:check'`
+  - **Files:** `internal/web/static.go`, `internal/web/static_test.go`, `internal/web/static/js/switch.mjs`, `internal/web/static/js/settings.mjs`, `internal/web/static/js/app.mjs`, `internal/web/static/sw.js`, `internal/web/ui/src/app/switchApp.ts`, `internal/web/ui/src/app/switchApp.test.ts`
+  - **Interfaces:** exposes `appCookie`, `staticTree`, `treeOf`, the classic `switchApp` and `cookieApp`, the new app's `switchApp`, `cookieApp`, `page` and `AppName`, and its three `TestStatic_` tests; uses Story 4's `nextFiles`, `nextStaticAssets` and worker
+  - **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && node --check internal/web/static/js/switch.mjs && node --check internal/web/static/js/settings.mjs && node --check internal/web/static/js/app.mjs && node --check internal/web/static/sw.js && cd internal/web/ui && pnpm run check && pnpm run dist:check'`
   - **Review:** deep
   - **Form:** full (which tree a request gets, the cookie's attributes and the worker's URL decide what every paired device loads)
-  - **Reading:** spec §3, §4, §5, §6; `internal/web/static.go`, `internal/web/static_test.go`, `internal/web/static/js/settings.mjs`, `internal/web/static/js/app.mjs:60-110`, `internal/web/static/sw.js`, `internal/web/auth.go:25-45`
+  - **Reading:** spec §3, §4, §5, §6; `internal/web/static.go`, `internal/web/static_test.go`, `internal/web/static/js/settings.mjs`, `internal/web/static/js/app.mjs:60-140`, `internal/web/static/sw.js`, `internal/web/auth.go:25-45`
 
 - **Story 7** — webshot renders the new app and serves the canned loom for the dev loop.
 
-  `tools/webshot` gains `-app classic|next` (serving `internal/web/dist/` under the same headers and CSP for `next`) and `-serve <addr>` (the canned `/api/v1` only, until killed), with tests; `tools/CLAUDE.md`'s webshot rule names the flags.
+  `tools/webshot` gains `-app classic|next` (serving `internal/web/dist/` for `next`, both trees' files under a copy of the layer's CSP that `internal/web/webshot_fixture_test.go` holds equal) and `-serve <addr>` (the canned `/api/v1` only, until killed), with tests; `tools/CLAUDE.md`'s webshot rule names the flags.
 
   - **Developer:** intermediate-dev
-  - **Files:** `tools/webshot/main.go`, `tools/webshot/canned.go`, `tools/webshot/webshot_test.go`, `tools/CLAUDE.md`
+  - **Files:** `tools/webshot/main.go`, `tools/webshot/canned.go`, `tools/webshot/webshot_test.go`, `internal/web/webshot_fixture_test.go`, `tools/CLAUDE.md`
   - **Interfaces:** exposes `-app` and `-serve`; uses Story 4's bundle
   - **Verify:** `bash -c 'CGO_ENABLED=0 go test ./tools/webshot/ && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
   - **Review:** light (a dev tool's two flags, covered by its tests)
-  - **Form:** brief (routine flags on a dev tool)
+  - **Form:** brief (routine flags on a dev tool; Task 7.2's serve loop and its miss logging from concurrent handlers are a dev tool's, covered by its tests; owner, 2026-11-18)
   - **Reading:** spec §12; `tools/webshot/main.go:1-200`, `tools/webshot/canned.go`, `tools/webshot/webshot_test.go:300-360`, `tools/CLAUDE.md`
 
 - **Story 8** — The design system: tokens, fonts and the base components.
 
-  Write spec §30's tokens into Tailwind's `@theme`, bundle Inter and JetBrains Mono from `@fontsource-variable` (latin only), add `cn` and the shadcn components the contract lists (Base UI base), give `Badge` loom's variants, import any component's runtime CSS statically so nothing injects a `<style>` element, rebuild the bundle, and add the Go test that the built CSS defines every token.
+  Write spec §30's tokens into Tailwind's `@theme`, bundle Inter and JetBrains Mono from `@fontsource-variable` (latin only), add `cn` and the shadcn components the contract lists (Base UI base, the Drawer and the Toast on Base UI's own, spec §32), give `Badge` loom's variants, check in Vitest that no component injects a `<style>` element, rebuild the bundle, and add the Go test that the built CSS defines every token.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/ui/src/styles/app.css`, `internal/web/ui/src/styles/fonts.css`, `internal/web/ui/src/lib/utils.ts`, `internal/web/ui/src/components/ui/button.tsx`, `internal/web/ui/src/components/ui/badge.tsx`, `internal/web/ui/src/components/ui/toggle-group.tsx`, `internal/web/ui/src/components/ui/collapsible.tsx`, `internal/web/ui/src/components/ui/drawer.tsx`, `internal/web/ui/src/components/ui/sonner.tsx`, `internal/web/ui/src/components/ui/skeleton.tsx`, `internal/web/ui/src/main.tsx`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`, `internal/web/static_test.go`
-  - **Interfaces:** exposes the tokens, `cn` and the components; uses Story 4's toolchain
+  - **Files:** `internal/web/ui/src/styles/app.css`, `internal/web/ui/src/styles/fonts.css`, `internal/web/ui/src/lib/utils.ts`, `internal/web/ui/src/components/ui/button.tsx`, `internal/web/ui/src/components/ui/badge.tsx`, `internal/web/ui/src/components/ui/toggle-group.tsx`, `internal/web/ui/src/components/ui/collapsible.tsx`, `internal/web/ui/src/components/ui/drawer.tsx`, `internal/web/ui/src/components/ui/toast.tsx`, `internal/web/ui/src/components/ui/skeleton.tsx`, `internal/web/ui/src/components/ui/components.test.tsx`, `internal/web/ui/src/main.tsx`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`, `internal/web/static_test.go`
+  - **Interfaces:** exposes the tokens, the stylesheet import, `cn`, the components, `toastManager` and `Toaster`; uses Story 4's toolchain
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/ -run TestDist_TheSkinDefinesEveryToken'`
   - **Review:** light (tokens the spec gives and components shadcn generates)
   - **Form:** brief (the values are the spec's; the components are shadcn's own)
@@ -318,12 +377,12 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 9** — The client core: the request path, the event stream, the store and the query client.
 
-  `request.ts` implements `Transport` over `fetch` with the contract's status mapping and the notice and unpaired listeners; `stream.ts` keeps the classic reconnect rules; the Zustand store applies each event, persists to IndexedDB `loom-next` at most once a second, marks a cold start stale until the first snapshot, sets the badge and clears on `unpaired`; `groups.ts` ports the classic grouping; `queries.ts` sets up TanStack Query. Vitest covers each, against the webshot fixtures typed by `gen.ts` (each fixture `satisfies` its type).
+  `request.ts` implements `Transport` over `fetch` with the contract's status mapping and the notice and unpaired listeners; `stream.ts` keeps the classic reconnect rules; the Zustand store applies each event, persists to IndexedDB `loom-next` at most once a second, marks a cold start stale until the first snapshot, sets the badge and clears on `unpaired` (a clear cancels a pending save); `groups.ts` ports the classic grouping; `queries.ts` sets up TanStack Query. Vitest covers each, against the webshot fixtures typed by `gen.ts` (each fixture `satisfies` its type; the fixtures gain the keys their generated types require). Saves are throttled, not debounced as the classic app's are, so a steady stream of events still saves once a second. Its new modules can add class candidates Tailwind finds, so it rebuilds `dist/` and commits it when it changed.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/ui/src/api/request.ts`, `internal/web/ui/src/api/request.test.ts`, `internal/web/ui/src/api/stream.ts`, `internal/web/ui/src/api/stream.test.ts`, `internal/web/ui/src/api/queries.ts`, `internal/web/ui/src/store/fleet.ts`, `internal/web/ui/src/store/fleet.test.ts`, `internal/web/ui/src/store/persist.ts`, `internal/web/ui/src/store/badge.ts`, `internal/web/ui/src/fleet/groups.ts`, `internal/web/ui/src/fleet/groups.test.ts`, `internal/web/ui/src/fixtures.test.ts`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`
-  - **Interfaces:** exposes `http`, `api`, `onNotices`, `onUnpaired`, `LinkState`, `StreamHandlers`, `connectStream`, `FleetState`, `useFleet`, `useSession`, `useFleetGroups`, `useLink`, `startFleet`, `loadSnapshot`, `saveSnapshot`, `clearSnapshot`, `setBadge`, `FleetGroups`, `GROUPS`, `allSessions`, `shownWorkspaces`, `groupSessions`, `fleetGroups`, `nextInGroup`, `queryClient`, `OutcomeError`, `unwrap`; uses Story 5's `gen.ts`
-  - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check'`
+  - **Files:** `internal/web/ui/src/api/request.ts`, `internal/web/ui/src/api/request.test.ts`, `internal/web/ui/src/api/stream.ts`, `internal/web/ui/src/api/stream.test.ts`, `internal/web/ui/src/api/queries.ts`, `internal/web/ui/src/store/fleet.ts`, `internal/web/ui/src/store/fleet.test.ts`, `internal/web/ui/src/store/persist.ts`, `internal/web/ui/src/store/badge.ts`, `internal/web/ui/src/fleet/groups.ts`, `internal/web/ui/src/fleet/groups.test.ts`, `internal/web/ui/src/api/queries.test.ts`, `internal/web/ui/src/store/persist.test.ts`, `internal/web/ui/src/store/badge.test.ts`, `internal/web/ui/src/store/startFleet.test.ts`, `internal/web/ui/src/fixtures.ts`, `internal/web/ui/src/fixtures.test.ts`, `tools/webshot/fixture/snapshot.json`, `tools/webshot/fixture/turns.json`, `tools/webshot/fixture/agent-turns.json`, `tools/webshot/fixture/flow.json`, `tools/webshot/fixture/flows.json`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`
+  - **Interfaces:** exposes `http`, `api`, `onNotices`, `onUnpaired`, `LinkState`, `StreamHandlers`, `connectStream`, `FleetState`, `useFleet`, `useSession`, `useFleetGroups`, `useLink`, `startFleet`, `loadSnapshot`, `saveSnapshot`, `clearSnapshot`, `setBadge`, `FleetGroups`, `GROUPS`, `allSessions`, `shownWorkspaces`, `groupSessions`, `fleetGroups`, `nextInGroup`, `queryClient`, `OutcomeError`, `unwrap`, `fixtureSnapshot`; uses Story 5's `gen.ts` and type rules
+  - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/ -run TestWebshotFixture && CGO_ENABLED=0 go test ./tools/webshot/'`
   - **Review:** deep
   - **Form:** full (the reconnect bounds, the persistence and the status mapping every request goes through)
   - **Reading:** spec §20, §24, §25, §26, §29; `internal/web/static/js/api.mjs`, `internal/web/static/js/store.mjs`, `internal/web/static/js/app.mjs:110-455`, `internal/web/static/js/fleet.mjs:1-60`, `tools/webshot/fixture/snapshot.json`, `internal/web/README.md` (The stream, The app)
@@ -334,7 +393,7 @@ Every name one story defines and another uses. A story may add names of its own;
 
   - **Developer:** intermediate-dev
   - **Files:** `internal/web/ui/src/app/panels.ts`, `internal/web/ui/src/app/panels.test.ts`, `internal/web/ui/src/app/routes.tsx`, `internal/web/ui/src/app/routes.test.ts`, `internal/web/ui/src/app/shell.tsx`, `internal/web/ui/src/app/shell.test.tsx`, `internal/web/ui/src/panels/index.ts`, `internal/web/ui/src/main.tsx`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`
-  - **Interfaces:** exposes `PanelId`, `PanelProps`, `Panel`, `definePanel`, `panelFor`, `sessionTabs`, `normalizeHash`, `routeOf`, `hrefFor`, `router`, `PanelHost`, `Placeholder`, `AppShell`, `src/panels/index.ts`; uses Story 6's `switchApp`, Story 8's components, Story 9's `startFleet`, `useSession` and `queryClient`
+  - **Interfaces:** exposes `PanelId`, `PanelProps`, `Panel`, `definePanel`, `panelFor`, `sessionTabs`, `normalizeHash`, `routeOf`, `hrefFor` and the route keys, `useRoute`, `router`, `PanelHost`, `Placeholder`, `AppShell`, `main.tsx`, `src/panels/index.ts`; uses Story 4's `#app`, Story 6's `switchApp`, Story 8's components and stylesheet import, Story 9's `startFleet`, `useSession`, `useLink`, `onUnpaired` and `queryClient`
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
   - **Review:** deep
   - **Form:** full (every classic URL must resolve to its view, push links included)
@@ -342,11 +401,11 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 11** — Commands and the chrome: the registry, the command button, the confirmation sheet, toasts, the header and the footer.
 
-  `commands.ts` holds the registry and the context (every command off while stale); `CommandButton` renders a command; `ConfirmSheet` is the one confirmation drawer; `toasts.ts` turns notices and outcomes into Sonner toasts, never dropping Kill's or Resume's stash notices; the placeholder's switch becomes the `app.backToClassic` command; the header gets `ContextRow` and `SessionTabs`, and the footer the `StatusRow` (the link's pill, `loom@<host>`, and each group's count opening its next session), hidden while a text field has focus. Vitest covers the enablement, the confirmation flow and the toasts.
+  `commands.ts` holds the registry and the context (every command but the offline switch off while stale); `CommandButton` renders a command; `ConfirmSheet` is the one confirmation drawer; `toasts.ts` turns notices, outcomes and plain messages into toasts through Story 8's `toastManager`, never dropping Kill's or Resume's stash notices; the placeholder's switch becomes the `app.backToClassic` command; the header gets `ContextRow` and `SessionTabs`, and the footer the `StatusRow` (the link's pill, `loom@<host>`, and each group's count opening its next session), hidden while a text field has focus. Vitest covers the enablement, the confirmation flow and the toasts.
 
   - **Developer:** intermediate-dev
   - **Files:** `internal/web/ui/src/app/commands.ts`, `internal/web/ui/src/app/commands.test.ts`, `internal/web/ui/src/app/CommandButton.tsx`, `internal/web/ui/src/app/ConfirmSheet.tsx`, `internal/web/ui/src/app/ConfirmSheet.test.tsx`, `internal/web/ui/src/app/toasts.ts`, `internal/web/ui/src/app/toasts.test.ts`, `internal/web/ui/src/app/shell.tsx`, `internal/web/ui/src/app/shell.test.tsx`, `internal/web/ui/src/main.tsx`, `internal/web/dist/`
-  - **Interfaces:** exposes `CommandContext`, `ConfirmSpec`, `Command`, `defineCommand`, `commandById`, `useCommandContext`, `runCommand`, `CommandButton`, `ConfirmSheet`, `showNotices`, `showOutcome`, `app.backToClassic`, `ContextRow`, `SessionTabs`, `StatusRow`; uses Story 6's `switchApp`, Story 8's components, Story 9's store, `fleetGroups`, `nextInGroup` and `onNotices`, Story 10's `Placeholder`, `AppShell`, `hrefFor` and `sessionTabs`
+  - **Interfaces:** exposes `CommandContext`, `ConfirmSpec`, `Command` (with `offline`), `defineCommand`, `commandById`, `useCommandContext`, `runCommand`, `CommandButton`, `ConfirmSheet`, `showNotices`, `showOutcome`, `showMessage`, `app.backToClassic`, `ContextRow`, `SessionTabs`, `StatusRow`; uses Story 6's `switchApp`, Story 8's components, `toastManager` and `Toaster`, Story 9's `useFleet`, `useLink`, `LinkState`, `useFleetGroups`, `fleetGroups`, `allSessions`, `nextInGroup` and `onNotices`, Story 10's `Placeholder`, `AppShell`, `useRoute`, `panelProps`, `hrefFor` and `sessionTabs`
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
   - **Review:** deep
   - **Form:** full (the enablement and confirmation every action goes through)
@@ -354,23 +413,24 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 12** — The worker: registration, the shell upgrade, push and the launch-time subscription check.
 
-  The app registers `/sw.js?ui=next` and reloads when a new worker takes over; a snapshot whose `build` differs from `shellBuild()` asks the worker to update once per build; the launch-time subscription check ports `push.mjs`'s. The worker keeps the classic one's behaviour (the shell cache under `loom-next-`, never `/api/`, every push a notification tagged by session, the badge, opening the push's `url`). Go tests check the new tree's worker gets its build and shell list.
+  The app registers `/sw.js?ui=<the cookie's app>` at every launch (spec §5) and reloads when a new worker takes over; a snapshot whose `build` differs from `shellBuild()` asks the worker to update once per build; the launch-time subscription check ports `push.mjs`'s. The worker keeps the classic one's behaviour (the shell cache under `loom-next-`, never `/api/`, every push a notification tagged by session, the badge, opening the push's `url`), which Story 4 ports whole; this story pins it (a Go test and `sw.test.ts`, which runs the worker's source against fakes) and leaves it unchanged. Go tests check the new tree's worker gets its build and shell list.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/ui/public/sw.js`, `internal/web/ui/src/app/worker.ts`, `internal/web/ui/src/app/worker.test.ts`, `internal/web/ui/src/main.tsx`, `internal/web/ui/src/store/fleet.ts`, `internal/web/dist/`, `internal/web/static_test.go`
-  - **Interfaces:** exposes `registerWorker`, `shellBuild`, `upgradeShell`, `checkPushSubscription`; uses Story 9's store and `api`, Story 11's `showOutcome`
+  - **Files:** `internal/web/ui/src/app/worker.ts`, `internal/web/ui/src/app/worker.test.ts`, `internal/web/ui/src/app/sw.test.ts`, `internal/web/push_test.go`, `internal/web/ui/src/main.tsx`, `internal/web/ui/src/store/fleet.ts`, `internal/web/ui/src/store/startFleet.test.ts`, `internal/web/dist/`, `internal/web/static_test.go`
+  - **Interfaces:** exposes `registerWorker`, `shellBuild`, `upgradeShell`, `checkPushSubscription`; uses Story 4's worker and `nextStaticAssets`, Story 6's `cookieApp` and `page`, Story 9's store, `startFleet` and `api`, Story 11's `showMessage`
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
   - **Review:** deep
   - **Form:** full (the worker's caches, push display and update path; a wrong one shows a stale fleet or drops a push)
   - **Reading:** spec §6, §28; `internal/web/static/sw.js`, `internal/web/static/js/push.mjs`, `internal/web/static/js/app.mjs:60-140`, `internal/web/static.go`, `internal/web/README.md` (Push)
+  - **Drafts after:** Story 4, Story 6, Story 9, Story 11
 
 - **Story 13** — The fleet panel.
 
-  Port the classic fleet to direction B: the workspace filter (`ToggleGroup`, kept across launches as the classic app keeps it), the four groups with their counts, Paused folded (`Collapsible`), and each row with every part the classic row shows (status, title, account share and age, the wait reason and its detail, diffstat, agents, PR, the jobs label, the flow chip, the workspace), linking to the session or, while its mockup is fresh, the mockup (both placeholders in this part); the header's flows, settings and new-session links. Vitest covers the ordering, each row's parts over the fixture's sessions, `opensMockup` and `rowShare`; webshot renders the fleet.
+  Port the classic fleet to direction B: the workspace filter (`ToggleGroup`, kept across launches as the classic app keeps it), the four groups with their counts, Paused folded (`Collapsible`), and each row with every part the classic row shows (status, title, account share and age, the wait reason and its detail, diffstat, agents, PR, the jobs label, the flow chip, the workspace), linking to the session or, while its mockup is fresh, the mockup (both placeholders in this part); the header's flows, settings and new-session links (links, not commands: they act on nothing). The classic row's NEW mark comes in Part 2 with the conversation, which marks a session seen. Vitest covers the ordering, each row's parts over the fixture's sessions (`fixtureSnapshot`), `opensMockup` and `rowShare`; webshot renders the fleet.
 
   - **Developer:** intermediate-dev
   - **Files:** `internal/web/ui/src/fleet/usage.ts`, `internal/web/ui/src/fleet/usage.test.ts`, `internal/web/ui/src/fleet/links.ts`, `internal/web/ui/src/fleet/links.test.ts`, `internal/web/ui/src/panels/fleet/index.tsx`, `internal/web/ui/src/panels/fleet/FleetHead.tsx`, `internal/web/ui/src/panels/fleet/SessionRow.tsx`, `internal/web/ui/src/panels/fleet/fleet.test.tsx`, `internal/web/ui/src/panels/index.ts`, `internal/web/dist/`
-  - **Interfaces:** exposes `rowShare`, `opensMockup`, `sessionHref`, `SessionRow`, the `fleet` panel; uses Story 8's components, Story 9's store and groups, Story 10's `definePanel` and `hrefFor`, Story 11's `ContextRow` and `CommandButton`
+  - **Interfaces:** exposes `rowShare`, `opensMockup`, `sessionHref`, `SessionRow`, the `fleet` panel; uses Story 8's components, Story 9's store, groups and `fixtureSnapshot`, Story 10's `definePanel` and `hrefFor`, Story 11's `ContextRow` and `CommandButton`
   - **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -screens fleet -out "$d"'`
   - **Review:** deep
   - **Form:** brief (a port of `fleet.mjs`, whose behaviour the plan lists; the store and the grouping are Story 9's)
@@ -378,7 +438,7 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 14** — CI for the new app, and the first-load budget.
 
-  Add `.github/workflows/web.yml` (spec §14: pnpm's frozen install, `check`, `dist:check`, then webshot over every route of the new app), add `internal/web/dist/**` to `build.yml`'s paths, and add the Go test that sums the gzipped size of the entry script and every `modulepreload` that `dist/index.html` names against `firstLoadBudget`.
+  Add `.github/workflows/web.yml` (spec §14: pnpm's frozen install, `check`, `dist:check`, then webshot over every route of the new app), add `internal/web/dist/**`, `internal/web/api.fields`, `docs/specs/web-api.md` and `internal/web/ui/src/api/gen.ts` to `build.yml`'s paths (so Story 5's freshness and only-grow tests run when only they change), and add the Go test that sums the gzipped size of the entry script and every `modulepreload` that `dist/index.html` names against `firstLoadBudget`.
 
   - **Developer:** junior-dev
   - **Files:** `.github/workflows/web.yml`, `.github/workflows/build.yml`, `internal/web/static_budget_test.go`
@@ -391,10 +451,10 @@ Every name one story defines and another uses. A story may add names of its own;
 
 - **Story 15** — The rules and procedures for the new app and the table.
 
-  Write `internal/web/ui/CLAUDE.md` (spec §35's rules), replace `internal/web/CLAUDE.md`'s route-checklist Convention with the table's enforced rules and the only-grow rule (within its 20,000-byte budget), add spec §36's procedures to `docs/claude/web-layer.md`, move `internal/web/README.md`'s route table to a pointer at `docs/specs/web-api.md` and describe the new app and the switch, document the dev loop in `CONTRIBUTING.md` and the switch in `USAGE.md`, and point `NOTICE.md` at `dist/THIRD_PARTY.txt`. Root `CLAUDE.md` does not change.
+  Write `internal/web/ui/CLAUDE.md` (spec §35's rules), replace `internal/web/CLAUDE.md`'s route-checklist Convention with the table's enforced rules and the only-grow rule (within its 20,000-byte budget), add spec §36's procedures to `docs/claude/web-layer.md` and its row in `docs/claude/INDEX.md`, move `internal/web/README.md`'s route table to a pointer at `docs/specs/web-api.md` (whose routes carry the table's prose as their `doc`) and describe the new app and the switch, document the dev loop in `CONTRIBUTING.md` and the switch in `USAGE.md`, point `NOTICE.md` at `dist/THIRD_PARTY.txt`, and make `docs/ARCHITECTURE.md`'s two descriptions of `internal/web/` name both apps and the switch. The CLAUDE.md lint learns to skip `node_modules`, as a guard: pnpm's layout already keeps packages behind `.pnpm/` and symlinks, which its walk skips, but an npm or hoisted install would expose their READMEs. Root `CLAUDE.md` does not change.
 
   - **Developer:** intermediate-dev
-  - **Files:** `internal/web/ui/CLAUDE.md`, `internal/web/CLAUDE.md`, `internal/web/README.md`, `docs/claude/web-layer.md`, `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`
+  - **Files:** `internal/web/ui/CLAUDE.md`, `internal/web/CLAUDE.md`, `internal/web/README.md`, `docs/claude/web-layer.md`, `docs/claude/INDEX.md`, `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`, `docs/ARCHITECTURE.md`, `tools/claudemd/lint.go`, `tools/claudemd/lint_test.go`, `tools/claudemd/idents.go`, `tools/claudemd/idents_test.go`
   - **Interfaces:** none; uses every earlier story's names
   - **Verify:** `CGO_ENABLED=0 go test ./tools/claudemd/`
   - **Review:** light (docs, checked by the CLAUDE.md lint)
@@ -403,3 +463,15601 @@ Every name one story defines and another uses. A story may add names of its own;
   - **Drafts after:** Story 1, Story 2, Story 4, Story 5, Story 6, Story 7, Story 9, Story 10, Story 11, Story 12, Story 13, Story 14
 
 <!-- plan_join: the stories below are generated from the drafts; edit the drafts, then re-join -->
+
+## Story 1: The route table, the typed-handler adapter, and the lifecycle routes on it
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/reads.go`, `internal/web/web.go`
+- **Interfaces:** exposes `spec` (with `doc`), `route`, `typed`, `page`, `call` with `session`, `notice`, `act`, `actCreated`, `read` and `setAction`, `settle`, `errPending`, `pendingJSON`, `statusError.Error`, `readQuery`, `routes()`, `registerRoutes`, and the five `TestRoutes_` tests; uses none
+- **Verify:** `CGO_ENABLED=0 go test ./internal/web/`
+- **Review:** deep
+- **Form:** full (the auth wrapping of every route and the status mapping every answer goes through)
+
+This story adds `internal/web/routes.go`: the table's types (`spec`, `route`), the adapter `typed` that resolves `{id}`, decodes, calls, answers and logs, `page` for a hand-served route, `call` with its helpers (`session`, `notice`, `act`, `actCreated`, `read`, `setAction`), `readQuery`, `errPending`, `pendingJSON`, `statusError.Error`, and `routes()` with `registerRoutes`. It then moves the six session lifecycle routes (send, merge, pause, resume, kill, push) onto the table as its first users, each with its `doc`; every other route stays registered by `routeAPI`, `routePair` and `routePush` until Story 2. Two existing helpers are refactored so the new code reuses them instead of copying them: `writeOutcome`'s outcome rule becomes `settle` (shared by `act`, `actCreated` and `writeOutcome`, which Story 2 deletes), and `readAnswering`'s wait becomes `readReply` (shared by `call.read` and `readAnswering`, which the mockup page route keeps); `sessionFromPath`'s lookup becomes `pathSession`, shared with `call.session`. The adapter is the one place that wraps a route in `authed` (`registerRoutes`), so a route added later cannot forget it: `TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice` and `TestRoutes_OnlyPairIsOpen` pin that. Every existing route test keeps passing unchanged. The story's files are `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/web.go`, and also `internal/web/reads.go` (the `readReply` extraction; the entry's Files line lacks it).
+
+### Task 1.1: The table's types, `call` and the adapter
+
+**Files:**
+- Create: `internal/web/routes.go`
+- Create: `internal/web/routes_test.go`
+- Modify: `internal/web/api.go` (`sessionFromPath`, after the `decodeBody` function)
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `internal/web/routes_test.go`:
+
+```go
+package web
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// echoBody, echoQuery and echoOut are the types of the routes these tests
+// declare for themselves.
+type echoBody struct {
+	Text string `json:"text"`
+}
+
+type echoQuery struct {
+	Name  string `query:"name"`
+	Other string `query:"other"`
+}
+
+type echoOut struct {
+	Text string `json:"text"`
+}
+
+// newRouteLayer is a layer with no model behind it whose log lines the test
+// reads from the returned slice.
+func newRouteLayer() (*Layer, *[]loggedAction) {
+	var got []loggedAction
+	l := &Layer{now: time.Now}
+	l.onAction = func(a actionLog, result string) {
+		got = append(got, loggedAction{device: a.device, name: a.name, session: a.sessionID, result: result})
+	}
+	return l, &got
+}
+
+// serveRoute calls rt as the paired device "phone" with body.
+func serveRoute(rt route, method, target, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	rt.serve(rec, req, "phone")
+	return rec
+}
+
+func TestTyped_AnswersTheHandlersValueWithTheRoutesStatus(t *testing.T) {
+	for _, tc := range []struct {
+		ok   int
+		want string
+	}{
+		{http.StatusOK, "200 ok"},
+		{http.StatusCreated, "201 created"},
+	} {
+		l, got := newRouteLayer()
+		rt := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", log: "echo", client: "echo", ok: tc.ok},
+			func(c *call, _ struct{}) (echoOut, error) { return echoOut{Text: "hi"}, nil })
+
+		rec := serveRoute(rt, http.MethodGet, "/api/v1/echo", "")
+
+		assert.Equal(t, tc.ok, rec.Code)
+		assert.JSONEq(t, `{"text":"hi"}`, rec.Body.String())
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+		assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: tc.want}}, *got)
+	}
+}
+
+func TestTyped_A204AnswersNoBody(t *testing.T) {
+	l, got := newRouteLayer()
+	rt := typed(l, spec{method: http.MethodDelete, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusNoContent},
+		func(c *call, _ struct{}) (struct{}, error) { return struct{}{}, nil })
+
+	rec := serveRoute(rt, http.MethodDelete, "/api/v1/echo", "")
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Empty(t, rec.Body.String())
+	assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: "204 ok"}}, *got)
+}
+
+func TestTyped_RecordsTheTypesTheGeneratorReads(t *testing.T) {
+	l, _ := newRouteLayer()
+	noop := func(c *call, _ struct{}) (echoOut, error) { return echoOut{}, nil }
+
+	none := typed(l, spec{method: http.MethodPost, path: "/a", ok: http.StatusOK}, noop)
+	assert.Nil(t, none.query, "a route that takes neither has no query type")
+	assert.Nil(t, none.body, "and no body type")
+	assert.Equal(t, reflect.TypeFor[echoOut](), none.resp)
+	assert.False(t, none.page)
+
+	query := typed(l, spec{method: http.MethodGet, path: "/b", ok: http.StatusOK},
+		func(c *call, _ echoQuery) (echoOut, error) { return echoOut{}, nil })
+	assert.Equal(t, reflect.TypeFor[echoQuery](), query.query, "a GET's In is its query")
+	assert.Nil(t, query.body)
+
+	body := typed(l, spec{method: http.MethodPut, path: "/c", ok: http.StatusOK},
+		func(c *call, _ echoBody) (echoOut, error) { return echoOut{}, nil })
+	assert.Equal(t, reflect.TypeFor[echoBody](), body.body, "any other method's In is its body")
+	assert.Nil(t, body.query)
+
+	gone := typed(l, spec{method: http.MethodDelete, path: "/d", ok: http.StatusNoContent},
+		func(c *call, _ struct{}) (struct{}, error) { return struct{}{}, nil })
+	assert.Nil(t, gone.resp, "a 204 has no response type")
+}
+
+func TestTyped_AnswersAnErrorWithTheStatusItEarnsAndLogsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		text   string
+		logged string
+	}{
+		{"a status error", &statusError{http.StatusBadRequest, "text: want 1 to 5 bytes"}, http.StatusBadRequest, "text: want 1 to 5 bytes", "400 text: want 1 to 5 bytes"},
+		{"a device the model lost", fmt.Errorf("revoke: %w", core.ErrNoDevice), http.StatusUnauthorized, "revoke: " + core.ErrNoDevice.Error(), "401 revoke: " + core.ErrNoDevice.Error()},
+		{"a daemon that is stopping", core.ErrUnavailable, http.StatusServiceUnavailable, core.ErrUnavailable.Error(), "503 " + core.ErrUnavailable.Error()},
+		{"a refusal of the model", errors.New("cannot pause: not started"), http.StatusConflict, "cannot pause: not started", "409 cannot pause: not started"},
+		{"a request still running", errPending, http.StatusAccepted, "", "202 pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, got := newRouteLayer()
+			rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+				func(c *call, _ struct{}) (echoOut, error) { return echoOut{}, tc.err })
+
+			rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", "")
+
+			assert.Equal(t, tc.status, rec.Code)
+			if tc.status == http.StatusAccepted {
+				assert.JSONEq(t, `{"pending":true}`, rec.Body.String())
+			} else {
+				assert.JSONEq(t, fmt.Sprintf(`{"error":%q}`, tc.text), rec.Body.String())
+			}
+			assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: tc.logged}}, *got)
+		})
+	}
+}
+
+func TestTyped_ARouteThatLogsForItselfIsAnsweredButNotLogged(t *testing.T) {
+	l, got := newRouteLayer()
+	fail := false
+	rt := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", client: "echo", ok: http.StatusOK},
+		func(c *call, _ struct{}) (echoOut, error) {
+			if fail {
+				return echoOut{}, &statusError{http.StatusServiceUnavailable, "push is not available"}
+			}
+			return echoOut{Text: "hi"}, nil
+		})
+
+	assert.Equal(t, http.StatusOK, serveRoute(rt, http.MethodGet, "/api/v1/echo", "").Code)
+	fail = true
+	rec := serveRoute(rt, http.MethodGet, "/api/v1/echo", "")
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.JSONEq(t, `{"error":"push is not available"}`, rec.Body.String())
+	assert.Empty(t, *got, "an empty log name means the handler logs for itself")
+}
+
+func TestTyped_ABodyThatDoesNotDecodeIs400AndNeverReachesTheHandler(t *testing.T) {
+	for _, tc := range []struct{ name, body, text string }{
+		{"not JSON", "not json", "bad request: the body is not the JSON this route takes"},
+		{"empty", "", "bad request: the body is empty"},
+		{"a field the route does not take", `{"text":"x","extra":1}`, "bad request: the body is not the JSON this route takes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, got := newRouteLayer()
+			called := false
+			rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+				func(c *call, in echoBody) (echoOut, error) {
+					called = true
+					return echoOut{Text: in.Text}, nil
+				})
+
+			rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", tc.body)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.text)
+			assert.False(t, called)
+			require.Len(t, *got, 1)
+			assert.True(t, strings.HasPrefix((*got)[0].result, "400 bad request: "), (*got)[0].result)
+		})
+	}
+}
+
+func TestTyped_ABodyThatDecodesReachesTheHandlerAndAGETReadsItsQuery(t *testing.T) {
+	l, _ := newRouteLayer()
+	post := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoBody) (echoOut, error) { return echoOut{Text: in.Text}, nil })
+	rec := serveRoute(post, http.MethodPost, "/api/v1/echo", `{"text":"hello"}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"text":"hello"}`, rec.Body.String())
+
+	get := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoQuery) (echoOut, error) { return echoOut{Text: in.Name + "/" + in.Other}, nil })
+	rec = serveRoute(get, http.MethodGet, "/api/v1/echo?name=a&other=b&extra=z", "")
+	assert.JSONEq(t, `{"text":"a/b"}`, rec.Body.String())
+}
+
+func TestTyped_ARouteThatTakesNeitherDecodesNothing(t *testing.T) {
+	l, _ := newRouteLayer()
+	rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, _ struct{}) (echoOut, error) { return echoOut{Text: "ran"}, nil })
+
+	rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", "garbage that is no JSON")
+
+	assert.Equal(t, http.StatusOK, rec.Code, "a body is not read for a route that takes none")
+	assert.JSONEq(t, `{"text":"ran"}`, rec.Body.String())
+}
+
+func TestTyped_AnIDPathIsResolvedBeforeItsBodyIsDecoded(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+	idle := env.ids["idle"]
+	ran := 0
+	rt := typed(env.layer, spec{method: http.MethodPost, path: "/api/v1/sessions/{id}/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoBody) (echoOut, error) {
+			ran++
+			return echoOut{Text: in.Text}, nil
+		})
+	serve := func(id, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/"+id+"/echo", strings.NewReader(body))
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		rt.serve(rec, req, "phone")
+		return rec
+	}
+
+	rec := serve("999999", "not json")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the session's 404 comes before the body's 400")
+	assert.JSONEq(t, `{"error":"no such session"}`, rec.Body.String())
+
+	rec = serve(strconv.FormatUint(uint64(idle), 10), "not json")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	rec = serve(strconv.FormatUint(uint64(idle), 10), `{"text":"hi"}`)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, ran, "the handler ran for the one request that named a session and sent a body")
+
+	got := env.logged()
+	require.Len(t, got, 3)
+	assert.Equal(t, loggedAction{device: "phone", name: "echo", session: 0, result: "404 no such session"}, got[0])
+	assert.Equal(t, idle, got[1].session, "the 400 is logged with the session")
+	assert.True(t, strings.HasPrefix(got[1].result, "400 bad request: "), got[1].result)
+	assert.Equal(t, loggedAction{device: "phone", name: "echo", session: idle, result: "200 ok"}, got[2])
+}
+
+func TestPage_MountsItsHandlerAsItIsAndTakesNoTypes(t *testing.T) {
+	l, _ := newRouteLayer()
+	var gotDevice string
+	rt := page(l, spec{method: http.MethodGet, path: "/api/v1/page", log: "page", client: "page", ok: http.StatusOK},
+		func(w http.ResponseWriter, r *http.Request, device string) {
+			gotDevice = device
+			_, _ = w.Write([]byte("<p>"))
+		})
+
+	rec := serveRoute(rt, http.MethodGet, "/api/v1/page", "")
+
+	assert.True(t, rt.page)
+	assert.Nil(t, rt.resp)
+	assert.Nil(t, rt.query)
+	assert.Nil(t, rt.body)
+	assert.Equal(t, "phone", gotDevice)
+	assert.Equal(t, "<p>", rec.Body.String(), "nothing wraps the handler's own answer")
+}
+
+func TestReadQuery_SetsEachTaggedStringAndIgnoresTheRest(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/x?name=a%20b&other=&unknown=z", nil)
+	q := echoQuery{Other: "stale"}
+
+	readQuery(r, &q)
+
+	assert.Equal(t, echoQuery{Name: "a b", Other: ""}, q, "a parameter that is present sets its field, an absent or empty one clears it")
+
+	var untouched struct {
+		Name string `query:"name"`
+		Free string
+	}
+	untouched.Free = "kept"
+	readQuery(r, &untouched)
+	assert.Equal(t, "a b", untouched.Name)
+	assert.Equal(t, "kept", untouched.Free, "a field with no query tag is not set")
+}
+
+func TestStatusError_IsAnErrorWithItsText(t *testing.T) {
+	var err error = &statusError{http.StatusNotFound, "no such session"}
+
+	assert.EqualError(t, err, "no such session")
+	var se *statusError
+	require.ErrorAs(t, fmt.Errorf("wrapped: %w", err), &se)
+	assert.Equal(t, http.StatusNotFound, se.status)
+}
+
+func TestCall_SessionIsResolvedOnceAndAnswersTheSameTwice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	id := env.ids["one"]
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.SetPathValue("id", strconv.FormatUint(uint64(id), 10))
+	c := &call{l: env.layer, r: req}
+
+	got, err := c.session()
+	require.NoError(t, err)
+	assert.Equal(t, id, got)
+	assert.Equal(t, id, c.a.sessionID, "the log line names the session")
+
+	req.SetPathValue("id", "999999")
+	again, err := c.session()
+	require.NoError(t, err)
+	assert.Equal(t, id, again, "a second call returns the first one's answer")
+}
+
+func TestCall_SessionRefusesAPathThatNamesNoSessionWith404(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	for _, bad := range []string{"999999", "0", "x", "-1", "9007199254740992", ""} {
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.SetPathValue("id", bad)
+		c := &call{l: env.layer, r: req}
+
+		_, err := c.session()
+
+		var se *statusError
+		require.ErrorAs(t, err, &se, "id %q", bad)
+		assert.Equal(t, http.StatusNotFound, se.status, bad)
+		assert.Equal(t, "no such session", se.msg, bad)
+		assert.Zero(t, c.a.sessionID, bad)
+		_, again := c.session()
+		assert.Equal(t, err, again, "a refusal is answered the same the second time: %q", bad)
+	}
+}
+
+func TestCall_SetActionReplacesTheLogLinesAction(t *testing.T) {
+	c := &call{a: actionLog{device: "phone", name: "job_control"}}
+
+	c.setAction("job_park")
+
+	assert.Equal(t, "job_park", c.a.name)
+	assert.Equal(t, "phone", c.a.device)
+}
+
+func TestCall_NoticeCollectsTheNoticesRaisedBeforeTheRequestInOrder(t *testing.T) {
+	c := &call{}
+
+	c.notice(noticeJSON{Text: "first"})
+	c.notice(noticeJSON{Text: "second"})
+
+	require.Len(t, c.pre, 2)
+	assert.Equal(t, "first", c.pre[0].Text)
+	assert.Equal(t, "second", c.pre[1].Text)
+}
+```
+
+Fails without: `TestTyped_AnswersTheHandlersValueWithTheRoutesStatus`: the adapter answering `http.StatusOK` whatever `s.ok` says, or logging `"ok"` for a 201. `TestTyped_A204AnswersNoBody`: writing the JSON of `Out` for a 204. `TestTyped_RecordsTheTypesTheGeneratorReads`: choosing the body type for a GET or the query type for a POST, or setting `resp` for a 204. `TestTyped_AnswersAnErrorWithTheStatusItEarnsAndLogsIt`: `errStatus` ignoring `modelStatus` (every non-status error 500), or `errPending` falling through to 409. `TestTyped_ARouteThatLogsForItselfIsAnsweredButNotLogged`: calling `l.record` when `s.log` is `""`. `TestTyped_ABodyThatDoesNotDecodeIs400AndNeverReachesTheHandler`: calling the handler with a zero `In` after a failed decode, or answering the bare error without `"bad request: "`. `TestTyped_ABodyThatDecodesReachesTheHandlerAndAGETReadsItsQuery`: skipping `readQuery` for a GET or `readJSON` for a body. `TestTyped_ARouteThatTakesNeitherDecodesNothing`: decoding a body when `In` is `struct{}`. `TestTyped_AnIDPathIsResolvedBeforeItsBodyIsDecoded`: decoding before `c.session()` (the unknown session then answers 400, and the known one logs session 0). `TestPage_MountsItsHandlerAsItIsAndTakesNoTypes`: `page` wrapping the handler or setting `resp`. `TestReadQuery_SetsEachTaggedStringAndIgnoresTheRest`: `readQuery` setting a field that has no tag, or leaving a stale value when the parameter is absent. `TestStatusError_IsAnErrorWithItsText`: no `Error` method (the file does not compile). `TestCall_SessionIsResolvedOnceAndAnswersTheSameTwice`: `session` asking the path again. `TestCall_SessionRefusesAPathThatNamesNoSessionWith404`: accepting `0`, a negative or an over-2^53 ID, or leaving `sessionID` set on a refusal. `TestCall_SetActionReplacesTheLogLinesAction` and `TestCall_NoticeCollectsTheNoticesRaisedBeforeTheRequestInOrder`: the methods being absent or replacing instead of appending.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestTyped_|TestPage_|TestReadQuery_|TestStatusError_|TestCall_'`
+
+Expected: the package does not build, `internal/web/routes_test.go: undefined: typed` (and `undefined: call`, `undefined: spec`, `undefined: page`, `undefined: readQuery`), then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/api.go`, replace `sessionFromPath`, which today reads
+
+```go
+// sessionFromPath is the session the path names, answered 404 when the path
+// holds no decimal ID the model serves.
+func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a actionLog) (core.InstanceID, bool) {
+	n, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err == nil && n != 0 && n <= maxIDValue {
+		if _, ok := l.client.View(core.InstanceID(n)); ok {
+			return core.InstanceID(n), true
+		}
+	}
+	l.refuse(w, a, http.StatusNotFound, "no such session")
+	return 0, false
+}
+```
+
+with the lookup split out, so `call.session` shares it:
+
+```go
+// pathSession is the session the path names: a decimal ID the model serves.
+func (l *Layer) pathSession(r *http.Request) (core.InstanceID, bool) {
+	n, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err == nil && n != 0 && n <= maxIDValue {
+		if _, ok := l.client.View(core.InstanceID(n)); ok {
+			return core.InstanceID(n), true
+		}
+	}
+	return 0, false
+}
+
+// sessionFromPath is the session the path names, answered 404 when the path
+// holds no decimal ID the model serves.
+func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a actionLog) (core.InstanceID, bool) {
+	if id, ok := l.pathSession(r); ok {
+		return id, true
+	}
+	l.refuse(w, a, http.StatusNotFound, "no such session")
+	return 0, false
+}
+```
+
+Create `internal/web/routes.go`:
+
+```go
+package web
+
+import (
+	"errors"
+	"net/http"
+	"reflect"
+	"strings"
+
+	"github.com/aidan-bailey/loom/core"
+)
+
+// The route table. Every JSON route under /api/v1 is declared once, as a
+// route: its method and path, whether it is open, the action its log line
+// names, the generated client's name for it, its success status, its
+// documentation, the types of its query, body and answer, and the handler.
+// Registration (registerRoutes) wraps every route that is not open in
+// authed, so a route cannot be added without it, and the generator reads the
+// same table for the app's types.
+
+// spec is what one table entry declares.
+type spec struct {
+	method string // "GET", "POST", "PUT" or "DELETE"
+	path   string // the ServeMux pattern's path
+	open   bool   // served without authed: only POST /api/v1/pair
+	log    string // the action its log line names, "" when the handler logs for itself
+	client string // the generated TS function's name, lowerCamelCase, unique in the table
+	ok     int    // the success status: 200, 201 or 204
+	doc    string // what the route does and refuses, limits included, in one to three sentences
+}
+
+// route is one entry of the table.
+type route struct {
+	spec  spec
+	query reflect.Type // the decoded query's type, nil for none
+	body  reflect.Type // the decoded body's type, nil for none
+	resp  reflect.Type // the success body's type, nil for a 204 or a page route
+	page  bool         // an HTML page the generated client only builds the URL of
+	serve deviceHandler
+}
+
+// errPending is act's and actCreated's "still running" outcome: the wait ran
+// out, and the request's outcome follows on the device's stream.
+var errPending = errors.New("the request is still running")
+
+// pendingJSON is the 202 body.
+type pendingJSON struct {
+	Pending bool `json:"pending"`
+}
+
+// Error makes a refusal that knows its status an error, so a typed handler
+// returns it and the adapter answers its status and text.
+func (e *statusError) Error() string { return e.msg }
+
+// errStatus is the HTTP status err earns and the text it answers: a
+// statusError's own, otherwise the status modelStatus gives and err's text.
+func errStatus(err error) (int, string) {
+	var se *statusError
+	if errors.As(err, &se) {
+		return se.status, se.msg
+	}
+	return modelStatus(err), err.Error()
+}
+
+// call is a typed handler's request.
+type call struct {
+	l      *Layer
+	w      http.ResponseWriter // for headers and cookies only: the adapter writes the body
+	r      *http.Request
+	device string // the paired device's name, "" on an open route
+	a      actionLog
+
+	// pre holds the notices raised before the request (notice).
+	pre []noticeJSON
+
+	// id and idErr are session's answer, once idKnown.
+	id      core.InstanceID
+	idErr   error
+	idKnown bool
+}
+
+// session is the session {id} names, setting the log line's session: a
+// *statusError 404 "no such session" when the path holds no decimal ID the
+// model serves. A second call returns the first one's answer.
+func (c *call) session() (core.InstanceID, error) {
+	if !c.idKnown {
+		c.idKnown = true
+		if id, ok := c.l.pathSession(c.r); ok {
+			c.id = id
+			c.a.sessionID = id
+		} else {
+			c.idErr = &statusError{http.StatusNotFound, "no such session"}
+		}
+	}
+	return c.id, c.idErr
+}
+
+// setAction replaces the log line's action, for a route whose action
+// depends on the path.
+func (c *call) setAction(name string) { c.a.name = name }
+
+// notice adds a notice raised before the request (create's launch-account
+// notice), which act and actCreated put ahead of the Reply's.
+func (c *call) notice(n noticeJSON) { c.pre = append(c.pre, n) }
+
+// typed is a JSON route. A path holding {id} has its session resolved first,
+// answering its 404 before any decode and putting the session on the log
+// line, as the handlers did when each resolved its own. In is struct{} when
+// the route takes neither query nor body; otherwise a GET reads its query
+// into In (readQuery) and any other method decodes its body (readJSON, a
+// failure being 400). The handler's value is answered with the route's
+// status; errPending as 202; a *statusError with its status and text; any
+// other error with the status modelStatus gives it. Every answer is logged
+// unless the route's log name is empty.
+func typed[In, Out any](l *Layer, s spec, h func(c *call, in In) (Out, error)) route {
+	rt := route{spec: s}
+	if t := reflect.TypeFor[In](); t != reflect.TypeFor[struct{}]() {
+		if s.method == http.MethodGet {
+			rt.query = t
+		} else {
+			rt.body = t
+		}
+	}
+	if s.ok != http.StatusNoContent {
+		rt.resp = reflect.TypeFor[Out]()
+	}
+	rt.serve = func(w http.ResponseWriter, r *http.Request, device string) {
+		c := &call{l: l, w: w, r: r, device: device, a: actionLog{device: device, name: s.log}}
+		logged := s.log != ""
+		refuse := func(status int, msg string) {
+			if logged {
+				l.refuse(w, c.a, status, msg)
+				return
+			}
+			writeError(w, status, msg)
+		}
+		fail := func(err error) {
+			if errors.Is(err, errPending) {
+				if logged {
+					l.record(c.a, http.StatusAccepted, "pending")
+				}
+				writeJSON(w, http.StatusAccepted, pendingJSON{Pending: true})
+				return
+			}
+			status, msg := errStatus(err)
+			refuse(status, msg)
+		}
+		if strings.Contains(s.path, "{id}") {
+			if _, err := c.session(); err != nil {
+				fail(err)
+				return
+			}
+		}
+		var in In
+		switch {
+		case rt.query != nil:
+			readQuery(r, &in)
+		case rt.body != nil:
+			if err := readJSON(r, &in); err != nil {
+				refuse(http.StatusBadRequest, "bad request: "+err.Error())
+				return
+			}
+		}
+		out, err := h(c, in)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if logged {
+			what := "ok"
+			if s.ok == http.StatusCreated {
+				what = "created"
+			}
+			l.record(c.a, s.ok, what)
+		}
+		if s.ok == http.StatusNoContent {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, s.ok, out)
+	}
+	return rt
+}
+
+// page is a hand-served route: an HTML page the generated client only builds
+// the URL of. Its handler answers for itself, in the page's own failures.
+func page(_ *Layer, s spec, h deviceHandler) route {
+	return route{spec: s, page: true, serve: h}
+}
+
+// readQuery sets each string field of the struct v points to from the query
+// parameter its `query:"<name>"` tag names; a parameter with no field is
+// ignored, and a field whose parameter is absent is set empty. A query type
+// holds only string fields: TestRoutes_QueryTypesHoldOnlyStrings checks every
+// entry of the table.
+func readQuery(r *http.Request, v any) {
+	rv := reflect.ValueOf(v).Elem()
+	values := r.URL.Query()
+	for i := range rv.NumField() {
+		name, ok := rv.Type().Field(i).Tag.Lookup("query")
+		if !ok || rv.Field(i).Kind() != reflect.String {
+			continue
+		}
+		rv.Field(i).SetString(values.Get(name))
+	}
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestTyped_|TestPage_|TestReadQuery_|TestStatusError_|TestCall_'`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`.
+
+Then the story gates: `bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'` (it prints nothing), `CGO_ENABLED=0 go vet ./...`, `CGO_ENABLED=0 go test ./internal/web/`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/routes.go internal/web/routes_test.go
+git commit -m "feat(web): the route table's types, call and the typed-handler adapter" -- internal/web/routes.go internal/web/routes_test.go internal/web/api.go
+```
+
+### Task 1.2: `settle`, `readReply`, and `call`'s requests
+
+**Files:**
+- Modify: `internal/web/api.go` (`writeOutcome`, from `// writeOutcome answers an action`)
+- Modify: `internal/web/reads.go` (imports; `readAnswering`)
+- Modify: `internal/web/routes.go` (imports; after `notice`)
+- Test: `internal/web/routes_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/web/routes_test.go`:
+
+```go
+// replyWith is a send that answers its request at once with the events evs
+// makes, as the drain would, so the wait that follows returns.
+func replyWith(l *Layer, evs func(req core.ReqID) []core.Event) func(core.ReqID) {
+	return func(req core.ReqID) { l.reqs.apply(evs(req)) }
+}
+
+// newActCall is a call as the adapter makes one for the device "phone".
+func newActCall(env *apiEnv) *call {
+	return &call{l: env.layer, r: httptest.NewRequest(http.MethodPost, "/x", nil), device: "phone", a: actionLog{device: "phone", name: "pause"}}
+}
+
+// lateTexts records what goes to the device's stream, and returns the
+// recorded texts.
+func lateTexts(env *apiEnv) func() []string {
+	var texts []string
+	env.layer.reqs.setLate(func(device string, n noticeJSON) { texts = append(texts, device+": "+n.Text) })
+	return func() []string { return texts }
+}
+
+func TestSettle_AWaitThatRanOutIsPendingAndStreamsTheNoticesItWasGiven(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+
+	notes, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: "x", At: time.Now()}}, false)
+
+	require.ErrorIs(t, err, errPending)
+	assert.Nil(t, notes)
+	_, snap := env.openStream()
+	assert.Empty(t, snap.Notices, "the notices of a request still running are not among the hub's recent ones: they follow on the stream")
+	assert.Equal(t, []string{"phone: x"}, late(), "the notices raised before a request that goes pending are not lost: they go to the device's stream")
+}
+
+func TestSettle_AnOutcomeThatWorkedKeepsItsNoticesAndNeverReturnsNil(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	none, err := env.layer.settle("phone", core.Reply{}, nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, []noticeJSON{}, none, "an empty list, not null, so the body is {\"notices\":[]}")
+
+	notes, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: "kept the stash abc123", At: time.Now()}}, true)
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 1, "kept among the recent notices the snapshot carries")
+	assert.Equal(t, "kept the stash abc123", snap.Notices[0].Text)
+}
+
+func TestSettle_ARefusalIsTheRepliesErrorAfterTheOtherNoticesGoToTheStream(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+	refusal := errors.New("cannot pause: not started")
+
+	notes, err := env.layer.settle("phone", core.Reply{Err: refusal},
+		[]noticeJSON{{Text: "stash kept"}, {Text: refusal.Error()}}, true)
+
+	require.ErrorIs(t, err, refusal)
+	assert.Nil(t, notes)
+	assert.Equal(t, []string{"phone: stash kept"}, late(), "the notice that repeats the error is dropped, the others go to the device")
+	_, snap := env.openStream()
+	assert.Empty(t, snap.Notices, "a refusal's notices are not kept")
+}
+
+func TestCall_ActListsTheNoticesRaisedBeforeTheRequestFirstAndKeepsThemAll(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "moved off a removed account", At: time.Now()})
+
+	out, err := c.act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Notice{Req: req, Info: "stash kept"}, core.Reply{Req: req}}
+	}))
+
+	require.NoError(t, err)
+	require.Len(t, out.Notices, 2)
+	assert.Equal(t, "moved off a removed account", out.Notices[0].Text)
+	assert.Equal(t, "stash kept", out.Notices[1].Text)
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 2, "the notice raised before is kept with the Reply's")
+}
+
+func TestCall_ActWithNoNoticesAnswersAnEmptyList(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	out, err := newActCall(env).act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, noticesJSON{Notices: []noticeJSON{}}, out)
+}
+
+func TestCall_ActStreamsTheNoticesOfARefusalWithTheOnesRaisedBeforeAndReturnsItsError(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "moved off a removed account"})
+	refusal := errors.New("cannot pause: not started")
+
+	_, err := c.act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Notice{Req: req, Info: "stash kept"}, core.Reply{Req: req, Err: refusal}}
+	}))
+
+	require.ErrorIs(t, err, refusal)
+	assert.Equal(t, []string{"phone: moved off a removed account", "phone: stash kept"}, late())
+}
+
+func TestCall_ActIsPendingWhenTheWaitRunsOut(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	env.layer.reqs.timeout = 50 * time.Millisecond
+
+	_, err := newActCall(env).act(func(core.ReqID) {})
+
+	assert.ErrorIs(t, err, errPending)
+}
+
+func TestCall_ActCreatedAnswersTheNewSessionsIDAndLogsIt(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	c := newActCall(env)
+
+	out, err := c.actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 7}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, createdJSON{ID: 7, Notices: []noticeJSON{}}, out)
+	assert.Equal(t, core.InstanceID(7), c.a.sessionID, "the log line names the session the create made")
+
+	_, err = newActCall(env).actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, Err: errors.New("no room")}}
+	}))
+	assert.EqualError(t, err, "no room")
+}
+
+func TestCall_ReadAnswersTheReplyAndStopsTrackingTheRequest(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	tracked := func() int {
+		env.layer.reqs.mu.Lock()
+		defer env.layer.reqs.mu.Unlock()
+		return len(env.layer.reqs.entries)
+	}
+	before := tracked()
+
+	reply, err := newActCall(env).read(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 5}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, core.InstanceID(5), reply.ID)
+	assert.Equal(t, before, tracked(), "a read's Reply carries its data, so the request is dropped once answered")
+}
+
+func TestCall_ReadReturnsTheModelsErrorAndA504WhenTheWaitRunsOut(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	refusal := errors.New("no such job")
+
+	_, err := newActCall(env).read(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, Err: refusal}}
+	}))
+	assert.Equal(t, refusal, err, "the model's own error, for the adapter to map to 409")
+
+	env.layer.reqs.timeout = 50 * time.Millisecond
+	_, err = newActCall(env).read(func(core.ReqID) {})
+	var se *statusError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, http.StatusGatewayTimeout, se.status)
+	assert.Equal(t, "loom did not answer in time", se.msg)
+}
+```
+
+Fails without: `TestSettle_AWaitThatRanOutIsPendingAndStreamsTheNoticesItWasGiven`: `settle` returning `errPending` without sending the notices to the device's stream (they are dropped), or keeping them among the hub's recent ones. `TestSettle_AnOutcomeThatWorkedKeepsItsNoticesAndNeverReturnsNil`: dropping `l.keepNotices(notes)` or returning `notes` without `nonNil`. `TestSettle_ARefusalIsTheRepliesErrorAfterTheOtherNoticesGoToTheStream`: streaming the notice that equals the error's text, or keeping a refusal's notices. `TestCall_ActListsTheNoticesRaisedBeforeTheRequestFirstAndKeepsThemAll`: `request` leaving `c.pre` out of the notes (one notice back) or appending it after the Reply's. `TestCall_ActWithNoNoticesAnswersAnEmptyList`: `act` answering `Notices: nil`. `TestCall_ActStreamsTheNoticesOfARefusalWithTheOnesRaisedBeforeAndReturnsItsError`: `c.pre` not passed to `settle`. `TestCall_ActIsPendingWhenTheWaitRunsOut`: `act` turning a wait that ran out into an empty success. `TestCall_ActCreatedAnswersTheNewSessionsIDAndLogsIt`: `actCreated` not setting `c.a.sessionID` or dropping `reply.ID`. `TestCall_ReadAnswersTheReplyAndStopsTrackingTheRequest`: no `drop` in `readReply`. `TestCall_ReadReturnsTheModelsErrorAndA504WhenTheWaitRunsOut`: mapping the wait running out to the model's 409.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestSettle_|TestCall_Act|TestCall_Read'`
+
+Expected: build failure, `internal/web/routes_test.go: env.layer.settle undefined`, `c.act undefined (type *call has no field or method act)`, `c.actCreated undefined`, `c.read undefined`, then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/api.go`, replace the body of `writeOutcome` (its doc comment stays), which today reads
+
+```go
+func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
+	switch {
+	case !done:
+		l.record(a, http.StatusAccepted, "pending")
+		writeJSON(w, http.StatusAccepted, map[string]bool{"pending": true})
+	case reply.Err != nil:
+		text := reply.Err.Error()
+		for _, n := range notes {
+			if n.Text != text {
+				l.reqs.stream(a.device, n)
+			}
+		}
+		status := modelStatus(reply.Err)
+		l.refuse(w, a, status, text)
+	case created:
+		l.keepNotices(notes)
+		a.sessionID = reply.ID
+		l.record(a, http.StatusCreated, "created")
+		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: nonNil(notes)})
+	default:
+		l.keepNotices(notes)
+		l.record(a, http.StatusOK, "ok")
+		writeJSON(w, http.StatusOK, noticesJSON{Notices: nonNil(notes)})
+	}
+}
+```
+
+with the outcome rule extracted into `settle` (insert it directly above the `// writeOutcome answers an action from how its request ended.` comment) and `writeOutcome` answering from it:
+
+```go
+// settle is the outcome rule of an action's request, which act, actCreated
+// and writeOutcome share: not done is errPending (the outcome follows on the
+// device's stream), after the notices it was given, which are those raised
+// before the request, go to the device's stream; a Reply error is returned,
+// after the notices beside it that do not repeat it go to the device's
+// stream; otherwise the notices are kept among the hub's recent ones and
+// returned, never nil.
+func (l *Layer) settle(device string, reply core.Reply, notes []noticeJSON, done bool) ([]noticeJSON, error) {
+	switch {
+	case !done:
+		for _, n := range notes {
+			l.reqs.stream(device, n)
+		}
+		return nil, errPending
+	case reply.Err != nil:
+		text := reply.Err.Error()
+		for _, n := range notes {
+			if n.Text != text {
+				l.reqs.stream(device, n)
+			}
+		}
+		return nil, reply.Err
+	}
+	l.keepNotices(notes)
+	return nonNil(notes), nil
+}
+```
+
+```go
+func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
+	notes, err := l.settle(a.device, reply, notes, done)
+	switch {
+	case errors.Is(err, errPending):
+		l.record(a, http.StatusAccepted, "pending")
+		writeJSON(w, http.StatusAccepted, pendingJSON{Pending: true})
+	case err != nil:
+		l.refuse(w, a, modelStatus(err), err.Error())
+	case created:
+		a.sessionID = reply.ID
+		l.record(a, http.StatusCreated, "created")
+		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: notes})
+	default:
+		l.record(a, http.StatusOK, "ok")
+		writeJSON(w, http.StatusOK, noticesJSON{Notices: notes})
+	}
+}
+```
+
+In `internal/web/reads.go`, add `"context"` to the import block (before `"errors"`), and replace `readAnswering`, which today reads
+
+```go
+func (l *Layer) readAnswering(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID), fail func(http.ResponseWriter, actionLog, int, string)) (core.Reply, bool) {
+	req := l.reqs.next()
+	defer l.reqs.drop(req)
+	send(req)
+	reply, _, done := l.reqs.wait(r.Context(), req, a.device)
+	switch {
+	case !done:
+		fail(w, a, http.StatusGatewayTimeout, "loom did not answer in time")
+	case reply.Err != nil:
+		fail(w, a, modelStatus(reply.Err), reply.Err.Error())
+	default:
+		return reply, true
+	}
+	return core.Reply{}, false
+}
+```
+
+with the wait split out into `readReply`, so `call.read` shares it:
+
+```go
+func (l *Layer) readAnswering(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID), fail func(http.ResponseWriter, actionLog, int, string)) (core.Reply, bool) {
+	reply, err := l.readReply(r.Context(), a.device, send)
+	if err != nil {
+		status, msg := errStatus(err)
+		fail(w, a, status, msg)
+		return core.Reply{}, false
+	}
+	return reply, true
+}
+
+// readReply makes the read request send names, waits for its Reply and stops
+// tracking the request (reqs.drop). Its error is the model's own, or a
+// *statusError 504 when replyWait ran out.
+func (l *Layer) readReply(ctx context.Context, device string, send func(req core.ReqID)) (core.Reply, error) {
+	req := l.reqs.next()
+	defer l.reqs.drop(req)
+	send(req)
+	reply, _, done := l.reqs.wait(ctx, req, device)
+	switch {
+	case !done:
+		return core.Reply{}, &statusError{http.StatusGatewayTimeout, "loom did not answer in time"}
+	case reply.Err != nil:
+		return core.Reply{}, reply.Err
+	}
+	return reply, nil
+}
+```
+
+In `internal/web/routes.go`, add `"slices"` to the import block (between `"reflect"` and `"strings"`), and add after `notice`:
+
+```go
+// request makes the request send names with the layer's next request ID,
+// waits for it, and settles it with the notices raised before it (c.notice)
+// ahead of the Reply's.
+func (c *call) request(send func(req core.ReqID)) ([]noticeJSON, core.Reply, error) {
+	req := c.l.reqs.next()
+	send(req)
+	reply, notes, done := c.l.reqs.wait(c.r.Context(), req, c.device)
+	notes, err := c.l.settle(c.device, reply, slices.Concat(c.pre, notes), done)
+	return notes, reply, err
+}
+
+// act is doAction's request and wait: the notices on success (kept among the
+// hub's recent ones), errPending when the wait runs out (the notices raised
+// before the request go to the device's stream), and the Reply's error
+// otherwise, its other notices sent to the device's stream.
+func (c *call) act(send func(req core.ReqID)) (noticesJSON, error) {
+	notes, _, err := c.request(send)
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	return noticesJSON{Notices: notes}, nil
+}
+
+// actCreated is act for a create: the answer names the new session, which
+// the log line carries too.
+func (c *call) actCreated(send func(req core.ReqID)) (createdJSON, error) {
+	notes, reply, err := c.request(send)
+	if err != nil {
+		return createdJSON{}, err
+	}
+	c.a.sessionID = reply.ID
+	return createdJSON{ID: reply.ID, Notices: notes}, nil
+}
+
+// read is readReply's wait for a typed read route: the Reply, untracked once
+// answered, or the model's error, or a *statusError 504 when replyWait ran
+// out.
+func (c *call) read(send func(req core.ReqID)) (core.Reply, error) {
+	return c.l.readReply(c.r.Context(), c.device, send)
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`: the new tests, and every existing route test, `TestAPI_ACreatesNoticesAreKeptToo`, `TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder` and the mockup tests included, which still go through `writeOutcome` and `readAnswering`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): settle and readReply carry the outcome and read rules the table's calls share" -- internal/web/api.go internal/web/reads.go internal/web/routes.go internal/web/routes_test.go
+```
+
+### Task 1.3: The table, its registration, and the lifecycle routes on it
+
+**Files:**
+- Modify: `internal/web/routes.go` (imports; after `readQuery`)
+- Modify: `internal/web/api.go` (`routeAPI`; `sessionOp`, `sendReply`, `mergeInto`)
+- Modify: `internal/web/web.go:90-97`
+- Test: `internal/web/routes_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/web/routes_test.go`:
+
+```go
+// intQuery and untaggedQuery are query types readQuery cannot fill.
+type intQuery struct {
+	N int `query:"n"`
+}
+
+type untaggedQuery struct {
+	S string
+}
+
+// concretePath is a route's path with a value in each of its path values.
+func concretePath(path string) string {
+	return strings.NewReplacer("{id}", "1", "{ask}", "a", "{job}", "1", "{action}", "pause").Replace(path)
+}
+
+func TestRoutes_OnlyPairIsOpen(t *testing.T) {
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		if rt.spec.open {
+			assert.Equal(t, "POST /api/v1/pair", key, "an open route is served to anyone: only the pairing route may be")
+		}
+	}
+}
+
+func TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice(t *testing.T) {
+	host := &scriptedHost{}
+	l := &Layer{host: host}
+	m := http.NewServeMux()
+	l.registerRoutes(m)
+	cookies := []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"no cookie", nil},
+		{"a token no device holds", &http.Cookie{Name: cookieName, Value: deviceToken(9)}},
+	}
+	closed := 0
+	for _, rt := range l.routes() {
+		if rt.spec.open {
+			continue
+		}
+		closed++
+		for _, tc := range cookies {
+			req := httptest.NewRequest(rt.spec.method, concretePath(rt.spec.path), strings.NewReader(`{}`))
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			rec := httptest.NewRecorder()
+
+			// The layer has no client, so a route that is not behind authed
+			// panics on it: report that as this route's failure, not as the
+			// end of the test binary.
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						t.Errorf("%s %s with %s ran without a paired device and panicked: %v", rt.spec.method, rt.spec.path, tc.name, p)
+					}
+				}()
+				m.ServeHTTP(rec, req)
+				assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s %s with %s", rt.spec.method, rt.spec.path, tc.name)
+			}()
+		}
+	}
+	assert.NotZero(t, closed)
+	assert.Empty(t, host.touched, "no device was touched: no route ran")
+}
+
+// queryTypeProblem says what is wrong with t as a route's query type, "" when
+// nothing is: readQuery fills only string fields that carry a query tag.
+func queryTypeProblem(t reflect.Type) string {
+	if t.Kind() != reflect.Struct {
+		return "not a struct"
+	}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.Type.Kind() != reflect.String {
+			return f.Name + " is not a string"
+		}
+		if f.Tag.Get("query") == "" {
+			return f.Name + " has no query tag"
+		}
+	}
+	return ""
+}
+
+func TestRoutes_QueryTypesHoldOnlyStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  reflect.Type
+		want string
+	}{
+		{"strings with tags", reflect.TypeFor[echoQuery](), ""},
+		{"an int", reflect.TypeFor[intQuery](), "N is not a string"},
+		{"no tag", reflect.TypeFor[untaggedQuery](), "S has no query tag"},
+		{"a pointer", reflect.TypeFor[*echoQuery](), "not a struct"},
+	} {
+		assert.Equal(t, tc.want, queryTypeProblem(tc.typ), tc.name)
+	}
+
+	for _, rt := range (&Layer{}).routes() {
+		if rt.query != nil {
+			assert.Empty(t, queryTypeProblem(rt.query), "%s %s", rt.spec.method, rt.spec.path)
+		}
+	}
+}
+
+// clientProblems are the faults in the routes' client names: empty, not
+// lowerCamelCase, or used twice.
+func clientProblems(rs []route) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, rt := range rs {
+		c := rt.spec.client
+		switch {
+		case c == "":
+			out = append(out, rt.spec.method+" "+rt.spec.path+": no client name")
+		case c[:1] != strings.ToLower(c[:1]):
+			out = append(out, c+": not lowerCamelCase")
+		case seen[c]:
+			out = append(out, c+": used twice")
+		}
+		seen[c] = true
+	}
+	return out
+}
+
+func TestRoutes_ClientNamesAreUnique(t *testing.T) {
+	named := func(names ...string) []route {
+		var rs []route
+		for _, n := range names {
+			rs = append(rs, route{spec: spec{method: http.MethodGet, path: "/" + n, client: n}})
+		}
+		return rs
+	}
+	assert.Empty(t, clientProblems(named("send", "merge")))
+	assert.Equal(t, []string{"GET /: no client name"}, clientProblems(named("")))
+	assert.Equal(t, []string{"Send: not lowerCamelCase"}, clientProblems(named("Send")))
+	assert.Equal(t, []string{"send: used twice"}, clientProblems(named("send", "send")))
+
+	assert.Empty(t, clientProblems((&Layer{}).routes()))
+}
+
+func TestRoutes_EveryRouteHasADoc(t *testing.T) {
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		assert.NotEmpty(t, rt.spec.doc, key)
+		assert.True(t, strings.HasSuffix(rt.spec.doc, "."), "%s: a doc is sentences: %q", key, rt.spec.doc)
+		assert.LessOrEqual(t, len(rt.spec.doc), 700, "%s: a doc is one to three sentences", key)
+	}
+}
+```
+
+Fails without: `TestRoutes_OnlyPairIsOpen`: `open: true` on any lifecycle entry. `TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice`: `registerRoutes` mounting `rt.serve` without `l.authed` (a route with no `{id}` runs and answers 400, 404 or 409, not 401, and a `{id}` route panics on the layer's nil client, which the `recover` reports as that route's failure instead of aborting the test binary); `TestRoutes_QueryTypesHoldOnlyStrings`: `queryTypeProblem` accepting a non-string field or an untagged one (the detection rows). `TestRoutes_ClientNamesAreUnique`: `clientProblems` missing an empty, capitalised or repeated name (the detection rows), and a table entry that repeats a client name. `TestRoutes_EveryRouteHasADoc`: an entry with no `doc`.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestRoutes_'`
+
+Expected: build failure, `internal/web/routes_test.go: (&Layer{}).routes undefined (type *Layer has no field or method routes)` and `l.registerRoutes undefined`, then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/routes.go`, append after `readQuery` (no import changes):
+
+```go
+// lifecycleDoc is the doc of a lifecycle route that names only the session.
+func lifecycleDoc(request string) string {
+	return "The " + request + " request of the session: 200 with its notices, 409 with the model's own words when it refuses, and 202 `{\"pending\": true}` when it is still running after 30 s, its outcome then arriving on the stream."
+}
+
+// routes is the table, in registration order. Story 2 of the web foundation
+// moves the other routes onto it.
+func (l *Layer) routes() []route {
+	return []route{
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/send", log: "send", client: "send", ok: http.StatusOK,
+			doc: "`{text}`: sends the text to the session through its loom mod as the person's own words (`core.OriginWeb`); a reply that is an allowed slash command runs it, and its result arrives as a notice. The text is 1 byte to 64 KiB after trimming, else 400.",
+		}, l.sendReply),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/merge", log: "merge", client: "merge", ok: http.StatusOK,
+			doc: "`{source}`: merges the session `source` names into the session in the URL, as the TUI's picker does. A `source` that is no session ID is 400, one that names no session 404, and a merge the model refuses 409 with its words.",
+		}, l.mergeInto),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/pause", log: "pause", client: "pause", ok: http.StatusOK,
+			doc: lifecycleDoc("pause"),
+		}, l.sessionOp(core.Core.Pause)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/resume", log: "resume", client: "resume", ok: http.StatusOK,
+			doc: lifecycleDoc("resume"),
+		}, l.sessionOp(core.Core.Resume)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/kill", log: "kill", client: "kill", ok: http.StatusOK,
+			doc: lifecycleDoc("kill"),
+		}, l.sessionOp(core.Core.Kill)),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/push", log: "push", client: "push", ok: http.StatusOK,
+			doc: lifecycleDoc("push"),
+		}, l.sessionOp(core.Core.Push)),
+	}
+}
+
+// registerRoutes mounts every entry of the table on m at its method and
+// path, wrapped in authed unless the entry is open, which is served with no
+// device.
+func (l *Layer) registerRoutes(m *http.ServeMux) {
+	for _, rt := range l.routes() {
+		var h http.Handler
+		if rt.spec.open {
+			h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rt.serve(w, r, "") })
+		} else {
+			h = l.authed(rt.serve)
+		}
+		m.Handle(rt.spec.method+" "+rt.spec.path, h)
+	}
+}
+```
+
+In `internal/web/api.go`, in `routeAPI`, replace these seven lines
+
+```go
+	m.Handle("POST /api/v1/sessions/{id}/send", l.authed(l.sendReply))
+	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
+	m.Handle("POST /api/v1/sessions/{id}/merge", l.authed(l.mergeInto))
+	m.Handle("POST /api/v1/sessions/{id}/pause", l.authed(l.sessionOp("pause", core.Core.Pause)))
+	m.Handle("POST /api/v1/sessions/{id}/resume", l.authed(l.sessionOp("resume", core.Core.Resume)))
+	m.Handle("POST /api/v1/sessions/{id}/kill", l.authed(l.sessionOp("kill", core.Core.Kill)))
+	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
+```
+
+with the one that stays:
+
+```go
+	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
+```
+
+Also in `api.go`, replace `sessionOp`, `sendReply` and `mergeInto` (from the comment `// sessionOp is the handler of a lifecycle request` through the closing brace of `mergeInto`; `sendBody` and `mergeBody` and their comments stay), where today `sessionOp` reads
+
+```go
+func (l *Layer) sessionOp(name string, op func(core.Core, core.InstanceID, core.ReqID)) deviceHandler {
+	return func(w http.ResponseWriter, r *http.Request, device string) {
+		a := actionLog{device: device, name: name}
+		id, ok := l.sessionFromPath(w, r, a)
+		if !ok {
+			return
+		}
+		a.sessionID = id
+		l.doAction(w, r, a, func(req core.ReqID) {
+			op(l.client, id, req)
+		})
+	}
+}
+```
+
+`sendReply` reads
+
+```go
+func (l *Layer) sendReply(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "send"}
+	id, ok := l.sessionFromPath(w, r, a)
+	if !ok {
+		return
+	}
+	a.sessionID = id
+	var body sendBody
+	if !l.decodeBody(w, r, a, &body) {
+		return
+	}
+	text := strings.TrimSpace(body.Text)
+	if text == "" || len(text) > maxReplyBytes {
+		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes))
+		return
+	}
+	l.doAction(w, r, a, func(req core.ReqID) {
+		l.client.Send(id, core.Message{Text: text, Origin: core.OriginWeb}, req)
+	})
+}
+```
+
+and `mergeInto` reads
+
+```go
+func (l *Layer) mergeInto(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "merge"}
+	id, ok := l.sessionFromPath(w, r, a)
+	if !ok {
+		return
+	}
+	a.sessionID = id
+	var body mergeBody
+	if !l.decodeBody(w, r, a, &body) {
+		return
+	}
+	if body.Source == 0 || body.Source > maxIDValue {
+		l.refuse(w, a, http.StatusBadRequest, "source: want a session ID")
+		return
+	}
+	if _, ok := l.client.View(body.Source); !ok {
+		l.refuse(w, a, http.StatusNotFound, "source: no such session")
+		return
+	}
+	l.doAction(w, r, a, func(req core.ReqID) {
+		l.client.Merge(id, body.Source, req)
+	})
+}
+```
+
+Replace the three functions with these typed handlers (each keeps the doc comment it has above it, whose first words the new names match):
+
+```go
+func (l *Layer) sessionOp(op func(core.Core, core.InstanceID, core.ReqID)) func(c *call, _ struct{}) (noticesJSON, error) {
+	return func(c *call, _ struct{}) (noticesJSON, error) {
+		id, err := c.session()
+		if err != nil {
+			return noticesJSON{}, err
+		}
+		return c.act(func(req core.ReqID) {
+			op(l.client, id, req)
+		})
+	}
+}
+```
+
+```go
+func (l *Layer) sendReply(c *call, body sendBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	text := strings.TrimSpace(body.Text)
+	if text == "" || len(text) > maxReplyBytes {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes)}
+	}
+	return c.act(func(req core.ReqID) {
+		l.client.Send(id, core.Message{Text: text, Origin: core.OriginWeb}, req)
+	})
+}
+```
+
+```go
+func (l *Layer) mergeInto(c *call, body mergeBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	if body.Source == 0 || body.Source > maxIDValue {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, "source: want a session ID"}
+	}
+	if _, ok := l.client.View(body.Source); !ok {
+		return noticesJSON{}, &statusError{http.StatusNotFound, "source: no such session"}
+	}
+	return c.act(func(req core.ReqID) {
+		l.client.Merge(id, body.Source, req)
+	})
+}
+```
+
+and change `sessionOp`'s comment to `// sessionOp is the typed handler of a lifecycle request that names only the session: pause, resume, kill and push.`
+
+In `internal/web/web.go`, in `mux()`, replace
+
+```go
+	l.routeAPI(m)
+```
+
+with
+
+```go
+	l.routeAPI(m)
+	l.registerRoutes(m)
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`. The existing lifecycle tests (`TestAPI_EveryAnswerIsLoggedWithItsStatus` with its `send` "400 bad request: " on the idle session, `TestAPI_ARefusalIs409WithTheModelsText`, `TestAPI_APendingRequestAnswers202AndItsOutcomeGoesToTheStream`, `TestAPI_AnOpThatWorksAnswers200WithItsNotices`, `TestAPI_MergeRefusesASourceBeyondWhatJSONHolds`) now run through the table and pass unchanged.
+
+Then the story gates, in order: the gofmt check, `CGO_ENABLED=0 go vet ./...`, `CGO_ENABLED=0 go test ./...`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the session lifecycle routes on the route table" -- internal/web/routes.go internal/web/routes_test.go internal/web/api.go internal/web/web.go
+```
+
+## Story 2: Every other route on the table, and the stream's events table
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/routes.go`, `internal/web/routes_test.go`, `internal/web/api.go`, `internal/web/api_test.go`, `internal/web/stream_test.go`, `internal/web/auth_test.go`, `internal/web/asks.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/auth.go`, `internal/web/push.go`, `internal/web/mockup.go`, `internal/web/stream.go`, `internal/web/web.go`
+- **Interfaces:** exposes the full table with its `client` names and `doc`s, `turnsParams`, `jobLogParams`, `flowParams`, `flowDocParams`, `launchDefaultsParams`, `pairBody`, `pairJSON`, `pushKeyJSON`, `streamEvent`, `streamEvents()`; uses Story 1's table, `typed`, `page`, `call` (with `notice`) and `settle`
+- **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/... && CGO_ENABLED=0 go test -tags e2e ./e2e/ -run TestE2E_Web_SessionLifecycleOverHTTP'`
+- **Review:** deep
+- **Form:** full (the open pair route, unpair, the store writes and create's bounds move onto the adapter, which changes who writes each status and log line; owner, 2026-11-18, after the skeleton review)
+
+This story converts every remaining `/api/v1` handler to a typed handler on Story 1's table (`typed`, `call`, `act`, `actCreated`, `read`): the reads (message, turns, diff, job log, flow, flow document, flows), job control, answer, create, launch defaults, device, quick replies, push subscribe and unsubscribe, unpair, and the two routes the old registrars held, pair (open: the one route served with no device) and push key. It registers the mockup as a page route over its unchanged hand-served handler, adds `streamEvents()`, and deletes `routeAPI`, `routePair`, `routePush`, and the helpers the move orphans: `l.read`, `doAction`, `decodeBody` and `writeOutcome` (its two tests move onto `settle` and `actCreated`). Each route gets its `doc`, from its row of the README's route table. Every check, message, status and log line stays as it is, with four differences the adapter brings, each pinned by a test: pair's malformed-body 400 gains the `bad request: ` prefix every other route's has; a request that fails both answer's `{ask}` check and the decode gets the decode's 400; and a job control that names both an unknown session and an unknown action gets the session's 404 (the adapter resolves `{id}` first; today the unknown action answers first), an unknown action on a known session is logged with that session, and a valid job action on an unknown session is logged as `job_control`, not `job_<action>`, since the handler never runs. Pair's errors other than its pairing refusals stay a fixed 500 through a `*statusError`, never the host's text, which can carry paths; create's launch-account notice goes through `c.notice`, so it is kept with the response's notices, and streamed to the device on a refusal or a pending outcome (`settle`'s rule). The route tests and the web e2e pin the rest. The story's files are those of the entry, which names `internal/web/api_test.go` and `internal/web/stream_test.go`, and also `internal/web/auth_test.go` (the entry's Files line lacks it: Task 2.4 tightens one row of `TestPair_AnswersWhatTheHostSays`): two tests of `api_test.go` call `putDevice`, `postPush` and `deleteDevice` directly (three references) and two call `writeOutcome`.
+
+### Task 2.1: The read routes
+
+**Files:**
+- Modify: `internal/web/routes.go` (after `session`; the end of `routes()`)
+- Modify: `internal/web/routes_test.go`
+- Modify: `internal/web/api.go` (`routeAPI`; `message`)
+- Modify: `internal/web/reads.go` (`readSession`; `read`; `readAnswering`'s comment; `readTurns`; `turnsQuery`; `readDiff`)
+- Modify: `internal/web/jobs.go` (`readJobLog`, `jobLogQuery`)
+- Modify: `internal/web/flow.go` (`flowQuery`, `readFlow`, `readFlows`, `readFlowDoc`)
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/web/routes_test.go` (the imports it already has cover them):
+
+```go
+// tableRow is what one route of the table must declare.
+type tableRow struct {
+	method string
+	path   string
+	client string
+	ok     int
+	query  reflect.Type
+	body   reflect.Type
+	resp   reflect.Type
+}
+
+// routeOf is the table's entry for method and path.
+func routeOf(t *testing.T, l *Layer, method, path string) route {
+	t.Helper()
+	for _, rt := range l.routes() {
+		if rt.spec.method == method && rt.spec.path == path {
+			return rt
+		}
+	}
+	require.FailNow(t, "the table has no such route", "%s %s", method, path)
+	return route{}
+}
+
+// requireRows checks each row against the table.
+func requireRows(t *testing.T, rows []tableRow) {
+	t.Helper()
+	l := &Layer{}
+	for _, row := range rows {
+		key := row.method + " " + row.path
+		rt := routeOf(t, l, row.method, row.path)
+		assert.Equal(t, row.client, rt.spec.client, key)
+		assert.Equal(t, row.ok, rt.spec.ok, key)
+		assert.Equal(t, row.query, rt.query, "%s: its query type", key)
+		assert.Equal(t, row.body, rt.body, "%s: its body type", key)
+		assert.Equal(t, row.resp, rt.resp, "%s: its response type", key)
+		assert.False(t, rt.page, key)
+	}
+}
+
+func TestRoutes_TheReadRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodGet, "/api/v1/sessions/{id}/message", "message", http.StatusOK, nil, nil, reflect.TypeFor[messageJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/turns", "turns", http.StatusOK, reflect.TypeFor[turnsParams](), nil, reflect.TypeFor[turnsJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/diff", "diff", http.StatusOK, nil, nil, reflect.TypeFor[patchJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/jobs/{job}/log", "jobLog", http.StatusOK, reflect.TypeFor[jobLogParams](), nil, reflect.TypeFor[jobLogJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/flow", "flow", http.StatusOK, reflect.TypeFor[flowParams](), nil, reflect.TypeFor[flowJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/flow/doc", "flowDoc", http.StatusOK, reflect.TypeFor[flowDocParams](), nil, reflect.TypeFor[flowDocJSON]()},
+		{http.MethodGet, "/api/v1/flows", "flows", http.StatusOK, nil, nil, reflect.TypeFor[flowsJSON]()},
+	})
+}
+
+func TestAPI_JobLogAndFlowReadsOfAWorkspaceTerminalAre404(t *testing.T) {
+	term, err := session.NewInstance(session.InstanceOptions{Title: "term", Path: t.TempDir(), Program: "claude", IsWorkspaceTerminal: true})
+	require.NoError(t, err)
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{term}})
+	id := env.ids["term"]
+
+	for _, path := range []string{
+		fmt.Sprintf("/api/v1/sessions/%d/jobs/7/log", id),
+		fmt.Sprintf("/api/v1/sessions/%d/flow?plan=p.md", id),
+		fmt.Sprintf("/api/v1/sessions/%d/flow/doc?plan=p.md&doc=spec", id),
+	} {
+		status, out := env.do(http.MethodGet, path, nil)
+		assert.Equal(t, http.StatusNotFound, status, path)
+		assert.Equal(t, "no such session", apiErrorOf(t, out), path)
+	}
+}
+```
+
+Fails without: `TestRoutes_TheReadRoutesAreOnTheTable`: a read route missing from `routes()`, a wrong `client` or `ok`, or a query or response type other than the one the generator must read (a read of the wrong params type fails its own row). `TestAPI_JobLogAndFlowReadsOfAWorkspaceTerminalAre404`: a read handler asking `c.session()` where it should ask `c.readSession()`, which lets a workspace terminal (no session of the app's) through to the model.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestRoutes_TheReadRoutesAreOnTheTable|TestAPI_JobLogAndFlowReadsOfAWorkspaceTerminalAre404'`
+
+Expected: the package does not build, `internal/web/routes_test.go: undefined: turnsParams` (and `jobLogParams`, `flowParams`, `flowDocParams`), then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`. (The terminal test passes on today's handlers once it builds: it pins `c.readSession` against the conversion.)
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/routes.go`, add after `session`:
+
+```go
+// readSession is session for a read route: a workspace terminal is no
+// session of the app's, so it is 404 as an unknown one is.
+func (c *call) readSession() (core.InstanceID, error) {
+	id, err := c.session()
+	if err != nil {
+		return 0, err
+	}
+	if c.l.isWorkspaceTerminal(id) {
+		return 0, &statusError{http.StatusNotFound, "no such session"}
+	}
+	return id, nil
+}
+```
+
+and append these entries to the slice `routes()` returns, after the `push` entry (the docs are the README's rows, shortened):
+
+```go
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/message", log: "message", client: "message", ok: http.StatusOK,
+			doc: "The session's last message as a tree of plain nodes (`markdown.go`) with the text it was built from: `{text, blocks, truncated}`. No screen draws it now, and the route stays. A workspace terminal is no session of the app's: 404.",
+		}, l.message),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/turns", log: "turns", client: "turns", ok: http.StatusOK,
+			doc: "A page of the session's conversation: `{conversation, turns, earlier, reset, skipped}` and, on a subagent's page, `agent`. `before` (the page before, from a page's `earlier`) and `after` (the turns from a turn's `id` on) are byte offsets, at most one set, else 400; `agent` reads that subagent's own transcript in place of the conversation, and an id Claude could not have written is 400. A text item crosses as its tree, never as its text; a page holds at most 10 turns and, past its newest, 256 KiB of text.",
+		}, l.readTurns),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/diff", log: "diff", client: "diff", ok: http.StatusOK,
+			doc: "The session's worktree diff against its base commit: `{base, files}`, a file `{path, old_path, status, binary, added, removed, hunks, omitted}`. A diff keeps at most 1 MiB of lines, 5,000 lines a file and 2,000 bytes a line; `omitted` is `lines` or `budget` when a file's hunks were dropped.",
+		}, l.readDiff),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/jobs/{job}/log", log: "job_log", client: "jobLog", ok: http.StatusOK,
+			doc: "A job of the session's output, from the byte offset `after` or, when `after` is absent, its tail: `{text, start, end, cut, reset}`, at most 64 KiB, cleaned for display. An `after` past the file's end answers a fresh tail with `reset`. A malformed `job` or `after` is 400; a job that is not the session's, or that the queue no longer holds, is the model's 409.",
+		}, l.readJobLog),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/flow", log: "flow", client: "flow", ok: http.StatusOK,
+			doc: "The board of the flow whose plan (or spec, in design) is `plan` in the session's worktree: `{summary, stages, base, start, end, premise, stories, final, question, kept, others, costs}`. No `plan` is 400, and a session with no worktree the model's 409.",
+		}, l.readFlow),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/flow/doc", log: "flow-doc", client: "flowDoc", ok: http.StatusOK,
+			doc: "One of the flow's documents as its tree, `{path, blocks, cut}`, each heading with its source `line`; at most 1 MiB and 40,000 nodes. `doc` is `spec`, `skeleton`, `plan`, `record`, `drafts-state` or `report:<agent run>`, and the model refuses any other with 409; a missing `plan` or `doc` is 400.",
+		}, l.readFlowDoc),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/flows", log: "flows", client: "flows", ok: http.StatusOK,
+			doc: "Every session's flows and the host's past runs: `{live, past}`, a live one `{session, title, flow}`, a past one `{key, file, stem, plan, stories, ended, end, usd, unreadable}`, newest first.",
+		}, l.readFlows),
+```
+
+In `internal/web/api.go`, delete these lines from `routeAPI`:
+
+```go
+	m.Handle("GET /api/v1/sessions/{id}/message", l.authed(l.message))
+	m.Handle("GET /api/v1/sessions/{id}/turns", l.authed(l.readTurns))
+	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
+	m.Handle("GET /api/v1/sessions/{id}/jobs/{job}/log", l.authed(l.readJobLog))
+	m.Handle("GET /api/v1/sessions/{id}/flow", l.authed(l.readFlow))
+	m.Handle("GET /api/v1/sessions/{id}/flow/doc", l.authed(l.readFlowDoc))
+	m.Handle("GET /api/v1/flows", l.authed(l.readFlows))
+```
+
+(the `mockup` line stays between them until Task 2.4), and replace `message` (signature `func (l *Layer) message(w http.ResponseWriter, r *http.Request, device string) {` through its closing brace; its doc comment stays) with:
+
+```go
+func (l *Layer) message(c *call, _ struct{}) (messageJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return messageJSON{}, err
+	}
+	v, ok := l.client.View(id)
+	if !ok {
+		return messageJSON{}, &statusError{http.StatusNotFound, "no such session"}
+	}
+	out := messageJSON{Blocks: []*mdNode{}}
+	if v.HasLastMessage {
+		out.Text = v.LastMessage
+		out.Blocks, out.Truncated = buildTree(v.LastMessage)
+	}
+	return out, nil
+}
+```
+
+In `internal/web/reads.go`:
+
+1. In `readSession`, replace the line `	if v, _ := l.client.View(id); v.IsWorkspaceTerminal {` with `	if l.isWorkspaceTerminal(id) {`, and add above `readSession`'s doc comment:
+
+```go
+// isWorkspaceTerminal reports whether the session is a workspace terminal,
+// which is no session of the app's.
+func (l *Layer) isWorkspaceTerminal(id core.InstanceID) bool {
+	v, _ := l.client.View(id)
+	return v.IsWorkspaceTerminal
+}
+```
+
+2. Delete `read`, which today is
+
+```go
+// read makes the read request send names and waits for its Reply, then
+// stops tracking the request (reqs.drop). It answers a failure itself, as
+// JSON (refuse), and otherwise returns the Reply with true.
+func (l *Layer) read(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID)) (core.Reply, bool) {
+	return l.readAnswering(w, r, a, send, l.refuse)
+}
+```
+
+and in the comment above `readAnswering` replace its first words `// readAnswering is read with its failures answered by fail:` with `// readAnswering makes a read request (readReply) and answers its failures with fail:`.
+
+3. Replace `readTurns` (signature through closing brace; the doc comment stays) with the typed handler, add `turnsParams` above its doc comment, and replace `turnsQuery` (doc comment through closing brace) with the version that reads the params:
+
+```go
+// turnsParams is GET /api/v1/sessions/{id}/turns's query.
+type turnsParams struct {
+	Conversation string `query:"conversation"`
+	Before       string `query:"before"`
+	After        string `query:"after"`
+	Agent        string `query:"agent"`
+}
+```
+
+```go
+func (l *Layer) readTurns(c *call, p turnsParams) (turnsJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return turnsJSON{}, err
+	}
+	q, err := turnsQuery(p)
+	if err != nil {
+		return turnsJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadTurns(id, q, req) })
+	if err != nil {
+		return turnsJSON{}, err
+	}
+	return turnsOf(reply.Turns), nil
+}
+```
+
+```go
+// turnsQuery reads the turns route's query: before and after are byte
+// offsets, and at most one of them is set; agent, when not empty, is a
+// subagent's id (subagent.ValidAgentID), whose own turns are read in
+// place of the conversation's.
+func turnsQuery(p turnsParams) (transcript.Query, error) {
+	q := transcript.Query{Conversation: p.Conversation, Agent: p.Agent}
+	if q.Agent != "" && !subagent.ValidAgentID(q.Agent) {
+		return transcript.Query{}, fmt.Errorf("agent %q: not an agent id", q.Agent)
+	}
+	for _, c := range []struct {
+		name  string
+		value string
+		to    *int64
+	}{{"before", p.Before, &q.Before}, {"after", p.After, &q.After}} {
+		if c.value == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(c.value, 10, 64)
+		if err != nil || n < 0 {
+			return transcript.Query{}, fmt.Errorf("%s %q: want a byte offset", c.name, c.value)
+		}
+		*c.to = n
+	}
+	if q.Before > 0 && q.After > 0 {
+		return transcript.Query{}, errors.New("before and after: give at most one")
+	}
+	return q, nil
+}
+```
+
+and replace `readDiff` (signature through closing brace) with:
+
+```go
+func (l *Layer) readDiff(c *call, _ struct{}) (patchJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return patchJSON{}, err
+	}
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadDiff(id, req) })
+	if err != nil {
+		return patchJSON{}, err
+	}
+	return patchOf(reply.Diff), nil
+}
+```
+
+In `internal/web/jobs.go`, add `jobLogParams` above `readJobLog`'s doc comment, and replace `readJobLog` (signature through closing brace) and `jobLogQuery` (doc comment through closing brace):
+
+```go
+// jobLogParams is GET …/jobs/{job}/log's query.
+type jobLogParams struct {
+	After string `query:"after"`
+}
+```
+
+```go
+func (l *Layer) readJobLog(c *call, p jobLogParams) (jobLogJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return jobLogJSON{}, err
+	}
+	job, after, err := jobLogQuery(c.r, p)
+	if err != nil {
+		return jobLogJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadJobLog(id, job, after, req) })
+	if err != nil {
+		return jobLogJSON{}, err
+	}
+	return jobLogOf(reply.JobLog), nil
+}
+```
+
+```go
+// jobLogQuery reads the log route's job (a decimal ID above 0) and after (a
+// byte offset; -1, the tail, when absent).
+func jobLogQuery(r *http.Request, p jobLogParams) (sched.JobID, int64, error) {
+	job, err := jobFromPath(r)
+	if err != nil {
+		return 0, 0, err
+	}
+	after := int64(-1)
+	if p.After != "" {
+		n, err := strconv.ParseInt(p.After, 10, 64)
+		if err != nil || n < 0 {
+			return 0, 0, fmt.Errorf("after %q: want a byte offset", p.After)
+		}
+		after = n
+	}
+	return job, after, nil
+}
+```
+
+In `internal/web/flow.go`, replace `flowQuery` (doc comment through closing brace), `readFlow`, `readFlows` and `readFlowDoc` (each signature through closing brace; their doc comments stay), and add the two params types above `flowQuery`'s replacement:
+
+```go
+// flowParams is GET …/flow's query, and flowDocParams GET …/flow/doc's.
+type flowParams struct {
+	Plan string `query:"plan"`
+}
+
+type flowDocParams struct {
+	Plan string `query:"plan"`
+	Doc  string `query:"doc"`
+}
+
+// flowPlan is a flow route's plan, refused when empty or too long.
+func flowPlan(plan string) (string, error) {
+	if plan == "" || len(plan) > maxPlanQuery {
+		return "", &statusError{http.StatusBadRequest, "bad request: a flow route takes its plan (?plan=)"}
+	}
+	return plan, nil
+}
+```
+
+```go
+func (l *Layer) readFlow(c *call, p flowParams) (flowJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return flowJSON{}, err
+	}
+	plan, err := flowPlan(p.Plan)
+	if err != nil {
+		return flowJSON{}, err
+	}
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlow(id, plan, req) })
+	if err != nil {
+		return flowJSON{}, err
+	}
+	lost := false
+	if v, ok := l.client.View(id); ok {
+		for _, f := range v.Flows {
+			if f.Plan == reply.Flow.Detail.Plan {
+				lost = f.Lost
+			}
+		}
+	}
+	return flowOf(reply.Flow, lost), nil
+}
+```
+
+```go
+func (l *Layer) readFlows(c *call, _ struct{}) (flowsJSON, error) {
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlows(req) })
+	if err != nil {
+		return flowsJSON{}, err
+	}
+	return flowsOf(reply.Flows), nil
+}
+```
+
+```go
+func (l *Layer) readFlowDoc(c *call, p flowDocParams) (flowDocJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return flowDocJSON{}, err
+	}
+	plan, err := flowPlan(p.Plan)
+	if err != nil {
+		return flowDocJSON{}, err
+	}
+	if p.Doc == "" || len(p.Doc) > maxDocQuery {
+		return flowDocJSON{}, &statusError{http.StatusBadRequest, "bad request: the document route takes its doc (?doc=)"}
+	}
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlowDoc(id, plan, p.Doc, req) })
+	if err != nil {
+		return flowDocJSON{}, err
+	}
+	blocks, cut := buildTreeLimit(reply.FlowDoc.Text, flowview.DocLimit, docTreeNodes, true)
+	return flowDocJSON{Path: reply.FlowDoc.Path, Blocks: blocks, Cut: cut || reply.FlowDoc.Cut}, nil
+}
+```
+
+(The `flowDocJSON` comment above it says "GET …/flow/doc"; `readFlows` keeps its log name `flows`.)
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`: the two new tests and every existing read test, `TestAPI_ReadsOfAWorkspaceTerminalOrAnUnknownSessionAre404`, `TestAPI_AReadIsNotTrackedOnceAnsweredAndATimedOutOneIs504`, `TestAPI_JobLogRefusesBadPathsAndTheModelsRefusals`, `TestAPI_AFlowRouteNeedsItsPlanAndItsDoc` and `TestAPI_AFlowOfASessionWithNoWorktreeIsTheModelsRefusal` included.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): the read routes on the route table" -- internal/web/routes.go internal/web/routes_test.go internal/web/api.go internal/web/reads.go internal/web/jobs.go internal/web/flow.go
+```
+
+### Task 2.2: Job control, answer, create and launch defaults
+
+**Files:**
+- Modify: `internal/web/routes.go` (the end of `routes()`)
+- Modify: `internal/web/routes_test.go`
+- Modify: `internal/web/api.go` (`routeAPI`; `doAction`; `createSession`; `launchDefaultsJSON`; `launchDefaults`)
+- Modify: `internal/web/asks.go` (`answerAsk`)
+- Modify: `internal/web/jobs.go` (`jobControl`)
+- Test: `internal/web/routes_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/web/routes_test.go`:
+
+```go
+func TestRoutes_TheActionRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPost, "/api/v1/sessions/{id}/asks/{ask}/answer", "answer", http.StatusOK, nil, reflect.TypeFor[answerBody](), reflect.TypeFor[noticesJSON]()},
+		{http.MethodPost, "/api/v1/sessions/{id}/jobs/{job}/{action}", "jobControl", http.StatusOK, nil, nil, reflect.TypeFor[noticesJSON]()},
+		{http.MethodPost, "/api/v1/sessions", "create", http.StatusCreated, nil, reflect.TypeFor[createBody](), reflect.TypeFor[createdJSON]()},
+		{http.MethodGet, "/api/v1/launch-defaults", "launchDefaults", http.StatusOK, reflect.TypeFor[launchDefaultsParams](), nil, reflect.TypeFor[launchDefaultsJSON]()},
+	})
+}
+
+func TestAPI_AnswerWithAnOversizedAskAndABadBodyGetsTheDecodes400(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+	long := fmt.Sprintf("/api/v1/sessions/%d/asks/%s/answer", env.ids["idle"], strings.Repeat("a", 129))
+
+	status, out := env.do(http.MethodPost, long, "not json")
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Contains(t, apiErrorOf(t, out), "bad request: ", "the adapter decodes the body before the handler looks at the ask")
+
+	status, out = env.do(http.MethodPost, long, map[string]any{"allow": true})
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "ask: want an ID of 1 to 128 bytes", apiErrorOf(t, out), "with a good body the ask's own check answers")
+}
+
+func TestAPI_JobControlOfAnUnknownSessionAndAnUnknownActionIsTheSessions404(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "fresh", session.Ready)}})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions/999999/jobs/7/nap", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such session", apiErrorOf(t, out), "the adapter resolves {id} before the handler checks the action")
+
+	status, out = env.do(http.MethodPost, "/api/v1/sessions/999999/jobs/7/park", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such session", apiErrorOf(t, out), "a valid action on an unknown session")
+	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "job_control", result: "404 no such session"}, "the handler never ran, so the line keeps the route's name, not job_park")
+
+	status, out = env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/jobs/7/nap", env.ids["fresh"]), nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such action", apiErrorOf(t, out), "a known session and an unknown action")
+	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "job_control", session: env.ids["fresh"], result: "404 no such action"})
+}
+
+func TestAPI_JobControlLogsItsActionByName(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "fresh", session.Ready)}})
+
+	status, _ := env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/jobs/7/park", env.ids["fresh"]), nil)
+
+	assert.Equal(t, http.StatusConflict, status, "the model has no job 7")
+	got := env.logged()
+	require.Len(t, got, 1)
+	assert.Equal(t, "job_park", got[0].name, "the log line names the action the path chose")
+	assert.Equal(t, env.ids["fresh"], got[0].session)
+}
+```
+
+Fails without: `TestRoutes_TheActionRoutesAreOnTheTable`: an entry missing, `create` without `ok: 201`, or a body type other than the one the generator reads. `TestAPI_AnswerWithAnOversizedAskAndABadBodyGetsTheDecodes400`: the handler checking `{ask}` before the adapter decodes (the first case would answer the ask's text), or dropping the ask check (the second would reach the model and answer 409). `TestAPI_JobControlOfAnUnknownSessionAndAnUnknownActionIsTheSessions404`: the first case pins the adapter's `{id}`-first order (Story 1's `TestTyped_AnIDPathIsResolvedBeforeItsBodyIsDecoded`), which answers before the handler runs, so it fails only if that order changes; the second case and the `job_control` log assertion pin the spec's `log: "job_control"` (a valid action on an unknown session is logged under it, not `job_park`); the last case and its log line pin `jobControl`: answering an unknown action as "no such session", or logging it without the session. `TestAPI_JobControlLogsItsActionByName`: no `c.setAction("job_" + …)` (the line would keep the name `job_control`).
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestRoutes_TheActionRoutesAreOnTheTable|TestAPI_AnswerWithAnOversized|TestAPI_JobControl'`
+
+Expected: the package does not build, `internal/web/routes_test.go: undefined: launchDefaultsParams`, then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`. With that type in place, the row test fails with `the table has no such route` (`POST /api/v1/sessions/{id}/asks/{ask}/answer`), and on today's handlers `TestAPI_AnswerWithAnOversizedAskAndABadBodyGetsTheDecodes400` answers the ask's text to the bad body and `TestAPI_JobControlOfAnUnknownSessionAndAnUnknownActionIsTheSessions404` answers `no such action`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/routes.go`, append to the slice `routes()` returns, after the entries Task 2.1 added:
+
+```go
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/jobs/{job}/{action}", log: "job_control", client: "jobControl", ok: http.StatusOK,
+			doc: "A control of one of the session's jobs (the job controls spec): `action` is `start` (start a queued job now, past the queue's fit), `park` or `unpark` (a waiting job), `pause` or `resume` (a running one). Any other action is 404 (`no such action`), a malformed `job` 400, and a refusal, a job that is not the session's included, the model's 409.",
+		}, l.jobControl),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/asks/{ask}/answer", log: "answer", client: "answer", ok: http.StatusOK,
+			doc: "`{answers}` (each question's `labels`, `other` and `note`, by its text), `{chat, chat_text}`, or `{allow, suggestion}` / `{allow: false, message}`: answers one of the session's asks. 200 once the session's loom mod took the answer, 409 with the model's words for every refusal; an `ask` ID over 128 bytes, more than 8 answers or 8 labels a question, or a text over 64 KiB is 400.",
+		}, l.answerAsk),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions", log: "create", client: "create", ok: http.StatusCreated,
+			doc: "`{workspace, title, prompt}` and the optional `account`, `model`, `permission_mode`, `effort`: creates and starts a session as `loom session new` does; 201 `{id, notices}`. The prompt is at most 64 KiB and the title as `core.CheckNewTitle` says; an override that is no registered account, no model in `config.ClaudeModelAliases()`, no mode in `config.ClaudePermissionModes` or no effort in `config.ClaudeEfforts` is 400, and a workspace that is full or read-only, a title the workspace holds, or remote control the account's login can't use is 409.",
+		}, l.createSession),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/launch-defaults", log: "launch-defaults", client: "launchDefaults", ok: http.StatusOK,
+			doc: "`?workspace=<id>`: what the new-session sheet pre-fills (`account`, `model`, `permission_mode`, `effort`) and the choices it offers (`accounts`, `models`, `permission_modes`, `efforts`), from the account registry, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none. An unknown workspace is 400.",
+		}, l.launchDefaults),
+```
+
+In `internal/web/api.go`:
+
+1. Delete these lines from `routeAPI`:
+
+```go
+	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
+	m.Handle("POST /api/v1/sessions/{id}/jobs/{job}/{action}", l.authed(l.jobControl))
+	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
+	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
+```
+
+2. Delete `doAction`, which no route uses now, with its comment:
+
+```go
+// doAction makes the request send names, with the web client's next request
+// ID, and answers from how it ended.
+func (l *Layer) doAction(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID)) {
+	req := l.reqs.next()
+	send(req)
+	reply, notes, done := l.reqs.wait(r.Context(), req, a.device)
+	l.writeOutcome(w, a, reply, notes, done, false)
+}
+```
+
+3. Replace `createSession` (signature `func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device string) {` through its closing brace; its doc comment stays) with:
+
+```go
+func (l *Layer) createSession(c *call, body createBody) (createdJSON, error) {
+	title := strings.TrimSpace(body.Title)
+	prompt := strings.TrimRight(body.Prompt, " \t\r\n")
+	if len(prompt) > maxPromptBytes {
+		return createdJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes)}
+	}
+	ws, ok := l.client.Workspace(body.Workspace)
+	if !ok {
+		return createdJSON{}, &statusError{http.StatusBadRequest, "workspace: no such workspace"}
+	}
+	if err := core.CheckNewTitle(title, ws); err != nil {
+		return createdJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	views := l.client.Views(ws.ID)
+	for _, check := range []error{core.CheckRoom(len(views)), core.CheckWritable(ws)} {
+		if check != nil {
+			return createdJSON{}, &statusError{http.StatusConflict, check.Error()}
+		}
+	}
+	for _, v := range views {
+		if v.Title == title {
+			return createdJSON{}, &statusError{http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title)}
+		}
+	}
+	program := ws.Settings.GetProgram()
+	l.client.ReloadAccounts()
+	opts, notice, refused := l.launchOptions(ws, program, body)
+	if refused != nil {
+		return createdJSON{}, refused
+	}
+	if notice != "" {
+		c.notice(noticeOf(core.Notice{Info: notice}, l.now()))
+	}
+	return c.actCreated(func(req core.ReqID) {
+		l.client.Create(ws.ID, core.NewInstance{
+			Title: title, Path: ws.RepoPath, Program: program, Prompt: prompt, Launch: opts, Start: true,
+		}, req)
+	})
+}
+```
+
+4. Add `launchDefaultsParams` above `launchDefaults`'s doc comment, and replace `launchDefaults` (signature through closing brace) with:
+
+```go
+// launchDefaultsParams is GET /api/v1/launch-defaults's query.
+type launchDefaultsParams struct {
+	Workspace string `query:"workspace"`
+}
+```
+
+```go
+func (l *Layer) launchDefaults(_ *call, p launchDefaultsParams) (launchDefaultsJSON, error) {
+	n, err := strconv.ParseUint(p.Workspace, 10, 64)
+	ws, ok := l.client.Workspace(core.WorkspaceID(n))
+	if err != nil || !ok {
+		return launchDefaultsJSON{}, &statusError{http.StatusBadRequest, "workspace: no such workspace"}
+	}
+	program := ws.Settings.GetProgram()
+	l.client.ReloadAccounts()
+	opts, _ := core.ChooseLaunchAccount(l.client, launch.FromSettings(ws.Settings), program)
+	out := launchDefaultsJSON{
+		Account:         opts.Account,
+		Accounts:        []string{},
+		Model:           opts.Model,
+		Models:          config.ClaudeModelAliases(),
+		PermissionMode:  opts.PermissionMode,
+		PermissionModes: slices.Clone(config.ClaudePermissionModes),
+		Effort:          opts.Effort,
+		Efforts:         slices.Clone(config.ClaudeEfforts),
+	}
+	if names := l.client.AccountNames(); names.Present && session.IsClaudeProgram(program) {
+		out.Accounts = append(out.Accounts, names.Names...)
+	}
+	return out, nil
+}
+```
+
+In `internal/web/asks.go`, replace `answerAsk` (signature through closing brace; doc comment stays) with:
+
+```go
+func (l *Layer) answerAsk(c *call, body answerBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	ask := c.r.PathValue("ask")
+	if ask == "" || len(ask) > maxAskPath {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("ask: want an ID of 1 to %d bytes", maxAskPath)}
+	}
+	if why := body.tooBig(); why != "" {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, why}
+	}
+	answer := core.AskAnswer{Chat: body.Chat, ChatText: body.ChatText, Allow: body.Allow, Suggestion: body.Suggestion, Message: body.Message}
+	if len(body.Answers) > 0 {
+		answer.Questions = make(map[string]core.QuestionAnswer, len(body.Answers))
+		for q, qa := range body.Answers {
+			answer.Questions[q] = core.QuestionAnswer{Labels: qa.Labels, Other: qa.Other, Note: qa.Note}
+		}
+	}
+	return c.act(func(req core.ReqID) {
+		l.client.Answer(id, ask, answer, req)
+	})
+}
+```
+
+In `internal/web/jobs.go`, replace `jobControl` (signature through closing brace; doc comment stays) with:
+
+```go
+func (l *Layer) jobControl(c *call, _ struct{}) (noticesJSON, error) {
+	action, ok := jobActions[c.r.PathValue("action")]
+	if !ok {
+		return noticesJSON{}, &statusError{http.StatusNotFound, "no such action"}
+	}
+	c.setAction("job_" + string(action))
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	job, err := jobFromPath(c.r)
+	if err != nil {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	return c.act(func(req core.ReqID) {
+		l.client.ControlJob(core.JobControl{Job: job, Owner: id, Action: action}, req)
+	})
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`: the four new tests and the existing create, launch-defaults, answer and job-control tests (`TestAPI_CreateRefusesWhatLoomSessionNewRefuses`, `TestAPI_CreateStartsASessionWithTheChosenOptions`, `TestAPI_LaunchDefaultsNeedAWorkspace`, `TestAPI_AnswerChecksTheBody`, `TestAPI_JobControlAsksTheModelForTheSessionsJob`, `TestAPI_EveryAnswerIsLoggedWithItsStatus` among them).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): job control, answer, create and launch defaults on the route table" -- internal/web/routes.go internal/web/routes_test.go internal/web/api.go internal/web/asks.go internal/web/jobs.go
+```
+
+### Task 2.3: Device, quick replies, push subscription and unpair
+
+**Files:**
+- Modify: `internal/web/routes.go` (the end of `routes()`)
+- Modify: `internal/web/routes_test.go`
+- Modify: `internal/web/api.go` (`routeAPI`; `decodeBody`; `putDevice`; `putQuickReplies`; `postPush`; `deletePush`; `deleteDevice`)
+- Modify: `internal/web/api_test.go` (`TestAPI_ADeviceRouteFailureIsLoggedWithItsStatus`, `TestAPI_DeleteDeviceOfADeviceAlreadyGoneIs204`)
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/web/routes_test.go`:
+
+```go
+// routeNamed is the table's entry whose client name is client.
+func routeNamed(t *testing.T, l *Layer, client string) route {
+	t.Helper()
+	for _, rt := range l.routes() {
+		if rt.spec.client == client {
+			return rt
+		}
+	}
+	require.FailNow(t, "no route of the table has this client name", client)
+	return route{}
+}
+
+func TestRoutes_TheDeviceRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPut, "/api/v1/device", "putDevice", http.StatusOK, nil, reflect.TypeFor[deviceBody](), reflect.TypeFor[deviceJSON]()},
+		{http.MethodPut, "/api/v1/quick-replies", "putQuickReplies", http.StatusOK, nil, reflect.TypeFor[quickRepliesBody](), reflect.TypeFor[quickRepliesJSON]()},
+		{http.MethodPost, "/api/v1/device/push", "postPush", http.StatusOK, nil, reflect.TypeFor[subscriptionBody](), reflect.TypeFor[deviceJSON]()},
+		{http.MethodDelete, "/api/v1/device/push", "deletePush", http.StatusNoContent, nil, nil, nil},
+		{http.MethodDelete, "/api/v1/device", "deleteDevice", http.StatusNoContent, nil, nil, nil},
+	})
+}
+```
+
+and in `internal/web/api_test.go` make the three direct calls go through the table (the handlers' signatures change in Step 3). In `TestAPI_ADeviceRouteFailureIsLoggedWithItsStatus`, replace
+
+```go
+		{"notify", env.layer.putDevice, http.StatusUnauthorized},
+		{"subscribe", env.layer.postPush, http.StatusUnauthorized},
+```
+
+with
+
+```go
+		{"notify", routeNamed(t, env.layer, "putDevice").serve, http.StatusUnauthorized},
+		{"subscribe", routeNamed(t, env.layer, "postPush").serve, http.StatusUnauthorized},
+```
+
+and in `TestAPI_DeleteDeviceOfADeviceAlreadyGoneIs204` replace
+
+```go
+	env.layer.deleteDevice(w, httptest.NewRequest(http.MethodDelete, "/api/v1/device", nil), "phone")
+```
+
+with
+
+```go
+	routeNamed(t, env.layer, "deleteDevice").serve(w, httptest.NewRequest(http.MethodDelete, "/api/v1/device", nil), "phone")
+```
+
+Fails without: `TestRoutes_TheDeviceRoutesAreOnTheTable`: an entry missing, a 204 route declared with a response type, or `putDevice` and `postPush` answering something other than `deviceJSON`. The two edited tests keep their own assertions (the 401 and its log line for a device the model forgot behind the layer's back; the 204, the log line and no refusal for a device already gone): they fail if a typed handler turned `core.ErrNoDevice` into 409 or `deleteDevice` refused a device that is gone.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestRoutes_TheDeviceRoutesAreOnTheTable|TestAPI_ADeviceRouteFailureIsLoggedWithItsStatus|TestAPI_DeleteDeviceOfADeviceAlreadyGoneIs204'`
+
+Expected: the package builds; the three tests fail with `the table has no such route` (`PUT /api/v1/device`) from `routeOf` / `no route of the table has this client name: putDevice` from `routeNamed`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/routes.go`, append to the slice `routes()` returns:
+
+```go
+		typed(l, spec{
+			method: http.MethodPut, path: "/api/v1/device", log: "notify", client: "putDevice", ok: http.StatusOK,
+			doc: "`{waiting, finished, pause}`: this device's notification settings, each field optional and a missing one left as it is; `pause` is `\"1h\"` (until an hour from now) or `\"none\"` (ends a pause), any other value is 400. Answers the device as the model stored it.",
+		}, l.putDevice),
+		typed(l, spec{
+			method: http.MethodPut, path: "/api/v1/quick-replies", log: "quick-replies", client: "putQuickReplies", ok: http.StatusOK,
+			doc: "`{replies}`: the quick replies every paired phone offers above its reply box, or `null` (or no field) for the defaults; a list `core.NormalizeQuickReplies` refuses is 400 with its words. Answers `{quick_replies}`, the list as the app reads it.",
+		}, l.putQuickReplies),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/device/push", log: "subscribe", client: "postPush", ok: http.StatusOK,
+			doc: "The browser's `PushSubscription.toJSON()`: stores this device's push subscription and answers the device. An endpoint that is not `https`, over 2 KiB, or not on `web.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com` or a host ending in `.notify.windows.com`, with a user or a port but 443, or keys of the wrong size, is 400.",
+		}, l.postPush),
+		typed(l, spec{
+			method: http.MethodDelete, path: "/api/v1/device/push", log: "unsubscribe", client: "deletePush", ok: http.StatusNoContent,
+			doc: "Drops this phone's push subscription, which the model records as expired; the app asks for it when it finds on a launch that the phone holds none or may not notify. 204.",
+		}, l.deletePush),
+		typed(l, spec{
+			method: http.MethodDelete, path: "/api/v1/device", log: "unpair", client: "deleteDevice", ok: http.StatusNoContent,
+			doc: "Unpairs this phone: the model forgets the device, which ends its streams and drops its subscription, and the cookie is cleared. 204, a device already gone included.",
+		}, l.deleteDevice),
+```
+
+In `internal/web/api.go`:
+
+1. Delete these lines from `routeAPI`:
+
+```go
+	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
+	m.Handle("PUT /api/v1/quick-replies", l.authed(l.putQuickReplies))
+	m.Handle("POST /api/v1/device/push", l.authed(l.postPush))
+	m.Handle("DELETE /api/v1/device/push", l.authed(l.deletePush))
+	m.Handle("DELETE /api/v1/device", l.authed(l.deleteDevice))
+```
+
+2. Delete `decodeBody`, which no handler uses now, with its comment:
+
+```go
+// decodeBody reads the request's JSON body into v, answering 400 when it is
+// not that (an unknown field included).
+func (l *Layer) decodeBody(w http.ResponseWriter, r *http.Request, a actionLog, v any) bool {
+	if err := readJSON(r, v); err != nil {
+		l.refuse(w, a, http.StatusBadRequest, "bad request: "+err.Error())
+		return false
+	}
+	return true
+}
+```
+
+3. Replace each of these functions from its signature line through its closing brace (every doc comment stays):
+
+`putDevice` (signature `func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string) {`):
+
+```go
+func (l *Layer) putDevice(c *call, body deviceBody) (deviceJSON, error) {
+	change := core.NotifyChange{Waiting: body.Waiting, Finished: body.Finished}
+	if body.Pause != nil {
+		switch *body.Pause {
+		case "1h":
+			until := l.now().Add(time.Hour)
+			change.PausedUntil = &until
+		case "none":
+			change.PausedUntil = &time.Time{}
+		default:
+			return deviceJSON{}, &statusError{http.StatusBadRequest, `pause: want "1h" or "none"`}
+		}
+	}
+	stored, err := l.host.SetNotify(c.device, change)
+	if err != nil {
+		return deviceJSON{}, err
+	}
+	return deviceOf(stored), nil
+}
+```
+
+`putQuickReplies` (signature `func (l *Layer) putQuickReplies(w http.ResponseWriter, r *http.Request, device string) {`):
+
+```go
+func (l *Layer) putQuickReplies(_ *call, body quickRepliesBody) (quickRepliesJSON, error) {
+	stored, err := l.host.SetQuickReplies(body.Replies)
+	if err != nil {
+		if errors.Is(err, core.ErrQuickReplies) {
+			return quickRepliesJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+		}
+		return quickRepliesJSON{}, err
+	}
+	return quickRepliesJSON{QuickReplies: resolvedQuickReplies(stored)}, nil
+}
+```
+
+`postPush` (signature `func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) {`):
+
+```go
+func (l *Layer) postPush(c *call, body subscriptionBody) (deviceJSON, error) {
+	// The model takes unpadded base64url only; a browser may give padding.
+	sub := core.PushSubscription{
+		Endpoint: body.Endpoint,
+		P256DH:   strings.TrimRight(body.Keys.P256DH, "="),
+		Auth:     strings.TrimRight(body.Keys.Auth, "="),
+	}
+	if err := core.ValidatePushSubscription(sub); err != nil {
+		return deviceJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	stored, err := l.host.SetPushSubscription(c.device, sub)
+	if err != nil {
+		return deviceJSON{}, err
+	}
+	return deviceOf(stored), nil
+}
+```
+
+`deletePush` (signature `func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string) {`):
+
+```go
+func (l *Layer) deletePush(c *call, _ struct{}) (struct{}, error) {
+	if endpoint := l.host.PushEndpoint(c.device); endpoint != "" {
+		l.host.PushResult(c.device, endpoint, core.PushExpired)
+	}
+	return struct{}{}, nil
+}
+```
+
+`deleteDevice` (signature `func (l *Layer) deleteDevice(w http.ResponseWriter, _ *http.Request, device string) {`):
+
+```go
+func (l *Layer) deleteDevice(c *call, _ struct{}) (struct{}, error) {
+	if err := l.client.RevokeDevice(c.device); err != nil && !core.IsNoDevice(err, c.device) {
+		return struct{}{}, err
+	}
+	clearDeviceCookie(c.w)
+	return struct{}{}, nil
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>`: the new row test, the two edited tests, and the existing device, quick-reply and push tests (`TestAPI_EveryAnswerIsLoggedWithItsStatus` with its `notify`, `subscribe` and `unsubscribe` lines among them).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): the device, quick-reply, push and unpair routes on the route table" -- internal/web/routes.go internal/web/routes_test.go internal/web/api.go internal/web/api_test.go
+```
+
+### Task 2.4: Pair, push key, the mockup page route and the stream's events
+
+**Files:**
+- Modify: `internal/web/routes.go` (the end of `routes()`)
+- Modify: `internal/web/routes_test.go` (`TestRoutes_OnlyPairIsOpen`)
+- Modify: `internal/web/auth_test.go` (`TestPair_AnswersWhatTheHostSays`: its "no body" row)
+- Modify: `internal/web/auth.go` (`routePair`; `pair`)
+- Modify: `internal/web/push.go` (`routePush`; `pushKey`)
+- Modify: `internal/web/api.go` (`routeAPI`)
+- Modify: `internal/web/stream.go` (after `routeStream`)
+- Modify: `internal/web/web.go:90-97`
+- Test: `internal/web/routes_test.go`, `internal/web/stream_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/routes_test.go`, replace `TestRoutes_OnlyPairIsOpen`, which today reads
+
+```go
+func TestRoutes_OnlyPairIsOpen(t *testing.T) {
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		if rt.spec.open {
+			assert.Equal(t, "POST /api/v1/pair", key, "an open route is served to anyone: only the pairing route may be")
+		}
+	}
+}
+```
+
+with the exact set, which now requires the pair route to be in the table and open:
+
+```go
+func TestRoutes_OnlyPairIsOpen(t *testing.T) {
+	var open []string
+	for _, rt := range (&Layer{}).routes() {
+		if rt.spec.open {
+			open = append(open, rt.spec.method+" "+rt.spec.path)
+		}
+	}
+	assert.Equal(t, []string{"POST /api/v1/pair"}, open, "an open route is served to anyone: the pairing route, and only it, must be")
+}
+```
+
+and append:
+
+```go
+// typeProblem says what is wrong with t as a route's query, body or response
+// type, "" when nothing is: Story 5's generator takes JSON names from named
+// types, so only struct{} (no data) may be unnamed.
+func typeProblem(t reflect.Type) string {
+	if t == nil || t == reflect.TypeFor[struct{}]() {
+		return ""
+	}
+	if t.Name() == "" {
+		return "unnamed type " + t.String()
+	}
+	return ""
+}
+
+func TestRoutes_TypesAreNamed(t *testing.T) {
+	assert.Empty(t, typeProblem(nil))
+	assert.Empty(t, typeProblem(reflect.TypeFor[struct{}]()))
+	assert.Empty(t, typeProblem(reflect.TypeFor[echoBody]()))
+	assert.NotEmpty(t, typeProblem(reflect.TypeFor[struct{ Code string }]()), "an unnamed struct is refused")
+
+	for _, rt := range (&Layer{}).routes() {
+		key := rt.spec.method + " " + rt.spec.path
+		assert.Empty(t, typeProblem(rt.query), "%s: query", key)
+		assert.Empty(t, typeProblem(rt.body), "%s: body", key)
+		assert.Empty(t, typeProblem(rt.resp), "%s: resp", key)
+	}
+}
+
+func TestRoutes_TheTableHoldsExactlyTheRoutesOfTheAPI(t *testing.T) {
+	want := []string{
+		"POST /api/v1/pair pair",
+		"GET /api/v1/push-key pushKey",
+		"POST /api/v1/sessions create",
+		"GET /api/v1/launch-defaults launchDefaults",
+		"POST /api/v1/sessions/{id}/send send",
+		"POST /api/v1/sessions/{id}/asks/{ask}/answer answer",
+		"POST /api/v1/sessions/{id}/merge merge",
+		"POST /api/v1/sessions/{id}/pause pause",
+		"POST /api/v1/sessions/{id}/resume resume",
+		"POST /api/v1/sessions/{id}/kill kill",
+		"POST /api/v1/sessions/{id}/push push",
+		"GET /api/v1/sessions/{id}/message message",
+		"GET /api/v1/sessions/{id}/turns turns",
+		"GET /api/v1/sessions/{id}/diff diff",
+		"GET /api/v1/sessions/{id}/mockup mockup",
+		"GET /api/v1/sessions/{id}/jobs/{job}/log jobLog",
+		"POST /api/v1/sessions/{id}/jobs/{job}/{action} jobControl",
+		"GET /api/v1/sessions/{id}/flow flow",
+		"GET /api/v1/sessions/{id}/flow/doc flowDoc",
+		"GET /api/v1/flows flows",
+		"PUT /api/v1/device putDevice",
+		"PUT /api/v1/quick-replies putQuickReplies",
+		"POST /api/v1/device/push postPush",
+		"DELETE /api/v1/device/push deletePush",
+		"DELETE /api/v1/device deleteDevice",
+	}
+	var got []string
+	for _, rt := range (&Layer{}).routes() {
+		got = append(got, rt.spec.method+" "+rt.spec.path+" "+rt.spec.client)
+	}
+	assert.ElementsMatch(t, want, got, "every route under /api/v1 but the stream is declared once, in the table")
+}
+
+func TestRoutes_PairAndPushKeyAndTheMockup(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPost, "/api/v1/pair", "pair", http.StatusOK, nil, reflect.TypeFor[pairBody](), reflect.TypeFor[pairJSON]()},
+		{http.MethodGet, "/api/v1/push-key", "pushKey", http.StatusOK, nil, nil, reflect.TypeFor[pushKeyJSON]()},
+	})
+	assert.Empty(t, routeOf(t, &Layer{}, http.MethodPost, "/api/v1/pair").spec.log, "pair logs for itself")
+	assert.Empty(t, routeOf(t, &Layer{}, http.MethodGet, "/api/v1/push-key").spec.log, "so does the push key")
+
+	mockup := routeOf(t, &Layer{}, http.MethodGet, "/api/v1/sessions/{id}/mockup")
+	assert.True(t, mockup.page, "the mockup is a page the generated client only builds the URL of")
+	assert.Equal(t, "mockup", mockup.spec.client)
+	assert.Nil(t, mockup.resp)
+	assert.Nil(t, mockup.query)
+	assert.Nil(t, mockup.body)
+}
+
+func TestRoutes_TheOpenEntryIsServedToARequestWithNoCookie(t *testing.T) {
+	host := &scriptedHost{name: "iPhone", token: deviceToken(7)}
+	l := &Layer{host: host}
+	m := http.NewServeMux()
+	l.registerRoutes(m)
+	rec := httptest.NewRecorder()
+
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pair", strings.NewReader(`{"code": "k7qm-2xpa"}`)))
+
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"k7qm-2xpa"}, host.redeemed, "the pair handler ran, with no cookie and so no device")
+	assert.JSONEq(t, `{"device":"iPhone"}`, rec.Body.String())
+}
+```
+
+In `internal/web/auth_test.go`, in `TestPair_AnswersWhatTheHostSays`, tighten the row that pins a malformed body's answer, which today reads
+
+```go
+		{"no body", ``, nil, http.StatusBadRequest, nil, nil, "empty"},
+```
+
+to
+
+```go
+		{"no body", ``, nil, http.StatusBadRequest, nil, nil, "bad request: the body is empty"},
+```
+
+(The row already asserts that the host was asked about no code and that no cookie was set, so it replaces a test of its own for the prefix.)
+
+Append to `internal/web/stream_test.go` (it already imports `reflect`, `json` and `strings`):
+
+```go
+func TestStreamEvents_NameThePayloadOfEveryEventTheStreamSends(t *testing.T) {
+	var names []string
+	types := map[string]reflect.Type{}
+	for _, e := range streamEvents() {
+		names = append(names, e.name)
+		types[e.name] = e.data
+	}
+
+	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "device", "notice", "ping", "bye"}, names)
+	assert.Equal(t, reflect.TypeFor[snapshotJSON](), types["snapshot"])
+	assert.Equal(t, reflect.TypeFor[sessionsJSON](), types["sessions"])
+	assert.Equal(t, reflect.TypeFor[workspacesJSON](), types["workspaces"])
+	assert.Equal(t, reflect.TypeFor[usageEventJSON](), types["usage"])
+	assert.Equal(t, reflect.TypeFor[quickRepliesJSON](), types["quick_replies"])
+	assert.Equal(t, reflect.TypeFor[deviceJSON](), types["device"])
+	assert.Equal(t, reflect.TypeFor[noticeJSON](), types["notice"])
+	assert.Equal(t, reflect.TypeFor[struct{}](), types["ping"], "a ping carries {}")
+	assert.Equal(t, reflect.TypeFor[struct{}](), types["bye"])
+	assert.Contains(t, names, pingFrame.event, "the frame the stream writes for a ping is in the table")
+	assert.Contains(t, names, byeFrame.event)
+}
+
+func TestStreamEvents_EveryFrameTheHubSendsIsInTheTableWithItsPayloadType(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	e.tune(func(h *hub) { h.ping = 30 * time.Millisecond })
+	s := e.open(t, e.cookie)
+	table := map[string]reflect.Type{}
+	for _, ev := range streamEvents() {
+		table[ev.name] = ev.data
+	}
+	seen := map[string]bool{}
+	check := func(f streamFrame) {
+		t.Helper()
+		typ, ok := table[f.Event]
+		if !assert.True(t, ok, "the hub sent %q, which streamEvents() does not name", f.Event) {
+			return
+		}
+		dec := json.NewDecoder(strings.NewReader(string(f.Data)))
+		dec.DisallowUnknownFields()
+		assert.NoError(t, dec.Decode(reflect.New(typ).Interface()), "%s: its data does not fit the table's type %s: %s", f.Event, typ, f.Data)
+		seen[f.Event] = true
+	}
+
+	check(s.next()) // the snapshot, which opens a stream
+	e.change(t, func() { require.NoError(t, e.insts["one"].TransitionTo(session.Prompting)) })
+	require.NoError(t, e.tui.RenameWorkspace("toy", "renamed"))
+	_, err := e.loop.SetQuickReplies([]string{"ship it"})
+	require.NoError(t, err)
+	e.layer.hub.apply([]core.Event{core.AccountsChanged{View: core.AccountsView{
+		Names: core.AccountNames{Present: true, Default: "default", Names: []string{"default"}},
+		Usage: map[string]account.Usage{"default": {Available: true, Plan: "max", FiveHour: &account.Window{Pct: 62}, At: time.Now()}},
+	}}})
+	off := false
+	_, err = e.loop.SetNotify("iPhone", core.NotifyChange{Finished: &off})
+	require.NoError(t, err)
+	e.loop.WebServing("", errors.New("push failed"))
+	for _, ev := range streamEvents() {
+		for ev.name != "bye" && !seen[ev.name] {
+			check(s.next())
+		}
+	}
+	e.layer.Close()
+	for _, f := range s.ended() {
+		check(f)
+	}
+
+	for _, ev := range streamEvents() {
+		assert.True(t, seen[ev.name], "the table names %q, which the hub never sent", ev.name)
+	}
+}
+```
+
+Fails without: `TestRoutes_OnlyPairIsOpen`: the pair entry missing, or not `open`, or any other entry open. `TestRoutes_TypesAreNamed`: a route declared over an anonymous struct (pair's old unnamed body); the detection row for `struct{ Code string }`. `TestRoutes_TheTableHoldsExactlyTheRoutesOfTheAPI`: a route left on `routeAPI` or a registrar, or dropped from the table. `TestRoutes_PairAndPushKeyAndTheMockup`: `log` set for pair or push key (a double log line), the mockup not a page route, or a `resp` on it. `TestRoutes_TheOpenEntryIsServedToARequestWithNoCookie`: `registerRoutes` wrapping an `open` entry in `authed` (a 401, and no code redeemed). `TestPair_AnswersWhatTheHostSays` (its tightened "no body" row): pair answering its bare `readJSON` error without the adapter's `bad request: ` prefix. `TestStreamEvents_NameThePayloadOfEveryEventTheStreamSends`: the table's order, a payload type other than the contract's, or `ping` and `bye` named otherwise than the frames the stream writes (`pingFrame`, `byeFrame`). `TestStreamEvents_EveryFrameTheHubSendsIsInTheTableWithItsPayloadType`: an event the hub sends that `streamEvents()` lacks (the frame is reported as not named), a table name the hub never sends (the final check), or a payload type the frame's data does not fit (decoding refuses an unknown field).
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestRoutes_|TestPair_|TestStreamEvents_'`
+
+Expected: build failure, `internal/web/routes_test.go: undefined: pairBody` (and `pairJSON`, `pushKeyJSON`), `internal/web/stream_test.go: undefined: streamEvents`, then `FAIL github.com/aidan-bailey/loom/internal/web [build failed]`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/auth.go`, delete `routePair` with its comment:
+
+```go
+// routePair registers the one route a phone can call before it is paired.
+func (l *Layer) routePair(m *http.ServeMux) {
+	m.Handle("POST /api/v1/pair", http.HandlerFunc(l.pair))
+}
+```
+
+and replace `pair` (signature `func (l *Layer) pair(w http.ResponseWriter, r *http.Request) {` through its closing brace; its doc comment stays, but add the two types above it):
+
+```go
+// pairBody is POST /api/v1/pair.
+type pairBody struct {
+	Code string `json:"code"`
+}
+
+// pairJSON is the pair route's answer: the name the model gave the device.
+type pairJSON struct {
+	Device string `json:"device"`
+}
+```
+
+```go
+func (l *Layer) pair(c *call, body pairBody) (pairJSON, error) {
+	if len(body.Code) > maxCodeLen {
+		return pairJSON{}, &statusError{http.StatusBadRequest, "the code is too long"}
+	}
+	name, token, err := l.host.RedeemPairing(body.Code)
+	if err == nil {
+		setDeviceCookie(c.w, token)
+		log.For("web").Info("web.paired", "device", name)
+		return pairJSON{Device: name}, nil
+	}
+	for _, refusal := range pairRefusals {
+		if errors.Is(err, refusal.err) {
+			log.For("web").Warn("web.pair_refused", "reason", refusal.err.Error())
+			return pairJSON{}, &statusError{refusal.status, refusal.err.Error()}
+		}
+	}
+	log.For("web").Error("web.pair_failed", "err", err)
+	return pairJSON{}, &statusError{http.StatusInternalServerError, "pairing failed; the daemon's log says why"}
+}
+```
+
+(An error that is none of the sentinels is the fixed 500 above, never `err`'s text: the model's errors can carry paths and device names. A body that does not decode is the adapter's 400, `bad request: ` plus the reason.)
+
+In `internal/web/push.go`, delete `routePush` with its comment:
+
+```go
+// routePush adds the push key route to the layer's mux.
+func (l *Layer) routePush(m *http.ServeMux) {
+	m.Handle("GET /api/v1/push-key", l.authed(l.pushKey))
+}
+```
+
+and replace `pushKey` (signature `func (l *Layer) pushKey(w http.ResponseWriter, _ *http.Request, _ string) {` through its closing brace; its doc comment stays, and add `pushKeyJSON` above it):
+
+```go
+// pushKeyJSON is the push key route's answer: the VAPID public key.
+type pushKeyJSON struct {
+	Key string `json:"key"`
+}
+```
+
+```go
+func (l *Layer) pushKey(_ *call, _ struct{}) (pushKeyJSON, error) {
+	key, err := l.host.VAPIDKey()
+	if err != nil {
+		return pushKeyJSON{}, &statusError{http.StatusServiceUnavailable, "push is not available"}
+	}
+	return pushKeyJSON{Key: base64.RawURLEncoding.EncodeToString(key.Public)}, nil
+}
+```
+
+In `internal/web/api.go`, delete `routeAPI`, which now holds only the mockup line, with its comment:
+
+```go
+// routeAPI registers the sessions' actions under /api/v1. Every route needs
+// a paired device (authed); /pair, /stream and /push-key are other stories'.
+func (l *Layer) routeAPI(m *http.ServeMux) {
+	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
+}
+```
+
+In `internal/web/stream.go`, add after `routeStream`:
+
+```go
+// streamEvent is one event of the stream: its SSE name and its payload's type.
+type streamEvent struct {
+	name string
+	data reflect.Type
+}
+
+// streamEvents is the stream's events table, which the generator reads for
+// the app's event map: every event the stream sends, with its payload's type.
+// ping and bye carry {}.
+func streamEvents() []streamEvent {
+	return []streamEvent{
+		{"snapshot", reflect.TypeFor[snapshotJSON]()},
+		{"sessions", reflect.TypeFor[sessionsJSON]()},
+		{"workspaces", reflect.TypeFor[workspacesJSON]()},
+		{"usage", reflect.TypeFor[usageEventJSON]()},
+		{"quick_replies", reflect.TypeFor[quickRepliesJSON]()},
+		{"device", reflect.TypeFor[deviceJSON]()},
+		{"notice", reflect.TypeFor[noticeJSON]()},
+		{"ping", reflect.TypeFor[struct{}]()},
+		{"bye", reflect.TypeFor[struct{}]()},
+	}
+}
+```
+
+In `internal/web/routes.go`, append to the slice `routes()` returns (replace the comment above `routes` that names Story 2 with `// routes is the table, in registration order.`):
+
+```go
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/pair", open: true, client: "pair", ok: http.StatusOK,
+			doc: "`{code}`: trades a pairing code for the device cookie and answers `{\"device\": \"<name>\"}`. The one route served without a cookie. A wrong or used code is 400, too many wrong ones 429, a name taken or 16 devices paired 409, the web off 503, and any other failure a fixed 500.",
+		}, l.pair),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/push-key", client: "pushKey", ok: http.StatusOK,
+			doc: "The VAPID public key the app subscribes with, as unpadded base64url: `{key}`. 503 when push is not available.",
+		}, l.pushKey),
+		page(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/mockup", log: "mockup", client: "mockup", ok: http.StatusOK,
+			doc: "The page the session's brainstorm companion serves now, as HTML under `mockupCSP` with `Cache-Control: no-store`, for the app's iframe. A refusal (409: no companion, or a page refused) or a timeout (504) is a small HTML page that says why, under the same policy.",
+		}, l.readMockup),
+```
+
+In `internal/web/web.go`, in `mux()`, replace
+
+```go
+	l.routePair(m)
+	l.routeStream(m)
+	l.routeAPI(m)
+	l.registerRoutes(m)
+	l.routeStatic(m)
+	l.routePush(m)
+```
+
+with
+
+```go
+	l.registerRoutes(m)
+	l.routeStream(m)
+	l.routeStatic(m)
+```
+
+and in the comment above `mux` replace `one registrar per part` with `the table's routes, the stream and the static files`.
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && CGO_ENABLED=0 go vet ./internal/web/'`
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web	<time>` and no vet output: the new tests, `TestPair_AnswersWhatTheHostSays` (every case, the tightened no-body row, the fixed 500 and the sentinel-only bodies included), `TestPair_TakesPostOnly`, `TestPair_ACodeFromTheModelPairsAPhoneOnce`, the push-key tests (`TestRoutePush_*`), `TestMockup_ServesThePageSandboxed` and `TestMockup_ARefusalIsAPageThatSaysWhy`, `TestListener_GuardsEveryRequestAtTheDoor`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): pair, the push key and the mockup on the route table, and the stream's events table" -- internal/web/routes.go internal/web/routes_test.go internal/web/auth.go internal/web/auth_test.go internal/web/push.go internal/web/api.go internal/web/stream.go internal/web/stream_test.go internal/web/web.go
+```
+
+### Task 2.5: Delete `writeOutcome`, and move its two tests onto `settle` and `actCreated`
+
+**Files:**
+- Modify: `internal/web/api.go` (`writeOutcome`)
+- Modify: `internal/web/api_test.go` (`TestAPI_ACreatesNoticesAreKeptToo`, `TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder`)
+
+- [ ] **Step 1: Write the changed tests**
+
+In `internal/web/api_test.go`, in `TestAPI_ACreatesNoticesAreKeptToo`, replace
+
+```go
+	env := newAPIEnv(t, apiFixture{})
+	rec := httptest.NewRecorder()
+	now := time.Now()
+
+	env.layer.writeOutcome(rec, actionLog{device: "phone", name: "create"}, core.Reply{ID: 7},
+		[]noticeJSON{{Text: "prompt not sent", At: now}}, true, true)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	_, snap := env.openStream()
+```
+
+with
+
+```go
+	env := newAPIEnv(t, apiFixture{})
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "prompt not sent", At: time.Now()})
+
+	out, err := c.actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 7}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, core.InstanceID(7), out.ID)
+	_, snap := env.openStream()
+```
+
+(the lines after it, `require.Len(t, snap.Notices, 1)` and the text check, stay), and in `TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder` replace
+
+```go
+		env.layer.writeOutcome(httptest.NewRecorder(), actionLog{device: "phone", name: "pause"}, core.Reply{},
+			[]noticeJSON{{Text: fmt.Sprintf("r%d", i), At: time.Now()}}, true, false)
+```
+
+with
+
+```go
+		_, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: fmt.Sprintf("r%d", i), At: time.Now()}}, true)
+		require.NoError(t, err)
+```
+
+Fails without: `TestAPI_ACreatesNoticesAreKeptToo`: `actCreated` not keeping the notice raised before the request among the recent notices, or not answering the new session's ID. `TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder`: `settle` not keeping a successful outcome's notices, or the hub not holding the last 20 in order.
+
+- [ ] **Step 2: Run them**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestAPI_ACreatesNoticesAreKeptToo|TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder'`
+
+Expected: both pass already: `settle` and `actCreated` exist (Story 1), and the tests no longer name `writeOutcome`, so nothing prevents Step 3.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/api.go`, delete `writeOutcome` with its doc comment, which no production code calls now:
+
+```go
+// writeOutcome answers an action from how its request ended. Not done is the
+// wait running out: 202, the outcome following on the stream. An error in the
+// Reply keeps the model's text with the status it earns, and any notice
+// beside it goes to the device's stream; otherwise the notices ride the
+// response, with the new session's ID for a create, and are also kept among
+// the recent notices the snapshot carries.
+func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
+	notes, err := l.settle(a.device, reply, notes, done)
+	switch {
+	case errors.Is(err, errPending):
+		l.record(a, http.StatusAccepted, "pending")
+		writeJSON(w, http.StatusAccepted, pendingJSON{Pending: true})
+	case err != nil:
+		l.refuse(w, a, modelStatus(err), err.Error())
+	case created:
+		a.sessionID = reply.ID
+		l.record(a, http.StatusCreated, "created")
+		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: notes})
+	default:
+		l.record(a, http.StatusOK, "ok")
+		writeJSON(w, http.StatusOK, noticesJSON{Notices: notes})
+	}
+}
+```
+
+and in the comment above `settle`, which Story 1 wraps over two lines, replace
+
+```go
+// settle is the outcome rule of an action's request, which act, actCreated
+// and writeOutcome share: not done is errPending (the outcome follows on the
+```
+
+with
+
+```go
+// settle is the outcome rule of an action's request, which act and
+// actCreated share: not done is errPending (the outcome follows on the
+```
+
+- [ ] **Step 4: Run the story's gates**
+
+Run, in order: the gofmt check from the profile (`bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'`, printing nothing), `CGO_ENABLED=0 go vet ./...`, `CGO_ENABLED=0 go test ./...`, then the story's Verify: `bash -c 'CGO_ENABLED=0 go test ./internal/web/... && CGO_ENABLED=0 go test -tags e2e ./e2e/ -run TestE2E_Web_SessionLifecycleOverHTTP'`.
+
+Expected: no gofmt output, no vet output, `ok` for every package, and `ok  	github.com/aidan-bailey/loom/e2e	<time>` for the web lifecycle e2e (it needs tmux), which drives pair, create, send, pause, resume and kill over the real HTTP listener.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor(web): writeOutcome goes; its tests run through settle and actCreated" -- internal/web/api.go internal/web/api_test.go
+```
+
+## Story 3: The fixed-value fields as typed string types, each with its union's values
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/unions.go`, `internal/web/unions_test.go`, `internal/web/fleet.go`, `internal/web/reads.go`, `internal/web/jobs.go`, `internal/web/flow.go`, `internal/web/asks.go`, `internal/web/fleet_test.go`, `internal/web/stream_test.go`, `internal/web/jobs_test.go`, `internal/web/reads_test.go`, `internal/web/flow_test.go`, `internal/web/asks_test.go`
+- **Interfaces:** exposes `union`, `unions()`, `sessionGroup`, `sessionStatus` and the other typed string types; uses none
+- **Verify:** `CGO_ENABLED=0 go test ./internal/web/`
+- **Review:** light (the JSON is unchanged and the fleet, reads, jobs and flow tests pin it)
+- **Form:** brief (a retyping of fields; no behaviour changes)
+
+The generator (Story 5) turns a typed string type into a TS union only when `unions()` lists it, so each field the README documents as one of a fixed set of values becomes a Go type of its own here: 20 types in `internal/web/unions.go`, each listed in `unions()` with its union's name and its values in the contract's order, and each JSON struct field retyped. The JSON the app reads does not change: `encoding/json` writes a typed string as the plain string, and every assignment site converts from the string the model's packages give (`sessionStatus(v.Status.String())`, `jobState(j.State)`). `sessionStatus` lists the seven names `session.Status.String()` writes; a status this build does not know is still sent as `Status(n)`, outside the union, and `groupOf` still lists it last under `paused`. The story is a retyping with no behaviour change, so it is brief: each task names the sites and the tests, and the developer writes the code. No landmine marker appears in it. Each retyped field breaks the existing tests that `assert.Equal` it against an untyped expected value (`assert.Equal` compares types), so each task converts those too.
+
+The names it defines are the contract's: `union` (`name string`, `values []string`), `unions()` (a `map[reflect.Type]union` keyed by `reflect.TypeFor[T]()`), and the 20 types `sessionGroup`, `sessionStatus`, `stopVerdict`, `jobState`, `jobControlKind`, `turnFrom`, `itemKind`, `stepState`, `agentPageState`, `fileStatus`, `fileOmitted`, `askKind`, `prState`, `prChecks`, `flowStageName`, `flowStageState`, `flowStatus`, `flowCell`, `flowStepKind` and `flowQuestionKind`. Names private to this story: the typed constants `prDraft`, `prOpen`, `prMerged`, `prClosed`, `checksNone`, `checksPending`, `checksPassing`, `checksFailing` (the words `prOf` writes) and `flowLost` (the word `flowSummaryOf` writes), which `unions()` and the conversions use.
+
+### Task 3.1: The union types, the fleet's fields, and the agreement tests
+
+**Files:**
+- Create: `internal/web/unions.go`
+- Create: `internal/web/unions_test.go`
+- Modify: `internal/web/fleet.go` (the group constants at `fleet.go:27-32`, `prJSON` at `:55-62`, `sessionJSON` at `:94-143`, `groupOf` at `:227`, `sessionOf` at `:262-292`, `prOf` at `:318-348`)
+- Modify: `internal/web/fleet_test.go` (`TestGroupOf_Verdicts`, `TestGroupOf_EachStatusLandsInItsGroup`, `TestPRWords`)
+- Modify: `internal/web/stream_test.go` (`:408-415`, `:455-457`)
+
+**Behaviour.**
+- `unions.go` declares `union`, all 20 string types (each with a one-line doc comment saying which field it types), the typed constants named above, and `unions()`, which returns the 20 entries with the names and values of the contract's lines (`SessionGroup` is `needs_you`, `your_turn`, `working`, `paused`; `SessionStatus` is `Running`, `Ready`, `Loading`, `Paused`, `Prompting`, `Deleting`, `Recoverable`; `StopVerdict`, `PrState`, `PrChecks` and the rest as listed there, in that order, the `""` values included).
+- `fleet.go`: the four `group…` constants become typed `sessionGroup` constants (same words); `sessionJSON.Group` is `sessionGroup`, `.Status` `sessionStatus`, `.Verdict` `stopVerdict`; `prJSON.State` is `prState` and `.Checks` `prChecks`. `groupOf` returns `(group sessionGroup, label string)`. `sessionOf` writes `Status: sessionStatus(v.Status.String())` and converts the verdict (the tuple assignment `s.Verdict, s.Gist = v.Verdict, v.VerdictGist` is split). `prOf`'s `var state, checks string` become `prState` and `prChecks`, assigned the typed constants.
+- `fleet_test.go`, `stream_test.go`: the expected values become typed so `assert.Equal` compares like with like: the tables' `group` column in `TestGroupOf_Verdicts` (`:515-526`, a `verdict, group, label string` row type) and `TestGroupOf_EachStatusLandsInItsGroup` (`:29-32`) become `sessionGroup`; `TestPRWords` (`:176-200`) maps to `prState`/`prChecks` and compares `prOpen`, `checksNone`; `stream_test.go` compares `groupNeedsYou`, `groupWorking`, `groupPaused` and `sessionStatus("Prompting")`.
+
+**Tests** (in `unions_test.go`):
+- `TestUnions_EachTypeIsListedUnderItsName`: a table of the 20 types with their contract name and ordered values; asserts `unions()` has exactly those 20 keys and that each entry equals the row. Fails without: an entry left out of `unions()`, a misspelt name, or values reordered or missing a value (`""` in `JobControl`, `FileOmitted`, `FlowStatus`, `FlowQuestionKind`).
+- `TestUnions_ValuesAreWhatTheCodeSends`: for each union, its `values` equal, in order, the values the code sends, read from their source: `session.Status` from 0 while `String()` does not start with `Status(`; `attention.NeedsYou`, `Done`, `Waiting`, `Stopped`; `sched.Held` … `Lost` and `sched.ControlPause`, `ControlResume` plus `""`; `transcript.From…`, `Kind…`, `State…` and `Agent…`; `git.StatusAdded` … `StatusCopied`, `git.OmittedLines`, `OmittedBudget` (after `""`); `core.AskKindQuestion`, `AskKindPermission`; `flowview.Stage…`, `State…`, `Status…` followed by `flowrun.Running`, `Parked`, `Done`, `Stopped`, `Cancelled`, `flowLost` and `""`; `flowview.Cell…`; `flowrun.KindPremise`, `KindDev`, `KindGates`, `KindReview`, `KindFix`, `KindDocs`; the question kinds `flowrun.KindNeedsContext` … `KindLane` plus `""`; and, for the words the web layer writes itself, `groupNeedsYou` … `groupPaused`, `prDraft` … `prClosed` and `checksNone` … `checksFailing`. Fails without: a value dropped from a list or added to a source package without the list, so the generator's unions would drift from what the code sends.
+- `TestUnions_EveryFixedValueFieldIsTyped`: a table of (struct type, field name, expected type); asserts each field's `reflect` type equals the union type. Rows here: `sessionJSON.Group`, `.Status`, `.Verdict`, `prJSON.State`, `.Checks`; Tasks 3.2 to 3.4 add theirs. Fails without: a field left `string` (no union, no TS union).
+- `TestSessionOf_TheWireWordsAreUnchanged` (in `fleet_test.go`): marshals `sessionOf` over a started `session.Prompting` view and over a `session.Ready` view with `HasLastMessage` true (`sessionOf` sends the verdict only then), verdict `attention.NeedsYou` and an open PR with passing checks (`github.State{Known: true, HasPR: true, PRNumber: 7, PRState: github.PROpen, Checks: github.ChecksPassing}`), unmarshals into a `map[string]any`, and asserts `group` `"needs_you"`, `status` `"Prompting"` (then `"Ready"`), `verdict` `"needs_you"`, and `pr` `state` `"open"` and `checks` `"passing"`. Fails without: the `sessionStatus(v.Status.String())` conversion, `groupOf`'s typed constants, or `prOf`'s typed words (a conversion through the status's integer, or a constant with another word, changes what the app reads).
+- `TestSessionOf_AnUnknownStatusIsSentAsItsString` (in `fleet_test.go`): `sessionOf(1, core.InstanceView{Status: session.Status(99)})` has `Status` `sessionStatus("Status(99)")` and `Group` `groupPaused`. Fails without: the pass-through of `Status.String()`; a conversion through the seven listed names would send `""`.
+
+- [ ] **Step 1: Write the tests** above (`unions_test.go` fails to compile until `unions()` exists; convert the `fleet_test.go` and `stream_test.go` expectations).
+- [ ] **Step 2: Run them to see them fail:** `CGO_ENABLED=0 go test ./internal/web/ -run 'TestUnions_|TestSessionOf_AnUnknownStatus|TestGroupOf|TestPRWords|TestStream' 2>&1 | head -30`; the package does not build (`undefined: unions`, `undefined: sessionGroup`).
+- [ ] **Step 3: Implement** `unions.go` and the `fleet.go` retyping as described.
+- [ ] **Step 4: Run the package:** `CGO_ENABLED=0 go test ./internal/web/` prints `ok  	github.com/aidan-bailey/loom/internal/web`. `go vet ./internal/web/` names any other site that no longer compiles.
+- [ ] **Step 5: Commit:** `git add -N internal/web/unions.go internal/web/unions_test.go`, then `git commit -m "refactor(web): type the session's fixed-value fields and list their unions" -- internal/web/unions.go internal/web/unions_test.go internal/web/fleet.go internal/web/fleet_test.go internal/web/stream_test.go`.
+
+### Task 3.2: The conversation and diff fields
+
+**Files:**
+- Modify: `internal/web/reads.go` (`agentPageJSON.State` at `:43`, `turnJSON.From` at `:51`, `itemJSON.Kind` at `:65`, `stepJSON.State` at `:82`, `fileJSON.Status` and `.Omitted` at `:96`, `:101`; the sites in `turnsOf` at `:127-152` and `patchOf` at `:166-172`)
+- Modify: `internal/web/reads_test.go` (`:268`, `:279`)
+- Modify: `internal/web/unions_test.go`
+
+**Behaviour.** `agentPageJSON.State` is `agentPageState`, `turnJSON.From` `turnFrom`, `itemJSON.Kind` `itemKind`, `stepJSON.State` `stepState`, `fileJSON.Status` `fileStatus`, `fileJSON.Omitted` `fileOmitted`. `turnsOf` and `patchOf` convert at each assignment (`From: turnFrom(t.From)`, `Kind: itemKind(it.Kind)`, `State: stepState(s.State)`, `State: agentPageState(a.State)`, `Status: fileStatus(f.Status)`, `Omitted: fileOmitted(f.Omitted)`); the `switch it.Kind` over the transcript's own item stays on its string. In `reads_test.go` the two `assert.Equal` calls on `page.Turns[0].From` and `empty.Agent.State` compare `turnFrom(transcript.FromBrief)` and `agentPageState(transcript.AgentUnknown)`.
+
+**Tests.**
+- `TestUnions_EveryFixedValueFieldIsTyped` (rows added): `agentPageJSON.State`, `turnJSON.From`, `itemJSON.Kind`, `stepJSON.State`, `fileJSON.Status`, `fileJSON.Omitted`. Fails without: any of the six left `string`.
+- `TestTurnsOf_EveryFromKindAndStateIsInItsUnion` (in `reads_test.go`): `turnsOf` over a `transcript.Page` holding one turn for each `transcript.From…` value, each with items of each `Kind…` (a steps item with a step in each `State…`) and an `Agent` in each of `AgentRunning`, `AgentFinished`, `AgentUnknown` (one page per agent state); asserts every `From`, item `Kind`, step `State` and agent `State` in the output is among the matching union's values (`slices.Contains(unions()[reflect.TypeFor[turnFrom]()].values, string(x))`) and that the output holds each of the five `From` words. Fails without: a conversion that maps a word outside its union, or a union missing a word the transcript sends.
+- `TestPatchOf_EveryStatusAndOmittedIsInItsUnion` (in `reads_test.go`): `patchOf` over a `git.Patch` with files of status `StatusAdded`, `StatusModified`, `StatusDeleted`, `StatusRenamed`, `StatusCopied` and `Omitted` `""`, `OmittedLines`, `OmittedBudget`; asserts each output `Status` and `Omitted` is in its union. Fails without: `"C"` or `"budget"` missing from the lists.
+
+- [ ] **Step 1: Write the tests** (the two new ones, the table rows, the converted expectations).
+- [ ] **Step 2: Run them to see them fail:** `CGO_ENABLED=0 go test ./internal/web/ -run 'TestUnions_EveryFixedValueFieldIsTyped|TestTurnsOf_Every|TestPatchOf_Every|TestAPI_Turns' 2>&1 | head -30`; the typed-field table reports the six fields as `string`.
+- [ ] **Step 3: Implement** the retyping and conversions.
+- [ ] **Step 4: Run the package:** `CGO_ENABLED=0 go test ./internal/web/` prints `ok  	github.com/aidan-bailey/loom/internal/web`.
+- [ ] **Step 5: Commit:** `git commit -m "refactor(web): type the conversation and diff fields" -- internal/web/reads.go internal/web/reads_test.go internal/web/unions_test.go`.
+
+### Task 3.3: The jobs' and asks' fields
+
+**Files:**
+- Modify: `internal/web/jobs.go` (`jobJSON.State` at `:36`, `.Control` at `:53`; `jobOf` at `:70-90`)
+- Modify: `internal/web/asks.go` (`askJSON.Kind` at `:32`; `askOf` at `:72`, whose `out := askJSON{ID: a.ID, Kind: a.Kind, …}` line sets it)
+- Modify: `internal/web/jobs_test.go` (`:105`, `:172`)
+- Modify: `internal/web/asks_test.go` (adds `TestAskOf_BothKindsAreInTheUnion`)
+- Modify: `internal/web/unions_test.go`
+
+**Behaviour.** `jobJSON.State` is `jobState` and `.Control` `jobControlKind`; `jobOf` writes `State: jobState(j.State)` and `Control: jobControlKind(j.Control)`. `live(s sched.State)` and the queue code keep `sched.State`. `askJSON.Kind` is `askKind`; `askOf` writes `Kind: askKind(a.Kind)` (its `a.Kind == core.AskKindPermission` test is on the core view and stays). In `jobs_test.go` the expectations at `:105` and `:172` become `jobState("done")` and `jobControlKind("resume")`.
+
+**Tests.**
+- `TestUnions_EveryFixedValueFieldIsTyped` (rows added): `jobJSON.State`, `jobJSON.Control`, `askJSON.Kind`. Fails without: any of the three left `string`.
+- `TestJobOf_EveryStateAndControlIsInItsUnion` (in `jobs_test.go`): `jobOf` over a `core.JobView` in each of the seven `sched` states, and with `Control` `sched.ControlPause`, `ControlResume` and unset; asserts each output `State` and `Control` is in its union and that an unset control is `""`. Fails without: `""` missing from `JobControl`, or a state word missing from `JobState`.
+- `TestAskOf_BothKindsAreInTheUnion` (in `asks_test.go`'s file, `internal/web/asks_test.go`): `askOf` over a `core.AskView` of `core.AskKindQuestion` and of `core.AskKindPermission`; asserts each `Kind` is in `AskKind`'s values. Fails without: either word missing from the list.
+
+- [ ] **Step 1: Write the tests** (and convert the two expectations).
+- [ ] **Step 2: Run them to see them fail:** `CGO_ENABLED=0 go test ./internal/web/ -run 'TestUnions_EveryFixedValueFieldIsTyped|TestJobOf_|TestAskOf_|TestJobs' 2>&1 | head -30`; the typed-field table reports the three fields as `string`.
+- [ ] **Step 3: Implement** the retyping and conversions.
+- [ ] **Step 4: Run the package:** `CGO_ENABLED=0 go test ./internal/web/` prints `ok  	github.com/aidan-bailey/loom/internal/web`.
+- [ ] **Step 5: Commit:** `git commit -m "refactor(web): type a job's state and control and an ask's kind" -- internal/web/jobs.go internal/web/asks.go internal/web/jobs_test.go internal/web/asks_test.go internal/web/unions_test.go`.
+
+### Task 3.4: The flow board's fields
+
+**Files:**
+- Modify: `internal/web/flow.go` (`flowSummaryJSON` at `:29-46` (`Stage`, `Status`, `Asks`), `flowStageJSON` at `:73-78` (`Name`, `State`), `flowStepJSON.Kind` at `:92`, `flowStoryJSON.Cells` at `:121`, `flowQuestionJSON.Kind` at `:128`; `flowSummaryOf` at `:47-65`, `flowOf` at `:176-208` (the stage and question sites), `storyOf` at `:210-258` (the cells and step-kind sites))
+- Modify: `internal/web/flow_test.go` (`:126`)
+- Modify: `internal/web/unions_test.go`
+
+**Behaviour.** `flowSummaryJSON.Stage` is `flowStageName`, `.Status` `flowStatus`, `.Asks` `flowQuestionKind`; `flowStageJSON.Name` is `flowStageName` and `.State` `flowStageState`; `flowStepJSON.Kind` is `flowStepKind`; `flowQuestionJSON.Kind` is `flowQuestionKind`; `flowStoryJSON.Cells` is `map[string]flowCell`. A step's `Status`, a gate's `Verdict`, a story's `Status` and a past run's `Status` stay `string` (they hold report words). `flowSummaryOf` converts `Stage`, `Status` and `Asks` and writes `flowLost` where it wrote `"lost"`; `flowOf` converts each stage's name and state and the question's kind; `storyOf` converts each step's kind and builds `Cells` into a non-nil `map[string]flowCell` of the converted values (a story with no cells still encodes `{}`, as `out.Cells = map[string]string{}` did). `flow_test.go:126` compares `flowLost`.
+
+**Tests.**
+- `TestUnions_EveryFixedValueFieldIsTyped` (rows added): `flowSummaryJSON.Stage`, `.Status`, `.Asks`; `flowStageJSON.Name`, `.State`; `flowStepJSON.Kind`; `flowQuestionJSON.Kind`; and `flowStoryJSON.Cells` (map type `map[string]flowCell`). Fails without: any left `string`.
+- `TestFlowOf_CellsEncodeAsStringsAndNoneAsAnEmptyObject` (in `flow_test.go`): `flowOf` over a view with one story whose `Cells` hold `{"dev": flowview.CellPassed, "fix": flowview.CellSkipped}` and one with nil `Cells`; marshals it and asserts the first story's `cells` is `{"dev":"passed","fix":"skipped"}` and the second's is `{}`, never `null`. Fails without: the non-nil `make` for the empty case (a nil typed map encodes `null`) or the per-value conversion.
+- `TestFlowSummaryOf_ConvertsStageStatusAndAsks` (in `flow_test.go`): `flowSummaryOf` over a `core.FlowSummary` in stage `flowview.StageRun`, status `flowrun.Parked`, asking `flowrun.KindBlocked`, and again with `Lost` true; asserts `Stage` `flowStageName("run")`, `Status` `flowStatus("parked")`, `Asks` `flowQuestionKind("blocked-decision")`, and `Status` `flowLost` in the lost case. Fails without: the `Lost` branch writing `flowLost`.
+
+- [ ] **Step 1: Write the tests** (and convert `flow_test.go:126`).
+- [ ] **Step 2: Run them to see them fail:** `CGO_ENABLED=0 go test ./internal/web/ -run 'TestUnions_EveryFixedValueFieldIsTyped|TestFlowOf_|TestFlowSummaryOf_|TestSessionJSON_CarriesTheFlows' 2>&1 | head -30`; the typed-field table reports the flow fields as `string`.
+- [ ] **Step 3: Implement** the retyping and conversions.
+- [ ] **Step 4: Run the package:** `CGO_ENABLED=0 go test ./internal/web/` prints `ok  	github.com/aidan-bailey/loom/internal/web`; then the story gates: `bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'` prints nothing, and `CGO_ENABLED=0 go vet ./...` is clean.
+- [ ] **Step 5: Commit:** `git commit -m "refactor(web): type the flow board's fixed-value fields" -- internal/web/flow.go internal/web/flow_test.go internal/web/unions_test.go`.
+
+## Story 4: The new app's toolchain, its committed bundle, and the embed
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/ui/vite.config.ts`, `internal/web/ui/tsconfig.json`, `internal/web/ui/eslint.config.js`, `internal/web/ui/.prettierrc.json`, `internal/web/ui/.prettierignore`, `internal/web/ui/components.json`, `internal/web/ui/index.html`, `internal/web/ui/scripts/check-dist.mjs`, `internal/web/ui/public/sw.js`, `internal/web/ui/public/manifest.webmanifest`, `internal/web/ui/public/icons/icon-180.png`, `internal/web/ui/public/icons/icon-192.png`, `internal/web/ui/public/icons/icon-512.png`, `internal/web/ui/src/main.tsx`, `internal/web/ui/src/test-setup.ts`, `internal/web/dist/`, `internal/web/static.go`, `internal/web/static_test.go`, `.gitattributes`, `.gitignore`, `flake.nix`
+- **Interfaces:** exposes the package scripts, the Vite config, `tsconfig.json`'s `@/*`, the Vitest harness, the ignore lists, `components.json`, the installed packages, `index.html`'s `#app`, the worker, `check-dist.mjs`, `nextFiles`, `nextStaticAssets` and its two `TestStatic_` tests; uses none
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm install --frozen-lockfile && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
+- **Review:** deep
+- **Form:** full (the build's configuration and the embed every later story builds on, which no gate covers until this story lands)
+
+This story gives the new app a home: `internal/web/ui/` with a pnpm package, Vite 8 (Rolldown), TypeScript, ESLint, Prettier, Tailwind's Vite plugin, shadcn's `components.json` and a Vitest harness, a one-line React app that mounts into `#app`, and `public/` holding the manifest, the icons copied from the classic app and a worker that is the classic worker whole with its cache prefix `loom-next-`. The build writes `internal/web/dist/` (with `THIRD_PARTY.txt`, the licence of every package in the bundle), which is committed and embedded in Go as `nextFiles` beside the classic `staticFiles`. `scripts/check-dist.mjs` rebuilds into a temporary directory and fails on any byte that differs from the committed bundle, so a stale `dist/` can never land. The daemon still serves only the classic app (Story 6 adds the switch); a Go test builds the new tree's assets through `buildStaticAssets`, which is what the daemon will do. Tasks 4.1 to 4.3 are configuration, checked by the pnpm gates and by `dist:check`; Task 4.4's Go tests pin the result and fail if the bundle, its placeholders or its content types are wrong. The story's code holds none of the profile's landmine markers.
+
+### Task 4.1: The manifest, the icons and the worker
+
+**Files:**
+- Create: `internal/web/ui/public/manifest.webmanifest`
+- Create: `internal/web/ui/public/icons/icon-180.png`
+- Create: `internal/web/ui/public/icons/icon-192.png`
+- Create: `internal/web/ui/public/icons/icon-512.png`
+- Create: `internal/web/ui/public/sw.js`
+
+- [ ] **Step 1: Copy the icons and write the manifest**
+
+The classic app's three icons are the new app's too (`tools/webicons` draws them; nothing in this story redraws them).
+
+```bash
+mkdir -p internal/web/ui/public/icons
+cp internal/web/static/icons/icon-180.png internal/web/static/icons/icon-192.png internal/web/static/icons/icon-512.png internal/web/ui/public/icons/
+```
+
+Create `internal/web/ui/public/manifest.webmanifest`. It is the classic manifest with the new app's background colour (spec §30's `--background`):
+
+```json
+{
+  "name": "Loom",
+  "short_name": "Loom",
+  "description": "Your loom sessions, from your phone.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1012",
+  "theme_color": "#0f1012",
+  "icons": [
+    { "src": "/icons/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+```
+
+- [ ] **Step 2: Write the worker**
+
+Create `internal/web/ui/public/sw.js`. It is `internal/web/static/sw.js` whole (shell cache, never `/api/`, every push a notification tagged by session, the badge, a tap opening the push's `url`) with three differences, each spec §5 or §6, and one small fix to `pushTarget` (a push whose `url` is not a string opens `/`; the classic worker's daemon always sends a `url`, so it never met the case, and `new URL(undefined, origin)` would open `<origin>/undefined`): its cache is `loom-next-<build>`; on activate it deletes every `loom-shell-` and `loom-next-` cache but its own; and it fetches its own shell files (`/`, `/index.html`, `/sw.js`, `/manifest.webmanifest`) as `?ui=next`, storing each answer under its plain path, so it never caches the classic app's shell whatever cookie its requests carry. The server writes `BUILD` and `SHELL` where the two placeholders are (`buildStaticAssets` refuses a worker without both), so the lines `const BUILD = ...;` and `const SHELL = ...;` keep exactly this shape. Each `catch` omits its unused binding, which the lint's `no-unused-vars` would flag.
+
+```js
+// Loom's service worker for the new app. It caches the app shell and never the API. The server
+// writes BUILD and SHELL when it serves this file: BUILD is the daemon's build ID, SHELL the URL
+// of every file of this app plus "/".
+const BUILD = "__LOOM_BUILD__";
+const SHELL = ["__LOOM_SHELL__"];
+// TREE is this worker's app. The server answers a shell file by its ui parameter before it looks
+// at the device's cookie, so the worker asks for each shell file as ?ui=TREE and stores the answer
+// under the plain path: it never caches the other app's shell, whatever cookie its requests carry.
+const TREE = "next";
+const SHELL_FILES = ["/", "/index.html", "/sw.js", "/manifest.webmanifest"];
+// Both apps' caches are swept on activate, so a switch leaves nothing of the other behind.
+const PREFIXES = ["loom-shell-", "loom-next-"];
+const CACHE = "loom-next-" + BUILD;
+
+async function precache() {
+  const cache = await caches.open(CACHE);
+  await Promise.all(
+    SHELL.map(async (url) => {
+      const asked = SHELL_FILES.includes(url) ? `${url}?ui=${TREE}` : url;
+      const response = await fetch(new Request(asked, { cache: "reload" }));
+      if (!response.ok) throw new Error(`${asked}: ${response.status}`);
+      await cache.put(url, response);
+    }),
+  );
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(precache().then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key !== CACHE && PREFIXES.some((prefix) => key.startsWith(prefix)))
+            .map((key) => caches.delete(key)),
+        ),
+      )
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  const key = req.mode === "navigate" ? "/" : url.pathname;
+  event.respondWith(
+    caches.open(CACHE).then((cache) => cache.match(key).then((hit) => hit || fetch(req))),
+  );
+});
+
+// ---- Push ----
+// A push is encrypted for this worker alone: the push service carries
+// ciphertext. Its JSON is {kind, session, title, body, badge, url}
+// (internal/web/triggers.go). iOS drops the subscription of a worker whose
+// push shows nothing, so every push shows a notification, even one this code
+// cannot read.
+self.addEventListener("push", (event) => {
+  event.waitUntil(showPush(event));
+});
+
+async function showPush(event) {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  if (data === null || typeof data !== "object") data = {};
+
+  const title =
+    typeof data.title === "string" && data.title
+      ? data.title
+      : data.kind === "waiting"
+        ? "A session needs you"
+        : "loom";
+  const body =
+    typeof data.body === "string" && data.body ? data.body : "Open loom to see what changed.";
+  // One notification per session: a newer push for it replaces the older
+  // one, and renotify still alerts.
+  const tag = data.session ? "session-" + data.session : "loom";
+
+  await self.registration.showNotification(title, {
+    body,
+    tag,
+    renotify: true,
+    icon: "/icons/icon-192.png",
+    data: { url: pushTarget(data.url) },
+  });
+  await setBadge(data.badge);
+}
+
+// setBadge puts the count of sessions that need you on the Home Screen icon.
+// A push without a count leaves the badge alone.
+async function setBadge(count) {
+  if (!Number.isInteger(count) || count < 0) return;
+  if (!self.navigator || !self.navigator.setAppBadge) return;
+  try {
+    if (count > 0) await self.navigator.setAppBadge(count);
+    else await self.navigator.clearAppBadge();
+  } catch {
+    // The badge is a courtesy; the notification is already shown.
+  }
+}
+
+// pushTarget is the page a notification opens: the push's url when it is a
+// string that stays on this origin, else the app's front page. A payload
+// with no url must not reach new URL(undefined, origin), which resolves to
+// <origin>/undefined.
+function pushTarget(url) {
+  if (typeof url !== "string") return new URL("/", self.location.origin).href;
+  try {
+    const target = new URL(url, self.location.origin);
+    if (target.origin === self.location.origin) return target.href;
+  } catch {
+    // fall through to the front page
+  }
+  return new URL("/", self.location.origin).href;
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url =
+    event.notification.data && event.notification.data.url
+      ? event.notification.data.url
+      : pushTarget("/");
+  event.waitUntil(openApp(url));
+});
+
+// openApp brings an open window of the app to the front on the page, or
+// opens one.
+async function openApp(url) {
+  const windows = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  for (const win of windows) {
+    try {
+      await win.focus();
+      if (win.navigate) await win.navigate(url);
+      return;
+    } catch {
+      // Try the next window, then a new one.
+    }
+  }
+  await self.clients.openWindow(url);
+}
+```
+
+- [ ] **Step 3: Check the worker parses**
+
+Run: `node --check internal/web/ui/public/sw.js`
+Expected: no output, exit status 0. Before Step 2's file exists the same command prints `Error: Cannot find module` and exits 1.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -N internal/web/ui/public
+git commit -m "build(web): the new app's manifest, icons and worker" -- internal/web/ui/public
+```
+
+### Task 4.2: The package, its configuration and a one-line app
+
+**Files:**
+- Modify: `.gitignore:12-13`
+- Create: `internal/web/ui/package.json`
+- Create: `internal/web/ui/pnpm-lock.yaml`
+- Create: `internal/web/ui/tsconfig.json`
+- Create: `internal/web/ui/vite.config.ts`
+- Create: `internal/web/ui/eslint.config.js`
+- Create: `internal/web/ui/.prettierrc.json`
+- Create: `internal/web/ui/.prettierignore`
+- Create: `internal/web/ui/components.json`
+- Create: `internal/web/ui/index.html`
+- Create: `internal/web/ui/src/main.tsx`
+- Create: `internal/web/ui/src/test-setup.ts`
+
+- [ ] **Step 1: Ignore `node_modules`, before anything installs into it**
+
+An untracked tree there would fill every session's diff. In `.gitignore`, after the last two lines
+
+```
+# Python bytecode from flow/lib test runs
+__pycache__/
+```
+
+add:
+
+```
+# The new web app's dependencies (internal/web/ui, installed by pnpm)
+internal/web/ui/node_modules/
+```
+
+- [ ] **Step 2: Write `package.json`**
+
+Create `internal/web/ui/package.json`. `check` runs, in this order, the typecheck, the lint, the format check, Vitest and `node --check` of the worker; `dist:check` is Task 4.3's script; `test` passes with no test files (`--passWithNoTests`) so `check` is green before the first test exists. `packageManager` is what `pnpm --version` prints on the dev machine at the time of writing (CI's `pnpm/action-setup` reads it); use the version your `pnpm --version` prints if it differs.
+
+```json
+{
+  "name": "loom-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --passWithNoTests",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && node --check public/sw.js",
+    "dist:check": "node scripts/check-dist.mjs"
+  }
+}
+```
+
+- [ ] **Step 3: Install the packages**
+
+`rollup` is installed only for the types `rollup-plugin-license` imports. The lockfile pins every version.
+
+```bash
+cd internal/web/ui
+pnpm add react react-dom
+pnpm add -D typescript vite @vitejs/plugin-react tailwindcss @tailwindcss/vite vitest happy-dom @types/react @types/react-dom @testing-library/react @testing-library/dom @testing-library/jest-dom @testing-library/user-event eslint typescript-eslint eslint-plugin-react-hooks prettier rollup-plugin-license rollup
+```
+
+Expected: pnpm writes `pnpm-lock.yaml` and `node_modules/`, and `git status --short` shows no `node_modules` line (Step 1).
+
+- [ ] **Step 4: Write the configuration**
+
+Create `internal/web/ui/tsconfig.json`. `paths` is the twin of Vite's `@` alias, which shadcn's CLI reads; `types` gives every file Vite's client types (CSS imports, `import.meta.env`) and Vitest's globals, and nothing from Node, so browser code cannot reach a Node-only name.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "types": ["vite/client", "vitest/globals"]
+  },
+  "include": ["src", "vite.config.ts"]
+}
+```
+
+Create `internal/web/ui/vite.config.ts` (Task 4.3 adds the licence plugin). The build writes `../dist` (`emptyOutDir` is explicit because `dist` is outside Vite's root) and no manifest; the dev server proxies `/api/v1` to `tools/webshot`'s `-serve` address; Vitest runs on happy-dom over `src/**/*.test.{ts,tsx}` with its globals and the setup file. The alias path comes from `import.meta.url`, since `tsconfig` gives browser code no Node types.
+
+```ts
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": decodeURIComponent(new URL("./src", import.meta.url).pathname) },
+  },
+  build: {
+    outDir: "../dist",
+    emptyOutDir: true,
+    manifest: false,
+  },
+  server: {
+    proxy: { "/api/v1": "http://127.0.0.1:5670" },
+  },
+  test: {
+    environment: "happy-dom",
+    globals: true,
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["./src/test-setup.ts"],
+  },
+});
+```
+
+Create `internal/web/ui/eslint.config.js`: typescript-eslint's `recommendedTypeChecked` and the react-hooks plugin's recommended rules, type information from the project service, the type-aware rules off for the plain JavaScript files (the config itself, `scripts/`, `public/sw.js`), and `dist`, `node_modules` and the generated `src/api/gen.ts` ignored (the typecheck still covers `gen.ts`).
+
+```js
+import { defineConfig, globalIgnores } from "eslint/config";
+import reactHooks from "eslint-plugin-react-hooks";
+import tseslint from "typescript-eslint";
+
+export default defineConfig([
+  globalIgnores(["dist", "node_modules", "src/api/gen.ts"]),
+  tseslint.configs.recommendedTypeChecked,
+  reactHooks.configs.flat.recommended,
+  {
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+  },
+  { files: ["**/*.{js,mjs}"], extends: [tseslint.configs.disableTypeChecked] },
+]);
+```
+
+Create `internal/web/ui/.prettierrc.json` (Prettier's defaults but for the width):
+
+```json
+{
+  "printWidth": 100
+}
+```
+
+Create `internal/web/ui/.prettierignore` (Prettier skips `src/api/gen.ts` because the Go generator writes it, not Prettier):
+
+```
+dist
+node_modules
+pnpm-lock.yaml
+src/api/gen.ts
+```
+
+Create `internal/web/ui/components.json`: shadcn on Base UI, Tailwind 4 (no config file), the stylesheet Story 8 writes, and the aliases under `@/`.
+
+```json
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-nova",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/app.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@/components",
+    "ui": "@/components/ui",
+    "utils": "@/lib/utils",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  }
+}
+```
+
+Create `internal/web/ui/index.html`. It carries the `loom-build` meta tag (`buildStaticAssets` fills `__LOOM_BUILD__`, and Vite leaves it alone), the app's mount point `<div id="app"></div>` (webshot waits for `#app` to hold an element, as the classic shell's does), no inline script or style, and the head the classic shell has with the new background colour.
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="loom-build" content="__LOOM_BUILD__" />
+    <meta name="theme-color" content="#0f1012" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Loom" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <title>Loom</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>Loom needs JavaScript.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+```
+
+Create `internal/web/ui/src/main.tsx` (Story 10 replaces it with the router):
+
+```tsx
+import { createRoot } from "react-dom/client";
+
+const mount = document.getElementById("app");
+if (mount) createRoot(mount).render(<p>Loom</p>);
+```
+
+Create `internal/web/ui/src/test-setup.ts`, Vitest's setup file: jest-dom's matchers (`toBeInTheDocument` and the rest) and Testing Library's cleanup after each test. Test files import `describe`, `it`, `expect` and `vi` from `vitest`.
+
+```ts
+import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+afterEach(() => {
+  cleanup();
+});
+```
+
+- [ ] **Step 5: Format, then run the gates**
+
+Run: `cd internal/web/ui && pnpm exec prettier --write . && pnpm run check`
+Expected: Prettier lists the files it checked (it may rewrite the ones above; keep its output), then `tsc` and `eslint` print nothing, `prettier --check` prints `All matched files use Prettier code style!`, Vitest prints `No test files found, exiting with code 0`, and `node --check` prints nothing; exit status 0.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -N internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml internal/web/ui/tsconfig.json internal/web/ui/vite.config.ts internal/web/ui/eslint.config.js internal/web/ui/.prettierrc.json internal/web/ui/.prettierignore internal/web/ui/components.json internal/web/ui/index.html internal/web/ui/src
+git commit -m "build(web): the new app's toolchain" -- .gitignore internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml internal/web/ui/tsconfig.json internal/web/ui/vite.config.ts internal/web/ui/eslint.config.js internal/web/ui/.prettierrc.json internal/web/ui/.prettierignore internal/web/ui/components.json internal/web/ui/index.html internal/web/ui/src
+```
+
+### Task 4.3: The licences, `dist:check` and the first committed bundle
+
+**Files:**
+- Modify: `internal/web/ui/vite.config.ts`
+- Create: `internal/web/ui/scripts/check-dist.mjs`
+- Create: `internal/web/dist/` (generated by `pnpm run build`)
+- Create: `.gitattributes`
+
+- [ ] **Step 1: Write `check-dist.mjs`**
+
+Create `internal/web/ui/scripts/check-dist.mjs`. It builds the app with Vite's `build()` into a fresh temporary directory (so the tree is never touched), lists the files of the result and of the committed `internal/web/dist/`, and exits 1, naming each file that differs, is missing from the committed bundle or is extra in it, unless the two are equal byte for byte. It changes into the package directory first, because the licence plugin finds `package.json` from the working directory.
+
+```js
+// Builds the app into a fresh temporary directory and compares the result with the committed
+// bundle, internal/web/dist, byte for byte. It writes nothing under the tree: a stale bundle is
+// a failure here, and `pnpm run build` is the fix.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "vite";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const committed = path.resolve(root, "../dist");
+
+// files lists every file under dir as a slash-separated path relative to dir, sorted.
+function files(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
+    )
+    .sort();
+}
+
+process.chdir(root);
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-dist-"));
+const problems = [];
+try {
+  await build({ root, logLevel: "warn", build: { outDir: tmp, emptyOutDir: true } });
+  const built = files(tmp);
+  const have = files(committed);
+  for (const name of built) {
+    if (!have.includes(name)) {
+      problems.push(`missing from internal/web/dist: ${name}`);
+    } else if (!fs.readFileSync(path.join(tmp, name)).equals(fs.readFileSync(path.join(committed, name)))) {
+      problems.push(`differs from the build: internal/web/dist/${name}`);
+    }
+  }
+  for (const name of have) {
+    if (!built.includes(name)) problems.push(`extra in internal/web/dist: ${name}`);
+  }
+} catch (err) {
+  problems.push(`the build failed: ${err instanceof Error ? err.message : String(err)}`);
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+if (problems.length > 0) {
+  console.error(problems.join("\n"));
+  console.error("internal/web/dist is stale: run `pnpm run build` in internal/web/ui and commit it.");
+  process.exit(1);
+}
+console.log("internal/web/dist matches the build.");
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `cd internal/web/ui && pnpm run dist:check`
+Expected: exit status 1; every built file is reported missing, for example `missing from internal/web/dist: index.html`, `missing from internal/web/dist: sw.js`, `missing from internal/web/dist: manifest.webmanifest`, `missing from internal/web/dist: icons/icon-180.png` (and the other two icons), `missing from internal/web/dist: assets/index-<hash>.js`, followed by `internal/web/dist is stale: run ...`. (`THIRD_PARTY.txt` is not built yet.)
+
+- [ ] **Step 3: Write the licence plugin**
+
+In `internal/web/ui/vite.config.ts`, add the three lines to the imports, the plugin function above `export default`, and the plugin to `plugins`.
+
+Replace
+
+```ts
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+```
+
+with
+
+```ts
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import license from "rollup-plugin-license";
+import type { Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+
+// The two hooks of rollup-plugin-license this config runs itself. The plugin's own file output
+// writes to a fixed path on disk, which would put a file in the tree from a `dist:check` build;
+// here the licences are collected as the chunks render and emitted into the bundle instead.
+interface LicenseHooks {
+  renderChunk(
+    code: string,
+    chunk: { modules: Record<string, { renderedLength: number }> },
+    options: { sourcemap: boolean },
+  ): unknown;
+  generateBundle(): void;
+}
+
+// thirdPartyLicenses writes the licence of every package the bundle holds into the bundle as
+// THIRD_PARTY.txt (NOTICE.md points there). The packages come sorted by name, so the file is the
+// same on every machine.
+function thirdPartyLicenses(): Plugin {
+  let text = "";
+  const scanner = license({
+    thirdParty: {
+      output: (dependencies) => {
+        text = [...dependencies]
+          .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+          .map((dependency) => dependency.text().replaceAll("\r\n", "\n"))
+          .join("\n\n---\n\n");
+      },
+    },
+  }) as unknown as LicenseHooks;
+  return {
+    name: "loom:third-party-licenses",
+    apply: "build",
+    renderChunk(code, chunk) {
+      scanner.renderChunk(code, chunk, { sourcemap: false });
+      return null;
+    },
+    generateBundle() {
+      scanner.generateBundle();
+      this.emitFile({ type: "asset", fileName: "THIRD_PARTY.txt", source: `${text}\n` });
+    },
+  };
+}
+
+export default defineConfig({
+  plugins: [react(), tailwindcss(), thirdPartyLicenses()],
+```
+
+- [ ] **Step 4: Build the bundle**
+
+Run: `cd internal/web/ui && pnpm exec prettier --write vite.config.ts scripts/check-dist.mjs && pnpm run build && ls ../dist ../dist/assets ../dist/icons`
+Expected: Vite prints the files it wrote (`../dist/index.html`, `../dist/assets/index-<hash>.js`, and the rest); `ls` shows `THIRD_PARTY.txt`, `assets`, `icons`, `index.html`, `manifest.webmanifest` and `sw.js`. Then `grep -c '^Name: react' ../dist/THIRD_PARTY.txt` prints a number above 0 (`react`, `react-dom` and `scheduler` are in it), and `grep -c '__LOOM_' ../dist/index.html ../dist/sw.js` prints `../dist/index.html:1` and `../dist/sw.js:2` (the placeholders reach the bundle intact; the server fills them).
+
+- [ ] **Step 5: Run `dist:check` to see it pass, then fail on a changed byte**
+
+Run: `cd internal/web/ui && pnpm run dist:check`
+Expected: `internal/web/dist matches the build.`, exit status 0.
+
+Then prove it fails on a stale file: `printf ' ' >> ../dist/sw.js && pnpm run dist:check; echo $?`
+Expected: `differs from the build: internal/web/dist/sw.js`, the `is stale` line, then `1`. Restore the file with `pnpm run build`, and `pnpm run dist:check` passes again.
+
+- [ ] **Step 6: Mark the bundle generated, run the gates and commit**
+
+Create `.gitattributes` at the repo root, so reviews and session diffs skip the bundle while `git diff --exit-code` still sees it change:
+
+```
+internal/web/dist/** linguist-generated=true -diff
+```
+
+Run: `cd internal/web/ui && pnpm run check && pnpm run dist:check`
+Expected: both exit 0.
+
+```bash
+git add -N .gitattributes internal/web/ui/scripts internal/web/dist
+git commit -m "build(web): the licence plugin, dist:check and the first committed bundle" -- .gitattributes internal/web/ui/vite.config.ts internal/web/ui/scripts internal/web/dist
+```
+
+### Task 4.4: Embed the new tree and test that it builds
+
+**Files:**
+- Modify: `internal/web/static.go:18-22` (the embed), `internal/web/static.go:31-39` (the content types)
+- Modify: `internal/web/static_test.go:90-98` (add the helper after it), `internal/web/static_test.go:195` (one existing case)
+- Test: `internal/web/static_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/static_test.go`, after the existing helper
+
+```go
+// staticAssets is the embedded app as routeStatic serves it.
+func staticAssets(t *testing.T) map[string]staticAsset {
+	t.Helper()
+	sub, err := fs.Sub(staticFiles, "static")
+	require.NoError(t, err)
+	assets, err := buildStaticAssets(sub, "b-test")
+	require.NoError(t, err)
+	return assets
+}
+```
+
+add the new tree's helper and its three tests. `nextStaticAssets` is the new app as `routeStatic` will serve it (the build ID `b-test`, as the classic helper's); Stories 6, 8, 12 and 14 use it.
+
+```go
+// nextStaticAssets is the new app as routeStatic serves it.
+func nextStaticAssets(t *testing.T) map[string]staticAsset {
+	t.Helper()
+	sub, err := fs.Sub(nextFiles, "dist")
+	require.NoError(t, err)
+	assets, err := buildStaticAssets(sub, "b-test")
+	require.NoError(t, err)
+	return assets
+}
+
+func TestStatic_ContentTypesKnowTheNewTreesExtensions(t *testing.T) {
+	for ext, want := range map[string]string{
+		".svg":   "image/svg+xml",
+		".woff2": "font/woff2",
+		".txt":   "text/plain; charset=utf-8",
+	} {
+		require.Equal(t, want, staticContentTypes[ext], ext)
+	}
+}
+
+func TestStatic_NextTreeBuilds(t *testing.T) {
+	assets := nextStaticAssets(t)
+
+	index := string(assets["/index.html"].body)
+	require.NotContains(t, index, "__LOOM_", "the placeholders are filled")
+	meta := regexp.MustCompile(`<meta name="loom-build" content="([^"]*)"\s*/?>`).FindStringSubmatch(index)
+	require.NotNil(t, meta, "index.html lost its loom-build meta")
+	require.Equal(t, "b-test", html.UnescapeString(meta[1]))
+	require.Contains(t, index, `<div id="app"></div>`, "webshot waits for #app")
+	require.Equal(t, assets["/index.html"], assets["/"], "the shell is served at / too")
+
+	for _, ref := range staticAttrRef.FindAllStringSubmatch(index, -1) {
+		require.Contains(t, assets, ref[1], "index.html references a file the bundle lacks")
+	}
+	entry := regexp.MustCompile(`<script type="module"[^>]* src="(/assets/[^"]+\.js)"`).FindStringSubmatch(index)
+	require.NotNil(t, entry, "index.html names no entry script")
+	require.Equal(t, "text/javascript; charset=utf-8", assets[entry[1]].ctype)
+
+	licenses := assets["/THIRD_PARTY.txt"]
+	require.Equal(t, "text/plain; charset=utf-8", licenses.ctype)
+	for _, pkg := range []string{"react", "react-dom"} {
+		require.Contains(t, string(licenses.body), "Name: "+pkg+"\n", "THIRD_PARTY.txt lacks "+pkg)
+	}
+
+	for _, size := range []string{"180", "192", "512"} {
+		require.Contains(t, assets, "/icons/icon-"+size+".png")
+	}
+	require.Contains(t, assets, "/manifest.webmanifest")
+	require.NotContains(t, string(assets["/sw.js"].body), "__LOOM_", "the worker's placeholders are filled")
+}
+
+func TestStatic_NextIndexHasNoInlineScriptOrStyle(t *testing.T) {
+	require.Empty(t, staticInlineMarkup(string(nextStaticAssets(t)["/index.html"].body)))
+}
+```
+
+Fails without: `TestStatic_ContentTypesKnowTheNewTreesExtensions`: an entry removed from `staticContentTypes`. `TestStatic_NextTreeBuilds`: `.txt` missing from `staticContentTypes` (`buildStaticAssets` errors on `THIRD_PARTY.txt`), the licence plugin unwired in `vite.config.ts` (no `Name: react`), `index.html` without `<div id="app">` or with a placeholder left, or a file `index.html` names missing from `dist/`. `TestStatic_NextIndexHasNoInlineScriptOrStyle`: Vite or `index.html` writing an inline `<script>` or a `style`/`on…` attribute.
+
+In the existing `TestStatic_BuildRefusesAnAppThatCannotBeServed`, the case for a file of an unknown type uses `notes.txt`, a type this story adds. Replace
+
+```go
+		{"a file of an unknown type", func(f fstest.MapFS) { f["notes.txt"] = &fstest.MapFile{Data: []byte("x")} }, "no content type"},
+```
+
+with
+
+```go
+		{"a file of an unknown type", func(f fstest.MapFS) { f["notes.pdf"] = &fstest.MapFile{Data: []byte("x")} }, "no content type"},
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestStatic_(ContentTypes|Next)'`
+Expected: the package fails to compile, `./static_test.go:...: undefined: nextFiles`.
+
+- [ ] **Step 3: Implement the embed and the content types**
+
+In `internal/web/static.go`, replace
+
+```go
+// staticFiles is the app: the shell, its modules, the stylesheet, the service
+// worker, the manifest and the icons.
+//
+//go:embed static
+var staticFiles embed.FS
+```
+
+with
+
+```go
+// staticFiles is the classic app: the shell, its modules, the stylesheet, the
+// service worker, the manifest and the icons.
+//
+//go:embed static
+var staticFiles embed.FS
+
+// nextFiles is the new app: `pnpm run build` in internal/web/ui writes dist/,
+// which is committed, and `pnpm run dist:check` fails when it is stale. `all:`
+// keeps a file whose name starts with a dot or an underscore.
+//
+//go:embed all:dist
+var nextFiles embed.FS
+```
+
+and in `staticContentTypes`, replace
+
+```go
+	".webmanifest": "application/manifest+json",
+	".png":         "image/png",
+}
+```
+
+with
+
+```go
+	".webmanifest": "application/manifest+json",
+	".png":         "image/png",
+	".svg":         "image/svg+xml",
+	".woff2":       "font/woff2",
+	".txt":         "text/plain; charset=utf-8",
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): embed the new app's bundle beside the classic one" -- internal/web/static.go internal/web/static_test.go
+```
+
+### Task 4.5: The dev shell gets Node and pnpm
+
+**Files:**
+- Modify: `flake.nix:137-144`
+
+- [ ] **Step 1: Add the two packages**
+
+The Nix package does not change: it embeds the committed bundle, and its check phase runs the Go tests. Only `devShells.default` gains the tools. In `flake.nix`, replace
+
+```nix
+              pkgs.golangci-lint
+              pkgs.tmux
+              pkgs.git
+              pkgs.gh
+            ];
+          };
+```
+
+with
+
+```nix
+              pkgs.golangci-lint
+              pkgs.tmux
+              pkgs.git
+              pkgs.gh
+              # The new web app (internal/web/ui) builds with Node 22 and pnpm.
+              pkgs.nodejs_22
+              pkgs.pnpm
+            ];
+          };
+```
+
+- [ ] **Step 2: Check the shell resolves**
+
+Run: `nix develop --command node --version`
+Expected: a line starting `v22.`. (On a machine without Nix the Go gates still pass: nothing else reads `flake.nix`.)
+
+- [ ] **Step 3: Run the story's gates and commit**
+
+Run: `bash -c 'cd internal/web/ui && pnpm install --frozen-lockfile && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
+Expected: every command exits 0.
+
+```bash
+git commit -m "build(nix): Node 22 and pnpm in the dev shell for the new web app" -- flake.nix
+```
+
+## Story 5: The contract: `Contract()`, the generator, and its three outputs
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/contract.go`, `internal/web/internal/gen/gen.go`, `internal/web/internal/gen/gen_test.go`, `internal/web/internal/gen/testmain_test.go`, `internal/web/internal/gen/cmd/main.go`, `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md`, `internal/web/api.fields`
+- **Interfaces:** exposes `Contract()`, `ContractSpec`, `ContractRoute`, `ContractEvent`, `ContractUnion`, `gen.Generate`, `gen.Output`, the type rules, the `api.fields` line forms, `web-api.md`, and `gen.ts`'s types, `Method`, `Outcome`, `Transport`, `StreamEvents`, `createClient` and `Client`; uses Story 1's `spec.doc`, Story 2's table and `streamEvents()`, Story 3's `unions()` and Story 4's ignore lists
+- **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/... && cd internal/web/ui && pnpm run typecheck'`
+- **Review:** deep
+- **Form:** full (the reflection rules, the TS it emits and both freshness tests decide every later TS type)
+
+The web layer's route table (Story 1, completed by Story 2), the stream's events table and the union types (Story 3) are Go values; this story reads them by reflection and writes the app's contract. `internal/web/contract.go` exports `Contract()`, the tables as one value, and carries the `//go:generate` line. `internal/web/internal/gen/` holds `Generate`, which turns that value into `ui/src/api/gen.ts` (a TS type per JSON type and per union, `Method`, `Outcome`, `Transport`, the stream's `StreamEvents`, and `createClient` with its `Client`, all with no imports), `docs/specs/web-api.md` (every route with its `doc`, every event, type and union) and `api.fields` (one line per shipped field, route, event and union value, which only grows), plus the command that writes them and the two freshness tests. The generator follows the contract's type rules: the TS type is what `encoding/json` writes (a `time.Time` is `string`, any number kind `number`, map keys `string`, a pointer, slice or map without `omitempty` `T | null`, a field with `omitempty` `name?: T`), a query type's fields are named by their `query` tags (`readQuery`'s), and anything it cannot type (a type that marshals itself, an unnamed struct with fields, a channel) fails `Generate` naming the type and the field rather than guessing. The test package calls `testenv.MustIsolateLoomDirs` from its `TestMain`, since importing `internal/web` reaches `config`. No landmine marker appears in this story's code.
+
+The names it defines are the contract's: `ContractRoute`, `ContractEvent`, `ContractUnion`, `ContractSpec`, `Contract()`, `Generate`, `Output`, and the two tests `TestContract_GeneratedFilesAreFresh` and `TestContract_FieldsOnlyGrow`. Names private to this story: `Files`, `ReadFields`, `FormatFields` and `Dropped` (exported inside the internal package, for the command and the tests), and, inside `gen.go`, `model`, `build`, `field`, `tsType`, `client`, `genTS`, `webAPI` and `fieldLines`. The story assumes the Story 1 to 3 shapes of the contract: `(*Layer).routes()` builds with a zero `Layer` (its handlers close over `l` and run only when a request does), every route's query type holds only `string` fields tagged `query:"…"`, every query, body and response type is named, a 204 route has a nil `resp`, a page route has nil `query`, `body` and `resp`, a route's `doc` is set, and an `Outcome`'s `Notice` type is reachable (the `notice` event's payload is `noticeJSON`).
+
+Every Go file below is gofmt-formatted by running `gofmt -w` on the files the task touches (never `gofmt -w .`); the struct and `var` blocks are written aligned, and a step that disagrees with gofmt takes gofmt's output.
+
+### Task 5.1: `Contract()`, the package's file helpers and its `TestMain`
+
+**Files:**
+- Create: `internal/web/contract.go`
+- Create: `internal/web/internal/gen/gen.go`
+- Create: `internal/web/internal/gen/testmain_test.go`
+- Create: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `internal/web/internal/gen/testmain_test.go`:
+
+```go
+package gen
+
+import (
+	"os"
+	"testing"
+
+	"github.com/aidan-bailey/loom/internal/testenv"
+)
+
+// TestMain points LOOM_HOME and LOOM_GLOBAL_DIR at throwaway directories:
+// the package imports internal/web, whose imports reach config, so its tests
+// must not resolve the developer's real ~/.loom.
+func TestMain(m *testing.M) {
+	cleanup := testenv.MustIsolateLoomDirs()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
+```
+
+Create `internal/web/internal/gen/gen_test.go`:
+
+```go
+package gen
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/aidan-bailey/loom/internal/web"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestContract_ReadsTheTablesAndUnions(t *testing.T) {
+	c := web.Contract()
+	require.NotEmpty(t, c.Routes)
+	var open []string
+	for _, r := range c.Routes {
+		if r.Open {
+			open = append(open, r.Method+" "+r.Path)
+		}
+		assert.NotEmpty(t, r.Client, r.Method+" "+r.Path)
+		assert.NotEmpty(t, r.Doc, r.Method+" "+r.Path)
+	}
+	assert.Equal(t, []string{"POST /api/v1/pair"}, open, "the table's open set")
+
+	var events []string
+	for _, e := range c.Events {
+		events = append(events, e.Name)
+		assert.NotNil(t, e.Data, e.Name)
+	}
+	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "device", "notice", "ping", "bye"}, events)
+
+	names := map[string]bool{}
+	for _, u := range c.Unions {
+		names[u.Name] = true
+		assert.NotEmpty(t, u.Values, u.Name)
+	}
+	for _, want := range []string{
+		"SessionGroup", "SessionStatus", "StopVerdict", "JobState", "JobControl", "TurnFrom", "ItemKind",
+		"StepState", "AgentPageState", "FileStatus", "FileOmitted", "AskKind", "PrState", "PrChecks",
+		"FlowStageName", "FlowStageState", "FlowStatus", "FlowCell", "FlowStepKind", "FlowQuestionKind",
+	} {
+		assert.True(t, names[want], "the contract's unions hold %s", want)
+	}
+}
+
+func TestFields_ReadFormatAndDrop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.fields")
+	require.NoError(t, os.WriteFile(path, []byte("A.x: string\n\nB.y?: number\n"), 0o644))
+	got, err := ReadFields(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"A.x: string", "B.y?: number"}, got, "blank lines are not lines")
+	assert.Equal(t, "A.x: string\nB.y?: number\n", string(FormatFields(got)))
+	assert.Nil(t, FormatFields(nil))
+
+	assert.Equal(t, []string{"A.x: string"}, Dropped(got, []string{"B.y?: number", "A.x: number"}),
+		"a committed line the fresh set lacks is dropped, even when only its type changed")
+	assert.Empty(t, Dropped(got, []string{"A.x: string", "B.y?: number", "C.z: boolean"}), "a new line drops nothing")
+
+	_, err = ReadFields(filepath.Join(t.TempDir(), "missing"))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+```
+
+Fails without: `TestContract_ReadsTheTablesAndUnions`: `Contract()` leaving out the unions or the events, or marking another route open; a route with no `doc`. `TestFields_ReadFormatAndDrop`: `ReadFields` keeping blank lines, `Dropped` comparing by prefix instead of the whole line (it would not report the retyped `A.x`), or `ReadFields` swallowing the read error.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: the package does not build: `undefined: web.Contract`, `undefined: ReadFields`, `undefined: FormatFields`, `undefined: Dropped`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/contract.go`:
+
+```go
+package web
+
+import (
+	"reflect"
+	"slices"
+)
+
+//go:generate go run ./internal/gen/cmd
+
+// ContractRoute is one route of the table as the generator reads it: what
+// routes.go declares for it, and the types it decodes and answers with.
+type ContractRoute struct {
+	Method string
+	Path   string
+	Open   bool
+	Client string
+	OK     int
+	Doc    string
+	Query  reflect.Type
+	Body   reflect.Type
+	Resp   reflect.Type
+	Page   bool
+}
+
+// ContractEvent is one stream event: its SSE name and its payload's type.
+type ContractEvent struct {
+	Name string
+	Data reflect.Type
+}
+
+// ContractUnion is a TS string union: its name and its values, in order.
+type ContractUnion struct {
+	Name   string
+	Values []string
+}
+
+// ContractSpec is everything the generator reads: the route table, the
+// stream's events and the typed string types that become unions.
+type ContractSpec struct {
+	Routes []ContractRoute
+	Events []ContractEvent
+	Unions map[reflect.Type]ContractUnion
+}
+
+// Contract is the route table, the stream's events table and the unions as
+// one value, built from a Layer with no client: the handlers in the table
+// close over the layer and run only when a request reaches them, so the
+// generator needs no model. internal/web/internal/gen turns it into
+// ui/src/api/gen.ts, docs/specs/web-api.md and api.fields.
+func Contract() ContractSpec {
+	l := &Layer{}
+	var c ContractSpec
+	for _, r := range l.routes() {
+		c.Routes = append(c.Routes, ContractRoute{
+			Method: r.spec.method,
+			Path:   r.spec.path,
+			Open:   r.spec.open,
+			Client: r.spec.client,
+			OK:     r.spec.ok,
+			Doc:    r.spec.doc,
+			Query:  r.query,
+			Body:   r.body,
+			Resp:   r.resp,
+			Page:   r.page,
+		})
+	}
+	for _, e := range streamEvents() {
+		c.Events = append(c.Events, ContractEvent{Name: e.name, Data: e.data})
+	}
+	known := unions()
+	c.Unions = make(map[reflect.Type]ContractUnion, len(known))
+	for t, u := range known {
+		c.Unions[t] = ContractUnion{Name: u.name, Values: slices.Clone(u.values)}
+	}
+	return c
+}
+```
+
+Create `internal/web/internal/gen/gen.go`:
+
+```go
+// Package gen turns internal/web's route table, stream events and union types
+// (web.Contract) into the app's typed contract: ui/src/api/gen.ts, the
+// reference docs/specs/web-api.md, and api.fields, which pins every field,
+// route, event and union value that has shipped. It reads Go types by
+// reflection and writes what encoding/json writes; `go generate ./internal/web`
+// runs it, and TestContract_GeneratedFilesAreFresh fails when a file is stale.
+package gen
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Output is what Generate produces: the three committed files.
+type Output struct {
+	// GenTS is internal/web/ui/src/api/gen.ts.
+	GenTS []byte
+	// WebAPI is docs/specs/web-api.md.
+	WebAPI []byte
+	// Fields is internal/web/api.fields: the committed lines, then the new
+	// ones, sorted within the new.
+	Fields []string
+}
+
+// Files are the paths of the three outputs, given the directory of
+// internal/web (go generate runs in it, so the command passes ".").
+func Files(webDir string) (genTS, webAPI, fields string) {
+	return filepath.Join(webDir, "ui", "src", "api", "gen.ts"),
+		filepath.Join(webDir, "..", "..", "docs", "specs", "web-api.md"),
+		filepath.Join(webDir, "api.fields")
+}
+
+// ReadFields reads the lines of an api.fields file, leaving out blank ones.
+func ReadFields(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(data), "\n") {
+		if l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines, nil
+}
+
+// FormatFields is the content of an api.fields file: one line each, nothing
+// for no lines.
+func FormatFields(lines []string) []byte {
+	if len(lines) == 0 {
+		return nil
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+// Dropped returns the committed lines fresh lacks: a field, route, event or
+// union value that was removed, or whose type changed, since it shipped.
+func Dropped(committed, fresh []string) []string {
+	now := make(map[string]bool, len(fresh))
+	for _, l := range fresh {
+		now[l] = true
+	}
+	var gone []string
+	for _, l := range committed {
+		if !now[l] {
+			gone = append(gone, l)
+		}
+	}
+	return gone
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `gofmt -w internal/web/contract.go internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go internal/web/internal/gen/testmain_test.go && CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web/internal/gen`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/contract.go internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go internal/web/internal/gen/testmain_test.go
+git commit -m "feat(web): export the route table, the events and the unions as a contract" -- internal/web/contract.go internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go internal/web/internal/gen/testmain_test.go
+```
+
+### Task 5.2: The model: the type rules and the TS types
+
+**Files:**
+- Modify: `internal/web/internal/gen/gen.go`
+- Test: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `gen_test.go`, replace the import block
+
+```go
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/aidan-bailey/loom/internal/web"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+```
+
+with
+
+```go
+import (
+	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/aidan-bailey/loom/internal/web"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+```
+
+and append the fixtures (a small contract that uses every rule) and the tests to the end of the file:
+
+```go
+type levelKind string
+
+type itemID uint64
+
+type badgeJSON struct {
+	Label string `json:"label"`
+}
+
+type baseJSON struct {
+	Kept int `json:"kept"`
+}
+
+type itemJSON struct {
+	baseJSON
+	ID     itemID           `json:"id"`
+	Kind   levelKind        `json:"kind"`
+	Note   *badgeJSON       `json:"note"`
+	Tags   []string         `json:"tags"`
+	Extra  []string         `json:"extra,omitempty"`
+	Seen   map[itemID][]int `json:"seen"`
+	Raw    json.RawMessage  `json:"raw"`
+	Any    any              `json:"any"`
+	Blob   []byte           `json:"blob"`
+	Trio   [3]int           `json:"trio"`
+	Pair   [2]*badgeJSON    `json:"pair"`
+	Empty  struct{}         `json:"empty"`
+	Secret string           `json:"-"`
+	At     time.Time        `json:"at"`
+	Kids   []*itemJSON      `json:"kids,omitempty"`
+	hidden string
+}
+
+type itemParams struct {
+	Q    string `query:"q"`
+	Page string `query:"page"`
+}
+
+type noticeJSON struct {
+	Text  string    `json:"text"`
+	Error bool      `json:"error"`
+	At    time.Time `json:"at"`
+}
+
+type noticesJSON struct {
+	Notices []noticeJSON `json:"notices"`
+}
+
+type pairBody struct {
+	Code string `json:"code"`
+}
+
+type pairJSON struct {
+	Device string `json:"device"`
+}
+
+// sample is a contract with an open route with a body, a GET with a query, a
+// POST with three path values and no body, a 204, a page route, two events
+// and a union.
+func sample() web.ContractSpec {
+	return web.ContractSpec{
+		Routes: []web.ContractRoute{
+			{Method: "POST", Path: "/api/v1/pair", Open: true, Client: "pair", OK: 200, Doc: "Trades a code for the cookie.", Body: reflect.TypeFor[pairBody](), Resp: reflect.TypeFor[pairJSON]()},
+			{Method: "GET", Path: "/api/v1/items/{id}", Client: "item", OK: 200, Doc: "One item.", Query: reflect.TypeFor[itemParams](), Resp: reflect.TypeFor[itemJSON]()},
+			{Method: "POST", Path: "/api/v1/items/{id}/jobs/{job}/{action}", Client: "control", OK: 200, Doc: "Controls a job.", Resp: reflect.TypeFor[noticesJSON]()},
+			{Method: "DELETE", Path: "/api/v1/device", Client: "unpair", OK: 204, Doc: "Unpairs."},
+			{Method: "GET", Path: "/api/v1/items/{id}/view", Client: "view", OK: 200, Doc: "A page.", Page: true},
+		},
+		Events: []web.ContractEvent{
+			{Name: "notice", Data: reflect.TypeFor[noticeJSON]()},
+			{Name: "ping", Data: reflect.TypeFor[struct{}]()},
+		},
+		Unions: map[reflect.Type]web.ContractUnion{
+			reflect.TypeFor[levelKind](): {Name: "Level", Values: []string{"low", "high", ""}},
+		},
+	}
+}
+
+// mini is a contract of one GET route answering resp, with the notice event
+// every contract needs.
+func mini(resp reflect.Type) web.ContractSpec {
+	return web.ContractSpec{
+		Routes: []web.ContractRoute{{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 200, Resp: resp}},
+		Events: []web.ContractEvent{{Name: "notice", Data: reflect.TypeFor[noticeJSON]()}},
+	}
+}
+
+func TestTypes_FollowEncodingJSON(t *testing.T) {
+	_ = itemJSON{hidden: "x"} // an unexported field is no JSON field
+	m, err := build(sample())
+	require.NoError(t, err)
+	ts, err := m.types()
+	require.NoError(t, err)
+
+	assert.Contains(t, ts, "export type Level = \"low\" | \"high\" | \"\";\n", "a union lists its values in order")
+	assert.Contains(t, ts, "export interface Item {\n"+
+		"  kept: number;\n"+ // an embedded struct's fields are flattened
+		"  id: number;\n"+ // a named number kind is a number
+		"  kind: Level;\n"+ // a typed string is its union
+		"  note: Badge | null;\n"+ // a pointer without omitempty is nullable
+		"  tags: string[] | null;\n"+
+		"  extra?: string[];\n"+ // omitempty is optional
+		"  seen: Record<string, number[] | null> | null;\n"+ // map keys are strings, a slice value is nullable
+		"  raw: unknown;\n"+
+		"  any: unknown;\n"+
+		"  blob: string | null;\n"+ // []byte is a string
+		"  trio: number[];\n"+ // an array is the slice's T[], never null: a JSON import widens it to T[]
+		"  pair: (Badge | null)[];\n"+ // an array's pointer element is nullable, as a slice's is
+		"  empty: Record<string, never>;\n"+
+		"  at: string;\n"+ // time.Time is a string
+		"  kids?: (Item | null)[];\n"+ // a pointer element is nullable
+		"}\n")
+	assert.NotContains(t, ts, "secret", "a json:\"-\" field is left out")
+	assert.NotContains(t, ts, "hidden", "an unexported field is left out")
+	assert.Contains(t, ts, "export interface ItemParams {\n  q: string;\n  page: string;\n}\n", "a query type's fields are named by their query tags")
+	assert.Contains(t, ts, "export interface Notice {\n  text: string;\n  error: boolean;\n  at: string;\n}\n")
+
+	var order []string
+	for _, match := range regexp.MustCompile(`(?m)^export interface (\w+) \{$`).FindAllStringSubmatch(ts, -1) {
+		order = append(order, match[1])
+	}
+	assert.Equal(t, []string{"Badge", "Item", "ItemParams", "Notice", "Notices", "Pair", "PairBody"}, order, "interfaces are sorted by TS name")
+}
+
+type unnamedHolderJSON struct {
+	Inner struct{ N int } `json:"inner"`
+}
+
+type tokenJSON struct {
+	Value string `json:"value"`
+}
+
+func (tokenJSON) MarshalJSON() ([]byte, error) { return []byte(`"token"`), nil }
+
+type selfHolderJSON struct {
+	Tok tokenJSON `json:"tok"`
+}
+
+type chanHolderJSON struct {
+	C chan int `json:"c"`
+}
+
+type badKeyJSON struct {
+	M map[float64]int `json:"m"`
+}
+
+type twinJSON struct {
+	A int `json:"a"`
+}
+
+// Twin has the TS name twinJSON has.
+type Twin struct {
+	B int `json:"b"`
+}
+
+type twinHolderJSON struct {
+	A twinJSON `json:"a"`
+	B Twin     `json:"b"`
+}
+
+type queryHolder struct {
+	N int `query:"n"`
+}
+
+func TestBuild_RefusesWhatItCannotType(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    web.ContractSpec
+		want string
+	}{
+		{"an unnamed struct with fields", mini(reflect.TypeFor[unnamedHolderJSON]()), "an unnamed struct with fields"},
+		{"a type that marshals itself", mini(reflect.TypeFor[selfHolderJSON]()), "marshals itself"},
+		{"a channel", mini(reflect.TypeFor[chanHolderJSON]()), "has no JSON type"},
+		{"a map keyed by a float", mini(reflect.TypeFor[badKeyJSON]()), "map key"},
+		{"two types with one TS name", mini(reflect.TypeFor[twinHolderJSON]()), "TS name Twin"},
+		{"a query field that is not a string", web.ContractSpec{
+			Routes: []web.ContractRoute{{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 200, Query: reflect.TypeFor[queryHolder](), Resp: reflect.TypeFor[pairJSON]()}},
+			Events: mini(nil).Events,
+		}, "exported string field with a query tag"},
+		{"a union on a type that is not a string", web.ContractSpec{
+			Unions: map[reflect.Type]web.ContractUnion{reflect.TypeFor[itemID](): {Name: "Id", Values: []string{"1"}}},
+		}, "is not a string type"},
+		{"a union named like a type", func() web.ContractSpec {
+			c := mini(reflect.TypeFor[badgeJSON]())
+			c.Unions = map[reflect.Type]web.ContractUnion{reflect.TypeFor[levelKind](): {Name: "Badge", Values: []string{"a"}}}
+			return c
+		}(), "TS name Badge"},
+		{"a union named like gen.ts's own names", func() web.ContractSpec {
+			c := mini(reflect.TypeFor[badgeJSON]())
+			c.Unions = map[reflect.Type]web.ContractUnion{reflect.TypeFor[levelKind](): {Name: "Outcome", Values: []string{"a"}}}
+			return c
+		}(), "already gen.ts itself"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := build(tc.c)
+			if err == nil {
+				_, err = m.types()
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+```
+
+Fails without: `TestTypes_FollowEncodingJSON`: the embedded-struct flattening (no `kept`), the `omitempty` rule (`extra` or `kids` required), the nullable rule for a pointer, slice, map or a pointer element, the `time.Time`, `[]byte`, `json.RawMessage`/`any` and `struct{}` cases (each would be `{}`, `number[]`, an opaque name or an error), the array case (a tuple `[number, number, number]` instead of `number[]`, or `trio` or `pair` nullable, or `pair`'s element not nullable), the unexported and `json:"-"` skips, the `query`-tag naming of `ItemParams`, the name sort. `TestBuild_RefusesWhatItCannotType`: the unnamed-struct check in `tsType`, the `marshals` check (before it the type would be typed as `{ value: string }`), the kind default, the map-key check, the TS-name clash check in `build`, `walkQuery`'s field check, the union kind check, and the clash checks against types and reserved names.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: the package does not build: `undefined: build` (and `m.types`).
+
+- [ ] **Step 3: Implement**
+
+In `gen.go`, replace the import block
+
+```go
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+```
+
+with
+
+```go
+import (
+	"encoding"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/aidan-bailey/loom/internal/web"
+)
+```
+
+and append to the file:
+
+```go
+var (
+	timeType      = reflect.TypeFor[time.Time]()
+	rawType       = reflect.TypeFor[json.RawMessage]()
+	jsonMarshaler = reflect.TypeFor[json.Marshaler]()
+	textMarshaler = reflect.TypeFor[encoding.TextMarshaler]()
+	identifier    = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+)
+
+// reserved are the names gen.ts declares itself: no type or union takes one.
+var reserved = []string{"Method", "Outcome", "Transport", "StreamEvents", "Client"}
+
+// field is one JSON field of a struct: its JSON name, its Go type, and
+// whether encoding/json may leave it out.
+type field struct {
+	name     string
+	typ      reflect.Type
+	optional bool
+}
+
+// model is the contract after its types are walked: every named struct type
+// the routes and events reach, with its JSON fields and TS name, and the
+// unions.
+type model struct {
+	c      web.ContractSpec
+	fields map[reflect.Type][]field
+	names  map[reflect.Type]string
+	sorted []reflect.Type
+	unions []web.ContractUnion
+}
+
+// build walks every route's query, body and response type and every event's
+// payload, and names what it reaches. A TS name that two types, or a type and
+// a union, would share is an error.
+func build(c web.ContractSpec) (*model, error) {
+	m := &model{c: c, fields: map[reflect.Type][]field{}, names: map[reflect.Type]string{}}
+	for t, u := range c.Unions {
+		if t.Kind() != reflect.String {
+			return nil, fmt.Errorf("union %s: %s is not a string type", u.Name, t)
+		}
+		m.unions = append(m.unions, u)
+	}
+	sort.Slice(m.unions, func(i, j int) bool { return m.unions[i].Name < m.unions[j].Name })
+	taken := map[string]string{}
+	for _, name := range reserved {
+		taken[name] = "gen.ts itself"
+	}
+	for _, u := range m.unions {
+		if u.Name == "" || len(u.Values) == 0 {
+			return nil, fmt.Errorf("a union needs a name and values, not %+v", u)
+		}
+		if what, dup := taken[u.Name]; dup {
+			return nil, fmt.Errorf("union %s: the TS name %s is already %s", u.Name, u.Name, what)
+		}
+		taken[u.Name] = "another union"
+	}
+
+	for _, r := range c.Routes {
+		if r.Query != nil {
+			if err := m.walkQuery(r.Query, r.Method+" "+r.Path+" query"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, r := range c.Routes {
+		for _, t := range []reflect.Type{r.Body, r.Resp} {
+			if t == nil {
+				continue
+			}
+			if err := m.walk(t, r.Method+" "+r.Path); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, e := range c.Events {
+		if e.Data == nil {
+			return nil, fmt.Errorf("event %s has no data type", e.Name)
+		}
+		if err := m.walk(e.Data, "event "+e.Name); err != nil {
+			return nil, err
+		}
+	}
+
+	types := make([]reflect.Type, 0, len(m.fields))
+	for t := range m.fields {
+		types = append(types, t)
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i].String() < types[j].String() })
+	for _, t := range types {
+		name, err := tsName(t)
+		if err != nil {
+			return nil, err
+		}
+		if what, dup := taken[name]; dup {
+			return nil, fmt.Errorf("%s maps to the TS name %s, which %s already holds", t, name, what)
+		}
+		taken[name] = t.String()
+		m.names[t] = name
+	}
+	sort.Slice(types, func(i, j int) bool { return m.names[types[i]] < m.names[types[j]] })
+	m.sorted = types
+	return m, nil
+}
+
+// tsName is a struct type's TS name: its Go name without a trailing JSON, its
+// first letter upper-cased (sessionJSON is Session, sendBody is SendBody).
+func tsName(t reflect.Type) (string, error) {
+	n := strings.TrimSuffix(t.Name(), "JSON")
+	if n == "" || strings.ContainsAny(n, "[]") {
+		return "", fmt.Errorf("%s has no name the generator can use", t)
+	}
+	r, size := utf8.DecodeRuneInString(n)
+	return string(unicode.ToUpper(r)) + n[size:], nil
+}
+
+// walkQuery registers a route's query type: a named struct of string fields,
+// each named by its query tag, as readQuery reads it.
+func (m *model) walkQuery(t reflect.Type, where string) error {
+	if t.Kind() != reflect.Struct || t.Name() == "" {
+		return fmt.Errorf("%s: %s is not a named struct", where, t)
+	}
+	if _, done := m.fields[t]; done {
+		return nil
+	}
+	var fields []field
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		name := f.Tag.Get("query")
+		if name == "" || f.Type.Kind() != reflect.String || !f.IsExported() {
+			return fmt.Errorf("%s: %s.%s must be an exported string field with a query tag", where, t.Name(), f.Name)
+		}
+		fields = append(fields, field{name: name, typ: f.Type})
+	}
+	m.fields[t] = fields
+	return nil
+}
+
+// walk registers every named struct type t reaches, with its JSON fields. It
+// only collects: tsType reports a type it cannot write.
+func (m *model) walk(t reflect.Type, where string) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == timeType || t == rawType {
+		return nil
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		if t.Name() == "" {
+			return nil
+		}
+		if _, done := m.fields[t]; done {
+			return nil
+		}
+		fields, err := jsonFields(t)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		m.fields[t] = fields
+		for _, f := range fields {
+			if err := m.walk(f.typ, where+" "+t.Name()+"."+f.name); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return m.walk(t.Elem(), where)
+	}
+	return nil
+}
+
+// jsonFields are t's fields as encoding/json writes them: names from the
+// tags, unexported and json:"-" fields left out, an embedded struct's fields
+// flattened, a field with omitempty or omitzero optional.
+func jsonFields(t reflect.Type) ([]field, error) {
+	var out []field
+	seen := map[string]bool{}
+	var collect func(t reflect.Type) error
+	collect = func(t reflect.Type) error {
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			tag := f.Tag.Get("json")
+			if tag == "-" {
+				continue
+			}
+			name, opts, _ := strings.Cut(tag, ",")
+			if f.Anonymous && name == "" {
+				inner := f.Type
+				if inner.Kind() == reflect.Pointer {
+					inner = inner.Elem()
+				}
+				if inner.Kind() == reflect.Struct {
+					if err := collect(inner); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+			if !f.IsExported() {
+				continue
+			}
+			if name == "" {
+				name = f.Name
+			}
+			optional := false
+			for _, o := range strings.Split(opts, ",") {
+				switch o {
+				case "omitempty", "omitzero":
+					optional = true
+				case "string":
+					return fmt.Errorf("%s.%s: the string tag option changes the wire type, which the generator does not follow", t.Name(), f.Name)
+				}
+			}
+			if seen[name] {
+				return fmt.Errorf("%s: the JSON name %q appears twice", t.Name(), name)
+			}
+			seen[name] = true
+			out = append(out, field{name: name, typ: f.Type, optional: optional})
+		}
+		return nil
+	}
+	if err := collect(t); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// marshals reports whether t writes its own JSON, which reflection cannot
+// follow.
+func marshals(t reflect.Type) bool {
+	p := reflect.PointerTo(t)
+	return t.Implements(jsonMarshaler) || p.Implements(jsonMarshaler) || t.Implements(textMarshaler) || p.Implements(textMarshaler)
+}
+
+// canBeNull reports whether encoding/json may write null for a value of type
+// t whose TS type is ts.
+func canBeNull(t reflect.Type, ts string) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map:
+		return ts != "unknown"
+	}
+	return false
+}
+
+// tsType is the TS type of what encoding/json writes for t. where names the
+// route, event or field it is for, in an error.
+func (m *model) tsType(t reflect.Type, where string) (string, error) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case t == timeType:
+		return "string", nil
+	case t == rawType, t.Kind() == reflect.Interface && t.NumMethod() == 0:
+		return "unknown", nil
+	case marshals(t):
+		return "", fmt.Errorf("%s: %s marshals itself, which the generator cannot type", where, t)
+	}
+	switch t.Kind() {
+	case reflect.String:
+		if u, ok := m.c.Unions[t]; ok {
+			return u.Name, nil
+		}
+		return "string", nil
+	case reflect.Bool:
+		return "boolean", nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return "number", nil
+	case reflect.Slice, reflect.Array:
+		// An array is written as a JSON array: T[], never null; its length
+		// is not in the type, since a JSON import widens it to T[].
+		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+			return "string", nil
+		}
+		elem, null, err := m.elementType(t.Elem(), where)
+		if err != nil {
+			return "", err
+		}
+		if null {
+			return "(" + elem + " | null)[]", nil
+		}
+		return elem + "[]", nil
+	case reflect.Map:
+		switch t.Key().Kind() {
+		case reflect.String,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		default:
+			return "", fmt.Errorf("%s: %s has a map key encoding/json writes in no plain form", where, t)
+		}
+		elem, null, err := m.elementType(t.Elem(), where)
+		if err != nil {
+			return "", err
+		}
+		if null {
+			elem += " | null"
+		}
+		return "Record<string, " + elem + ">", nil
+	case reflect.Struct:
+		if name, ok := m.names[t]; ok {
+			return name, nil
+		}
+		if t.Name() == "" && t.NumField() == 0 {
+			return "Record<string, never>", nil
+		}
+		if t.Name() == "" {
+			return "", fmt.Errorf("%s: an unnamed struct with fields (%s): give it a name", where, t)
+		}
+		return "", fmt.Errorf("%s: %s was not reached", where, t)
+	}
+	return "", fmt.Errorf("%s: %s (a %s) has no JSON type", where, t, t.Kind())
+}
+
+// elementType is the TS type of a slice element or map value, and whether
+// encoding/json may write null for it.
+func (m *model) elementType(t reflect.Type, where string) (string, bool, error) {
+	ts, err := m.tsType(t, where)
+	if err != nil {
+		return "", false, err
+	}
+	return ts, canBeNull(t, ts), nil
+}
+
+// fieldType is the TS type of a field: its type, with | null for one that
+// encoding/json writes as null unless the field is optional.
+func (m *model) fieldType(f field, where string) (string, error) {
+	ts, err := m.tsType(f.typ, where)
+	if err != nil {
+		return "", err
+	}
+	if !f.optional && canBeNull(f.typ, ts) {
+		ts += " | null"
+	}
+	return ts, nil
+}
+
+// key is a property name in TS source: bare when it is an identifier.
+func key(name string) string {
+	if identifier.MatchString(name) {
+		return name
+	}
+	return strconv.Quote(name)
+}
+
+// types is the TS source of every union and every interface, each followed by
+// a blank line: unions by name, then interfaces by name.
+func (m *model) types() (string, error) {
+	var b strings.Builder
+	for _, u := range m.unions {
+		quoted := make([]string, len(u.Values))
+		for i, v := range u.Values {
+			quoted[i] = strconv.Quote(v)
+		}
+		fmt.Fprintf(&b, "export type %s = %s;\n\n", u.Name, strings.Join(quoted, " | "))
+	}
+	for _, t := range m.sorted {
+		fmt.Fprintf(&b, "export interface %s {\n", m.names[t])
+		for _, f := range m.fields[t] {
+			ts, err := m.fieldType(f, t.Name()+"."+f.name)
+			if err != nil {
+				return "", err
+			}
+			opt := ""
+			if f.optional {
+				opt = "?"
+			}
+			fmt.Fprintf(&b, "  %s%s: %s;\n", key(f.name), opt, ts)
+		}
+		b.WriteString("}\n\n")
+	}
+	return b.String(), nil
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `gofmt -w internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go && CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web/internal/gen`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the contract generator's type rules and TS types" -- internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go
+```
+
+### Task 5.3: The rest of `gen.ts`: `Outcome`, `Transport`, `StreamEvents` and the client
+
+**Files:**
+- Modify: `internal/web/internal/gen/gen.go`
+- Test: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `gen_test.go`:
+
+```go
+func TestGenTS_HasTheContractsExports(t *testing.T) {
+	m, err := build(sample())
+	require.NoError(t, err)
+	out, err := m.genTS()
+	require.NoError(t, err)
+	ts := string(out)
+
+	assert.True(t, strings.HasPrefix(ts, "// Code generated by go generate ./internal/web; DO NOT EDIT.\n"))
+	assert.NotContains(t, ts, "import ", "gen.ts has no imports")
+	assert.Contains(t, ts, "export type Method = \"GET\" | \"POST\" | \"PUT\" | \"DELETE\";\n")
+	for _, want := range []string{
+		"  | { kind: \"ok\"; status: number; value: T; notices: Notice[] }\n",
+		"  | { kind: \"pending\" }\n",
+		"  | { kind: \"unpaired\" }\n",
+		"  | { kind: \"refused\"; status: number; message: string }\n",
+		"  | { kind: \"stopping\"; message: string }\n",
+		"  | { kind: \"timeout\"; message: string }\n",
+		"  | { kind: \"failed\"; status: number; message: string };\n",
+		"export interface Transport {\n  send<T>(\n    method: Method,\n    path: string,\n    query: Record<string, string> | undefined,\n    body: unknown,\n  ): Promise<Outcome<T>>;\n}\n",
+	} {
+		assert.Contains(t, ts, want)
+	}
+	assert.Contains(t, ts, "export interface StreamEvents {\n  notice: Notice;\n  ping: Record<string, never>;\n}\n", "one key per event, in the table's order")
+	assert.Contains(t, ts, "export function createClient(t: Transport): Client {\n  return {\n")
+	assert.Contains(t, ts, "function queryOf(", "a route with a query needs the helper")
+}
+
+func TestGenTS_ClientHasOneMethodPerRoute(t *testing.T) {
+	m, err := build(sample())
+	require.NoError(t, err)
+	out, err := m.genTS()
+	require.NoError(t, err)
+	ts := string(out)
+
+	for _, want := range []string{
+		// the interface
+		"  pair(body: PairBody): Promise<Outcome<Pair>>;\n",
+		"  item(id: number, query?: Partial<ItemParams>): Promise<Outcome<Item>>;\n",
+		"  control(id: number, job: number, action: string): Promise<Outcome<Notices>>;\n",
+		"  unpair(): Promise<Outcome<void>>;\n",
+		"  viewURL(id: number): string;\n",
+		// the implementation
+		"    pair: (body) => t.send<Pair>(\"POST\", \"/api/v1/pair\", undefined, body),\n",
+		"    item: (id, query) => t.send<Item>(\"GET\", `/api/v1/items/${id}`, queryOf(query), undefined),\n",
+		"    control: (id, job, action) => t.send<Notices>(\"POST\", `/api/v1/items/${id}/jobs/${job}/${encodeURIComponent(action)}`, undefined, undefined),\n",
+		"    unpair: () => t.send<void>(\"DELETE\", \"/api/v1/device\", undefined, undefined),\n",
+		"    viewURL: (id) => `/api/v1/items/${id}/view`,\n",
+	} {
+		assert.Contains(t, ts, want)
+	}
+}
+
+func TestGenTS_NeedsANoticeType(t *testing.T) {
+	m, err := build(web.ContractSpec{Routes: []web.ContractRoute{
+		{Method: "POST", Path: "/api/v1/pair", Client: "pair", OK: 200, Body: reflect.TypeFor[pairBody](), Resp: reflect.TypeFor[pairJSON]()},
+	}})
+	require.NoError(t, err)
+	_, err = m.genTS()
+	assert.ErrorContains(t, err, "needs a Notice type")
+}
+
+func TestGenTS_RefusesAMalformedRoute(t *testing.T) {
+	route := func(r web.ContractRoute) web.ContractSpec {
+		c := mini(nil)
+		c.Routes = []web.ContractRoute{r}
+		return c
+	}
+	pair := reflect.TypeFor[pairJSON]()
+	for _, tc := range []struct {
+		name string
+		r    web.ContractRoute
+		want string
+	}{
+		{"an unknown method", web.ContractRoute{Method: "PATCH", Path: "/api/v1/x", Client: "x", OK: 200, Resp: pair}, "the method must be GET, POST, PUT or DELETE"},
+		{"a client name that is not an identifier", web.ContractRoute{Method: "GET", Path: "/api/v1/x", Client: "get-x", OK: 200, Resp: pair}, "is not a TS identifier"},
+		{"a query on a POST", web.ContractRoute{Method: "POST", Path: "/api/v1/x", Client: "x", OK: 200, Query: reflect.TypeFor[itemParams](), Resp: pair}, "only a GET takes a query"},
+		{"a body on a GET", web.ContractRoute{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 200, Body: reflect.TypeFor[pairBody](), Resp: pair}, "a GET takes no body"},
+		{"a 204 with a response", web.ContractRoute{Method: "DELETE", Path: "/api/v1/x", Client: "x", OK: 204, Resp: pair}, "a 204 has no body"},
+		{"a 200 without a response", web.ContractRoute{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 200}, "needs a response type"},
+		{"a success status of 202", web.ContractRoute{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 202, Resp: pair}, "must be 200, 201 or 204, not 202"},
+		{"a page route with a response", web.ContractRoute{Method: "GET", Path: "/api/v1/x", Client: "x", OK: 200, Page: true, Resp: pair}, "a page route has no query, body or response type"},
+		{"a path value called body", web.ContractRoute{Method: "POST", Path: "/api/v1/{body}", Client: "x", OK: 200, Resp: pair}, "a path value cannot be called \"body\""},
+		{"a path with a stray brace", web.ContractRoute{Method: "GET", Path: "/api/v1/{id", Client: "x", OK: 200, Resp: pair}, "a path value must be a plain {name}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := build(route(tc.r))
+			require.NoError(t, err)
+			_, err = m.genTS()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	twice := mini(pair)
+	twice.Routes = append(twice.Routes, twice.Routes[0])
+	m, err := build(twice)
+	require.NoError(t, err)
+	_, err = m.genTS()
+	assert.ErrorContains(t, err, "is used twice")
+}
+```
+
+Fails without: `TestGenTS_HasTheContractsExports`: any of the fixed texts in the prelude (`Outcome`'s seven members, `Transport`'s `send`), `StreamEvents`' one key per event, the `queryOf` helper being written when a route has a query, or the header; `NotContains "import "` fails if the generator emits an import. `TestGenTS_ClientHasOneMethodPerRoute`: path values in path order with `id` and `job` numbers and the rest strings (`encodeURIComponent`), the query argument only on a GET with a query type, the body argument only on a route with a body, `Outcome<void>` for a 204, the page route's `viewURL`. `TestGenTS_NeedsANoticeType`: the Notice check in `genTS`. `TestGenTS_RefusesAMalformedRoute`: each check in `client`, in the order of the table, and the duplicate-name check.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: the package does not build: `m.genTS undefined (type *model has no field or method genTS)`.
+
+- [ ] **Step 3: Implement**
+
+In `gen_test.go`, add `"strings"` to the import block (after `"regexp"`).
+
+In `gen.go`, append:
+
+```go
+const tsHeader = `// Code generated by go generate ./internal/web; DO NOT EDIT.
+// Source: the route table (routes.go), the stream's events (stream.go) and the union types (unions.go).
+
+`
+
+const tsPrelude = `export type Method = "GET" | "POST" | "PUT" | "DELETE";
+
+export type Outcome<T> =
+  | { kind: "ok"; status: number; value: T; notices: Notice[] }
+  | { kind: "pending" }
+  | { kind: "unpaired" }
+  | { kind: "refused"; status: number; message: string }
+  | { kind: "stopping"; message: string }
+  | { kind: "timeout"; message: string }
+  | { kind: "failed"; status: number; message: string };
+
+export interface Transport {
+  send<T>(
+    method: Method,
+    path: string,
+    query: Record<string, string> | undefined,
+    body: unknown,
+  ): Promise<Outcome<T>>;
+}
+
+`
+
+const tsQueryOf = `function queryOf(query: object | undefined): Record<string, string> | undefined {
+  if (query === undefined) {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(query)) {
+    if (typeof value === "string") {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
+`
+
+var (
+	validMethod = map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true}
+	pathValue   = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+)
+
+// pathValues are the names in path's {name} segments, in order.
+func pathValues(path string) ([]string, error) {
+	found := pathValue.FindAllStringSubmatch(path, -1)
+	if strings.Count(path, "{") != len(found) || strings.Count(path, "}") != len(found) {
+		return nil, fmt.Errorf("%s: a path value must be a plain {name}", path)
+	}
+	names := make([]string, len(found))
+	for i, f := range found {
+		names[i] = f[1]
+	}
+	return names, nil
+}
+
+// pathType is the TS type of a path value: the session and the job are
+// numbers, everything else a string.
+func pathType(name string) string {
+	if name == "id" || name == "job" {
+		return "number"
+	}
+	return "string"
+}
+
+// pathExpr is a path as a TS expression: a string, or a template literal
+// when it holds path values (a string one is encoded).
+func pathExpr(path string) string {
+	if !strings.Contains(path, "{") {
+		return strconv.Quote(path)
+	}
+	out := pathValue.ReplaceAllStringFunc(path, func(s string) string {
+		name := s[1 : len(s)-1]
+		if pathType(name) == "number" {
+			return "${" + name + "}"
+		}
+		return "${encodeURIComponent(" + name + ")}"
+	})
+	return "`" + out + "`"
+}
+
+// clientCode is the TS of the client: the Client interface's members, the
+// object createClient returns, and whether any route takes a query (the
+// queryOf helper is written only then).
+type clientCode struct {
+	iface    string
+	impl     string
+	hasQuery bool
+}
+
+// client writes one method per route, named by its client name, taking the
+// path values in path order and then the query or the body, and answering
+// Promise<Outcome<Resp>>; a page route gives <client>URL instead.
+func (m *model) client() (clientCode, error) {
+	var code clientCode
+	var ib, mb strings.Builder
+	seen := map[string]bool{}
+	for _, r := range m.c.Routes {
+		where := r.Method + " " + r.Path
+		if !validMethod[r.Method] {
+			return clientCode{}, fmt.Errorf("%s: the method must be GET, POST, PUT or DELETE", where)
+		}
+		if !identifier.MatchString(r.Client) {
+			return clientCode{}, fmt.Errorf("%s: the client name %q is not a TS identifier", where, r.Client)
+		}
+		name := r.Client
+		if r.Page {
+			name += "URL"
+		}
+		if seen[name] {
+			return clientCode{}, fmt.Errorf("%s: the client name %q is used twice", where, name)
+		}
+		seen[name] = true
+
+		values, err := pathValues(r.Path)
+		if err != nil {
+			return clientCode{}, err
+		}
+		var args, names []string
+		for _, v := range values {
+			if v == "query" || v == "body" {
+				return clientCode{}, fmt.Errorf("%s: a path value cannot be called %q", where, v)
+			}
+			args = append(args, v+": "+pathType(v))
+			names = append(names, v)
+		}
+
+		if r.Page {
+			if r.Query != nil || r.Body != nil || r.Resp != nil {
+				return clientCode{}, fmt.Errorf("%s: a page route has no query, body or response type", where)
+			}
+			fmt.Fprintf(&ib, "  %s(%s): string;\n", name, strings.Join(args, ", "))
+			fmt.Fprintf(&mb, "    %s: (%s) => %s,\n", name, strings.Join(names, ", "), pathExpr(r.Path))
+			continue
+		}
+
+		query, body := "undefined", "undefined"
+		if r.Query != nil {
+			if r.Method != "GET" {
+				return clientCode{}, fmt.Errorf("%s: only a GET takes a query", where)
+			}
+			ts, err := m.tsType(r.Query, where+" query")
+			if err != nil {
+				return clientCode{}, err
+			}
+			args = append(args, "query?: Partial<"+ts+">")
+			names = append(names, "query")
+			query = "queryOf(query)"
+			code.hasQuery = true
+		}
+		if r.Body != nil {
+			if r.Method == "GET" {
+				return clientCode{}, fmt.Errorf("%s: a GET takes no body", where)
+			}
+			ts, err := m.tsType(r.Body, where+" body")
+			if err != nil {
+				return clientCode{}, err
+			}
+			args = append(args, "body: "+ts)
+			names = append(names, "body")
+			body = "body"
+		}
+
+		result := "void"
+		switch r.OK {
+		case 204:
+			if r.Resp != nil {
+				return clientCode{}, fmt.Errorf("%s: a 204 has no body, so no response type", where)
+			}
+		case 200, 201:
+			if r.Resp == nil {
+				return clientCode{}, fmt.Errorf("%s: a JSON route needs a response type", where)
+			}
+			ts, err := m.tsType(r.Resp, where+" response")
+			if err != nil {
+				return clientCode{}, err
+			}
+			result = ts
+		default:
+			return clientCode{}, fmt.Errorf("%s: the success status must be 200, 201 or 204, not %d", where, r.OK)
+		}
+
+		fmt.Fprintf(&ib, "  %s(%s): Promise<Outcome<%s>>;\n", name, strings.Join(args, ", "), result)
+		fmt.Fprintf(&mb, "    %s: (%s) => t.send<%s>(%s, %s, %s, %s),\n",
+			name, strings.Join(names, ", "), result, strconv.Quote(r.Method), pathExpr(r.Path), query, body)
+	}
+	code.iface, code.impl = ib.String(), mb.String()
+	return code, nil
+}
+
+// genTS is gen.ts: the types, Method, Outcome and Transport, the stream's
+// event map, the Client and createClient. It has no imports.
+func (m *model) genTS() ([]byte, error) {
+	hasNotice := false
+	for _, n := range m.names {
+		hasNotice = hasNotice || n == "Notice"
+	}
+	if !hasNotice {
+		return nil, fmt.Errorf("gen.ts needs a Notice type, which Outcome carries, and no route or event reaches one")
+	}
+	types, err := m.types()
+	if err != nil {
+		return nil, err
+	}
+	var events strings.Builder
+	events.WriteString("export interface StreamEvents {\n")
+	for _, e := range m.c.Events {
+		ts, err := m.tsType(e.Data, "event "+e.Name)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&events, "  %s: %s;\n", key(e.Name), ts)
+	}
+	events.WriteString("}\n\n")
+	code, err := m.client()
+	if err != nil {
+		return nil, err
+	}
+
+	var b strings.Builder
+	b.WriteString(tsHeader)
+	b.WriteString(types)
+	b.WriteString(tsPrelude)
+	b.WriteString(events.String())
+	b.WriteString("export interface Client {\n" + code.iface + "}\n\n")
+	if code.hasQuery {
+		b.WriteString(tsQueryOf)
+	}
+	b.WriteString("export function createClient(t: Transport): Client {\n  return {\n" + code.impl + "  };\n}\n")
+	return []byte(b.String()), nil
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `gofmt -w internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go && CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web/internal/gen`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the contract generator writes the client, Outcome and the event map" -- internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go
+```
+
+### Task 5.4: `docs/specs/web-api.md`
+
+**Files:**
+- Modify: `internal/web/internal/gen/gen.go`
+- Test: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `gen_test.go`:
+
+```go
+func TestWebAPI_ListsEveryRouteEventTypeAndUnion(t *testing.T) {
+	m, err := build(sample())
+	require.NoError(t, err)
+	out, err := m.webAPI()
+	require.NoError(t, err)
+	md := string(out)
+
+	assert.True(t, strings.HasPrefix(md, "# Web API\n"))
+	assert.Contains(t, md, "do not edit it by hand")
+	assert.Contains(t, md, "### `POST /api/v1/pair`\n\nTrades a code for the cookie.\n\n- Auth: none (open)\n- Success: 200\n- Client: `pair`\n- Body: `PairBody`\n- Response: `Pair`\n")
+	assert.Contains(t, md, "### `GET /api/v1/items/{id}`\n\nOne item.\n\n- Auth: the device cookie\n- Success: 200\n- Client: `item`\n- Query: `ItemParams`\n- Response: `Item`\n")
+	assert.Contains(t, md, "### `DELETE /api/v1/device`\n\nUnpairs.\n\n- Auth: the device cookie\n- Success: 204\n- Client: `unpair`\n")
+	assert.Contains(t, md, "### `GET /api/v1/items/{id}/view`\n\nA page.\n\n- Auth: the device cookie\n- Page: HTML for the app's iframe; the generated client builds its URL as `viewURL`.\n")
+	assert.Contains(t, md, "## Stream events\n")
+	assert.Contains(t, md, "- `notice`: `Notice`\n- `ping`: `Record<string, never>`\n")
+	assert.Contains(t, md, "### `Item`\n\n- `kept`: `number`\n- `id`: `number`\n- `kind`: `Level`\n- `note`: `Badge | null`\n")
+	assert.Contains(t, md, "- `extra?`: `string[]`\n")
+	assert.Contains(t, md, "- `trio`: `number[]`\n- `pair`: `(Badge | null)[]`\n", "an array is written as T[], never a tuple")
+	assert.Contains(t, md, "### `Level`\n\n`\"low\"`, `\"high\"`, `\"\"`\n")
+}
+```
+
+Fails without: `TestWebAPI_ListsEveryRouteEventTypeAndUnion`: a route's `doc` left out, the open marker, the success status, the page line, any of the query, body and response lines, the events list, a type's fields with their optional marker and `| null`, an array field as `T[]` (a tuple here), a union's values.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/ -run TestWebAPI`
+Expected: the package does not build: `m.webAPI undefined (type *model has no field or method webAPI)`.
+
+- [ ] **Step 3: Implement**
+
+Append to `gen.go`:
+
+```go
+const mdHeader = "# Web API\n\n" +
+	"Generated by `go generate ./internal/web` from the route table (`internal/web/routes.go`), the stream's events table (`internal/web/stream.go`) and the union types (`internal/web/unions.go`); do not edit it by hand. " +
+	"Every route needs the paired device's cookie except the one marked open. " +
+	"`internal/web/ui/src/api/gen.ts` is the app's typed form of this reference, and `internal/web/api.fields` pins every field, route, event and union value that has shipped: " +
+	"one may be added, and removing or changing one means deleting its line there by hand in the same commit.\n\n"
+
+// typeRef is one of a route's three types, with the word the reference and
+// api.fields use for it.
+type typeRef struct {
+	key   string
+	title string
+	t     reflect.Type
+}
+
+// refs are a route's query, body and response types, in that order; one a
+// route lacks has a nil t.
+func refs(r web.ContractRoute) []typeRef {
+	return []typeRef{
+		{"query", "Query", r.Query},
+		{"body", "Body", r.Body},
+		{"resp", "Response", r.Resp},
+	}
+}
+
+// webAPI is docs/specs/web-api.md: every route with its doc, then every
+// stream event, every type's fields and every union's values.
+func (m *model) webAPI() ([]byte, error) {
+	var b strings.Builder
+	b.WriteString(mdHeader)
+	b.WriteString("## Routes\n\n")
+	for _, r := range m.c.Routes {
+		where := r.Method + " " + r.Path
+		fmt.Fprintf(&b, "### `%s`\n\n", where)
+		if r.Doc != "" {
+			b.WriteString(r.Doc + "\n\n")
+		}
+		auth := "the device cookie"
+		if r.Open {
+			auth = "none (open)"
+		}
+		fmt.Fprintf(&b, "- Auth: %s\n", auth)
+		if r.Page {
+			fmt.Fprintf(&b, "- Page: HTML for the app's iframe; the generated client builds its URL as `%sURL`.\n", r.Client)
+		} else {
+			fmt.Fprintf(&b, "- Success: %d\n- Client: `%s`\n", r.OK, r.Client)
+		}
+		for _, ref := range refs(r) {
+			if ref.t == nil {
+				continue
+			}
+			ts, err := m.tsType(ref.t, where+" "+ref.key)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(&b, "- %s: `%s`\n", ref.title, ts)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## Stream events\n\n")
+	b.WriteString("`GET /api/v1/stream` sends these server-sent events; the first is always `snapshot`.\n\n")
+	for _, e := range m.c.Events {
+		ts, err := m.tsType(e.Data, "event "+e.Name)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&b, "- `%s`: `%s`\n", e.Name, ts)
+	}
+	b.WriteString("\n")
+
+	b.WriteString("## Types\n\n")
+	for _, t := range m.sorted {
+		fmt.Fprintf(&b, "### `%s`\n\n", m.names[t])
+		for _, f := range m.fields[t] {
+			ts, err := m.fieldType(f, t.Name()+"."+f.name)
+			if err != nil {
+				return nil, err
+			}
+			opt := ""
+			if f.optional {
+				opt = "?"
+			}
+			fmt.Fprintf(&b, "- `%s%s`: `%s`\n", f.name, opt, ts)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## Unions\n\n")
+	for _, u := range m.unions {
+		quoted := make([]string, len(u.Values))
+		for i, v := range u.Values {
+			quoted[i] = "`" + strconv.Quote(v) + "`"
+		}
+		fmt.Fprintf(&b, "### `%s`\n\n%s\n\n", u.Name, strings.Join(quoted, ", "))
+	}
+	return []byte(b.String()), nil
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `gofmt -w internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go && CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web/internal/gen`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the contract generator writes the API reference" -- internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go
+```
+
+### Task 5.5: `api.fields` and `Generate`
+
+**Files:**
+- Modify: `internal/web/internal/gen/gen.go`
+- Test: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `gen_test.go`, add `"sort"` to the import block (after `"regexp"`), and append:
+
+```go
+func TestGenerate_WritesTheFieldLines(t *testing.T) {
+	out, err := Generate(sample(), nil)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.GenTS)
+	assert.NotEmpty(t, out.WebAPI)
+	assert.True(t, sort.StringsAreSorted(out.Fields), "a first run is sorted")
+	for _, want := range []string{
+		"Item.kept: number",
+		"Item.kind: Level",
+		"Item.note: Badge | null",
+		"Item.extra?: string[]",
+		"Item.trio: number[]",
+		"Item.pair: (Badge | null)[]",
+		"Item.kids?: (Item | null)[]",
+		"ItemParams.q: string",
+		"Notice.at: string",
+		"POST /api/v1/pair body=PairBody resp=Pair ok=200 open",
+		"GET /api/v1/items/{id} query=ItemParams resp=Item ok=200",
+		"POST /api/v1/items/{id}/jobs/{job}/{action} resp=Notices ok=200",
+		"DELETE /api/v1/device ok=204",
+		"GET /api/v1/items/{id}/view ok=200 page",
+		"event notice data=Notice",
+		"event ping data=Record<string, never>",
+		"union Level \"low\"",
+		"union Level \"\"",
+	} {
+		assert.Contains(t, out.Fields, want)
+	}
+}
+
+func TestGenerate_FieldsAppendAndNeverRemove(t *testing.T) {
+	first, err := Generate(sample(), nil)
+	require.NoError(t, err)
+
+	// A committed line the code no longer produces stays where it was; the
+	// changed line is added beside it; the new lines follow, sorted.
+	committed := []string{"Zed.gone: string", "Item.kind: string"}
+	next, err := Generate(sample(), committed)
+	require.NoError(t, err)
+	assert.Equal(t, committed, next.Fields[:2])
+	assert.Contains(t, next.Fields[2:], "Item.kind: Level")
+	assert.NotContains(t, next.Fields[2:], "Item.kind: string", "a committed line is not added twice")
+	assert.True(t, sort.StringsAreSorted(next.Fields[2:]))
+	assert.Equal(t, []string{"Zed.gone: string", "Item.kind: string"}, Dropped(committed, first.Fields))
+
+	// Generating from its own output adds nothing.
+	again, err := Generate(sample(), next.Fields)
+	require.NoError(t, err)
+	assert.Equal(t, next.Fields, again.Fields)
+}
+
+func TestGenerate_NamesTheErrorOfAnUntypeableContract(t *testing.T) {
+	_, err := Generate(mini(reflect.TypeFor[chanHolderJSON]()), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generate:")
+	assert.Contains(t, err.Error(), "chanHolderJSON.c")
+}
+```
+
+Fails without: `TestGenerate_WritesTheFieldLines`: a field line missing its `?` or `| null`, an array field typed as a tuple (`Item.trio`) or with a plain element (`Item.pair`), a route line missing `ok=`, `open` or `page`, or its types, the event and union lines, the sort. `TestGenerate_FieldsAppendAndNeverRemove`: `Fields` starting from the fresh lines instead of the committed ones (`Zed.gone` would vanish), the `have` check (a committed line would repeat, and `again` would grow), the sort of the new lines. `TestGenerate_NamesTheErrorOfAnUntypeableContract`: the `generate:` wrap and the field's name in the error.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: the package does not build: `undefined: Generate`.
+
+- [ ] **Step 3: Implement**
+
+In `gen.go`, add `"slices"` to the import block (after `"regexp"`), and append:
+
+```go
+// fieldLines are the lines api.fields pins, sorted: one per field
+// (Session.status: SessionStatus, Session.worktree?: string, Session.pr: Pr |
+// null), per route (its method and path, then query=, body=, resp=, ok= and
+// open or page), per event and per union value.
+func (m *model) fieldLines() ([]string, error) {
+	var lines []string
+	for _, t := range m.sorted {
+		for _, f := range m.fields[t] {
+			ts, err := m.fieldType(f, t.Name()+"."+f.name)
+			if err != nil {
+				return nil, err
+			}
+			name := f.name
+			if f.optional {
+				name += "?"
+			}
+			lines = append(lines, fmt.Sprintf("%s.%s: %s", m.names[t], name, ts))
+		}
+	}
+	for _, r := range m.c.Routes {
+		where := r.Method + " " + r.Path
+		parts := []string{where}
+		for _, ref := range refs(r) {
+			if ref.t == nil {
+				continue
+			}
+			ts, err := m.tsType(ref.t, where+" "+ref.key)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, ref.key+"="+ts)
+		}
+		if r.OK != 0 {
+			parts = append(parts, "ok="+strconv.Itoa(r.OK))
+		}
+		if r.Open {
+			parts = append(parts, "open")
+		}
+		if r.Page {
+			parts = append(parts, "page")
+		}
+		lines = append(lines, strings.Join(parts, " "))
+	}
+	for _, e := range m.c.Events {
+		ts, err := m.tsType(e.Data, "event "+e.Name)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, "event "+e.Name+" data="+ts)
+	}
+	for _, u := range m.unions {
+		for _, v := range u.Values {
+			lines = append(lines, "union "+u.Name+" "+strconv.Quote(v))
+		}
+	}
+	sort.Strings(lines)
+	return slices.Compact(lines), nil
+}
+
+// Generate returns gen.ts, the API reference and the api.fields lines for c.
+// fields are the committed api.fields lines: Output.Fields keeps every one of
+// them, in place, and adds the lines c produces that they lack, sorted, so a
+// removed or retyped field stays pinned until its line is deleted by hand.
+func Generate(c web.ContractSpec, fields []string) (Output, error) {
+	m, err := build(c)
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	ts, err := m.genTS()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	md, err := m.webAPI()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	lines, err := m.fieldLines()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	have := make(map[string]bool, len(fields))
+	for _, l := range fields {
+		have[l] = true
+	}
+	out := slices.Clone(fields)
+	for _, l := range lines {
+		if !have[l] {
+			out = append(out, l)
+		}
+	}
+	return Output{GenTS: ts, WebAPI: md, Fields: out}, nil
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `gofmt -w internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go && CGO_ENABLED=0 go test ./internal/web/internal/gen/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web/internal/gen`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): Generate pins every shipped field, route, event and union value" -- internal/web/internal/gen/gen.go internal/web/internal/gen/gen_test.go
+```
+
+### Task 5.6: The command, the three outputs and the freshness tests
+
+**Files:**
+- Create: `internal/web/internal/gen/cmd/main.go`
+- Create: `internal/web/ui/src/api/gen.ts` (generated)
+- Create: `docs/specs/web-api.md` (generated)
+- Create: `internal/web/api.fields` (generated)
+- Test: `internal/web/internal/gen/gen_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `gen_test.go`:
+
+```go
+// webDirOf is internal/web, found from this package's directory and checked by
+// the repo's go.mod two levels above it, so a moved test fails rather than
+// reading nothing.
+func webDirOf(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(dir, "..", "..", "go.mod"), "the test is rooted at internal/web")
+	return dir
+}
+
+// TestContract_GeneratedFilesAreFresh fails when gen.ts, web-api.md or
+// api.fields no longer matches the route table, the events and the unions:
+// run `go generate ./internal/web` after changing any of them.
+func TestContract_GeneratedFilesAreFresh(t *testing.T) {
+	tsPath, mdPath, fieldsPath := Files(webDirOf(t))
+	committed, err := ReadFields(fieldsPath)
+	require.NoError(t, err)
+	out, err := Generate(web.Contract(), committed)
+	require.NoError(t, err)
+
+	gotTS, err := os.ReadFile(tsPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(out.GenTS), string(gotTS), "gen.ts is stale: run go generate ./internal/web")
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(out.WebAPI), string(gotMD), "web-api.md is stale: run go generate ./internal/web")
+	gotFields, err := os.ReadFile(fieldsPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(FormatFields(out.Fields)), string(gotFields), "api.fields lacks lines: run go generate ./internal/web")
+}
+
+// TestContract_FieldsOnlyGrow fails when a committed api.fields line is no
+// longer produced: a field, route, event or union value was removed or
+// retyped. Removing one on purpose means deleting its line by hand, in the
+// same commit.
+func TestContract_FieldsOnlyGrow(t *testing.T) {
+	_, _, fieldsPath := Files(webDirOf(t))
+	committed, err := ReadFields(fieldsPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, committed)
+	fresh, err := Generate(web.Contract(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, Dropped(committed, fresh.Fields),
+		"api.fields pins these lines, which the code no longer produces: restore the field, route or value, or delete the line here by hand")
+}
+```
+
+Fails without: `TestContract_GeneratedFilesAreFresh`: a change to the route table, the events, the unions or the generator that is not regenerated (a stale byte in any of the three files); an empty or missing file. `TestContract_FieldsOnlyGrow`: a field, route or union value removed or retyped in Go while its line stays committed (`Dropped` would be empty without the `Generate(web.Contract(), nil)` comparison).
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/internal/gen/ -run 'TestContract_GeneratedFilesAreFresh|TestContract_FieldsOnlyGrow'`
+Expected: both fail on `read …/api.fields: open …: no such file or directory`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/internal/gen/cmd/main.go`:
+
+```go
+// Command cmd writes internal/web/ui/src/api/gen.ts, docs/specs/web-api.md
+// and internal/web/api.fields from the route table, the stream's events and
+// the union types. Run it with go generate in internal/web, after any change
+// to routes.go, stream.go or unions.go, or to a type they name.
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/aidan-bailey/loom/internal/web"
+	"github.com/aidan-bailey/loom/internal/web/internal/gen"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "gen:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	if _, err := os.Stat("contract.go"); err != nil {
+		return fmt.Errorf("run it with go generate in internal/web (no contract.go here): %w", err)
+	}
+	tsPath, mdPath, fieldsPath := gen.Files(".")
+	committed, err := gen.ReadFields(fieldsPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	c := web.Contract()
+	out, err := gen.Generate(c, committed)
+	if err != nil {
+		return err
+	}
+	fresh, err := gen.Generate(c, nil)
+	if err != nil {
+		return err
+	}
+	for _, l := range gen.Dropped(committed, fresh.Fields) {
+		fmt.Fprintf(os.Stderr, "gen: api.fields keeps %q, which the code no longer produces; delete the line by hand if the removal is intended\n", l)
+	}
+	for _, f := range []struct {
+		path string
+		data []byte
+	}{
+		{tsPath, out.GenTS},
+		{mdPath, out.WebAPI},
+		{fieldsPath, gen.FormatFields(out.Fields)},
+	} {
+		if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(f.path, f.data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+```
+
+Then generate the three files:
+
+Run: `gofmt -w internal/web/internal/gen/cmd/main.go internal/web/internal/gen/gen_test.go && go generate ./internal/web`
+Expected: no output; `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` now exist. If `go generate` prints `gen: …`, the contract holds a type the rules refuse (an unnamed struct, a query field that is not a string): the message names the route and the field; fix that type in `internal/web` (Story 2's or 3's code), not the generator.
+
+Read the outputs once: `gen.ts` opens with `// Code generated by go generate ./internal/web; DO NOT EDIT.` and holds `export interface Session {` with `group: SessionGroup;` and `status: SessionStatus;`, `export interface Notice {` with `at: string;`, `export type SessionGroup = "needs_you" | "your_turn" | "working" | "paused";`, `export interface StreamEvents {` with nine keys, and `export function createClient(t: Transport): Client {` with one member per route; `api.fields` holds `POST /api/v1/pair body=PairBody resp=Pair ok=200 open`; `web-api.md` has a `### \`POST /api/v1/pair\`` section.
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/... && (cd internal/web/ui && pnpm install --frozen-lockfile && pnpm run typecheck)`
+Expected: every `internal/web` package `ok` (the two freshness tests included), and `tsc` exits 0 with no output over `src/api/gen.ts`. A typecheck error in `gen.ts` is the generator's (fix `gen.go`, run `go generate ./internal/web` again); it is never fixed by editing `gen.ts`.
+
+Then the story gates: `bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'` prints nothing, `CGO_ENABLED=0 go vet ./...` is clean, and `CGO_ENABLED=0 go test ./...` passes (the repo's `TestEveryConfigReachingPackageIsolatesLoomDirs` finds `internal/web/internal/gen`'s `TestMain`).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/internal/gen/cmd/main.go internal/web/ui/src/api/gen.ts docs/specs/web-api.md internal/web/api.fields
+git commit -m "feat(web): generate gen.ts, the API reference and api.fields from the route table" -- internal/web/internal/gen/cmd/main.go internal/web/internal/gen/gen_test.go internal/web/ui/src/api/gen.ts docs/specs/web-api.md internal/web/api.fields
+```
+
+## Story 6: The per-device switch between the classic and the new app
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/static.go`, `internal/web/static_test.go`, `internal/web/static/js/switch.mjs`, `internal/web/static/js/settings.mjs`, `internal/web/static/js/app.mjs`, `internal/web/static/sw.js`, `internal/web/ui/src/app/switchApp.ts`, `internal/web/ui/src/app/switchApp.test.ts`
+- **Interfaces:** exposes `appCookie`, `staticTree`, `treeOf`, the classic `switchApp` and `cookieApp`, the new app's `switchApp`, `cookieApp`, `page` and `AppName`, and its three `TestStatic_` tests; uses Story 4's `nextFiles`, `nextStaticAssets` and worker
+- **Verify:** `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && node --check internal/web/static/js/switch.mjs && node --check internal/web/static/js/settings.mjs && node --check internal/web/static/js/app.mjs && node --check internal/web/static/sw.js && cd internal/web/ui && pnpm run check && pnpm run dist:check'`
+- **Review:** deep
+- **Form:** full (which tree a request gets, the cookie's attributes and the worker's URL decide what every paired device loads)
+
+This story makes the daemon serve both embedded apps and lets each device pick one. `routeStatic` builds the assets of both trees (Story 4's `nextFiles` beside the classic `staticFiles`); the four shell files (`/`, `/index.html`, `/sw.js`, `/manifest.webmanifest`) come from the tree `treeOf` picks (a `ui` parameter on the URL, else the `__Host-loom-ui` cookie, `next` for the new app and anything else for the classic one), with `Vary: Cookie`; every other path comes from that tree, else from the other, so a page loaded just before a switch still gets its assets. If a tree cannot be built it fails closed for its own requests only: a shell request `treeOf` gives it answers 500, the other tree serves as normal, and no asset fallback reaches the broken tree, so a broken opt-in new app never takes down the classic one (and the reverse). The classic app gains `switch.mjs` (`switchApp`, `cookieApp`), a "Try the new app" row in Settings, a worker registration at `/sw.js?ui=<the cookie's app>` on every launch (so a switch deferred offline completes on the next one), and a worker that fetches its own shell files as `?ui=classic` and sweeps `loom-next-` caches too; the new app gains `src/app/switchApp.ts` with the same two functions. Go tests pin both sides of every choice; the new app's Vitest pins the cookie's attributes and the worker's URL. The story's code holds none of the profile's landmine markers.
+
+### Task 6.1: Serve both trees by the cookie and the `ui` parameter
+
+**Files:**
+- Modify: `internal/web/static.go:125-160` (`routeStatic`, `routeStaticFrom` and `routeStaticFailed`)
+- Modify: `internal/web/static_test.go:302-304` (one existing test's call)
+- Test: `internal/web/static_test.go`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/static_test.go`, the existing test builds one tree through `routeStaticFrom`:
+
+```go
+func TestStatic_AnAppThatCannotBeServedAnswers500OnTheShell(t *testing.T) {
+	m := http.NewServeMux()
+	(&Layer{build: "b-7"}).routeStaticFrom(m, fstest.MapFS{"index.html": {Data: []byte("<html>")}})
+
+	rec := staticDo(m, http.MethodGet, "/")
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "missing from this build")
+	require.Equal(t, http.StatusNotFound, staticDo(m, http.MethodGet, "/index.html").Code, "nothing else is served")
+}
+```
+
+`routeStaticFrom` now takes both trees, and with both broken every shell file answers 500 (it is the shell of whichever tree the request picks) while nothing else is served. Replace the function's lines from `m := http.NewServeMux()` through its closing brace with:
+
+```go
+func TestStatic_AnAppThatCannotBeServedAnswers500OnTheShell(t *testing.T) {
+	m := http.NewServeMux()
+	bad := fstest.MapFS{"index.html": {Data: []byte("<html>")}}
+	(&Layer{build: "b-7"}).routeStaticFrom(m, bad, bad)
+
+	for _, url := range []string{"/", "/index.html"} {
+		rec := staticDo(m, http.MethodGet, url)
+		require.Equal(t, http.StatusInternalServerError, rec.Code, url)
+		require.Contains(t, rec.Body.String(), "missing from this build", url)
+	}
+	require.Equal(t, http.StatusNotFound, staticDo(m, http.MethodGet, "/app.css").Code, "nothing else is served")
+}
+```
+
+Then add, after that function, the helpers and the tests of the choice. The stand-in trees say which one they are in every file (`tree=classic`, `tree=next`), hold a file of their own and a `both.css` both hold, so a test sees which tree answered; the real-tree checks use Story 4's `nextStaticAssets` and the existing `staticAssets`, both built with the build ID `b-test`.
+
+```go
+// standInTree is a small app whose every file names it ("tree=<name>"): the
+// shell files, a file only it holds and a file both stand-ins hold.
+func standInTree(name string) fstest.MapFS {
+	f := fstest.MapFS{}
+	put := func(file, body string) { f[file] = &fstest.MapFile{Data: []byte(body)} }
+	put("index.html", `<meta name="loom-build" content="__LOOM_BUILD__">tree=`+name)
+	put("sw.js", "const BUILD = \"__LOOM_BUILD__\";\nconst SHELL = [\"__LOOM_SHELL__\"];\n// tree="+name+"\n")
+	put("manifest.webmanifest", `{"name":"tree=`+name+`"}`)
+	put("both.css", "/* tree="+name+" */")
+	put("only-"+name+".css", "/* tree="+name+" */")
+	return f
+}
+
+// twoTrees serves the stand-in classic and new apps through routeStaticFrom.
+func twoTrees(t *testing.T) *http.ServeMux {
+	t.Helper()
+	m := http.NewServeMux()
+	(&Layer{build: "b-7"}).routeStaticFrom(m, standInTree("classic"), standInTree("next"))
+	return m
+}
+
+// staticGet is a GET of target, carrying the app cookie when cookie is not "".
+func staticGet(h http.Handler, target, cookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	if cookie != "" {
+		req.AddCookie(&http.Cookie{Name: appCookie, Value: cookie})
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// answeredBy is the stand-in tree a 200 response names.
+func answeredBy(t *testing.T, rec *httptest.ResponseRecorder, what string) string {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, what)
+	m := regexp.MustCompile(`tree=(\w+)`).FindStringSubmatch(rec.Body.String())
+	require.NotNil(t, m, "%s names no tree", what)
+	return m[1]
+}
+
+var staticShellURLs = []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"}
+
+func TestStatic_TheCookieChoosesTheTree(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ cookie, want string }{
+		{"", "classic"},
+		{"classic", "classic"},
+		{"next", "next"},
+		{"nexty", "classic"},
+		{"NEXT", "classic"},
+		{"anything", "classic"},
+	} {
+		for _, url := range staticShellURLs {
+			what := url + " with cookie " + tc.cookie
+			rec := staticGet(m, url, tc.cookie)
+			require.Equal(t, tc.want, answeredBy(t, rec, what), what)
+			require.Contains(t, rec.Header().Values("Vary"), "Cookie", what)
+		}
+		what := "both.css with cookie " + tc.cookie
+		require.Equal(t, tc.want, answeredBy(t, staticGet(m, "/both.css", tc.cookie), what), what+": a file both trees hold comes from the chosen one")
+	}
+
+	// The real trees: the cookie picks one app's shell, and the two differ.
+	mux := staticMux(t, "b-test")
+	classic, next := staticAssets(t), nextStaticAssets(t)
+	for _, url := range staticShellURLs {
+		require.NotEqual(t, classic[url].body, next[url].body, url+": the two apps' shells differ")
+		require.Equal(t, classic[url].body, staticGet(mux, url, "").Body.Bytes(), url)
+		require.Equal(t, next[url].body, staticGet(mux, url, "next").Body.Bytes(), url)
+	}
+}
+
+func TestStatic_TheUIParameterChoosesTheTree(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ query, cookie, want string }{
+		{"?ui=next", "", "next"},
+		{"?ui=next", "classic", "next"},
+		{"?ui=classic", "next", "classic"},
+		{"?ui=other", "next", "classic"},
+		{"?ui=Next", "next", "classic"},
+		{"?ui=", "next", "classic"},
+		{"?other=1", "next", "next"},
+		{"?other=1", "", "classic"},
+	} {
+		for _, url := range staticShellURLs {
+			what := url + tc.query + " with cookie " + tc.cookie
+			require.Equal(t, tc.want, answeredBy(t, staticGet(m, url+tc.query, tc.cookie), what), what)
+		}
+	}
+
+	// Off the shell files the parameter means nothing: the cookie picks.
+	require.Equal(t, "classic", answeredBy(t, staticGet(m, "/both.css?ui=next", ""), "both.css?ui=next"))
+	require.Equal(t, "next", answeredBy(t, staticGet(m, "/both.css?ui=classic", "next"), "both.css?ui=classic"))
+}
+
+func TestStatic_AssetsFallBackAcrossTrees(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ url, cookie, want string }{
+		{"/only-next.css", "", "next"},
+		{"/only-next.css", "next", "next"},
+		{"/only-classic.css", "next", "classic"},
+		{"/only-classic.css", "", "classic"},
+	} {
+		what := tc.url + " with cookie " + tc.cookie
+		require.Equal(t, tc.want, answeredBy(t, staticGet(m, tc.url, tc.cookie), what), what)
+	}
+	require.Equal(t, http.StatusNotFound, staticGet(m, "/neither.css", "next").Code)
+	require.Equal(t, http.StatusNotFound, staticGet(m, "/neither.css", "").Code)
+
+	// The real trees: a classic-only file under the new cookie, and a bundle
+	// script under no cookie, both still served.
+	mux := staticMux(t, "b-test")
+	classic, next := staticAssets(t), nextStaticAssets(t)
+	var script string
+	for url := range next {
+		if strings.HasPrefix(url, "/assets/") && strings.HasSuffix(url, ".js") {
+			script = url
+		}
+	}
+	require.NotEmpty(t, script, "the bundle has a script under /assets/")
+	require.Equal(t, next[script].body, staticGet(mux, script, "").Body.Bytes())
+	require.Equal(t, classic["/app.css"].body, staticGet(mux, "/app.css", "next").Body.Bytes())
+}
+
+func TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe(t *testing.T) {
+	bad := fstest.MapFS{
+		"index.html":   {Data: []byte("<html>")},
+		"only-bad.css": {Data: []byte("/* tree=bad */")},
+	}
+	for _, tc := range []struct {
+		name          string
+		trees         [2]fstest.MapFS
+		brokenCookie  string
+		workingCookie string
+		brokenQuery   string
+		workingQuery  string
+		working       string
+	}{
+		{"the new app", [2]fstest.MapFS{standInTree("classic"), bad}, "next", "", "?ui=next", "?ui=classic", "classic"},
+		{"the classic app", [2]fstest.MapFS{bad, standInTree("next")}, "", "next", "?ui=classic", "?ui=next", "next"},
+	} {
+		m := http.NewServeMux()
+		(&Layer{build: "b-7"}).routeStaticFrom(m, tc.trees[0], tc.trees[1])
+
+		for _, url := range staticShellURLs {
+			// A shell request the broken tree would answer gets 500, by its cookie or
+			// by its ui parameter, and says it varies by cookie.
+			for _, req := range []struct{ what, target, cookie string }{
+				{"cookie", url, tc.brokenCookie},
+				{"parameter", url + tc.brokenQuery, tc.workingCookie},
+			} {
+				label := tc.name + " broken, " + url + " by " + req.what
+				rec := staticGet(m, req.target, req.cookie)
+				require.Equal(t, http.StatusInternalServerError, rec.Code, label)
+				require.Contains(t, rec.Body.String(), "missing from this build", label)
+				require.Contains(t, rec.Header().Values("Vary"), "Cookie", label)
+			}
+
+			// The same shell file asked for by the working tree is served as normal.
+			for _, req := range []struct{ what, target, cookie string }{
+				{"cookie", url, tc.workingCookie},
+				{"parameter", url + tc.workingQuery, tc.brokenCookie},
+			} {
+				label := tc.name + " broken, " + url + " by " + req.what
+				require.Equal(t, tc.working, answeredBy(t, staticGet(m, req.target, req.cookie), label), label)
+			}
+		}
+
+		// An asset comes from the working tree whichever cookie asks, and one only
+		// the broken tree holds is not served.
+		for _, cookie := range []string{"", "next"} {
+			label := tc.name + " broken, both.css with cookie " + cookie
+			require.Equal(t, tc.working, answeredBy(t, staticGet(m, "/both.css", cookie), label), label)
+			require.Equal(t, http.StatusNotFound, staticGet(m, "/only-bad.css", cookie).Code, tc.name+" broken: its own asset is not served")
+		}
+	}
+}
+```
+
+Fails without: `TestStatic_TheCookieChoosesTheTree`: the cookie branch of `treeOf` removed (every request answers classic), the `== "next"` test loosened to any non-empty value (`nexty`, `NEXT` and `anything` answer next), or the `Vary: Cookie` line removed from the shell handler. `TestStatic_TheUIParameterChoosesTheTree`: the `ui` branch removed (the cookie always wins), `ui` honoured only for `/sw.js`, `ui` honoured off the shell files (`both.css?ui=next`), or `Has("ui")` replaced by a non-empty check (`?ui=` with the next cookie would answer next). `TestStatic_AssetsFallBackAcrossTrees`: the fallback to the other tree removed (a file only one tree holds answers 404 under the other's cookie). `TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe`: a tree that fails to build taking the whole layer down (500 on every request, the working tree unserved), the broken tree's shell requests answering the other tree's shell instead of 500, the shell files left unregistered when a tree is broken (404 rather than 500), the `Vary: Cookie` line moved after the 500 return, or an asset fallback that reaches the broken tree's files. `TestStatic_AnAppThatCannotBeServedAnswers500OnTheShell`: a layer with both trees broken serving anything.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run 'TestStatic_(AnApp|TheCookie|TheUIParameter|AssetsFallBack|ABroken)'`
+Expected: the package fails to compile, with `./static_test.go:...: undefined: appCookie` and `too many arguments in call to (&Layer{…}).routeStaticFrom`.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/static.go`, replace `routeStatic`, `routeStaticFrom` and `routeStaticFailed` (the last is used only by those two, and the new code logs a failing tree itself), which are
+
+```go
+// routeStatic serves the app shell and its files: public, with no data in
+// them. When the embedded app cannot be served it logs why and answers 500 on
+// "/", so a broken build is loud rather than a blank page.
+func (l *Layer) routeStatic(m *http.ServeMux) {
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		l.routeStaticFailed(m, err)
+		return
+	}
+	l.routeStaticFrom(m, sub)
+}
+
+// routeStaticFrom serves the app held in fsys (the embedded one, in
+// production) and fails closed as routeStatic does when it cannot be served.
+func (l *Layer) routeStaticFrom(m *http.ServeMux, fsys fs.FS) {
+	assets, err := buildStaticAssets(fsys, l.build)
+	if err != nil {
+		l.routeStaticFailed(m, err)
+		return
+	}
+	for url, a := range assets {
+		pattern := "GET " + url
+		if url == "/" {
+			pattern = "GET /{$}"
+		}
+		m.HandleFunc(pattern, a.serve)
+	}
+}
+
+// routeStaticFailed logs why the app cannot be served and answers 500 on "/".
+func (l *Layer) routeStaticFailed(m *http.ServeMux, err error) {
+	log.For("web").Error("web.static_unavailable", "err", err)
+	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "the app's files are missing from this build", http.StatusInternalServerError)
+	})
+}
+```
+
+with the choice's names, the two functions and the handler:
+
+```go
+// appCookie is the device's choice of app: "next" asks for the new one, any
+// other value or none for the classic one. The app sets it (it is not
+// HttpOnly) and it holds no data.
+const appCookie = "__Host-loom-ui"
+
+// staticTree is one of the two embedded apps.
+type staticTree int
+
+const (
+	treeClassic staticTree = iota
+	treeNext
+)
+
+// isShellFile reports whether url is one of the four files whose answer is
+// the app's shell, which the request's tree picks.
+func isShellFile(url string) bool {
+	switch url {
+	case "/", "/index.html", "/sw.js", "/manifest.webmanifest":
+		return true
+	}
+	return false
+}
+
+// treeOf is the tree a request is answered from. A shell file with a ui
+// parameter takes it (next for the new app, any other value for the classic
+// one), so a worker's own requests choose their tree whether or not they carry
+// the cookie; otherwise the cookie decides, next for the new app and anything
+// else, or none, for the classic one.
+func treeOf(r *http.Request) staticTree {
+	if isShellFile(r.URL.Path) {
+		if q := r.URL.Query(); q.Has("ui") {
+			if q.Get("ui") == "next" {
+				return treeNext
+			}
+			return treeClassic
+		}
+	}
+	if c, err := r.Cookie(appCookie); err == nil && c.Value == "next" {
+		return treeNext
+	}
+	return treeClassic
+}
+
+// routeStatic serves the classic app and the new one: public, with no data in
+// them. An embedded app that cannot be served is logged and fails closed for
+// its own requests only: the shell requests treeOf gives it answer 500, so a
+// broken build is loud rather than a blank page, while the other app is served
+// as normal.
+func (l *Layer) routeStatic(m *http.ServeMux) {
+	classic, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.For("web").Error("web.static_unavailable", "app", "classic", "err", err)
+		classic = nil
+	}
+	next, err := fs.Sub(nextFiles, "dist")
+	if err != nil {
+		log.For("web").Error("web.static_unavailable", "app", "new", "err", err)
+		next = nil
+	}
+	l.routeStaticFrom(m, classic, next)
+}
+
+// staticTreeBuild is one embedded app as routeStaticFrom built it: its assets,
+// or why it cannot be served.
+type staticTreeBuild struct {
+	assets map[string]staticAsset
+	err    error
+}
+
+// routeStaticFrom serves the two apps held in classic and next (the embedded
+// ones, in production; a nil one is an app that could not be opened). Each URL
+// a working tree holds is registered once and answered by serveTrees. A tree
+// that cannot be built is logged and fails closed for its own requests only:
+// the four shell URLs are registered so that a request treeOf gives it answers
+// 500, the other tree serves as normal, and no fallback reaches the broken
+// tree's files, because it has none.
+func (l *Layer) routeStaticFrom(m *http.ServeMux, classic, next fs.FS) {
+	var trees [2]staticTreeBuild
+	broken := false
+	for _, app := range []struct {
+		tree staticTree
+		name string
+		fsys fs.FS
+	}{{treeClassic, "classic", classic}, {treeNext, "new", next}} {
+		var err error
+		if app.fsys == nil {
+			err = errors.New("its files cannot be opened")
+		} else {
+			trees[app.tree].assets, err = buildStaticAssets(app.fsys, l.build)
+		}
+		if err != nil {
+			log.For("web").Error("web.static_unavailable", "app", app.name, "err", err)
+			trees[app.tree] = staticTreeBuild{err: err}
+			broken = true
+		}
+	}
+	urls := make(map[string]bool)
+	for _, tree := range trees {
+		for url := range tree.assets {
+			urls[url] = true
+		}
+	}
+	if broken {
+		for _, url := range []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"} {
+			urls[url] = true
+		}
+	}
+	for url := range urls {
+		pattern := "GET " + url
+		if url == "/" {
+			pattern = "GET /{$}"
+		}
+		m.HandleFunc(pattern, serveTrees(trees, url))
+	}
+}
+
+// serveTrees answers url from the tree treeOf picks for the request, else from
+// the other tree, so a page loaded just before a switch still gets its assets.
+// A shell answer depends on the request's cookie, so it says so, the 500 of a
+// broken tree included. A shell request whose tree is broken answers 500 and
+// is never handed to the other tree: the device chose that app and is told it
+// is down. A tree that failed to build holds no assets, so no other request
+// reaches it.
+func serveTrees(trees [2]staticTreeBuild, url string) http.HandlerFunc {
+	shell := isShellFile(url)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if shell {
+			w.Header().Add("Vary", "Cookie")
+		}
+		chosen := treeOf(r)
+		if shell && trees[chosen].err != nil {
+			http.Error(w, "the app's files are missing from this build", http.StatusInternalServerError)
+			return
+		}
+		a, ok := trees[chosen].assets[url]
+		if !ok {
+			a, ok = trees[treeNext-chosen].assets[url]
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		a.serve(w, r)
+	}
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): serve the classic and new apps by the device's cookie" -- internal/web/static.go internal/web/static_test.go
+```
+
+### Task 6.2: The classic app's switch, its Settings row and its worker
+
+**Files:**
+- Create: `internal/web/static/js/switch.mjs`
+- Modify: `internal/web/static/js/settings.mjs:8` (imports), `internal/web/static/js/settings.mjs:123-125` (`unpair`), `internal/web/static/js/settings.mjs:159-160` (the section before "Recent notices")
+- Modify: `internal/web/static/js/app.mjs:14` (imports), `internal/web/static/js/app.mjs:114` (the registration)
+- Modify: `internal/web/static/sw.js:6-7` (the constants), `internal/web/static/sw.js:9-16` (install), `internal/web/static/sw.js:23` (activate's filter)
+- Test: `internal/web/static_test.go`
+
+- [ ] **Step 1: Write the failing test**
+
+The classic app has no JavaScript harness (its logic stays in Go and `node --check` guards its syntax), so the worker's two lines of spec §5 are pinned by what the served worker says. In `internal/web/static_test.go`, after `TestStatic_AssetsFallBackAcrossTrees`, add: each tree's worker names its tree, asks for its shell as `?ui=<tree>`, and sweeps both prefixes. The new tree's worker is Story 4's; the classic one is this task's.
+
+```go
+func TestStatic_EachWorkerFetchesItsOwnShell(t *testing.T) {
+	mux := staticMux(t, "b-test")
+	for _, tc := range []struct{ query, tree string }{
+		{"?ui=classic", "classic"},
+		{"?ui=next", "next"},
+	} {
+		sw := staticGet(mux, "/sw.js"+tc.query, "").Body.String()
+		require.Contains(t, sw, `const TREE = "`+tc.tree+`";`, tc.query)
+		require.Contains(t, sw, "?ui=${TREE}", tc.query+": the shell is fetched by its tree")
+		for _, prefix := range []string{`"loom-shell-"`, `"loom-next-"`} {
+			require.Contains(t, sw, prefix, tc.query+": both apps' caches are swept")
+		}
+	}
+}
+```
+
+Fails without: `TestStatic_EachWorkerFetchesItsOwnShell`: the classic worker without its `TREE` line or its `?ui=${TREE}` fetch (a worker that precaches by the cookie alone), or without the `"loom-next-"` prefix in its sweep; the new worker with another tree's name.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/ -run TestStatic_EachWorkerFetchesItsOwnShell`
+Expected: FAIL for `?ui=classic`: `Error: "…" does not contain "const TREE = \"classic\";"`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/static/js/switch.mjs`. The cookie is the device's choice of app (spec §3): `Secure; Path=/; SameSite=Strict; Max-Age=31536000`, not HttpOnly, no data. `switchApp` sets it and registers the worker again at `/sw.js?ui=<app>` (spec §5); the page reloads on the next `controllerchange` (the other tree's worker differs in bytes, so it installs, takes over and the page reloads, the path a daemon upgrade already takes). When the registration fails (offline) the cookie stays set, the answer is `"deferred"`, and the next launch's registration at `/sw.js?ui=<the cookie's app>` completes the switch.
+
+```js
+// The switch between the classic app and the new one. The device's choice is
+// the __Host-loom-ui cookie: "next" serves the new app's shell, anything else
+// the classic one. The worker is registered as /sw.js?ui=<app>, so the choice
+// reaches the worker's update whether or not its requests carry the cookie.
+const COOKIE = "__Host-loom-ui";
+
+// cookieApp is the app the cookie names: "next", else "classic".
+export function cookieApp() {
+  const pair = document.cookie.split("; ").find((c) => c.startsWith(COOKIE + "="));
+  return pair === COOKIE + "=next" ? "next" : "classic";
+}
+
+// switchApp makes app ("next" or "classic") this device's app: it sets the
+// cookie, registers the worker again at /sw.js?ui=<app> and reloads when that
+// worker takes over. It answers "deferred" when the registration fails
+// (offline): the cookie stays set and the next launch finishes the switch.
+export async function switchApp(app) {
+  document.cookie = COOKIE + "=" + app + "; Secure; Path=/; SameSite=Strict; Max-Age=31536000";
+  if (!("serviceWorker" in navigator)) {
+    location.reload();
+    return "switched";
+  }
+  const reload = () => location.reload();
+  navigator.serviceWorker.addEventListener("controllerchange", reload, { once: true });
+  try {
+    await navigator.serviceWorker.register("/sw.js?ui=" + app);
+  } catch (err) {
+    navigator.serviceWorker.removeEventListener("controllerchange", reload);
+    return "deferred";
+  }
+  return "switched";
+}
+```
+
+In `internal/web/static/js/settings.mjs`, add the import after the last one. Replace
+
+```js
+import { ContextRow, FLEET_BACK } from "./chrome.mjs";
+```
+
+with
+
+```js
+import { ContextRow, FLEET_BACK } from "./chrome.mjs";
+import { switchApp } from "./switch.mjs";
+```
+
+Add the handler after `unpair` in `Settings`. Replace
+
+```js
+  async function unpair() {
+    await act("DELETE", "/api/v1/device");
+  }
+```
+
+with
+
+```js
+  async function unpair() {
+    await act("DELETE", "/api/v1/device");
+  }
+
+  // tryNewApp makes the new app this device's: the page reloads into it when
+  // its worker takes over. Offline the choice is kept and the switch happens
+  // on the next launch.
+  async function tryNewApp() {
+    if ((await switchApp("next")) === "deferred") toast("The new app opens the next time you launch loom.");
+  }
+```
+
+Add the row before the notices section. Replace
+
+```js
+      <section class="sc-section">
+        <h2 class="sc-group-title">Recent notices</h2>
+```
+
+with
+
+```js
+      <section class="sc-section">
+        <h2 class="sc-group-title">App</h2>
+        <div class="sc-row">
+          <span>A new look for loom</span>
+          <button class="sc-btn" type="button" onClick=${tryNewApp}>Try the new app</button>
+        </div>
+      </section>
+
+      <section class="sc-section">
+        <h2 class="sc-group-title">Recent notices</h2>
+```
+
+In `internal/web/static/js/app.mjs`, import `cookieApp` and register the worker by the cookie's app at every launch. Replace
+
+```js
+import { StatusRow } from "./chrome.mjs";
+```
+
+with
+
+```js
+import { StatusRow } from "./chrome.mjs";
+import { cookieApp } from "./switch.mjs";
+```
+
+and replace
+
+```js
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+```
+
+with
+
+```js
+  // The worker's URL carries the device's app, so a switch deferred offline
+  // finishes on this launch: a classic page under the new cookie installs the
+  // new app's worker, which takes over and reloads the page.
+  navigator.serviceWorker.register("/sw.js?ui=" + cookieApp()).catch(() => {});
+```
+
+In `internal/web/static/sw.js`, name the tree and both prefixes. Replace
+
+```js
+const PREFIX = "loom-shell-";
+const CACHE = PREFIX + BUILD;
+```
+
+with
+
+```js
+const PREFIX = "loom-shell-";
+const CACHE = PREFIX + BUILD;
+// TREE is this worker's app. The server answers a shell file by its ui
+// parameter before it looks at the device's cookie, so the worker asks for each
+// shell file as ?ui=TREE and stores the answer under the plain path: it never
+// caches the other app's shell, whatever cookie its requests carry.
+const TREE = "classic";
+const SHELL_FILES = ["/", "/index.html", "/sw.js", "/manifest.webmanifest"];
+// Both apps' caches are swept on activate, so a switch leaves nothing of the
+// other behind.
+const PREFIXES = ["loom-shell-", "loom-next-"];
+```
+
+Replace the install handler
+
+```js
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
+      .then(() => self.skipWaiting()),
+  );
+});
+```
+
+with
+
+```js
+// precache stores every shell URL under its plain path; a shell file is fetched
+// as ?ui=TREE (see TREE). Any answer but 200-299 fails the install, as addAll did.
+function precache() {
+  return caches.open(CACHE).then((cache) =>
+    Promise.all(
+      SHELL.map((url) => {
+        const asked = SHELL_FILES.includes(url) ? `${url}?ui=${TREE}` : url;
+        return fetch(new Request(asked, { cache: "reload" })).then((response) => {
+          if (!response.ok) throw new Error(`${asked}: ${response.status}`);
+          return cache.put(url, response);
+        });
+      }),
+    ),
+  );
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(precache().then(() => self.skipWaiting()));
+});
+```
+
+and the activate handler's filter. Replace
+
+```js
+        Promise.all(keys.filter((key) => key.startsWith(PREFIX) && key !== CACHE).map((key) => caches.delete(key))),
+```
+
+with
+
+```js
+        Promise.all(
+          keys
+            .filter((key) => key !== CACHE && PREFIXES.some((prefix) => key.startsWith(prefix)))
+            .map((key) => caches.delete(key)),
+        ),
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && node --check internal/web/static/js/switch.mjs && node --check internal/web/static/js/settings.mjs && node --check internal/web/static/js/app.mjs && node --check internal/web/static/sw.js'`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web`, and no output from the four `node --check` runs. (`TestStatic_EveryReferenceResolves` and `TestStatic_NamedImportsAreExported` check that `app.mjs` and `settings.mjs` import names `switch.mjs` exports.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/static/js/switch.mjs
+git commit -m "feat(web): the classic app's switch to the new app and a worker that fetches its own shell" -- internal/web/static/js/switch.mjs internal/web/static/js/settings.mjs internal/web/static/js/app.mjs internal/web/static/sw.js internal/web/static_test.go
+```
+
+### Task 6.3: The new app's switch
+
+**Files:**
+- Create: `internal/web/ui/src/app/switchApp.ts`
+- Create: `internal/web/ui/src/app/switchApp.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/switchApp.test.ts`. It replaces `document.cookie` and `navigator.serviceWorker` with recorders (happy-dom keeps no `Secure` cookie on a plain origin and has no worker registry), so each test sees the exact cookie string written and the exact URL registered. `page.reload` (the module's seam for `location.reload`) is stubbed to count reloads.
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cookieApp, page, switchApp } from "./switchApp";
+
+interface Added {
+  type: string;
+  fn: () => void;
+  opts: unknown;
+}
+
+let jar: string;
+let writes: string[];
+let registered: string[];
+let added: Added[];
+let removed: { type: string; fn: () => void }[];
+let registerWith: () => Promise<unknown>;
+let reloads: number;
+
+beforeEach(() => {
+  jar = "";
+  writes = [];
+  registered = [];
+  added = [];
+  removed = [];
+  registerWith = () => Promise.resolve({});
+  reloads = 0;
+  Object.defineProperty(document, "cookie", {
+    configurable: true,
+    get: () => jar,
+    set: (value: string) => {
+      writes.push(value);
+    },
+  });
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: {
+      register: (url: string) => {
+        registered.push(url);
+        return registerWith();
+      },
+      addEventListener: (type: string, fn: () => void, opts: unknown) => {
+        added.push({ type, fn, opts });
+      },
+      removeEventListener: (type: string, fn: () => void) => {
+        removed.push({ type, fn });
+      },
+    },
+  });
+  vi.spyOn(page, "reload").mockImplementation(() => {
+    reloads += 1;
+  });
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(document, "cookie");
+  Reflect.deleteProperty(navigator, "serviceWorker");
+  vi.restoreAllMocks();
+});
+
+describe("cookieApp", () => {
+  it.each([
+    ["", "classic"],
+    ["a=1", "classic"],
+    ["__Host-loom-ui=classic", "classic"],
+    ["__Host-loom-ui=next", "next"],
+    ["a=1; __Host-loom-ui=next; b=2", "next"],
+    ["__Host-loom-ui=nextish", "classic"],
+    ["x__Host-loom-ui=next", "classic"],
+  ])("reads %j as %s", (cookie, want) => {
+    jar = cookie;
+    expect(cookieApp()).toBe(want);
+  });
+});
+
+describe("switchApp", () => {
+  it("sets the cookie, registers the worker for the app and reloads when the worker takes over", async () => {
+    await expect(switchApp("classic")).resolves.toBe("switched");
+    expect(writes).toEqual([
+      "__Host-loom-ui=classic; Secure; Path=/; SameSite=Strict; Max-Age=31536000",
+    ]);
+    expect(registered).toEqual(["/sw.js?ui=classic"]);
+    expect(added).toHaveLength(1);
+    expect(added[0].type).toBe("controllerchange");
+    expect(added[0].opts).toEqual({ once: true });
+    expect(reloads).toBe(0);
+    added[0].fn();
+    expect(reloads).toBe(1);
+  });
+
+  it("registers the new app's worker for next", async () => {
+    await switchApp("next");
+    expect(writes).toEqual([
+      "__Host-loom-ui=next; Secure; Path=/; SameSite=Strict; Max-Age=31536000",
+    ]);
+    expect(registered).toEqual(["/sw.js?ui=next"]);
+  });
+
+  it("defers when the registration fails: the cookie stays, nothing reloads", async () => {
+    registerWith = () => Promise.reject(new Error("offline"));
+    await expect(switchApp("classic")).resolves.toBe("deferred");
+    expect(writes).toHaveLength(1);
+    expect(removed).toEqual([{ type: "controllerchange", fn: added[0].fn }]);
+    expect(reloads).toBe(0);
+  });
+
+  it("reloads at once, registering nothing, where there is no service worker", async () => {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    await expect(switchApp("next")).resolves.toBe("switched");
+    expect(writes).toHaveLength(1);
+    expect(registered).toEqual([]);
+    expect(reloads).toBe(1);
+  });
+});
+```
+
+Fails without: `reads %j as %s`: `cookieApp` comparing with `includes` instead of an exact `name=value` pair (`nextish`, `x__Host-loom-ui=next`), or returning `next` for any value. `sets the cookie…`: a cookie without `Secure`, `Path=/`, `SameSite=Strict` or the one-year `Max-Age`, a worker URL without `?ui=<app>`, or the `controllerchange` listener not `once` or not reloading. `registers the new app's worker for next`: the app name hard-coded into the URL. `defers when the registration fails`: the rejection not caught (the promise rejects), a `"switched"` answer, or the listener left in place to reload the page later. `reloads at once…`: the missing-worker branch removed (the promise rejects on `navigator.serviceWorker` being undefined).
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `cd internal/web/ui && pnpm exec vitest run src/app/switchApp.test.ts`
+Expected: FAIL, `Failed to resolve import "./switchApp" from "src/app/switchApp.test.ts"`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/switchApp.ts`. `page.reload` wraps `location.reload` so a test can count reloads without navigating.
+
+```ts
+// The switch between the new app and the classic one. The device's choice is the __Host-loom-ui
+// cookie: "next" serves this app's shell, anything else the classic one. The worker is registered
+// as /sw.js?ui=<app>, so the choice reaches the worker's update whether or not its requests carry
+// the cookie.
+export type AppName = "classic" | "next";
+
+const COOKIE = "__Host-loom-ui";
+
+// page is the one place the module touches the location, so a test can stub the reload.
+export const page = {
+  reload(): void {
+    window.location.reload();
+  },
+};
+
+// cookieApp is the app the cookie names: "next", else "classic".
+export function cookieApp(): AppName {
+  const prefix = `${COOKIE}=`;
+  const pair = document.cookie.split("; ").find((c) => c.startsWith(prefix));
+  return pair === `${prefix}next` ? "next" : "classic";
+}
+
+// switchApp makes app this device's app: it sets the cookie, registers the worker again at
+// /sw.js?ui=<app> and reloads when that worker takes over (the other tree's worker differs in
+// bytes, so it installs and takes over, the path a daemon upgrade already takes). It answers
+// "deferred" when the registration fails (offline): the cookie stays set and the next launch
+// registers the worker by the cookie and finishes the switch.
+export async function switchApp(app: AppName): Promise<"switched" | "deferred"> {
+  document.cookie = `${COOKIE}=${app}; Secure; Path=/; SameSite=Strict; Max-Age=31536000`;
+  if (!("serviceWorker" in navigator)) {
+    page.reload();
+    return "switched";
+  }
+  const workers = navigator.serviceWorker;
+  const reload = () => {
+    page.reload();
+  };
+  workers.addEventListener("controllerchange", reload, { once: true });
+  try {
+    await workers.register(`/sw.js?ui=${app}`);
+  } catch {
+    workers.removeEventListener("controllerchange", reload);
+    return "deferred";
+  }
+  return "switched";
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app && pnpm exec vitest run src/app/switchApp.test.ts'`
+Expected: `Test Files  1 passed (1)` and `Tests  11 passed (11)` (seven `cookieApp` rows and four `switchApp` tests).
+
+- [ ] **Step 5: Run the story's gates and commit**
+
+Run: `bash -c 'CGO_ENABLED=0 go test ./internal/web/ && node --check internal/web/static/js/switch.mjs && node --check internal/web/static/js/settings.mjs && node --check internal/web/static/js/app.mjs && node --check internal/web/static/sw.js && cd internal/web/ui && pnpm run check && pnpm run dist:check'`
+Expected: every command exits 0. `dist:check` still passes: nothing imports `switchApp.ts` until Story 10, so the bundle does not change.
+
+```bash
+git add -N internal/web/ui/src/app
+git commit -m "feat(web): the new app's switch back to classic" -- internal/web/ui/src/app
+```
+
+## Story 7: webshot renders the new app and serves the canned loom for the dev loop
+
+- **Developer:** intermediate-dev
+- **Files:** `tools/webshot/main.go`, `tools/webshot/canned.go`, `tools/webshot/webshot_test.go`, `internal/web/webshot_fixture_test.go`, `tools/CLAUDE.md`
+- **Interfaces:** exposes `-app` and `-serve`; uses Story 4's bundle
+- **Verify:** `bash -c 'CGO_ENABLED=0 go test ./tools/webshot/ && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+- **Review:** light (a dev tool's two flags, covered by its tests)
+- **Form:** brief (routine flags on a dev tool; Task 7.2's serve loop and its miss logging from concurrent handlers are a dev tool's, covered by its tests; owner, 2026-11-18)
+
+`tools/webshot` renders the classic app from `internal/web/static` against a canned loom. This story teaches it to render the new app too (`-app classic|next`, `next` reading `internal/web/dist/`), to serve every app file under a copy of the layer's real CSP, so a `<style>` element or a `style` attribute written as markup is a console error that fails the run instead of a blank phone, and to serve the canned `/api/v1` alone on an address until killed (`-serve <addr>`), which is what `pnpm dev` proxies to (spec §12). The story is brief: the tool stays stdlib-only, with no daemon, session or tmux, and the three tasks give behaviour, names and tests, not code. No landmine marker appears in the code it asks for; its developer runs at the default effort.
+
+The contract names this story defines: the flags `-app` and `-serve`. It uses Story 4's bundle: `internal/web/dist/index.html` holds the `loom-build` meta tag with `__LOOM_BUILD__` and the mount point `<div id="app"></div>`, so `appDrawn` (which waits for `#app` to hold an element) and the build fill in `canned.go`'s `file` work on it unchanged; its files are `.html`, `.js`, `.css`, `.webmanifest`, `.png`, `.svg`, `.woff2` and `THIRD_PARTY.txt`.
+
+### Task 7.1: `-app`, the bundle's file types and the layer's CSP on every file
+
+**Files:**
+- Modify: `tools/webshot/main.go:73-107` (flags and the canned loom's construction), `tools/webshot/main.go:1-14` (the package comment)
+- Modify: `tools/webshot/canned.go:31-38` (`staticTypes`), `tools/webshot/canned.go:246-270` (`file`)
+- Modify: `internal/web/webshot_fixture_test.go:42-44`
+- Test: `tools/webshot/webshot_test.go`, `internal/web/webshot_fixture_test.go`
+
+**Behaviour.**
+
+- `-app` is a string flag, default `"classic"`, that takes `classic` or `next`. Any other value is an error worded `no app "<value>" (have classic, next)`.
+- A new function `appDir(app, static string) (string, error)` resolves the files to serve. A non-empty `static` (the existing `-static` flag) wins for either app, so `TestRun_RendersEveryScreenInARealBrowser`, which passes `-static` explicitly, is unchanged. Otherwise `classic` gives `internal/web/static` and `next` gives `internal/web/dist`, both as `filepath.Join` of their elements, relative to the repo root as today.
+- The `-static` flag's default changes from `filepath.Join("internal", "web", "static")` to `""`, and its usage text says it overrides the directory `-app` picks. `run` passes `appDir`'s result to `newCannedLoom`, whose own error ("the app's files: ... run from the repo root, or pass -static") now also names the app that was picked.
+- `staticTypes` in `canned.go` gains `.svg` (`image/svg+xml`), `.woff2` (`font/woff2`) and `.txt` (`text/plain; charset=utf-8`), the three types Story 4 added to the layer's `staticContentTypes` for the bundle. An extension still outside the map is a 404 (the canned loom serves only the app's kinds of file).
+- `file` sets three headers on every file it serves, as the layer's `guard` does on every answer: `Content-Security-Policy` with the new constant `contentSecurityPolicy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. The constant is a plain double-quoted string, a copy of `contentSecurityPolicy` in `internal/web/server.go`:
+  `default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`
+  Its doc comment says what the mockup's does: `internal/web/server.go` is the source and `TestWebshotFixture_IsTheJSONTheLayerServes` holds the copy equal. The mockup page keeps its own `mockupCSP` and none of these three headers change it (`api` writes the mockup's headers, not `file`).
+- The package comment in `main.go` lists the new flags with an example for `-app next`.
+
+**Tests, in `tools/webshot/webshot_test.go`:**
+
+- `TestAppDir_PicksTheTreeTheAppNames`: a table over `appDir`. `("", "")` and `("classic", "")` give `filepath.Join("internal", "web", "static")`; `("next", "")` gives `filepath.Join("internal", "web", "dist")`; `("next", "/x")` and `("classic", "/x")` give `/x`; `("nope", "")` is an error containing `no app "nope"`.
+  Fails without: `TestAppDir_PicksTheTreeTheAppNames`: `appDir` returning the static directory for `next` (the `next` row reads `static`), ignoring a non-empty `static` (the `/x` rows), or accepting an unknown app (the `nope` row has no error).
+- `TestCanned_ServesTheNewAppsKindsOfFile`: build a temp directory holding `index.html` (with the build placeholder), `logo.svg`, `font.woff2` and `THIRD_PARTY.txt`, make it a canned loom with `newCannedLoom`, serve it with `httptest.NewServer`, and assert each of the three extra files answers 200 with its content type above, and that a file named `notes.json` in the same directory answers 404.
+  Fails without: `TestCanned_ServesTheNewAppsKindsOfFile`: any of the three entries removed from `staticTypes` (that file answers 404), or the map made to accept every extension (`notes.json` answers 200).
+- `TestCanned_FilesCarryTheLayersCSP`: through `cannedForTest`, GET `/` and assert the three headers: `Content-Security-Policy` equals `contentSecurityPolicy` and contains `default-src 'self'`, `X-Content-Type-Options` is `nosniff`, `Referrer-Policy` is `no-referrer`; then GET `/api/v1/sessions/7/mockup` and assert its `Content-Security-Policy` equals `mockupCSP` still (the file headers do not touch the mockup).
+  Fails without: `TestCanned_FilesCarryTheLayersCSP`: the three `Set` calls in `file` removed (the headers are empty), or `contentSecurityPolicy` set on the mockup too (the second assertion fails).
+
+**Edit to the existing test in the same file.** `cannedForTest` writes `secret.txt` and `TestCanned_ServesTheShellWithTheBuildTheSnapshotNames` asserts it answers 404 ("only the app's kinds of file"). `.txt` is now a served kind, so that probe would answer 200. Change the file the helper writes and the request the test makes to `secret.json` (an extension no tree serves); keep the assertion and its message.
+
+**The layer's test, in `internal/web/webshot_fixture_test.go`.** After the existing lines
+
+```go
+	require.Contains(t, string(canned), `"`+mockupCSP+`"`, "webshot frames its mockup under the policy the layer serves it under")
+```
+
+add one `require.Contains` of the same shape for `contentSecurityPolicy` with the message `webshot serves the app's files under the policy the layer serves them under`.
+
+Fails without: `TestWebshotFixture_IsTheJSONTheLayerServes`: `canned.go`'s `contentSecurityPolicy` edited by one character, or deleted (the copy no longer equals the layer's).
+
+- [ ] **Step 1: Write the tests** as described above: the three new tests and the `secret.json` edit in `tools/webshot/webshot_test.go`, and the added `require.Contains` in `internal/web/webshot_fixture_test.go`.
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+CGO_ENABLED=0 go test ./tools/webshot/ -run 'TestAppDir|TestCanned_'
+CGO_ENABLED=0 go test ./internal/web/ -run TestWebshotFixture_IsTheJSONTheLayerServes
+```
+
+The first fails to compile (`undefined: appDir`, `undefined: contentSecurityPolicy`); the second fails with `Does not contain` on the policy string.
+
+- [ ] **Step 3: Implement** the behaviour above in `main.go` and `canned.go`.
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+CGO_ENABLED=0 go test ./tools/webshot/ ./internal/web/ -run 'TestAppDir|TestCanned_|TestWebshotFixture_IsTheJSONTheLayerServes|TestPickScreens'
+```
+
+Expected: `ok` for both packages.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(webshot): -app next renders the new app, and every file goes out under the layer's CSP" -- tools/webshot/main.go tools/webshot/canned.go tools/webshot/webshot_test.go internal/web/webshot_fixture_test.go
+```
+
+### Task 7.2: `-serve <addr>`
+
+**Files:**
+- Modify: `tools/webshot/main.go:73-90` (flags, before the `-out` check), `tools/webshot/main.go:1-14` (the package comment)
+- Modify: `tools/webshot/canned.go:40-69` (the `cannedLoom` struct and `ServeHTTP`), `tools/webshot/canned.go:134-140` (`api`'s miss)
+- Test: `tools/webshot/webshot_test.go`
+
+**Behaviour.**
+
+- `-serve` is a string flag, default `""` (off). Its usage text says it serves the canned loom's `/api/v1` on the address until killed and renders nothing, and names `127.0.0.1:5670`, the address `internal/web/ui/vite.config.ts` proxies to.
+- `run` handles it right after the flags parse, before the `-out is required` check: with `-serve` set, `-out` or `-screens` set too is an error worded `-serve renders nothing: drop -out and -screens`; otherwise `run` serves and returns, never looking for a browser or a static directory (`-app` and `-static` are ignored, since no file is served).
+- A new constructor `newCannedAPI() *cannedLoom` returns `&cannedLoom{now: time.Now}` (the form the tests already build), with no static directory. A new method `apiHandler() http.Handler` on `cannedLoom` answers `GET /api/v1/stream` with `stream`, any other path under `/api/` with `api`, and every other path with a plain 404 (no file is served).
+- `cannedLoom` gains a field `onMiss func(route string)`. When it is non-nil, `api` calls it with `METHOD path` for a route the fixture has no answer for, in place of appending to `misses` (so a long-running `-serve` does not accumulate them); nil keeps today's behaviour exactly.
+- A new function `serveAPI(ctx context.Context, addr string, announce func(net.Addr), onMiss func(string)) error`. It listens on `tcp` at `addr` (a listen error is returned wrapped as `serve <addr>: ...`), calls `announce` with the listener's real address (so `127.0.0.1:0` works in a test), serves `newCannedAPI()` with `onMiss` set and a `ReadHeaderTimeout` of 5 seconds, and returns nil once `ctx` is done. It stops with `Close`, never `Shutdown`, because the stream stays open for as long as a client holds it and a `Shutdown` would wait on it forever.
+- `run`'s `-serve` branch calls `serveAPI` with a context from `signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)`, an `announce` that prints `serving the canned loom's /api/v1 on http://<addr>` to stdout, and an `onMiss` that prints `no answer for <route>: add it to tools/webshot/fixture` to stderr. Interrupt and SIGTERM exist in `os` and `syscall` on every platform loom builds, so no `_unix.go` file is needed.
+- The package comment in `main.go` gains an example: `go run ./tools/webshot -serve 127.0.0.1:5670`.
+
+**Tests, in `tools/webshot/webshot_test.go`:**
+
+- `TestServeAPI_AnswersTheCannedRoutesAndNothingElse`: run `serveAPI` in a goroutine on `127.0.0.1:0` with a cancellable context, an `announce` that sends the address down a channel and an `onMiss` that sends on a buffered channel; wait for the address. Assert: GET `/api/v1/sessions/1/turns` is 200 with no `"now` in the body; GET `/index.html` is 404 (no file is served); GET `/api/v1/push-key` is 404 and `onMiss` receives `GET /api/v1/push-key`; GET `/api/v1/stream` opens with the line `event: snapshot` (read it, then close the body).
+  Fails without: `TestServeAPI_AnswersTheCannedRoutesAndNothingElse`: `apiHandler` falling through to `file` (the `/index.html` request reads a nil directory and panics or answers 200), `onMiss` not called from `api` (the channel stays empty and the test times out), or the stream not routed (404 instead of `event: snapshot`).
+- `TestServeAPI_StopsWhenItsContextEndsEvenWithAStreamOpen`: as above, open `/api/v1/stream` and keep the body open, cancel the context, and assert `serveAPI` returns nil within two seconds.
+  Fails without: `TestServeAPI_StopsWhenItsContextEndsEvenWithAStreamOpen`: `Shutdown` in place of `Close` (the open stream keeps it waiting past the two seconds), or no handling of `ctx.Done()` (it never returns).
+- `TestServeAPI_AnAddressInUseIsAnError`: listen on `127.0.0.1:0` in the test, pass that address to `serveAPI`, and assert an error containing `serve 127.0.0.1:`, with an `announce` that fails the test if it is called.
+  Fails without: `TestServeAPI_AnAddressInUseIsAnError`: the listen error swallowed (it returns nil after serving nothing) or returned without the `serve <addr>` context.
+- `TestRun_ServeRefusesWhatItWouldRender`: `run([]string{"-serve", "127.0.0.1:0", "-out", t.TempDir()})` and `run([]string{"-serve", "127.0.0.1:0", "-screens", "fleet"})` each return an error containing `-serve renders nothing`.
+  Fails without: `TestRun_ServeRefusesWhatItWouldRender`: the combination check removed (the first call would serve until killed and the test hangs, so give the test a two-second watchdog that fails it) or checked after the `-out` requirement (the second call fails with `-out is required` instead).
+
+- [ ] **Step 1: Write the tests** as described, in `tools/webshot/webshot_test.go`.
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+CGO_ENABLED=0 go test ./tools/webshot/ -run 'TestServeAPI|TestRun_ServeRefuses'
+```
+
+Expected: a compile failure, `undefined: serveAPI`.
+
+- [ ] **Step 3: Implement** the behaviour above in `main.go` and `canned.go`.
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+CGO_ENABLED=0 go test ./tools/webshot/
+```
+
+Expected: `ok  	github.com/aidan-bailey/loom/tools/webshot`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(webshot): -serve <addr> serves the canned /api/v1 for the dev loop" -- tools/webshot/main.go tools/webshot/canned.go tools/webshot/webshot_test.go
+```
+
+### Task 7.3: `tools/CLAUDE.md`'s webshot rule names the flags
+
+**Files:**
+- Modify: `tools/CLAUDE.md:18` (insert a rule after it)
+
+**Behaviour.** Line 18, the rule that begins `- **Feed `webshot` only JSON the web layer serves`, is 980 bytes of the 1,200 a line may hold, so the flags go in a new bullet directly after it, not in it. The bullet is one line, under 1,000 bytes, in the rule shape (what to do; why in one clause; what breaks and how silently; Enforced or Convention), and says:
+
+- the bullet's lead: render the new app only through `-app next` (`classic` by default until cutover), which serves `internal/web/dist` instead of `internal/web/static`;
+- every file is served under a copy of `contentSecurityPolicy` (`internal/web/server.go`), so a `<style>` element or a `style` attribute written as markup is a console error and exit status 1 here, not a blank screen on a phone;
+- `-serve <addr>` serves only the canned `/api/v1`, until killed, for `pnpm dev` (`127.0.0.1:5670`), and renders nothing, so it refuses `-out` and `-screens`;
+- **Enforced** for the policy copy by `TestWebshotFixture_IsTheJSONTheLayerServes` (`internal/web/webshot_fixture_test.go`), and for the flags by `TestAppDir_PicksTheTreeTheAppNames` and `TestRun_ServeRefusesWhatItWouldRender` (`tools/webshot/webshot_test.go`); **Convention** for the rendered app's own CSP errors, which only a browser run (`TestRun_RendersEveryScreenInARealBrowser`, or CI's `web.yml`) shows.
+
+Name every test and path exactly as above (the CLAUDE.md lint resolves them); count nothing. Line 3's description of `tools/webshot` stays as it is.
+
+- [ ] **Step 1: Write the bullet** after line 18 of `tools/CLAUDE.md`, as described.
+- [ ] **Step 2: Check the lint and the budgets**
+
+```bash
+CGO_ENABLED=0 go test ./tools/claudemd/ -run TestRepo_ClaudeMDStructure
+go run ./tools/claudemd -v
+```
+
+Expected: `ok` for the test, and `tools/CLAUDE.md` well under its 100 lines and 20,000 bytes with no line over 1,200 bytes. Tasks 7.1 and 7.2 come first: the lint resolves the test names.
+
+- [ ] **Step 3: Run the story's own checks**
+
+```bash
+CGO_ENABLED=0 go test ./tools/webshot/ ./internal/web/ -run 'TestAppDir|TestCanned_|TestServeAPI|TestRun_|TestWebshotFixture_'
+d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"
+```
+
+Expected: `ok` for both packages; the run prints one `<screen>\t<file>` line per screen and exits 0. It needs a Chromium on `PATH` and `internal/web/dist/` built by Story 4; a screen that reports a CSP violation or an unanswered route is a failure of the bundle or the fixture, not of this story's code, and goes to the manager.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "docs(tools): webshot's rule names -app, -serve and the CSP copy" -- tools/CLAUDE.md
+```
+
+## Story 8: The design system: tokens, fonts and the base components
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/styles/app.css`, `internal/web/ui/src/styles/fonts.css`, `internal/web/ui/src/lib/utils.ts`, `internal/web/ui/src/components/ui/button.tsx`, `internal/web/ui/src/components/ui/badge.tsx`, `internal/web/ui/src/components/ui/toggle-group.tsx`, `internal/web/ui/src/components/ui/collapsible.tsx`, `internal/web/ui/src/components/ui/drawer.tsx`, `internal/web/ui/src/components/ui/toast.tsx`, `internal/web/ui/src/components/ui/skeleton.tsx`, `internal/web/ui/src/components/ui/components.test.tsx`, `internal/web/ui/src/main.tsx`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`, `internal/web/static_test.go`
+- **Interfaces:** exposes the tokens, the stylesheet import, `cn`, the components, `toastManager` and `Toaster`; uses Story 4's toolchain
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/ -run TestDist_TheSkinDefinesEveryToken'`
+- **Review:** light (tokens the spec gives and components shadcn generates)
+- **Form:** brief (the values are the spec's; the components are shadcn's own)
+
+This story gives the new app its skin and its owned components (spec §30 to §34): `src/styles/app.css` holds Tailwind's entry and the dark tokens, `src/styles/fonts.css` bundles Inter and JetBrains Mono (latin only), `cn` joins classes, and `src/components/ui/` holds `Button`, `Badge` with loom's variants, `ToggleGroup`, `Collapsible`, `Drawer`, `Skeleton` and the toast pair `toastManager` and `Toaster`, all written in shadcn's style on Base UI (`@base-ui/react`). The `Drawer` and the toast are Base UI's own, not shadcn's vaul and sonner ones, because both of those append a `<style>` element when they load and the CSP (`default-src 'self'`) blocks it (spec §32, §33); a Vitest file mounts every component and finds no `<style>` element. The story is brief: the values are the spec's, the components are shadcn's pattern, and the tasks give behaviour, names and tests, not code. No landmine marker appears in the code it asks for; its developer runs at the default effort.
+
+The contract names this story defines: the tokens in `app.css`, the stylesheet import in `src/main.tsx` (Story 10's rewrite keeps it), `cn`, the components named above with the props the contract gives (`Drawer`'s `open` and `onOpenChange(open: boolean)`, `ToggleGroup`'s `value: string[]` and `onValueChange(value: string[])`), `toastManager`, `Toaster`, and `TestDist_TheSkinDefinesEveryToken`. It uses Story 4's toolchain: `@tailwindcss/vite` is wired in `vite.config.ts`, `tsconfig.json` maps `@/*` to `src/*`, the Vitest harness (`test.globals`, `src/test-setup.ts` with jest-dom, Testing Library's `cleanup`, `@testing-library/user-event`) is in place, `components.json` points `css` at `src/styles/app.css`, and `nextStaticAssets(t)` in `internal/web/static_test.go` builds the new tree's assets. The packages this story adds are exactly `@base-ui/react`, `lucide-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `@fontsource-variable/inter` and `@fontsource-variable/jetbrains-mono`: no `sonner`, no `vaul`, no `next-themes`, no `tw-animate-css`. If the shadcn CLI is used for the plain components (`pnpm dlx shadcn@latest add button badge toggle-group collapsible skeleton`), anything it adds beyond that list, a package or a CSS import, is removed again; animation is Tailwind's transition utilities on Base UI's `data-starting-style` and `data-ending-style` attributes, and `prefers-reduced-motion` is handled once, in `app.css`.
+
+Tailwind's Vite plugin scans every file under the project for class candidates, test files included, so a test that only gains a `.filter(` or a `"hidden"` would change the built CSS and fail `dist:check` for no visible reason. `app.css` therefore keeps test files out of Tailwind's sources with `@source not`, and Task 8.4 checks it.
+
+### Task 8.1: Tokens, fonts, the stylesheet import and `cn`
+
+**Files:**
+- Create: `internal/web/ui/src/styles/app.css`
+- Create: `internal/web/ui/src/styles/fonts.css`
+- Create: `internal/web/ui/src/lib/utils.ts`
+- Modify: `internal/web/ui/src/main.tsx` (one import)
+- Modify: `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml` (through `pnpm add`)
+- Create: `internal/web/ui/src/components/ui/components.test.tsx`
+
+**Behaviour.**
+
+- `app.css` starts with `@import "tailwindcss";` and `@import "./fonts.css";`, then `@source not "../**/*.test.*";` (the path is relative to the CSS file, which is in `src/styles/`, so it covers every test file under `src/`; Tailwind's class scan then skips them, and a test-only change never changes the built CSS), and holds, in this order after those lines: the tokens, an `@theme inline` block, and a base layer.
+- **The tokens** are custom properties on `:root` with `color-scheme: dark`, the dark set: a later light set is a second block of the same names. Names and values (spec §30, with the surfaces and states the spec leaves unvalued taken from the design-system mockup `docs/superpowers/specs/2026-11-18-web-foundation/design-system.html`):
+
+  | Token | Value | Token | Value |
+  |---|---|---|---|
+  | `--background` | `#0f1012` | `--border` | `#23262b` |
+  | `--foreground` | `#e6e7ea` | `--input` | `#2a2d33` |
+  | `--card`, `--popover` | `#16181c` | `--ring` | `#6ca4e0` |
+  | `--card-foreground`, `--popover-foreground` | `#e6e7ea` | `--faint` | `#6f747d` |
+  | `--primary` | `#e6e7ea` | `--attention` | `#f0b45a` |
+  | `--primary-foreground` | `#0f1012` | `--turn` | `#6ca4e0` |
+  | `--secondary`, `--muted`, `--accent` | `#1c1f24` | `--working` | `#8fc46a` |
+  | `--secondary-foreground`, `--accent-foreground` | `#e6e7ea` | `--error`, `--destructive` | `#e8836b` |
+  | `--muted-foreground` | `#a3a8b1` | `--workspace` | `#d9a3b8` |
+  | `--diff-add` | `rgba(143, 196, 106, 0.12)` | `--docs` | `#a991d4` |
+  | `--diff-del` | `rgba(232, 131, 107, 0.12)` | | |
+
+  `--diff-add` and `--diff-del` are the mockup's 12%-alpha line tints, for backgrounds only (a diff line's row); text that marks an added or removed count uses `text-working` and `text-error`, never the diff tokens.
+
+  `--muted` is the raised surface and `--muted-foreground` is the spec's muted text (shadcn pairs a `--muted` background with its `--muted-foreground` text; the mockup's `--muted` is that text).
+- **`@theme inline`** maps every token to a Tailwind colour, `--color-<token>: var(--<token>)` (the `inline` form keeps a later light set working, since each utility reads the token where it is used), so `bg-card`, `border-border`, `text-muted-foreground`, `text-faint`, `bg-attention` and `text-turn` exist; and it sets `--font-sans` to `"Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif` and `--font-mono` to `"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace` (the family names the two fontsource packages declare; check them in the package's css), plus `--radius-*` values only if a component needs one.
+- **The base layer** sets, on `html` and `body`: `background` and `color` from the tokens, `font` at 13px/1.45 in the sans stack (the mockup's panel), `-webkit-font-smoothing: antialiased`, `-webkit-text-size-adjust: 100%`, `margin: 0` and `overscroll-behavior-y: none`; on `input`, `textarea` and `select`: `font-size: 16px` (iOS zooms anything smaller, spec §34); the border colour default `border-border`; and a `@media (prefers-reduced-motion: reduce)` rule that makes every animation and transition effectively instant. No rule writes a `style` attribute and nothing is injected at runtime.
+- **`fonts.css`** bundles the two variable fonts from npm, latin subset only, `font-display: swap`, so the daemon serves them (no CDN, the CSP allows none): use each package's latin-only stylesheet if it ships one (check its `package.json` `exports`); else write the `@font-face` rules by hand, pointing at the package's `files/*-latin-wght-normal.woff2` with the `unicode-range` the package's own css gives. Vite emits the two `.woff2` files into `dist/assets/`; none is inlined as a `data:` URL.
+- **`src/main.tsx`:** add `import "./styles/app.css";` as the first import and change nothing else (Story 4's file; Story 10 rewrites it and keeps this line).
+- **`src/lib/utils.ts`** exports `cn(...inputs: ClassValue[])`, shadcn's: `twMerge(clsx(inputs))`, with `ClassValue` from `clsx`.
+- Install the seven packages with `pnpm add` inside `internal/web/ui`.
+
+**Tests, in `components.test.tsx`** (create the file; later tasks add to it; it imports `describe`, `it`, `expect` and `vi` from `vitest`):
+
+- `cn joins its inputs, drops falsy ones and lets the last conflicting utility win`: `cn("a", false, ["b", undefined], "c")` is `"a b c"`; `cn("p-2", "p-4")` is `"p-4"`; `cn("text-faint", "text-muted-foreground")` is `"text-muted-foreground"` (twMerge treats both as colours).
+  Fails without: `cn joins its inputs, drops falsy ones and lets the last conflicting utility win`: `twMerge` left out (the `p-2 p-4` result keeps both), or `clsx` left out (arrays and falsy values are not flattened).
+
+- [ ] **Step 1: Write the test** above in a new `internal/web/ui/src/components/ui/components.test.tsx`.
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/components/ui/components.test.tsx
+```
+
+Expected: `Failed to resolve import "@/lib/utils"` (or the relative path the test uses).
+
+- [ ] **Step 3: Install and implement**
+
+```bash
+cd internal/web/ui && pnpm add @base-ui/react lucide-react class-variance-authority clsx tailwind-merge @fontsource-variable/inter @fontsource-variable/jetbrains-mono
+```
+
+Then write `app.css`, `fonts.css` and `utils.ts`, and add the import to `main.tsx`, as described.
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm run check
+```
+
+Expected: typecheck, lint, the format check and Vitest all pass, with the `cn` test among them (run `pnpm exec prettier --write src/styles src/lib src/components` first if the format check names a file).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/styles internal/web/ui/src/lib internal/web/ui/src/components
+git commit -m "feat(web): the new app's tokens, fonts and class joiner" -- internal/web/ui/src/styles internal/web/ui/src/lib internal/web/ui/src/components internal/web/ui/src/main.tsx internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml
+```
+
+### Task 8.2: `Button`, `Badge`, `ToggleGroup`, `Collapsible` and `Skeleton`
+
+**Files:**
+- Create: `internal/web/ui/src/components/ui/button.tsx`, `badge.tsx`, `toggle-group.tsx`, `collapsible.tsx`, `skeleton.tsx`
+- Test: `internal/web/ui/src/components/ui/components.test.tsx`
+
+**Behaviour.** Every component is shadcn's pattern on Base UI: a function component (not a `forwardRef` class), its root carrying `data-slot="<file name without extension>"`, its props the Base UI part's (`React.ComponentProps<typeof ...>`) plus `className`, merged last through `cn`, and `variants` through `class-variance-authority` where there are any. Import each Base UI part from its own subpath of `@base-ui/react`.
+
+- **`button.tsx`** exports `Button` and `buttonVariants`, over Base UI's `Button`. Variants (default `default`): `default` is `bg-primary text-primary-foreground`; `secondary` the raised surface with a border, `bg-secondary text-secondary-foreground border border-border`; `ghost` the muted text on no background, `text-muted-foreground`; `outline` a border on the page background, `border border-border text-foreground`; `destructive` the error colour on a tint, `bg-error/14 text-destructive border border-error/30`. Sizes (default `default`): `default` is 32px high with `px-3`, `sm` 28px, `lg` 40px, `icon` a 32px square; text `text-[12.5px] font-semibold` (the mockup's), rounded `rounded-lg`, inline-flex centred with `gap-1.5`, and a visible focus ring from `ring`. Every size carries a hit area of at least 44 by 44 CSS pixels without changing its look (spec §34): the button is `relative` and has an invisible `after:` pseudo-element, centred, `after:min-h-11 after:min-w-11 after:h-full after:w-full`. A disabled button is `opacity-50` and takes no pointer events.
+- **`badge.tsx`** exports `Badge` and `badgeVariants`: a `span` pill, `inline-flex items-center rounded-md px-[7px] py-px text-[11.5px] font-medium`, built with Base UI's `useRender` and `mergeProps` so a caller may render another element, as shadcn's does. Variants (default `neutral`), each a tint of its token with the token as the text, from the mockup's pills: `attention` (`bg-attention/14 text-attention`), `turn` (`bg-turn/14 text-[#8cb8e8]`), `working` (`bg-working/14 text-working`), `error` (`bg-error/14 text-error`), `workspace` (`bg-workspace/13 text-workspace`), `docs` (`bg-docs/14 text-docs`), `neutral` (`bg-secondary text-muted-foreground`).
+- **`toggle-group.tsx`** exports `ToggleGroup` and `ToggleGroupItem`, over Base UI's `ToggleGroup` and `Toggle`: the segmented filter of the mockup. The group is `inline-flex w-full rounded-[9px] border border-border bg-card p-0.5`; an item is `flex-1` centred, `rounded-[7px] py-1 text-xs text-faint`, and pressed (Base UI's `data-pressed`) `bg-input text-white`; each item carries the same 44px `after:` hit area as `Button`. The props are Base UI's: `value: string[]`, `defaultValue`, `onValueChange`, one item pressed at a time unless `multiple`, and an item's `value: string`.
+- **`collapsible.tsx`** exports `Collapsible`, `CollapsibleTrigger` and `CollapsibleContent` over Base UI's Collapsible `Root`, `Trigger` and `Panel`; the panel is unmounted while closed (Base UI's default) and its open and close are a height transition on Base UI's `--collapsible-panel-height` variable.
+- **`skeleton.tsx`** exports `Skeleton`: a `div`, `animate-pulse rounded-md bg-muted`.
+
+**Tests, added to `components.test.tsx`** (Testing Library's `render` and `screen`, `userEvent` from `@testing-library/user-event`):
+
+- `Button: each variant and size has its own classes, and every size keeps the 44px hit area`: render a `Button` for each of the five variants and read its `className`; assert the five strings are pairwise different, the default one contains `bg-primary`, and the destructive one contains `text-destructive`; render the four sizes and assert each `className` contains `after:min-h-11` and `after:min-w-11`; assert a `Button` with no props has `data-slot="button"`.
+  Fails without: `Button: each variant and size has its own classes, and every size keeps the 44px hit area`: two variants given the same string (the pairwise check), the `after:` hit area dropped from one size, or `data-slot` omitted.
+- `Button: a click reaches onClick, and a disabled button gets none`: click an enabled one (the mock is called once), click a `disabled` one (still once).
+  Fails without: `Button: a click reaches onClick, and a disabled button gets none`: props not spread onto the Base UI part (no call), or `disabled` not passed through (the second click calls it).
+- `Badge: the seven variants differ, the default is neutral, and it renders its children`: render each of `attention`, `turn`, `working`, `error`, `workspace`, `docs`, `neutral` with its name as text and assert the seven `className`s are pairwise different and each contains its token (`text-attention`, `text-turn`, `text-working`, `text-error`, `text-workspace`, `text-docs`, `text-muted-foreground`; the `turn` one contains `bg-turn`); render one with no `variant` and assert its `className` equals the `neutral` one.
+  Fails without: `Badge: the seven variants differ, the default is neutral, and it renders its children`: a variant missing from the `cva` table (its string is the base string, equal to another's), or `defaultVariants` not `neutral`.
+- `ToggleGroup: a press calls onValueChange with the new array and a single group replaces the old value`: render `<ToggleGroup defaultValue={["all"]} onValueChange={fn}>` with items `all`, `loom` and `flow`; click `loom`; assert `fn.mock.calls[0][0]` equals `["loom"]` and the `loom` item has `aria-pressed="true"` and `all` has `"false"`; render a second group with `multiple` and `defaultValue={["all"]}`, click `loom`, and assert the first argument is `["all", "loom"]`.
+  Fails without: `ToggleGroup: a press calls onValueChange with the new array and a single group replaces the old value`: the wrapper not forwarding `value`, `defaultValue` or `multiple` (no call, or `["loom"]` in the multiple case).
+- `Collapsible: the content shows only while open`: render with a trigger and a content of text `folded`; assert `queryByText("folded")` is null; click the trigger and `await screen.findByText("folded")`; click again and `await waitFor` it gone.
+  Fails without: `Collapsible: the content shows only while open`: `CollapsibleContent` rendered outside the Base UI `Panel` (the text shows while closed), or the trigger not wired (it never shows).
+- `Skeleton: renders a div with the pulse and the muted surface`: assert its `data-slot` is `skeleton` and its `className` contains `animate-pulse` and `bg-muted`.
+  Fails without: `Skeleton: renders a div with the pulse and the muted surface`: either class removed.
+
+- [ ] **Step 1: Write the tests** above into `components.test.tsx`.
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/components/ui/components.test.tsx
+```
+
+Expected: `Failed to resolve import` for `./button` (and the others).
+
+- [ ] **Step 3: Implement** the five components as described.
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/components && pnpm run check
+```
+
+Expected: all checks pass, the six new tests among them.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/components/ui
+git commit -m "feat(web): Button, Badge, ToggleGroup, Collapsible and Skeleton on Base UI" -- internal/web/ui/src/components/ui
+```
+
+### Task 8.3: `Drawer`, the toast, and the no-`<style>` check
+
+**Files:**
+- Create: `internal/web/ui/src/components/ui/drawer.tsx`, `internal/web/ui/src/components/ui/toast.tsx`
+- Test: `internal/web/ui/src/components/ui/components.test.tsx`
+
+**Behaviour.** Neither file uses `vaul`, `sonner` or `next-themes`: they are Base UI's own `Drawer` and `Toast`, written in shadcn's style (owner, spec §32). Check that `@base-ui/react` exports `drawer` and `toast` in the installed version (`node_modules/@base-ui/react/package.json`'s `exports`); if either is missing, stop and report it, since the plan's choice of dependency then needs the manager.
+
+- **`drawer.tsx`** exports `Drawer`, `DrawerContent`, `DrawerHeader`, `DrawerTitle`, `DrawerDescription`, `DrawerFooter` and `DrawerClose`.
+  - `Drawer` is Base UI's Drawer root: `open: boolean` and `onOpenChange(open: boolean)` (Base UI's callback also receives an event-details argument, which a caller may ignore), plus `defaultOpen`; it opens from the bottom and swipes down to close.
+  - `DrawerContent` renders the portal, a backdrop (`bg-black/60`) and the popup in one: a bottom sheet pinned to the bottom edge, `bg-card border border-border rounded-t-2xl`, `px-4 pt-2`, bottom padding `max(1rem, env(safe-area-inset-bottom))`, a `max-h` of 90dvh with overflow scrolling inside, a centred grab handle above its children (36px by 4px, `rounded-full bg-input`, `mb-3`, `aria-hidden`), and a slide-and-fade transition on Base UI's `data-starting-style` and `data-ending-style`. It takes `className` and children.
+  - `DrawerHeader` (a `div`, `flex flex-col gap-1.5`), `DrawerTitle` (Base UI's Drawer `Title`, `text-base font-semibold`), `DrawerDescription` (its `Description`, `text-sm text-muted-foreground`), `DrawerFooter` (a `div`, `mt-3 flex flex-col gap-2`) and `DrawerClose` (Base UI's `Close`, taking `render` so a `Button` can be the close control) carry `data-slot` as the others do.
+- **`toast.tsx`** exports `toastManager` and `Toaster`.
+  - `toastManager` is `Toast.createToastManager()`, a module-level constant, so code outside React (`toasts.ts`, Story 11) adds toasts with `toastManager.add({ title, description, type, timeout })`.
+  - `Toaster(): ReactElement` is Base UI's `Toast.Provider` given `toastManager` and a `limit` of 8 (a burst of notices is shown, not queued unseen), holding a `Toast.Portal` with a `Toast.Viewport` fixed at the top centre of the screen, below the top safe-area inset (`top: max(0.5rem, env(safe-area-inset-top))`, with the width of the phone column, `w-[min(100vw-1rem,24rem)]`), and under it a list component that reads `Toast.useToastManager()` and renders each toast as `Toast.Root` with `Toast.Title`, `Toast.Description` and a `Toast.Close` button (an icon button with `lucide-react`'s `X`, `aria-label="Dismiss"`, with the 44px hit area of `Button`). A toast is the mockup's: `bg-secondary border border-border rounded-[10px] px-3 py-2 text-[12.5px] shadow-lg`, the title `font-semibold`, the description `text-muted-foreground`; a toast of `type` `"error"` has its title in `text-error`. Dark only: no theme logic. A toast added with `timeout: 0` stays until dismissed (the caller sets it; the component never overrides it).
+
+**Tests, added to `components.test.tsx`:**
+
+- `Drawer: it shows its title and description while open, none while closed, and its close control reports false`: render `<Drawer open onOpenChange={fn}>` with a `DrawerContent` holding a header with a title `Kill fix-pane-cursor?`, a description and a footer with a `DrawerClose` whose text is `Cancel`; assert `screen.getByRole("dialog")` is named by the title (`toHaveAccessibleName("Kill fix-pane-cursor?")`) and the description is shown; click `Cancel` and assert `fn.mock.calls[0][0]` is `false`; render again with `open={false}` and assert `queryByRole("dialog")` is null.
+  Fails without: `Drawer: it shows its title and description while open, none while closed, and its close control reports false`: `DrawerTitle` not Base UI's `Title` (the dialog has no accessible name), `open` not passed to the root (the dialog shows while closed), or `DrawerClose` not wired (no call).
+- `Toaster: a toast added through toastManager shows, an error one is styled, and its close control dismisses it`: render `<Toaster />`; inside `act`, `toastManager.add({ title: "Killed fix-pane-cursor", description: "Stashed as a1b2c3d", timeout: 0 })` and `toastManager.add({ title: "Could not push", type: "error", timeout: 0 })`; `await screen.findByText("Killed fix-pane-cursor")` and its description; assert the `Could not push` title's `className` contains `text-error` and the first one's does not; click the first toast's `Dismiss` button and `await waitFor` its title gone while `Could not push` stays.
+  Fails without: `Toaster: a toast added through toastManager shows, an error one is styled, and its close control dismisses it`: `Toaster` not given `toastManager` (the titles never show), the `type` styling dropped (both or neither carry `text-error`), or `Toast.Close` not wired (the title stays).
+- `No component injects a <style> element, on import or in use`: `import` every component of this folder at the top of the file (`button`, `badge`, `toggle-group`, `collapsible`, `drawer`, `toast`, `skeleton`); in the first `it`, before anything renders, assert `document.querySelectorAll("style").length` is `0`; render a `Button`, a `Badge`, a `ToggleGroup`, an open `Collapsible`, an open `Drawer`, a `Skeleton` and a `Toaster` with a toast, and assert `document.querySelectorAll("style").length` is still `0` (the portals render into `document.body`, which the query covers).
+  Fails without: `No component injects a <style> element, on import or in use`: any component of this folder replaced by one that appends a `<style>` when it loads or mounts, which is what shadcn's vaul-based `Drawer` and sonner-based `Toaster` do; the first assertion catches an injection at import, the second one in use.
+
+- [ ] **Step 1: Write the tests** above into `components.test.tsx`.
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/components/ui/components.test.tsx
+```
+
+Expected: `Failed to resolve import` for `./drawer` and `./toast`.
+
+- [ ] **Step 3: Implement** `drawer.tsx` and `toast.tsx` as described.
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/components && pnpm run check
+```
+
+Expected: all checks pass. A Base UI part that happy-dom cannot run (for example one that calls `Element.getAnimations`) is stubbed in the test with a one-line `vi.stubGlobal` or a prototype assignment inside `components.test.tsx`, never in the component and never in `test-setup.ts` (Story 4's); say which in the commit message.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/components/ui
+git commit -m "feat(web): Drawer and toast on Base UI, and a check that nothing injects a style element" -- internal/web/ui/src/components/ui
+```
+
+### Task 8.4: The built CSS defines every token, and the rebuilt bundle
+
+**Files:**
+- Modify: `internal/web/static_test.go` (append two tests and a helper at the end of the file)
+- Modify: `internal/web/dist/` (rebuilt)
+- Test: `internal/web/static_test.go`
+
+**Behaviour.** `nextStaticAssets(t *testing.T) map[string]staticAsset` (Story 4, in this file) builds the new tree's assets through `buildStaticAssets`, keyed by URL path, each with `body` and `ctype`. Append, after the last test of the file:
+
+- a helper `distStylesheet(t *testing.T) string`: joins the `body` of every asset of `nextStaticAssets(t)` whose `ctype` starts with `text/css`, and fails the test with `the new tree has no stylesheet: is main.tsx importing styles/app.css and dist rebuilt?` when there is none; it then removes every space after a `:` and every newline, so the minifier's spacing never decides a check;
+- `TestDist_TheSkinDefinesEveryToken`: for each token of the table in Task 8.1 (all 27 names: `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`, `destructive`, `border`, `input`, `ring`, `faint`, `attention`, `turn`, `working`, `error`, `workspace`, `docs`, `diff-add`, `diff-del`), assert the stylesheet contains `--<name>:`; for the thirteen whose value is a hex in that table that §30 or the mockup fixes (`background`, `foreground`, `card`, `border`, `muted`, `muted-foreground`, `faint`, `attention`, `turn`, `working`, `error`, `workspace`, `docs`), assert it contains `--<name>:<hex>` (case-insensitive, so the minifier's casing never decides it); and assert the stylesheet contains `var(--attention)`, `var(--primary)`, `var(--muted-foreground)`, `var(--card)` and `var(--faint)`, the tokens a Tailwind colour utility reads (each is used by a component of Task 8.2 or 8.3);
+  Fails without: `TestDist_TheSkinDefinesEveryToken`: a token deleted from `app.css` (that name's `--name:` check fails), a value changed (the hex check), the `@theme inline` mapping removed (no `var(--attention)`), `main.tsx` not importing `app.css` or `dist/` not rebuilt (the helper fails: no stylesheet).
+- `TestDist_TheSkinBundlesOnlyTheLatinFonts`: assert `nextStaticAssets(t)` holds exactly two assets of content type `font/woff2`, that the stylesheet contains `Inter` and `JetBrains Mono`, and that it contains no `url(data:` (a font inlined as a `data:` URL would also break the CSP's `font-src`, which falls back to `'self'`).
+  Fails without: `TestDist_TheSkinBundlesOnlyTheLatinFonts`: the packages' all-subsets stylesheet imported (more than two `.woff2` files), a font not imported (fewer), or `assetsInlineLimit` large enough to inline them (a `url(data:`).
+
+**Rebuild.** `pnpm run build` writes `internal/web/dist/`: it now holds a stylesheet, two `.woff2` files, the regenerated entry script and `THIRD_PARTY.txt` (the fonts' licences join the packages'). Commit the whole directory, new hashed files and removed old ones; `dist:check` must then pass.
+
+- [ ] **Step 1: Write the tests** and the helper at the end of `internal/web/static_test.go`.
+- [ ] **Step 2: Run them to see them fail** (before the rebuild, `dist/` still holds Story 4's CSS-less bundle)
+
+```bash
+CGO_ENABLED=0 go test ./internal/web/ -run 'TestDist_TheSkin'
+```
+
+Expected: both fail with `the new tree has no stylesheet: is main.tsx importing styles/app.css and dist rebuilt?` (or `Should have 2 item(s), but has 0` for the fonts if Story 4's bundle carried CSS).
+
+- [ ] **Step 3: Rebuild the bundle**
+
+```bash
+cd internal/web/ui && pnpm run build
+```
+
+- [ ] **Step 4: Run the story's checks**
+
+```bash
+cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/ -run 'TestDist_TheSkin|TestStatic_'
+```
+
+Expected: the pnpm steps pass (`dist:check` prints nothing and exits 0) and `ok  	github.com/aidan-bailey/loom/internal/web`. If a hex check fails because the minifier rewrote a value (a shortened or reformatted colour), change that one row's expected text in the test to the built form and say so in the commit message; never edit the token.
+
+
+Then check that a test-only change leaves the built CSS alone (the `@source not` line): append a line holding class names no source file uses, rebuild, and compare the bundle's checksums before and after (the bundle is not committed yet, so `git status` cannot tell).
+
+```bash
+cd internal/web/ui && find ../dist -type f | sort | xargs sha256sum > /tmp/dist-before.txt && printf '\n// bg-fuchsia-500 flex-wrap-reverse\n' >> src/components/ui/components.test.tsx && pnpm run build && find ../dist -type f | sort | xargs sha256sum | diff /tmp/dist-before.txt - ; git checkout -- src/components/ui/components.test.tsx
+```
+
+Expected: `diff` prints nothing (the checkout then restores the test file, and `/tmp/dist-before.txt` is outside the worktree). If it prints a changed file, the `@source not` path in `app.css` does not match the test files: fix the path, never the check.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/dist
+git commit -m "feat(web): the skin's tokens and fonts reach the committed bundle, and a test holds them there" -- internal/web/dist internal/web/static_test.go
+```
+
+## Story 9: The client core: the request path, the event stream, the store and the query client
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/api/request.ts`, `internal/web/ui/src/api/request.test.ts`, `internal/web/ui/src/api/stream.ts`, `internal/web/ui/src/api/stream.test.ts`, `internal/web/ui/src/api/queries.ts`, `internal/web/ui/src/store/fleet.ts`, `internal/web/ui/src/store/fleet.test.ts`, `internal/web/ui/src/store/persist.ts`, `internal/web/ui/src/store/badge.ts`, `internal/web/ui/src/fleet/groups.ts`, `internal/web/ui/src/fleet/groups.test.ts`, `internal/web/ui/src/api/queries.test.ts`, `internal/web/ui/src/store/persist.test.ts`, `internal/web/ui/src/store/badge.test.ts`, `internal/web/ui/src/store/startFleet.test.ts`, `internal/web/ui/src/fixtures.ts`, `internal/web/ui/src/fixtures.test.ts`, `tools/webshot/fixture/snapshot.json`, `tools/webshot/fixture/turns.json`, `tools/webshot/fixture/agent-turns.json`, `tools/webshot/fixture/flow.json`, `tools/webshot/fixture/flows.json`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`
+- **Interfaces:** exposes `http`, `api`, `onNotices`, `onUnpaired`, `LinkState`, `StreamHandlers`, `connectStream`, `FleetState`, `useFleet`, `useSession`, `useFleetGroups`, `useLink`, `startFleet`, `loadSnapshot`, `saveSnapshot`, `clearSnapshot`, `setBadge`, `FleetGroups`, `GROUPS`, `allSessions`, `shownWorkspaces`, `groupSessions`, `fleetGroups`, `nextInGroup`, `queryClient`, `OutcomeError`, `unwrap`, `fixtureSnapshot`; uses Story 5's `gen.ts` and type rules
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/ -run TestWebshotFixture && CGO_ENABLED=0 go test ./tools/webshot/'`
+- **Review:** deep
+- **Form:** full (the reconnect bounds, the persistence and the status mapping every request goes through)
+
+The new app's data layer, in `internal/web/ui/src/`, built against `src/api/gen.ts` (Story 5's output) and its type rules: a slice or map without `omitempty` is `T[] | null` (a slice inside a map value too), so `Snapshot.sessions` is `Record<string, Session[] | null> | null`; `time.Time` is `string`; every number kind is `number`. `request.ts` is the one request path: `http` implements `Transport` over `fetch` with the contract's status mapping, and the notice, unpaired and stopping listeners (a 503 is `stopping` whatever its reason, but only one that carries the daemon's own stopping text, `isStoppingText`, tells the stopping listeners or is retried: a 503 for the push key or a web layer that is off is neither); `api` is `createClient(http)`. `stream.ts` keeps the classic reconnect rules (backoff 1 s to 30 s, a 45 s silence watchdog, a fresh stream when the page becomes visible, `restarting` for 30 s after a `bye`) and reports the link's state. `store/persist.ts` keeps the snapshot in IndexedDB `loom-next` through a queue, so a clear always lands after the saves before it, gives each IndexedDB open and transaction a time limit so one that never settles (WebKit's first-open hang in a Home Screen app) cannot stop the queue, and keeps at most one save waiting, replaced by the newest snapshot; `store/badge.ts` sets the Home Screen badge. `fleet/groups.ts` ports the classic grouping. `store/fleet.ts` is the Zustand store that applies each stream event, plus `startFleet`: it loads the saved snapshot (stale until the first snapshot), connects the stream into the store, saves at most once a second (a throttle, not the classic app's debounce, which starves while events keep coming), sets the badge, hands each stream `notice` to the `onNotices` listeners, and on an unpaired outcome (any request's 401 or the stream's) closes the stream, calls `clear()` (which cancels a pending save, empties the store and clears IndexedDB), clears the query client and zeroes the badge, so a revoked pairing's turns, diffs and logs do not come back if the app is paired again before a reload; the saver writes nothing while the store holds no snapshot. A request's stopping 503 marks the link `restarting` until the stream is live again (spec Errors). `startFleet` never navigates: Story 10's `main.tsx` sets `#/pair`. `queries.ts` sets up TanStack Query and defines `OutcomeError` and `unwrap`. `fixtures.ts` loads `tools/webshot/fixture/snapshot.json` with its relative times filled, and `fixtures.test.ts` holds every fixture that answers a route to that route's generated response type, so a Go change that breaks a fixture fails the typecheck; the fixtures gain the keys their generated types require, through a one-off script run from outside the worktree. Tests beyond the entry's Files line: `src/api/queries.test.ts`, `src/store/persist.test.ts`, `src/store/badge.test.ts` and `src/store/startFleet.test.ts`; Story 12 adds its launch-time calls in `startFleet`'s snapshot case.
+
+### Task 9.1: `request.ts` and `queries.ts`
+
+**Files:**
+- Modify: `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`
+- Create: `internal/web/ui/src/api/request.ts`
+- Create: `internal/web/ui/src/api/queries.ts`
+- Create: `internal/web/ui/src/api/request.test.ts`
+- Create: `internal/web/ui/src/api/queries.test.ts`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `internal/web/ui/src/api/request.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Notice } from "./gen";
+import { api, http, isStoppingText, onNotices, onStopping, onUnpaired } from "./request";
+
+const fetchMock = vi.fn<typeof fetch>();
+
+function reply(status: number, body?: unknown): Response {
+  return new Response(body === undefined ? null : JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const notice: Notice = { text: "stash kept: abc123", error: false, at: "2026-11-18T10:00:00Z" };
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("http.send", () => {
+  it.each([200, 201])("answers %i as ok with the body and its notices", async (status) => {
+    const body = { id: 4, notices: [notice] };
+    fetchMock.mockResolvedValueOnce(reply(status, body));
+    const out = await http.send("POST", "/api/v1/sessions", undefined, { title: "x" });
+    expect(out).toEqual({ kind: "ok", status, value: body, notices: [notice] });
+  });
+
+  it("answers an ok body without a notices key with an empty list", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { a: 1 }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind: "ok", status: 200, value: { a: 1 }, notices: [] });
+  });
+
+  it("answers 204 as ok with no value and no notices", async () => {
+    fetchMock.mockResolvedValueOnce(reply(204));
+    const out = await http.send("DELETE", "/api/v1/device", undefined, undefined);
+    expect(out).toEqual({ kind: "ok", status: 204, value: undefined, notices: [] });
+  });
+
+  it("fails a 200 whose body is not JSON", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>", { status: 200 }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({
+      kind: "failed",
+      status: 200,
+      message: "Unreadable answer from loom.",
+    });
+  });
+
+  it("answers 202 as pending", async () => {
+    fetchMock.mockResolvedValueOnce(reply(202, { pending: true }));
+    const out = await http.send("POST", "/api/v1/sessions/7/kill", undefined, undefined);
+    expect(out).toEqual({ kind: "pending" });
+  });
+
+  it("answers 401 as unpaired", async () => {
+    fetchMock.mockResolvedValueOnce(reply(401, { error: "not paired" }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind: "unpaired" });
+  });
+
+  it.each([
+    [503, "stopping"],
+    [504, "timeout"],
+  ])("answers %i as %s with the body's error", async (status, kind) => {
+    fetchMock.mockResolvedValueOnce(reply(status, { error: "loom says so" }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind, message: "loom says so" });
+  });
+
+  it.each([400, 404, 405, 409, 429])(
+    "answers %i as refused with the body's error",
+    async (status) => {
+      fetchMock.mockResolvedValueOnce(reply(status, { error: "no such session" }));
+      const out = await http.send("POST", "/api/v1/sessions/9/pause", undefined, undefined);
+      expect(out).toEqual({ kind: "refused", status, message: "no such session" });
+    },
+  );
+
+  it("answers any other status as failed with its status and the body's error", async () => {
+    fetchMock.mockResolvedValueOnce(reply(500, { error: "boom" }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind: "failed", status: 500, message: "boom" });
+  });
+
+  it("words a failure with no JSON body as the classic app does", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>bad gateway</html>", { status: 502 }));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind: "failed", status: 502, message: "That didn't work." });
+  });
+
+  it("answers a network failure as failed with status 0", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(out).toEqual({ kind: "failed", status: 0, message: "Can't reach loom." });
+  });
+
+  it("sends the query in the URL and no body or content type on a GET", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, {}));
+    await http.send(
+      "GET",
+      "/api/v1/sessions/7/turns",
+      { conversation: "abc", before: "9" },
+      undefined,
+    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sessions/7/turns?conversation=abc&before=9", {
+      method: "GET",
+      credentials: "same-origin",
+      headers: {},
+    });
+  });
+
+  it("adds no question mark for an empty query", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, {}));
+    await http.send("GET", "/api/v1/flows", {}, undefined);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/flows",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("sends a body as JSON with its content type", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, {}));
+    await http.send("POST", "/api/v1/sessions/7/send", undefined, { text: "hi" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sessions/7/send", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: '{"text":"hi"}',
+    });
+  });
+});
+
+describe("onNotices and onUnpaired", () => {
+  it("hands a response's notices to every listener once", async () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    const offA = onNotices(a);
+    const offB = onNotices(b);
+    fetchMock.mockResolvedValueOnce(reply(200, { notices: [notice] }));
+    await http.send("POST", "/api/v1/sessions/7/kill", undefined, undefined);
+    expect(a).toHaveBeenCalledOnce();
+    expect(a).toHaveBeenCalledWith([notice]);
+    expect(b).toHaveBeenCalledOnce();
+    expect(b).toHaveBeenCalledWith([notice]);
+    offA();
+    offB();
+  });
+
+  it("tells the listeners nothing for a response without notices", async () => {
+    const listener = vi.fn();
+    const off = onNotices(listener);
+    fetchMock.mockResolvedValueOnce(reply(200, { notices: [] }));
+    await http.send("POST", "/api/v1/sessions/7/pause", undefined, undefined);
+    expect(listener).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("stops telling a listener once it unsubscribes", async () => {
+    const listener = vi.fn();
+    onNotices(listener)();
+    fetchMock.mockResolvedValueOnce(reply(200, { notices: [notice] }));
+    await http.send("POST", "/api/v1/sessions/7/kill", undefined, undefined);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("keeps telling the other listeners when one throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const after = vi.fn();
+    const offBad = onNotices(() => {
+      throw new Error("listener bug");
+    });
+    const offAfter = onNotices(after);
+    fetchMock.mockResolvedValueOnce(reply(200, { notices: [notice] }));
+    await http.send("POST", "/api/v1/sessions/7/kill", undefined, undefined);
+    expect(after).toHaveBeenCalledOnce();
+    offBad();
+    offAfter();
+  });
+
+  it("fires the unpaired listeners on a 401, and not an unsubscribed one", async () => {
+    const live = vi.fn();
+    const gone = vi.fn();
+    const offLive = onUnpaired(live);
+    onUnpaired(gone)();
+    fetchMock.mockResolvedValueOnce(reply(401, { error: "not paired" }));
+    await http.send("GET", "/api/v1/flows", undefined, undefined);
+    expect(live).toHaveBeenCalledOnce();
+    expect(gone).not.toHaveBeenCalled();
+    offLive();
+  });
+
+  it.each(["the loom daemon is unavailable", "the loom daemon is unavailable: connection lost", "loom is stopping"])(
+    "tells the stopping listeners of a 503 that says %j, and not an unsubscribed one",
+    async (text) => {
+      const live = vi.fn();
+      const gone = vi.fn();
+      const offLive = onStopping(live);
+      onStopping(gone)();
+      fetchMock.mockResolvedValueOnce(reply(503, { error: text }));
+      const out = await http.send("GET", "/api/v1/flows", undefined, undefined);
+      expect(out).toEqual({ kind: "stopping", message: text });
+      expect(live).toHaveBeenCalledOnce();
+      expect(gone).not.toHaveBeenCalled();
+      offLive();
+    },
+  );
+
+  it.each(["push is not available", "web: not enabled; run loom web enable first"])(
+    "tells the stopping listeners nothing of a 503 that says %j",
+    async (text) => {
+      const listener = vi.fn();
+      const off = onStopping(listener);
+      fetchMock.mockResolvedValueOnce(reply(503, { error: text }));
+      const out = await http.send("GET", "/api/v1/push/key", undefined, undefined);
+      expect(out).toEqual({ kind: "stopping", message: text });
+      expect(listener).not.toHaveBeenCalled();
+      off();
+    },
+  );
+});
+
+describe("isStoppingText", () => {
+  it("knows the two texts a stopping daemon answers with", () => {
+    expect(isStoppingText("the loom daemon is unavailable")).toBe(true);
+    expect(isStoppingText("the loom daemon is unavailable: connection lost")).toBe(true);
+    expect(isStoppingText("loom is stopping")).toBe(true);
+  });
+
+  it("does not take any other 503 text for a stopping daemon", () => {
+    expect(isStoppingText("push is not available")).toBe(false);
+    expect(isStoppingText("")).toBe(false);
+  });
+});
+
+describe("api", () => {
+  it("is the generated client over http", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, { notices: [] }));
+    const out = await api.pause(7);
+    expect(out.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/7/pause",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    );
+  });
+
+  it("puts a GET's query in the URL", async () => {
+    fetchMock.mockResolvedValueOnce(reply(200, {}));
+    await api.turns(7, { conversation: "abc" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/7/turns?conversation=abc",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+});
+```
+
+Create `internal/web/ui/src/api/queries.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import type { Outcome } from "./gen";
+import { OutcomeError, queryClient, retryRead, unwrap } from "./queries";
+
+const refused: Outcome<unknown> = { kind: "refused", status: 409, message: "session is busy" };
+const failed: Outcome<unknown> = { kind: "failed", status: 500, message: "boom" };
+
+describe("unwrap", () => {
+  it("returns an ok outcome's value", () => {
+    const ok: Outcome<{ id: number }> = { kind: "ok", status: 200, value: { id: 3 }, notices: [] };
+    expect(unwrap(ok)).toEqual({ id: 3 });
+  });
+
+  it.each<[Outcome<unknown>, string]>([
+    [{ kind: "pending" }, "still running"],
+    [{ kind: "unpaired" }, "not paired"],
+    [refused, "session is busy"],
+    [{ kind: "stopping", message: "loom is stopping" }, "loom is stopping"],
+    [{ kind: "timeout", message: "timed out" }, "timed out"],
+    [failed, "boom"],
+  ])("throws an OutcomeError carrying the %j outcome", (outcome, message) => {
+    let caught: unknown;
+    try {
+      unwrap(outcome);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(OutcomeError);
+    expect((caught as OutcomeError).outcome).toBe(outcome);
+    expect((caught as OutcomeError).message).toBe(message);
+  });
+
+  it("makes an OutcomeError an Error named OutcomeError", () => {
+    const err = new OutcomeError(refused);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("OutcomeError");
+  });
+});
+
+describe("retryRead", () => {
+  it.each<Outcome<unknown>>([
+    failed,
+    { kind: "timeout", message: "timed out" },
+    { kind: "stopping", message: "loom is stopping" },
+  ])("retries a %j read", (outcome) => {
+    expect(retryRead(0, new OutcomeError(outcome))).toBe(true);
+    expect(retryRead(1, new OutcomeError(outcome))).toBe(true);
+  });
+
+  it.each<Outcome<unknown>>([
+    refused,
+    { kind: "unpaired" },
+    { kind: "pending" },
+    { kind: "stopping", message: "push is not available" },
+  ])(
+    "never retries a %j read",
+    (outcome) => {
+      expect(retryRead(0, new OutcomeError(outcome))).toBe(false);
+    },
+  );
+
+  it("stops after two retries", () => {
+    expect(retryRead(2, new OutcomeError(failed))).toBe(false);
+  });
+
+  it("does not retry an error that is not an outcome", () => {
+    expect(retryRead(0, new TypeError("a bug"))).toBe(false);
+  });
+});
+
+describe("queryClient", () => {
+  it("retries reads by retryRead and does not refetch on window focus", () => {
+    const options = queryClient.getDefaultOptions().queries;
+    expect(options?.retry).toBe(retryRead);
+    expect(options?.refetchOnWindowFocus).toBe(false);
+  });
+});
+```
+
+Fails without: `answers 200, 201 as ok`: the ok branch's value or the notices read from the body; `answers an ok body without a notices key`: the `[]` fallback; `answers 204 as ok`: the 204 branch that skips reading the body; `fails a 200 whose body is not JSON`: the try/catch around `res.json()`; `answers 202 as pending`: the 202 case; `answers 401 as unpaired`: the 401 case; `answers %i as %s`: the 503 and 504 cases; `answers %i as refused`: any of the five statuses missing from the refused list; `answers any other status as failed`: the default branch; `words a failure with no JSON body`: the `errorText` fallback; `answers a network failure`: the catch around `fetch`; `sends the query in the URL`: the query string building, or a header or body added to a GET; `adds no question mark for an empty query`: the empty-string check on the params; `sends a body as JSON`: the content type or `JSON.stringify`; `hands a response's notices to every listener once`: `emitNotices` after an ok answer; `tells the listeners nothing for a response without notices`: the `notices.length > 0` guard; `stops telling a listener once it unsubscribes`: the returned unsubscribe; `keeps telling the other listeners when one throws`: the try/catch in `emitNotices`; `fires the unpaired listeners on a 401`: `emitUnpaired()` in the 401 case, or the unsubscribe; `tells the stopping listeners of a 503 that says %j`: `emitStopping()` in the 503 case, its `isStoppingText` test not matching one of the three texts, or the unsubscribe; `tells the stopping listeners nothing of a 503 that says %j`: the `isStoppingText` test (a call for every 503 marks the link restarting for a push key's refusal or a web layer that is off); the `isStoppingText` tests: the two substrings it looks for, or a match that takes any text; `is the generated client over http` and `puts a GET's query in the URL`: `api` built over `http`; the `unwrap` tests: the ok return and the throw carrying the outcome; the `retryRead` tests: each term of the rule (the retryable kinds, the `failureCount < 2` bound, the `instanceof OutcomeError` check, and for a `stopping` outcome the `isStoppingText` test: without it the push key's refusal is retried twice and its error shows seconds late); `queryClient`: the two default options.
+
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+cd internal/web/ui && pnpm add @tanstack/react-query && pnpm exec vitest run src/api/request.test.ts src/api/queries.test.ts
+```
+
+`pnpm add` edits `package.json` and `pnpm-lock.yaml`; Vitest then reports `FAIL src/api/request.test.ts` and `FAIL src/api/queries.test.ts` with `Failed to resolve import "./request" from "src/api/request.test.ts". Does the file exist?` (and the same for `./queries`).
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/api/request.ts`:
+
+```ts
+// The request path (spec §20): every generated client function calls http.send, which turns a
+// response's status into an Outcome. Nothing here throws on an HTTP status.
+import {
+  createClient,
+  type Client,
+  type Method,
+  type Notice,
+  type Outcome,
+  type Transport,
+} from "./gen";
+
+const noticeListeners = new Set<(notices: Notice[]) => void>();
+const unpairedListeners = new Set<() => void>();
+const stoppingListeners = new Set<() => void>();
+
+/** Calls listener with the notices of every response that carries some, and of each stream notice. */
+export function onNotices(listener: (notices: Notice[]) => void): () => void {
+  noticeListeners.add(listener);
+  return () => {
+    noticeListeners.delete(listener);
+  };
+}
+
+/** Calls listener when a request or the stream is answered 401: the device is no longer paired. */
+export function onUnpaired(listener: () => void): () => void {
+  unpairedListeners.add(listener);
+  return () => {
+    unpairedListeners.delete(listener);
+  };
+}
+
+/** Calls listener when a request is answered 503 with the daemon's own stopping text. */
+export function onStopping(listener: () => void): () => void {
+  stoppingListeners.add(listener);
+  return () => {
+    stoppingListeners.delete(listener);
+  };
+}
+
+/** Hands notices to the onNotices listeners; a listener that throws does not stop the rest. */
+export function emitNotices(notices: Notice[]): void {
+  for (const listener of [...noticeListeners]) {
+    try {
+      listener(notices);
+    } catch (err) {
+      console.error("loom: a notices listener failed", err);
+    }
+  }
+}
+
+/** Tells the onUnpaired listeners; a listener that throws does not stop the rest. */
+export function emitUnpaired(): void {
+  for (const listener of [...unpairedListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error("loom: an unpaired listener failed", err);
+    }
+  }
+}
+
+/** Tells the onStopping listeners, as a 503 with the stopping text does; a listener that throws does not stop the rest. */
+export function emitStopping(): void {
+  for (const listener of [...stoppingListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error("loom: a stopping listener failed", err);
+    }
+  }
+}
+
+// What a daemon that is stopping, or that the web layer has lost, answers a request with: the text
+// of core.ErrUnavailable (the Go message may carry a reason after it) and of the stream hub's
+// "loom is stopping". Every 503 is a `stopping` outcome, but another reason (the push key's "push
+// is not available", the web layer being off) is not a restart, and is neither retried nor shown
+// as RESTARTING.
+const STOPPING_TEXTS = ["the loom daemon is unavailable", "loom is stopping"];
+
+/** Whether a 503's error text is the daemon's own stopping text. */
+export function isStoppingText(message: string): boolean {
+  return STOPPING_TEXTS.some((text) => message.includes(text));
+}
+
+const UNREACHABLE = "Can't reach loom.";
+const FALLBACK = "That didn't work.";
+
+// errorText is the answer's `error`, else the classic app's fallback.
+async function errorText(res: Response): Promise<string> {
+  try {
+    const body: unknown = await res.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "error" in body &&
+      typeof body.error === "string" &&
+      body.error !== ""
+    ) {
+      return body.error;
+    }
+  } catch {
+    // no JSON body: the fallback below
+  }
+  return FALLBACK;
+}
+
+// noticesOf is the body's `notices` list, else an empty one.
+function noticesOf(body: unknown): Notice[] {
+  if (
+    typeof body === "object" &&
+    body !== null &&
+    "notices" in body &&
+    Array.isArray(body.notices)
+  ) {
+    return body.notices as Notice[];
+  }
+  return [];
+}
+
+async function send<T>(
+  method: Method,
+  path: string,
+  query: Record<string, string> | undefined,
+  body: unknown,
+): Promise<Outcome<T>> {
+  const params = query === undefined ? "" : new URLSearchParams(query).toString();
+  const url = params === "" ? path : `${path}?${params}`;
+  const headers: Record<string, string> = {};
+  const init: RequestInit = { method, credentials: "same-origin", headers };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    return { kind: "failed", status: 0, message: UNREACHABLE };
+  }
+
+  switch (res.status) {
+    case 200:
+    case 201:
+    case 204: {
+      let value: unknown;
+      let notices: Notice[] = [];
+      if (res.status !== 204) {
+        try {
+          value = await res.json();
+        } catch {
+          return { kind: "failed", status: res.status, message: "Unreadable answer from loom." };
+        }
+        notices = noticesOf(value);
+      }
+      if (notices.length > 0) emitNotices(notices);
+      return { kind: "ok", status: res.status, value: value as T, notices };
+    }
+    case 202:
+      return { kind: "pending" };
+    case 401:
+      emitUnpaired();
+      return { kind: "unpaired" };
+    case 503: {
+      const message = await errorText(res);
+      if (isStoppingText(message)) emitStopping();
+      return { kind: "stopping", message };
+    }
+    case 504:
+      return { kind: "timeout", message: await errorText(res) };
+    case 400:
+    case 404:
+    case 405:
+    case 409:
+    case 429:
+      return { kind: "refused", status: res.status, message: await errorText(res) };
+    default:
+      return { kind: "failed", status: res.status, message: await errorText(res) };
+  }
+}
+
+export const http: Transport = { send };
+
+export const api: Client = createClient(http);
+```
+
+Create `internal/web/ui/src/api/queries.ts`:
+
+```ts
+// TanStack Query's client (spec §26) and the helpers that turn an Outcome into a query's result.
+import { QueryClient } from "@tanstack/react-query";
+import type { Outcome } from "./gen";
+import { isStoppingText } from "./request";
+
+function reasonOf(outcome: Outcome<unknown>): string {
+  switch (outcome.kind) {
+    case "ok":
+      return "ok";
+    case "pending":
+      return "still running";
+    case "unpaired":
+      return "not paired";
+    default:
+      return outcome.message;
+  }
+}
+
+/** What unwrap throws for an outcome that is not ok; the outcome stays on it. */
+export class OutcomeError extends Error {
+  readonly outcome: Outcome<unknown>;
+
+  constructor(outcome: Outcome<unknown>) {
+    super(reasonOf(outcome));
+    this.name = "OutcomeError";
+    this.outcome = outcome;
+  }
+}
+
+/** The value of an ok outcome; any other outcome throws an OutcomeError, which a query reports. */
+export function unwrap<T>(outcome: Outcome<T>): T {
+  if (outcome.kind === "ok") return outcome.value;
+  throw new OutcomeError(outcome);
+}
+
+function retryable(outcome: Outcome<unknown>): boolean {
+  switch (outcome.kind) {
+    case "failed":
+    case "timeout":
+      return true;
+    case "stopping":
+      // Only a daemon that says it is stopping will answer later; another 503 (the push key's
+      // "push is not available") would answer the same again.
+      return isStoppingText(outcome.message);
+    default:
+      return false;
+  }
+}
+
+/**
+ * A read is retried, at most twice, only when loom could not answer it (a network failure, a
+ * timeout, a stopping daemon): a refusal, an unpaired device or a bug would answer the same again.
+ */
+export function retryRead(failureCount: number, error: Error): boolean {
+  return failureCount < 2 && error instanceof OutcomeError && retryable(error.outcome);
+}
+
+export const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: retryRead, refetchOnWindowFocus: false } },
+});
+```
+
+Then format the four files:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/api/request.ts src/api/queries.ts src/api/request.test.ts src/api/queries.test.ts
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/api/request.test.ts src/api/queries.test.ts && pnpm run check
+```
+
+Expected: `Test Files  2 passed (2)`, `Tests  52 passed (52)` for the two files, and `pnpm run check` exits 0 (typecheck, lint, format check, the whole suite, `node --check public/sw.js`).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/api/request.ts internal/web/ui/src/api/queries.ts internal/web/ui/src/api/request.test.ts internal/web/ui/src/api/queries.test.ts && git commit -m "feat(web): the new app's request path, notice listeners and query client" -- internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml internal/web/ui/src/api/request.ts internal/web/ui/src/api/queries.ts internal/web/ui/src/api/request.test.ts internal/web/ui/src/api/queries.test.ts
+```
+
+### Task 9.2: `stream.ts`
+
+**Files:**
+- Create: `internal/web/ui/src/api/stream.ts`
+- Create: `internal/web/ui/src/api/stream.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/api/stream.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Snapshot } from "./gen";
+import { onUnpaired } from "./request";
+import { connectStream, type LinkState, type StreamHandlers } from "./stream";
+
+const fetchMock = vi.fn<typeof fetch>();
+const closers: (() => void)[] = [];
+
+// A server-sent-events connection the test drives: fetch resolves with a response whose reader
+// yields what push() gives it, ends on end(), and fails when the request's signal aborts.
+interface FakeConnection {
+  readonly aborted: boolean;
+  push(text: string): void;
+  end(): void;
+}
+
+function nextConnection(): FakeConnection {
+  const encoder = new TextEncoder();
+  const chunks: ReadableStreamReadResult<Uint8Array>[] = [];
+  let waiting: {
+    resolve: (r: ReadableStreamReadResult<Uint8Array>) => void;
+    reject: (e: unknown) => void;
+  } | null = null;
+  let aborted = false;
+
+  const deliver = (result: ReadableStreamReadResult<Uint8Array>) => {
+    if (waiting) {
+      const w = waiting;
+      waiting = null;
+      w.resolve(result);
+    } else {
+      chunks.push(result);
+    }
+  };
+  const reader = {
+    read: () =>
+      new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        const next = chunks.shift();
+        if (next) resolve(next);
+        else if (aborted) reject(new DOMException("aborted", "AbortError"));
+        else waiting = { resolve, reject };
+      }),
+  };
+
+  fetchMock.mockImplementationOnce((_input, init) => {
+    init?.signal?.addEventListener("abort", () => {
+      aborted = true;
+      if (waiting) {
+        const w = waiting;
+        waiting = null;
+        w.reject(new DOMException("aborted", "AbortError"));
+      }
+    });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      body: { getReader: () => reader },
+    } as unknown as Response);
+  });
+
+  return {
+    get aborted() {
+      return aborted;
+    },
+    push: (text) => {
+      deliver({ done: false, value: encoder.encode(text) });
+    },
+    end: () => {
+      deliver({ done: true, value: undefined });
+    },
+  };
+}
+
+function handlers() {
+  const events: [string, unknown][] = [];
+  const links: LinkState[] = [];
+  const h: StreamHandlers = {
+    onEvent: (name, data) => {
+      events.push([name, data]);
+    },
+    onLink: (state) => {
+      links.push(state);
+    },
+  };
+  return { h, events, links };
+}
+
+function start(h: StreamHandlers): () => void {
+  const close = connectStream(h);
+  closers.push(close);
+  return close;
+}
+
+// distinct collapses consecutive repeats: the link says "restarting" at the bye and again when
+// the stream ends, which is one state.
+const distinct = (links: LinkState[]) => links.filter((state, i) => state !== links[i - 1]);
+
+const frame = (event: string, data: unknown) =>
+  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const snapshot = { build: "b1" } as unknown as Snapshot;
+
+function setVisibility(state: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+}
+
+const settle = () => vi.advanceTimersByTimeAsync(0);
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  setVisibility("visible");
+});
+
+afterEach(() => {
+  for (const close of closers.splice(0)) close();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("connectStream", () => {
+  it("opens the stream with the session cookie and no cache, and says connecting", async () => {
+    nextConnection();
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/stream",
+      expect.objectContaining({
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "text/event-stream" },
+      }),
+    );
+    expect(links).toEqual(["connecting"]);
+  });
+
+  it("delivers each known event, and says live once the snapshot has arrived", async () => {
+    const conn = nextConnection();
+    const { h, events, links } = handlers();
+    start(h);
+    await settle();
+    conn.push(frame("snapshot", snapshot));
+    await settle();
+    conn.push(frame("sessions", { workspace: 1, sessions: [], badge: 0 }));
+    await settle();
+    expect(events).toEqual([
+      ["snapshot", snapshot],
+      ["sessions", { workspace: 1, sessions: [], badge: 0 }],
+    ]);
+    expect(links).toEqual(["connecting", "live"]);
+  });
+
+  it("reassembles an event split across chunks and skips comments, unknown events and bad JSON", async () => {
+    const conn = nextConnection();
+    const { h, events } = handlers();
+    start(h);
+    await settle();
+    conn.push(": ping\n\n");
+    conn.push("event: mystery\ndata: {}\n\n");
+    conn.push("event: device\ndata: {not json\n\n");
+    conn.push("event: notice\nda");
+    conn.push('ta: {"text":"hi","error":false,"at":"t"}\n\n');
+    conn.push('event: quick_replies\r\ndata: {"quick_replies":["yes"]}\r\n\r\n');
+    await settle();
+    expect(events).toEqual([
+      ["notice", { text: "hi", error: false, at: "t" }],
+      ["quick_replies", { quick_replies: ["yes"] }],
+    ]);
+  });
+
+  it("keeps reading after a handler throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const conn = nextConnection();
+    const seen: string[] = [];
+    start({
+      onEvent: (name) => {
+        seen.push(name);
+        if (name === "device") throw new Error("handler bug");
+      },
+      onLink: () => undefined,
+    });
+    await settle();
+    conn.push(frame("device", {}) + frame("usage", { usage: [] }));
+    await settle();
+    expect(seen).toEqual(["device", "usage"]);
+  });
+
+  it("says restarting after a bye and reconnects a second after the stream ends", async () => {
+    const first = nextConnection();
+    const second = nextConnection();
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    first.push(frame("snapshot", snapshot) + frame("bye", {}));
+    first.end();
+    await settle();
+    expect(distinct(links)).toEqual(["connecting", "live", "restarting"]);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    second.push(frame("snapshot", snapshot));
+    await settle();
+    expect(distinct(links)).toEqual(["connecting", "live", "restarting", "live"]);
+  });
+
+  it("says offline when the stream ends with no bye before it", async () => {
+    const conn = nextConnection();
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    conn.push(frame("snapshot", snapshot));
+    conn.end();
+    await settle();
+    expect(distinct(links)).toEqual(["connecting", "live", "offline"]);
+  });
+
+  it("says restarting for 30 s after a bye, then offline", async () => {
+    const first = nextConnection();
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    first.push(frame("snapshot", snapshot) + frame("bye", {}));
+    first.end();
+    await settle();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(links.at(-1)).toBe("restarting");
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(links.at(-1)).toBe("offline");
+  });
+
+  it("backs off 1, 2, 4, 8, 16 and then 30 seconds between failed attempts", async () => {
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h } = handlers();
+    start(h);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    let calls = 1;
+    for (const delay of [1000, 2000, 4000, 8000, 16_000, 30_000]) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(fetchMock).toHaveBeenCalledTimes(calls);
+      await vi.advanceTimersByTimeAsync(1);
+      calls += 1;
+      expect(fetchMock).toHaveBeenCalledTimes(calls);
+    }
+  });
+
+  it("starts the backoff over once a connection opens", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("down"));
+    fetchMock.mockRejectedValueOnce(new TypeError("down"));
+    const third = nextConnection();
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    third.end();
+    await settle();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("drops a stream silent for 45 s, and a ping keeps it alive", async () => {
+    const conn = nextConnection();
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(40_000);
+    conn.push(": ping\n\n");
+    await settle();
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(conn.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(conn.aborted).toBe(true);
+    expect(links.at(-1)).toBe("offline");
+  });
+
+  it("refreshes a live stream when the page becomes visible, without saying offline", async () => {
+    const first = nextConnection();
+    const second = nextConnection();
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    first.push(frame("snapshot", snapshot));
+    await settle();
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    expect(first.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    second.push(frame("snapshot", snapshot));
+    await settle();
+    expect(links).not.toContain("offline");
+  });
+
+  it("leaves a live stream alone while the page is hidden", async () => {
+    const conn = nextConnection();
+    const { h } = handlers();
+    start(h);
+    await settle();
+    conn.push(frame("snapshot", snapshot));
+    await settle();
+    setVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    expect(conn.aborted).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconnects at once when the phone comes online during a backoff", async () => {
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event("online"));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a 401 as unpaired once and never reconnects", async () => {
+    const unpaired = vi.fn();
+    const off = onUnpaired(unpaired);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401, body: null } as unknown as Response);
+    const { h, links } = handlers();
+    start(h);
+    await settle();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(unpaired).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(links).toEqual(["connecting"]);
+    off();
+  });
+
+  it("stops reading, reconnecting and refreshing once closed", async () => {
+    const conn = nextConnection();
+    const { h } = handlers();
+    const close = start(h);
+    await settle();
+    conn.push(frame("snapshot", snapshot));
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    const removed = vi.spyOn(document, "removeEventListener");
+    const removedFromWindow = vi.spyOn(window, "removeEventListener");
+    close();
+    // Synchronously: the watchdog is cleared by close itself, not by the abort it causes.
+    expect(vi.getTimerCount()).toBe(0);
+    expect(removed).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+    expect(removedFromWindow).toHaveBeenCalledWith("online", expect.any(Function));
+    await settle();
+    expect(conn.aborted).toBe(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reconnect when closed during a backoff", async () => {
+    fetchMock.mockRejectedValue(new TypeError("down"));
+    const { h } = handlers();
+    const close = start(h);
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    close();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+```
+
+Fails without: `opens the stream with the session cookie`: the request's `credentials`, `cache` or `Accept` header, or the initial `connecting`; `delivers each known event`: the frame parser or the `live` report after the snapshot; `reassembles an event split across chunks`: the buffer across chunks (a split event is lost), the `isKnown` filter (the mystery event is delivered), the JSON try/catch (the bad frame throws), the `\r` removal; `keeps reading after a handler throws`: the `guarded` try/catch; `says restarting after a bye`: the `bye` case that sets `byeAt` and reports `restarting`, or the 1 s first delay; `says offline when the stream ends with no bye`: the `byeAt !== 0` test; `says restarting for 30 s after a bye`: the `RESTART_GRACE` comparison; `backs off 1, 2, 4, 8, 16 and then 30 seconds`: the doubling or the `MAX_DELAY` cap; `starts the backoff over once a connection opens`: `delay = FIRST_DELAY` on open; `drops a stream silent for 45 s`: the watchdog, or the re-arm after each chunk; `refreshes a live stream when the page becomes visible`: `onVisible`'s refresh branch, or the `refreshing` flag that keeps the quiet reopen from reporting offline; `leaves a live stream alone while the page is hidden`: the `visibilityState` check; `reconnects at once when the phone comes online`: the `online` listener and `wake`; `reports a 401 as unpaired once`: the 401 branch (`emitUnpaired`, `closed = true`); `stops reading, reconnecting and refreshing once closed`: the `abort()` in the closer, `clearTimeout(watchdog)` in it (the timer count right after `close()` stays 1; the abort's own `finally` would clear it only later), and the two `removeEventListener` calls (the spies see none); `does not reconnect when closed during a backoff`: `clearTimeout(timer)` in the closer (the backoff timer count stays 1 after `close()`). The `closed` flag in `run` and `wake` is not pinned by a test of its own: closing already clears every timer and listener, so it guards only a reconnect racing the close.
+
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/api/stream.test.ts
+```
+
+Expected: `FAIL src/api/stream.test.ts` with `Failed to resolve import "./stream" from "src/api/stream.test.ts". Does the file exist?`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/api/stream.ts`:
+
+```ts
+// The event stream (spec §25): GET /api/v1/stream with the classic app's rules. It reconnects with
+// a backoff from 1 s to 30 s, drops a stream silent for 45 s, opens a fresh one whenever the page
+// becomes visible, and reports the link's state for the footer.
+import type { StreamEvents } from "./gen";
+import { emitUnpaired } from "./request";
+
+export type LinkState = "connecting" | "live" | "restarting" | "offline";
+
+export interface StreamHandlers {
+  onEvent: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void;
+  onLink: (state: LinkState) => void;
+}
+
+const FIRST_DELAY = 1000;
+const MAX_DELAY = 30_000;
+// The server pings every 20 s; a stream silent for more than twice that is dead, whatever the
+// phone's network layer believes.
+const SILENCE = 45_000;
+// How long after a bye the link says "restarting": a normal restart reconnects within it, so the
+// link never flashes "offline"; a daemon that stays away longer is plainly unreachable.
+const RESTART_GRACE = 30_000;
+
+// Every event the stream carries, one key per StreamEvents key (the compiler holds the two in
+// step): a name outside it is ignored, so a newer daemon's event does no harm.
+const KNOWN: Record<keyof StreamEvents, true> = {
+  snapshot: true,
+  sessions: true,
+  workspaces: true,
+  usage: true,
+  quick_replies: true,
+  device: true,
+  notice: true,
+  ping: true,
+  bye: true,
+};
+
+function isKnown(name: string): name is keyof StreamEvents {
+  return Object.keys(KNOWN).includes(name);
+}
+
+/**
+ * Opens the stream and calls handlers.onEvent for each event, and handlers.onLink as the link
+ * changes: connecting at the start, live once a snapshot has arrived, restarting after a bye,
+ * offline when the stream fails. It reconnects with a backoff from 1 s to 30 s, and at once when
+ * the phone comes online. When the page becomes visible again it drops a live stream and opens a
+ * fresh one without saying offline: a page iOS resumes can sit on a stream that delivers nothing,
+ * and the fresh snapshot replaces the view. On a 401 it tells the onUnpaired listeners and stops.
+ * It returns the function that closes it.
+ */
+export function connectStream(handlers: StreamHandlers): () => void {
+  let closed = false;
+  let running = false;
+  let live = false;
+  let refreshing = false;
+  let delay = FIRST_DELAY;
+  let byeAt = 0;
+  let controller: AbortController | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+
+  function guarded(what: string, call: () => void): void {
+    try {
+      call();
+    } catch (err) {
+      console.error(`loom: ${what} failed`, err);
+    }
+  }
+
+  function link(state: LinkState): void {
+    guarded("the link handler", () => {
+      handlers.onLink(state);
+    });
+  }
+
+  function receive(name: keyof StreamEvents, data: unknown): void {
+    guarded(`the ${name} handler`, () => {
+      handlers.onEvent(name, data as never);
+    });
+    if (name === "snapshot") {
+      byeAt = 0;
+      link("live");
+    } else if (name === "bye") {
+      byeAt = Date.now();
+      link("restarting");
+    }
+  }
+
+  function dispatch(block: string): void {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line === "" || line.startsWith(":")) continue;
+      const colon = line.indexOf(":");
+      const field = colon < 0 ? line : line.slice(0, colon);
+      let value = colon < 0 ? "" : line.slice(colon + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "event") event = value;
+      else if (field === "data") data.push(value);
+    }
+    if (data.length === 0 || !isKnown(event)) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data.join("\n"));
+    } catch {
+      return;
+    }
+    receive(event, parsed);
+  }
+
+  async function session(): Promise<void> {
+    const mine = new AbortController();
+    controller = mine;
+    const arm = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        mine.abort();
+      }, SILENCE);
+    };
+    try {
+      arm();
+      const res = await fetch("/api/v1/stream", {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "text/event-stream" },
+        signal: mine.signal,
+      });
+      if (res.status === 401) {
+        closed = true;
+        emitUnpaired();
+        return;
+      }
+      if (!res.ok || !res.body) throw new Error(`stream answered ${res.status}`);
+      live = true;
+      delay = FIRST_DELAY;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        arm();
+        buf += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+        for (let end = buf.indexOf("\n\n"); end >= 0; end = buf.indexOf("\n\n")) {
+          dispatch(buf.slice(0, end));
+          buf = buf.slice(end + 2);
+        }
+      }
+    } catch {
+      // The stream is down; run() reconnects.
+    } finally {
+      clearTimeout(watchdog);
+      live = false;
+    }
+  }
+
+  async function run(): Promise<void> {
+    if (closed || running) return;
+    running = true;
+    try {
+      await session();
+    } finally {
+      running = false;
+    }
+    if (closed) return;
+    if (refreshing) {
+      // onVisible dropped it on purpose: open the next one now, quietly.
+      refreshing = false;
+      delay = FIRST_DELAY;
+      void run();
+      return;
+    }
+    link(byeAt !== 0 && Date.now() - byeAt <= RESTART_GRACE ? "restarting" : "offline");
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      void run();
+    }, delay);
+    delay = Math.min(delay * 2, MAX_DELAY);
+  }
+
+  function wake(): void {
+    if (closed || running || live) return;
+    clearTimeout(timer);
+    delay = FIRST_DELAY;
+    void run();
+  }
+
+  // onVisible refreshes a live stream, which may be dead without a sign the watchdog would see for
+  // up to SILENCE, and wakes one that is down.
+  function onVisible(): void {
+    if (document.visibilityState !== "visible") return;
+    if (live && controller) {
+      refreshing = true;
+      controller.abort();
+      return;
+    }
+    wake();
+  }
+
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("online", wake);
+  link("connecting");
+  void run();
+
+  return () => {
+    closed = true;
+    clearTimeout(timer);
+    clearTimeout(watchdog);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("online", wake);
+    controller?.abort();
+  };
+}
+```
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/api/stream.ts src/api/stream.test.ts
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/api/stream.test.ts && pnpm run check
+```
+
+Expected: `Tests  16 passed (16)`, and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/api/stream.ts internal/web/ui/src/api/stream.test.ts && git commit -m "feat(web): the new app's event stream with the classic reconnect rules" -- internal/web/ui/src/api/stream.ts internal/web/ui/src/api/stream.test.ts
+```
+
+### Task 9.3: `persist.ts` and `badge.ts`
+
+**Files:**
+- Modify: `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`
+- Create: `internal/web/ui/src/store/persist.ts`
+- Create: `internal/web/ui/src/store/badge.ts`
+- Create: `internal/web/ui/src/store/persist.test.ts`
+- Create: `internal/web/ui/src/store/badge.test.ts`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `internal/web/ui/src/store/persist.test.ts`:
+
+```ts
+import "fake-indexeddb/auto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Snapshot } from "@/api/gen";
+import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
+
+const snapshotOf = (build: string) => ({ build, host: "fresco" }) as unknown as Snapshot;
+
+// putRaw writes value under the saved snapshot's key, as an older or foreign build might have.
+function putRaw(value: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open("loom-next", 1);
+    open.onupgradeneeded = () => {
+      open.result.createObjectStore("snapshot");
+    };
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction("snapshot", "readwrite");
+      tx.objectStore("snapshot").put(value, "latest");
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        reject(tx.error ?? new Error("put failed"));
+      };
+    };
+    open.onerror = () => {
+      reject(open.error ?? new Error("open failed"));
+    };
+  });
+}
+
+beforeEach(async () => {
+  await clearSnapshot();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+// OP_TIMEOUT is persist.ts's time limit for an open and for a transaction (ms).
+const OP_TIMEOUT = 5000;
+
+// settle lets the queue start its next operation.
+const settle = () => vi.advanceTimersByTimeAsync(0);
+
+// hangOpen makes the next indexedDB.open never answer (WebKit's first-open hang in a Home Screen
+// app), and gives back the request it returned, for a test that answers late. Only the timers the
+// limit uses are faked: fake-indexeddb schedules its own work with setImmediate.
+function hangOpen() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const close = vi.fn();
+  const request = { result: { close } } as unknown as IDBOpenDBRequest;
+  const open = vi.spyOn(indexedDB, "open").mockImplementationOnce(() => request);
+  return { open, request, close };
+}
+
+describe("the saved snapshot", () => {
+  it("loads as null when nothing was saved", async () => {
+    expect(await loadSnapshot()).toBeNull();
+  });
+
+  it("loads what was saved, with the time it was last heard from the daemon", async () => {
+    const snapshot = snapshotOf("b1");
+    saveSnapshot(snapshot, 1234);
+    expect(await loadSnapshot()).toEqual({ snapshot, updated: 1234 });
+  });
+
+  it("keeps the last of two saves, written in one transaction", async () => {
+    const open = vi.spyOn(indexedDB, "open");
+    saveSnapshot(snapshotOf("first"), 1);
+    saveSnapshot(snapshotOf("second"), 2);
+    expect(await loadSnapshot()).toEqual({ snapshot: snapshotOf("second"), updated: 2 });
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("forgets what was saved once cleared", async () => {
+    saveSnapshot(snapshotOf("b1"), 1);
+    await clearSnapshot();
+    expect(await loadSnapshot()).toBeNull();
+  });
+
+  it("never lets a save started before a clear land after it", async () => {
+    const open = vi.spyOn(indexedDB, "open");
+    const close = vi.spyOn(IDBDatabase.prototype, "close");
+    saveSnapshot(snapshotOf("b1"), 1);
+    await clearSnapshot();
+    expect(await loadSnapshot()).toBeNull();
+    // The clear opens its connection only once the save's is closed: without the queue both open
+    // at once and the save can land last.
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(open.mock.invocationCallOrder[1]).toBeGreaterThan(close.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY);
+  });
+
+  it("writes a save asked after a clear behind the clear, not into the save before it", async () => {
+    saveSnapshot(snapshotOf("before"), 1);
+    const cleared = clearSnapshot();
+    saveSnapshot(snapshotOf("after"), 2);
+    await cleared;
+    expect(await loadSnapshot()).toEqual({ snapshot: snapshotOf("after"), updated: 2 });
+  });
+
+  it("loads a record of the wrong shape as null", async () => {
+    await putRaw({ build: "classic", host: "fresco" });
+    expect(await loadSnapshot()).toBeNull();
+  });
+
+  it("never rejects where IndexedDB is missing", async () => {
+    vi.stubGlobal("indexedDB", undefined);
+    expect(await loadSnapshot()).toBeNull();
+    await expect(clearSnapshot()).resolves.toBeUndefined();
+    expect(() => {
+      saveSnapshot(snapshotOf("b1"), 1);
+    }).not.toThrow();
+  });
+});
+
+describe("an IndexedDB that stops answering", () => {
+  it("lets a later clear and load finish when an open never settles", async () => {
+    hangOpen();
+    saveSnapshot(snapshotOf("lost"), 1);
+    const cleared = clearSnapshot();
+    const loaded = loadSnapshot();
+    await settle();
+    await vi.advanceTimersByTimeAsync(OP_TIMEOUT);
+    await expect(cleared).resolves.toBeUndefined();
+    expect(await loaded).toBeNull();
+  });
+
+  it("closes a connection that opens after its time limit", async () => {
+    const { request, close } = hangOpen();
+    saveSnapshot(snapshotOf("late"), 1);
+    await settle();
+    await vi.advanceTimersByTimeAsync(OP_TIMEOUT);
+    expect(close).not.toHaveBeenCalled();
+    request.onsuccess?.(new Event("success"));
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("lets a later clear and load finish when a transaction never completes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const transaction = vi
+      .spyOn(IDBDatabase.prototype, "transaction")
+      .mockImplementationOnce(
+        () => ({ objectStore: () => ({ put: () => ({}) }) }) as unknown as IDBTransaction,
+      );
+    const close = vi.spyOn(IDBDatabase.prototype, "close");
+    saveSnapshot(snapshotOf("stuck"), 1);
+    const cleared = clearSnapshot();
+    const loaded = loadSnapshot();
+    // The save's real open finishes on its own clock; its transaction is the one that hangs.
+    await vi.waitFor(() => {
+      expect(transaction).toHaveBeenCalledOnce();
+    });
+    await vi.advanceTimersByTimeAsync(OP_TIMEOUT);
+    await expect(cleared).resolves.toBeUndefined();
+    expect(await loaded).toBeNull();
+    expect(close).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps one save waiting behind a stuck queue, the newest", async () => {
+    const { open } = hangOpen();
+    saveSnapshot(snapshotOf("lost"), 1);
+    await settle();
+    saveSnapshot(snapshotOf("b"), 2);
+    saveSnapshot(snapshotOf("c"), 3);
+    saveSnapshot(snapshotOf("d"), 4);
+    await vi.advanceTimersByTimeAsync(OP_TIMEOUT);
+    expect(await loadSnapshot()).toEqual({ snapshot: snapshotOf("d"), updated: 4 });
+    // The open that hung, one write for b, c and d, and the load.
+    expect(open).toHaveBeenCalledTimes(3);
+  });
+});
+```
+
+Create `internal/web/ui/src/store/badge.test.ts`:
+
+```ts
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setBadge } from "./badge";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("setBadge", () => {
+  it("puts a positive count on the Home Screen icon", () => {
+    const set = vi.fn().mockResolvedValue(undefined);
+    const clear = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { setAppBadge: set, clearAppBadge: clear });
+    setBadge(3);
+    expect(set).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith(3);
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("clears the icon at zero, so answering every session clears what a push set", () => {
+    const set = vi.fn().mockResolvedValue(undefined);
+    const clear = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { setAppBadge: set, clearAppBadge: clear });
+    setBadge(0);
+    expect(clear).toHaveBeenCalledOnce();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("does nothing, and does not throw, where the Badging API is missing", () => {
+    vi.stubGlobal("navigator", {});
+    expect(() => {
+      setBadge(2);
+    }).not.toThrow();
+  });
+
+  it("swallows a refusal from the browser", async () => {
+    vi.stubGlobal("navigator", {
+      setAppBadge: vi.fn().mockRejectedValue(new Error("not allowed")),
+      clearAppBadge: vi.fn(),
+    });
+    setBadge(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("swallows a throw from the browser", () => {
+    vi.stubGlobal("navigator", {
+      setAppBadge: () => {
+        throw new Error("no badge for you");
+      },
+    });
+    expect(() => {
+      setBadge(1);
+    }).not.toThrow();
+  });
+});
+```
+
+Fails without: `loads as null when nothing was saved`: `loadSnapshot` returning the stored `undefined` instead of null (the `isSaved` guard); `loads what was saved`: `saveSnapshot`'s put of `{ snapshot, updated }`; `keeps the last of two saves, written in one transaction`: the `waiting` slot (without it two saves open twice, and the open count is 3); `forgets what was saved once cleared`: `clearSnapshot`'s delete; `never lets a save started before a clear land after it`: the `enqueue` queue (without it the clear opens its connection while the save's is still open, so `open`'s second call comes before the first `close`, and a save that opens later writes after the delete); `writes a save asked after a clear behind the clear`: `waiting = null` in `clearSnapshot` (the later save would fold into the earlier slot, run before the clear and be deleted by it); `loads a record of the wrong shape as null`: `isSaved`; `never rejects where IndexedDB is missing`: the `typeof indexedDB` check and the catches. The stuck-IndexedDB tests: `lets a later clear and load finish when an open never settles`: the open's `OP_TIMEOUT` timer (the queue never moves, the clear never resolves and the test times out); `closes a connection that opens after its time limit`: the `settled` check in `onsuccess` (`close` is never called); `lets a later clear and load finish when a transaction never completes`: the transaction's timer in `withStore`, and the `finally` close (three closes are counted); `keeps one save waiting behind a stuck queue`: the `waiting` slot (each of the three saves would open its own connection). For `setBadge`: `puts a positive count` and `clears the icon at zero`: the two branches; `does nothing ... where the Badging API is missing`: only a throw escaping `setBadge` (the try/catch; the `?.` calls are not pinned by it, since the catch would swallow the TypeError their removal causes); `swallows a refusal from the browser`: the `.catch` on the returned promise (an unhandled rejection fails the run); `swallows a throw`: the try/catch.
+
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+cd internal/web/ui && pnpm add -D fake-indexeddb && pnpm exec vitest run src/store/persist.test.ts src/store/badge.test.ts
+```
+
+Expected: `FAIL` for both files with `Failed to resolve import "./persist" from "src/store/persist.test.ts"` and `Failed to resolve import "./badge" from "src/store/badge.test.ts"`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/store/persist.ts`:
+
+```ts
+// The phone's copy of the last snapshot, in IndexedDB `loom-next` (spec §24, §6: the classic app
+// keeps its own `loom` database, so switching back finds its snapshot untouched). Every access can
+// fail (a private window, a full disk, a blocked database) or never answer (WebKit's first open in
+// a Home Screen app can hang), and none may break the app, so each is guarded and a failure reads as
+// "nothing stored".
+import type { Snapshot } from "@/api/gen";
+
+const DB_NAME = "loom-next";
+const STORE = "snapshot";
+const KEY = "latest";
+
+// How long an open or a transaction may take before it is given up (ms). Every access is queued
+// behind the one before it, so one that never settled would stop every later save, load and clear.
+const OP_TIMEOUT = 5000;
+
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("no indexedDB"));
+      return;
+    }
+    const req = indexedDB.open(DB_NAME, 1);
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    };
+    const timer = setTimeout(() => {
+      fail(new Error("indexedDB open timed out"));
+    }, OP_TIMEOUT);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(STORE);
+    };
+    req.onsuccess = () => {
+      // An open that answers after it was given up has no one waiting for it: close it, or it
+      // would hold the database open (and block a version change) for as long as the app runs.
+      if (settled) {
+        req.result.close();
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(req.result);
+    };
+    req.onerror = () => {
+      fail(req.error ?? new Error("indexedDB open failed"));
+    };
+    req.onblocked = () => {
+      fail(new Error("indexedDB is blocked"));
+    };
+  });
+}
+
+// withStore runs one request in a transaction and resolves its result when the transaction
+// completes; one that does not complete within OP_TIMEOUT is given up.
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  const db = await openDB();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const tx = db.transaction(STORE, mode);
+      const request = run(tx.objectStore(STORE));
+      const timer = setTimeout(() => {
+        reject(new Error("indexedDB transaction timed out"));
+      }, OP_TIMEOUT);
+      tx.oncomplete = () => {
+        clearTimeout(timer);
+        resolve(request.result);
+      };
+      tx.onerror = () => {
+        clearTimeout(timer);
+        reject(tx.error ?? new Error("indexedDB transaction failed"));
+      };
+      tx.onabort = () => {
+        clearTimeout(timer);
+        reject(tx.error ?? new Error("indexedDB transaction aborted"));
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// Every access goes through one queue, so they run in the order they were asked: a save that
+// started before a clear can never open its connection later and write what the clear removed. An
+// access that outlasts OP_TIMEOUT rejects, which moves the queue on.
+let tail: Promise<void> = Promise.resolve();
+
+function enqueue<T>(op: () => Promise<T>): Promise<T> {
+  const result = tail.then(op);
+  tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+interface Saved {
+  snapshot: Snapshot;
+  updated: number;
+}
+
+function isSaved(value: unknown): value is Saved {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "snapshot" in value &&
+    typeof value.snapshot === "object" &&
+    value.snapshot !== null &&
+    "updated" in value &&
+    typeof value.updated === "number"
+  );
+}
+
+/** The last saved snapshot and when it was last heard from the daemon (ms), or null. Never rejects. */
+export async function loadSnapshot(): Promise<Saved | null> {
+  try {
+    const record: unknown = await enqueue(() => withStore("readonly", (store) => store.get(KEY)));
+    return isSaved(record) ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+// The save waiting for its turn in the queue, if there is one. A save asked while one waits
+// replaces its snapshot, so a queue held up by a slow access holds one snapshot, not one per event.
+// A clear empties the slot (the save stays queued ahead of the clear), so a save asked after the
+// clear gets a place behind it and is not folded into the save the clear removes.
+let waiting: { saved: Saved } | null = null;
+
+/**
+ * Stores the snapshot with the time it was last heard from the daemon, replacing a save that has
+ * not started yet. Never throws or rejects.
+ */
+export function saveSnapshot(snapshot: Snapshot, updated: number): void {
+  if (waiting !== null) {
+    waiting.saved = { snapshot, updated };
+    return;
+  }
+  const slot = { saved: { snapshot, updated } };
+  waiting = slot;
+  enqueue(() => {
+    if (waiting === slot) waiting = null;
+    return withStore("readwrite", (store) => store.put(slot.saved, KEY));
+  }).catch(() => undefined);
+}
+
+/** Forgets the stored snapshot (on a 401 and on unpairing). Never rejects. */
+export async function clearSnapshot(): Promise<void> {
+  waiting = null;
+  try {
+    await enqueue(() => withStore("readwrite", (store) => store.delete(KEY)));
+  } catch {
+    // nothing stored, or no way to store it
+  }
+}
+```
+
+Create `internal/web/ui/src/store/badge.ts`:
+
+```ts
+// The Home Screen badge: the count of sessions that need you, which the stream carries.
+
+interface BadgingNavigator {
+  setAppBadge?: (count: number) => Promise<void>;
+  clearAppBadge?: () => Promise<void>;
+}
+
+/**
+ * Puts the count on the Home Screen icon, and clears it at 0, so answering every session clears
+ * what a push set. A browser without the Badging API, or one that refuses, is left alone.
+ */
+export function setBadge(count: number): void {
+  try {
+    const nav = navigator as Navigator & BadgingNavigator;
+    const shown = count > 0 ? nav.setAppBadge?.(count) : nav.clearAppBadge?.();
+    shown?.catch(() => undefined);
+  } catch {
+    // no Badging API, or it threw: the icon keeps what it had
+  }
+}
+```
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/store/persist.ts src/store/badge.ts src/store/persist.test.ts src/store/badge.test.ts
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/store/persist.test.ts src/store/badge.test.ts && pnpm run check
+```
+
+Expected: `Test Files  2 passed (2)`, `Tests  17 passed (17)`, and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/store/persist.ts internal/web/ui/src/store/badge.ts internal/web/ui/src/store/persist.test.ts internal/web/ui/src/store/badge.test.ts && git commit -m "feat(web): the new app's snapshot persistence and Home Screen badge" -- internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml internal/web/ui/src/store/persist.ts internal/web/ui/src/store/badge.ts internal/web/ui/src/store/persist.test.ts internal/web/ui/src/store/badge.test.ts
+```
+
+### Task 9.4: `fixtures.ts`, the typed fixtures and the fixture keys
+
+**Files:**
+- Create: `internal/web/ui/src/fixtures.ts`
+- Create: `internal/web/ui/src/fixtures.test.ts`
+- Modify: `tools/webshot/fixture/snapshot.json`, `tools/webshot/fixture/turns.json`, `tools/webshot/fixture/agent-turns.json`, `tools/webshot/fixture/flow.json`, `tools/webshot/fixture/flows.json`
+
+The generated types require keys the canned loom's fixtures lack: every session's `asks` and `flows`, a flow summary's `part`, a job's six control fields, a step's `finished` (turns) and `waiting` (flow). Go's `TestWebshotFixture_IsTheJSONTheLayerServes` decodes with unknown fields refused but missing keys allowed, so it never noticed. The script below adds each missing key with the value the layer sends for "none"; a step's `finished` is `false`, which the classic app already reads a missing one as.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/fixtures.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import type {
+  AgentPageState,
+  Client,
+  FileOmitted,
+  FileStatus,
+  FlowCell,
+  FlowQuestionKind,
+  FlowStageName,
+  FlowStageState,
+  FlowStatus,
+  FlowStepKind,
+  ItemKind,
+  JobControl,
+  JobState,
+  PrChecks,
+  PrState,
+  SessionGroup,
+  SessionStatus,
+  Snapshot,
+  StepState,
+  TurnFrom,
+} from "@/api/gen";
+import { fillTimes, fixtureSnapshot } from "./fixtures";
+import agentTurns from "../../../../tools/webshot/fixture/agent-turns.json";
+import diff from "../../../../tools/webshot/fixture/diff.json";
+import flowDoc from "../../../../tools/webshot/fixture/flow-doc.json";
+import flow from "../../../../tools/webshot/fixture/flow.json";
+import flows from "../../../../tools/webshot/fixture/flows.json";
+import jobLogAfter from "../../../../tools/webshot/fixture/job-log-after.json";
+import jobLog from "../../../../tools/webshot/fixture/job-log.json";
+import launchDefaults from "../../../../tools/webshot/fixture/launch-defaults.json";
+import snapshot from "../../../../tools/webshot/fixture/snapshot.json";
+import turns from "../../../../tools/webshot/fixture/turns.json";
+
+// A JSON import's strings are `string`, not the union a field holds, so the typed comparison turns
+// every string union into `string`; the value checks below hold each union-typed field to its
+// union's values.
+type Widen<T> = T extends string
+  ? string
+  : T extends readonly (infer U)[]
+    ? Widen<U>[]
+    : T extends object
+      ? { [K in keyof T]: Widen<T[K]> }
+      : T;
+
+// The value a route's generated client function answers with.
+type Resp<K extends keyof Client> = Extract<
+  Awaited<ReturnType<Client[K]>>,
+  { kind: "ok" }
+>["value"];
+
+// Each fixture that answers a route, held to that route's generated response type: a Go change
+// that breaks a fixture fails the typecheck. A new fixture needs a line here (the next test).
+const typed = {
+  "snapshot.json": snapshot satisfies Widen<Snapshot>,
+  "turns.json": turns satisfies Widen<Resp<"turns">>,
+  "agent-turns.json": agentTurns satisfies Widen<Resp<"turns">>,
+  "diff.json": diff satisfies Widen<Resp<"diff">>,
+  "launch-defaults.json": launchDefaults satisfies Widen<Resp<"launchDefaults">>,
+  "job-log.json": jobLog satisfies Widen<Resp<"jobLog">>,
+  "job-log-after.json": jobLogAfter satisfies Widen<Resp<"jobLog">>,
+  "flow.json": flow satisfies Widen<Resp<"flow">>,
+  "flows.json": flows satisfies Widen<Resp<"flows">>,
+  "flow-doc.json": flowDoc satisfies Widen<Resp<"flowDoc">>,
+};
+
+// Each union's values, as a record the compiler holds to the union both ways: a value missing or
+// extra fails the typecheck.
+const sessionGroup: Record<SessionGroup, true> = {
+  needs_you: true,
+  your_turn: true,
+  working: true,
+  paused: true,
+};
+const sessionStatus: Record<SessionStatus, true> = {
+  Running: true,
+  Ready: true,
+  Loading: true,
+  Paused: true,
+  Prompting: true,
+  Deleting: true,
+  Recoverable: true,
+};
+const prState: Record<PrState, true> = { draft: true, open: true, merged: true, closed: true };
+const prChecks: Record<PrChecks, true> = {
+  none: true,
+  pending: true,
+  passing: true,
+  failing: true,
+};
+const jobState: Record<JobState, true> = {
+  held: true,
+  queued: true,
+  running: true,
+  done: true,
+  failed: true,
+  cancelled: true,
+  lost: true,
+};
+const jobControl: Record<JobControl, true> = { pause: true, resume: true, "": true };
+const turnFrom: Record<TurnFrom, true> = {
+  you: true,
+  plugin: true,
+  peer: true,
+  task: true,
+  brief: true,
+};
+const itemKind: Record<ItemKind, true> = {
+  text: true,
+  thinking: true,
+  steps: true,
+  compacted: true,
+  note: true,
+};
+const stepState: Record<StepState, true> = {
+  pending: true,
+  done: true,
+  failed: true,
+  interrupted: true,
+};
+const agentPageState: Record<AgentPageState, true> = {
+  running: true,
+  finished: true,
+  unknown: true,
+};
+const fileStatus: Record<FileStatus, true> = { A: true, M: true, D: true, R: true, C: true };
+const fileOmitted: Record<FileOmitted, true> = { "": true, lines: true, budget: true };
+const flowStageName: Record<FlowStageName, true> = {
+  design: true,
+  spec: true,
+  draft: true,
+  run: true,
+  record: true,
+};
+const flowStageState: Record<FlowStageState, true> = {
+  done: true,
+  now: true,
+  todo: true,
+  unreadable: true,
+};
+const flowStatus: Record<FlowStatus, true> = {
+  designing: true,
+  designed: true,
+  drafting: true,
+  drafted: true,
+  supervised: true,
+  running: true,
+  parked: true,
+  done: true,
+  stopped: true,
+  cancelled: true,
+  lost: true,
+  "": true,
+};
+const flowCell: Record<FlowCell, true> = {
+  todo: true,
+  running: true,
+  passed: true,
+  failed: true,
+  asks: true,
+  skipped: true,
+};
+const flowStepKind: Record<FlowStepKind, true> = {
+  premise: true,
+  dev: true,
+  gates: true,
+  review: true,
+  fix: true,
+  docs: true,
+};
+const flowQuestionKind: Record<FlowQuestionKind, true> = {
+  "needs-context": true,
+  "blocked-decision": true,
+  "design-finding": true,
+  "premise-design": true,
+  "unresolved-findings": true,
+  "gate-failure": true,
+  "agent-failed": true,
+  "tree-moved": true,
+  "docs-strayed": true,
+  "usage-limit": true,
+  lane: true,
+  "": true,
+};
+
+// collect gathers the values at a path: "/"-separated keys, "*" for every value of an object or
+// every element of an array; a hop through null or a missing key gathers nothing.
+function collect(root: unknown, path: string): unknown[] {
+  let level: unknown[] = [root];
+  for (const key of path.split("/")) {
+    const next: unknown[] = [];
+    for (const value of level) {
+      if (value === null || typeof value !== "object") continue;
+      if (key === "*") next.push(...Object.values(value));
+      else if (key in value) next.push((value as Record<string, unknown>)[key]);
+    }
+    level = next;
+  }
+  return level;
+}
+
+const outside = (values: unknown[], union: Record<string, true>) =>
+  values.filter((v) => typeof v !== "string" || !Object.keys(union).includes(v));
+
+// Every union-typed field the fixtures carry, with the union it must hold a value of.
+const unionFields: { fixture: keyof typeof typed; path: string; union: Record<string, true> }[] = [
+  { fixture: "snapshot.json", path: "sessions/*/*/group", union: sessionGroup },
+  { fixture: "snapshot.json", path: "sessions/*/*/status", union: sessionStatus },
+  { fixture: "snapshot.json", path: "sessions/*/*/pr/state", union: prState },
+  { fixture: "snapshot.json", path: "sessions/*/*/pr/checks", union: prChecks },
+  { fixture: "snapshot.json", path: "sessions/*/*/jobs/*/state", union: jobState },
+  { fixture: "snapshot.json", path: "sessions/*/*/jobs/*/control", union: jobControl },
+  { fixture: "snapshot.json", path: "sessions/*/*/flows/*/stage", union: flowStageName },
+  { fixture: "snapshot.json", path: "sessions/*/*/flows/*/status", union: flowStatus },
+  { fixture: "snapshot.json", path: "sessions/*/*/flows/*/asks", union: flowQuestionKind },
+  { fixture: "turns.json", path: "turns/*/from", union: turnFrom },
+  { fixture: "turns.json", path: "turns/*/items/*/kind", union: itemKind },
+  { fixture: "turns.json", path: "turns/*/items/*/steps/*/state", union: stepState },
+  { fixture: "agent-turns.json", path: "turns/*/from", union: turnFrom },
+  { fixture: "agent-turns.json", path: "turns/*/items/*/kind", union: itemKind },
+  { fixture: "agent-turns.json", path: "turns/*/items/*/steps/*/state", union: stepState },
+  { fixture: "agent-turns.json", path: "agent/state", union: agentPageState },
+  { fixture: "diff.json", path: "files/*/status", union: fileStatus },
+  { fixture: "diff.json", path: "files/*/omitted", union: fileOmitted },
+  { fixture: "flow.json", path: "summary/stage", union: flowStageName },
+  { fixture: "flow.json", path: "summary/status", union: flowStatus },
+  { fixture: "flow.json", path: "summary/asks", union: flowQuestionKind },
+  { fixture: "flow.json", path: "stages/*/name", union: flowStageName },
+  { fixture: "flow.json", path: "stages/*/state", union: flowStageState },
+  { fixture: "flow.json", path: "question/kind", union: flowQuestionKind },
+  { fixture: "flow.json", path: "premise/cells/*", union: flowCell },
+  { fixture: "flow.json", path: "stories/*/cells/*", union: flowCell },
+  { fixture: "flow.json", path: "premise/steps/*/kind", union: flowStepKind },
+  { fixture: "flow.json", path: "stories/*/steps/*/kind", union: flowStepKind },
+  { fixture: "flows.json", path: "live/*/flow/stage", union: flowStageName },
+  { fixture: "flows.json", path: "live/*/flow/status", union: flowStatus },
+  { fixture: "flows.json", path: "live/*/flow/asks", union: flowQuestionKind },
+];
+
+describe("the typed fixtures", () => {
+  it("covers every JSON file in the fixture directory", () => {
+    const files = import.meta.glob("../../../../tools/webshot/fixture/*.json", { eager: true });
+    const names = Object.keys(files).map((path) => path.slice(path.lastIndexOf("/") + 1));
+    expect(names.sort()).toEqual(Object.keys(typed).sort());
+  });
+
+  it.each(unionFields)("$fixture holds only values of its union at $path", (field) => {
+    const values = collect(typed[field.fixture], field.path);
+    expect(values.length).toBeGreaterThan(0);
+    expect(outside(values, field.union)).toEqual([]);
+  });
+
+  it("finds a value outside a union", () => {
+    expect(outside(["working", "mystery", 3], sessionGroup)).toEqual(["mystery", 3]);
+  });
+
+  it("collects through a null and past a missing key without error", () => {
+    expect(collect({ a: [{ b: null }, { c: 1 }, null] }, "a/*/b")).toEqual([null]);
+  });
+});
+
+describe("fillTimes", () => {
+  const now = Date.parse("2026-11-18T12:00:00Z");
+
+  it("fills now, and now plus or minus a duration, as RFC 3339", () => {
+    expect(fillTimes("now", now)).toBe("2026-11-18T12:00:00Z");
+    expect(fillTimes("now-2m10s", now)).toBe("2026-11-18T11:57:50Z");
+    expect(fillTimes("now+1h40m", now)).toBe("2026-11-18T13:40:00Z");
+    expect(fillTimes("now-72h", now)).toBe("2026-11-15T12:00:00Z");
+  });
+
+  it("fills inside objects and arrays and leaves other values alone", () => {
+    const value = { a: ["now-1m", "nowhere", 3, null, true], b: { c: "now-30s" } };
+    expect(fillTimes(value, now)).toEqual({
+      a: ["2026-11-18T11:59:00Z", "nowhere", 3, null, true],
+      b: { c: "2026-11-18T11:59:30Z" },
+    });
+  });
+
+  it("refuses a duration it cannot read", () => {
+    expect(() => fillTimes("now-3x", now)).toThrow("bad duration");
+  });
+});
+
+describe("fixtureSnapshot", () => {
+  const now = Date.parse("2026-11-18T12:00:00Z");
+
+  it("fills every relative time of the canned snapshot", () => {
+    const filled = fixtureSnapshot(now);
+    expect(JSON.stringify(filled)).not.toMatch(/"now[-+"]/);
+    const session = Object.values(filled.sessions ?? {})
+      .flatMap((list) => list ?? [])
+      .find((s) => s.id === 1);
+    expect(session?.since).toBe("2026-11-18T11:58:00Z");
+  });
+
+  it("is a copy, so a test may change it", () => {
+    const first = fixtureSnapshot(now);
+    first.host = "changed";
+    expect(fixtureSnapshot(now).host).toBe("fresco");
+  });
+});
+```
+
+Fails without: `covers every JSON file`: a fixture added without a line in `typed`; each `satisfies` line: the typecheck (`pnpm run typecheck`) fails when a fixture lacks a key its generated type requires (the reason for the fixture edits below) or holds a field of another type; the `$fixture holds only values` cases: a value outside its union (a Go union that grew, or a fixture typo) and, through `toBeGreaterThan(0)`, a path that gathers nothing; `finds a value outside a union`: `outside` returning nothing for a stranger; `collects through a null`: `collect`'s null and missing-key skips; `fills now ...`: the regex or the unit table; `fills inside objects and arrays`: the recursion; `refuses a duration it cannot read`: the `DURATION` check; `fills every relative time`: any relative time left unfilled; `is a copy`: `fillTimes` building new objects instead of returning the JSON import.
+
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/fixtures.test.ts
+```
+
+Expected: `FAIL src/fixtures.test.ts` with `Failed to resolve import "./fixtures" from "src/fixtures.test.ts". Does the file exist?`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/fixtures.ts`:
+
+```ts
+// The canned loom's snapshot (tools/webshot/fixture/snapshot.json) for the tests: its relative
+// times ("now-2m", "now+1h40m") filled as tools/webshot's fillTimes fills them, so the same
+// fixture feeds Vitest and the screenshots.
+import type { Snapshot } from "@/api/gen";
+import snapshotJson from "../../../../tools/webshot/fixture/snapshot.json";
+
+const RELATIVE = /^now(?:([+-])(\S+))?$/;
+const DURATION = /^(?:\d+(?:\.\d+)?(?:ms|h|m|s))+$/;
+const PART = /(\d+(?:\.\d+)?)(ms|h|m|s)/g;
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
+
+// durationMs reads the duration forms the fixtures use, as Go's time.ParseDuration writes them:
+// "30s", "2m10s", "1h40m", "430h".
+function durationMs(text: string): number {
+  if (!DURATION.test(text)) throw new Error(`fixture time: bad duration ${text}`);
+  let total = 0;
+  for (const m of text.matchAll(PART)) total += Number(m[1]) * (UNIT_MS[m[2] ?? ""] ?? 0);
+  return total;
+}
+
+/** Replaces every string of the form now[+-duration] in value with the RFC 3339 time it names. */
+export function fillTimes(value: unknown, now: number): unknown {
+  if (typeof value === "string") {
+    const m = value.match(RELATIVE);
+    if (m === null) return value;
+    const sign = m[1];
+    const span = m[2];
+    const at =
+      sign === undefined || span === undefined
+        ? now
+        : now + (sign === "-" ? -1 : 1) * durationMs(span);
+    return new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+  if (Array.isArray(value)) return (value as unknown[]).map((v) => fillTimes(v, now));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fillTimes(v, now)]));
+  }
+  return value;
+}
+
+/** The canned snapshot with its times counted from now (ms), a fresh copy each call. */
+export function fixtureSnapshot(now = Date.now()): Snapshot {
+  return fillTimes(snapshotJson, now) as Snapshot;
+}
+```
+
+Give the fixtures the keys their generated types require. Write the script outside the worktree and run it from the repo root:
+
+```bash
+d=$(mktemp -d) && cat > "$d/fixfx.mjs" <<'EOF'
+// Gives the canned loom's fixtures the keys their generated TS types require.
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const dir = process.argv[2];
+
+function edit(name, fn) {
+  const file = join(dir, name);
+  const data = JSON.parse(readFileSync(file, "utf8"));
+  fn(data);
+  // flow.json writes the section sign as a § escape: keep it that way.
+  const text = JSON.stringify(data, null, 2).replace(/§/g, "\\u00a7") + "\n";
+  writeFileSync(file, text);
+}
+
+const keep = (o, key, value) => {
+  if (!(key in o)) o[key] = value;
+};
+
+edit("snapshot.json", (d) => {
+  for (const list of Object.values(d.sessions)) {
+    for (const s of list) {
+      keep(s, "asks", []);
+      keep(s, "flows", []);
+      for (const f of s.flows) keep(f, "part", "");
+      for (const j of s.jobs) {
+        keep(j, "parked", false);
+        keep(j, "paused", false);
+        keep(j, "pause_reclaimed", false);
+        keep(j, "forced", false);
+        keep(j, "control", "");
+        keep(j, "control_error", "");
+      }
+    }
+  }
+});
+
+for (const name of ["turns.json", "agent-turns.json"]) {
+  edit(name, (d) => {
+    for (const t of d.turns) {
+      for (const it of t.items) for (const st of it.steps ?? []) keep(st, "finished", false);
+    }
+  });
+}
+
+edit("flow.json", (d) => {
+  keep(d.summary, "part", "");
+  for (const row of [d.premise, ...d.stories, d.final]) {
+    if (row) for (const st of row.steps) keep(st, "waiting", "");
+  }
+});
+
+edit("flows.json", (d) => {
+  for (const l of d.live) keep(l.flow, "part", "");
+});
+EOF
+node "$d/fixfx.mjs" tools/webshot/fixture && git diff --stat -- tools/webshot/fixture
+```
+
+The diff names `snapshot.json`, `turns.json`, `agent-turns.json`, `flow.json` and `flows.json`. It shows added keys (and the comma the added key puts on the line before it) and one reordering: a JS object lists integer-like keys first, so `flow.json`'s `costs.by_story` (`"P"`, `"1"`, `"2"`, `"3"`) comes back as `"1"`, `"2"`, `"3"`, `"P"`. The reorder changes no value and nothing reads the map's order, so keep it. Nothing else changes (the section sign stays an escape).
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/fixtures.ts src/fixtures.test.ts
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/fixtures.test.ts && pnpm run check
+```
+
+Expected: `Tests  39 passed (39)` for the file and `pnpm run check` exits 0.
+
+Then check the Go side still accepts the fixtures:
+
+```bash
+CGO_ENABLED=0 go test ./internal/web/ -run TestWebshotFixture_IsTheJSONTheLayerServes && CGO_ENABLED=0 go test ./tools/webshot/
+```
+
+Expected: `ok  github.com/aidan-bailey/loom/internal/web` and `ok  github.com/aidan-bailey/loom/tools/webshot`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/fixtures.ts internal/web/ui/src/fixtures.test.ts && git commit -m "feat(web): typed webshot fixtures for the new app's tests" -- internal/web/ui/src/fixtures.ts internal/web/ui/src/fixtures.test.ts tools/webshot/fixture/snapshot.json tools/webshot/fixture/turns.json tools/webshot/fixture/agent-turns.json tools/webshot/fixture/flow.json tools/webshot/fixture/flows.json
+```
+
+### Task 9.5: `groups.ts`
+
+**Files:**
+- Create: `internal/web/ui/src/fleet/groups.ts`
+- Create: `internal/web/ui/src/fleet/groups.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/fleet/groups.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import type { Session, SessionGroup, Snapshot } from "@/api/gen";
+import { fixtureSnapshot } from "@/fixtures";
+import {
+  allSessions,
+  emptyGroups,
+  fleetGroups,
+  GROUPS,
+  groupSessions,
+  nextInGroup,
+  shownWorkspaces,
+} from "./groups";
+
+const NOW = Date.parse("2026-11-18T12:00:00Z");
+const ids = (list: Session[]) => list.map((s) => s.id);
+
+// The canned fleet: workspace 1 (loom) holds 1 working (2m), 2 needs you (18m), 3 working (9m) and
+// 7 your turn (41m); workspace 2 (flow) holds 4 needs you (52m), 5 paused and 6 working (4m).
+describe("GROUPS", () => {
+  it("lists Needs you, Your turn, Working and Paused, in that order", () => {
+    expect(GROUPS).toEqual([
+      { key: "needs_you", title: "Needs you" },
+      { key: "your_turn", title: "Your turn" },
+      { key: "working", title: "Working" },
+      { key: "paused", title: "Paused" },
+    ]);
+  });
+});
+
+describe("allSessions and shownWorkspaces", () => {
+  it("flattens the sessions of every workspace", () => {
+    expect(ids(allSessions(fixtureSnapshot(NOW))).sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("copes with no sessions, and a workspace whose list is null", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    expect(allSessions({ ...snapshot, sessions: null })).toEqual([]);
+    const second = snapshot.sessions?.["2"] ?? null;
+    const partial: Snapshot = { ...snapshot, sessions: { "1": null, "2": second } };
+    expect(ids(allSessions(partial)).sort()).toEqual([4, 5, 6]);
+  });
+
+  it("lists the workspaces the daemon shows, and one without the flag", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    const [first, second] = snapshot.workspaces ?? [];
+    if (!first || !second) throw new Error("the fixture has two workspaces");
+    const hidden = { ...snapshot, workspaces: [first, { ...second, shown: false }] };
+    expect(shownWorkspaces(hidden).map((w) => w.id)).toEqual([1]);
+    const older: Partial<typeof second> = { ...second };
+    delete older.shown;
+    const flagless = { ...snapshot, workspaces: [first, older as typeof second] };
+    expect(shownWorkspaces(flagless).map((w) => w.id)).toEqual([1, 2]);
+    expect(shownWorkspaces({ ...snapshot, workspaces: null })).toEqual([]);
+  });
+});
+
+describe("groupSessions", () => {
+  const sessions = allSessions(fixtureSnapshot(NOW));
+
+  it("orders Needs you by the longest wait and the other groups newest first", () => {
+    const groups = groupSessions(sessions, null);
+    expect(ids(groups.needs_you)).toEqual([4, 2]);
+    expect(ids(groups.your_turn)).toEqual([7]);
+    expect(ids(groups.working)).toEqual([1, 6, 3]);
+    expect(ids(groups.paused)).toEqual([5]);
+  });
+
+  it("keeps one workspace's sessions when given its id", () => {
+    const groups = groupSessions(sessions, 1);
+    expect(ids(groups.needs_you)).toEqual([2]);
+    expect(ids(groups.working)).toEqual([1, 3]);
+    expect(ids(groups.paused)).toEqual([]);
+  });
+
+  it("lists a group this build does not know under Paused, never drops it", () => {
+    const stranger = { ...sessions[0], id: 99, group: "mystery" as SessionGroup } as Session;
+    const groups = groupSessions([...sessions, stranger], null);
+    expect(ids(groups.paused)).toContain(99);
+  });
+
+  it("sorts a session with no time last among the newest-first groups", () => {
+    const first = sessions.find((s) => s.id === 1) as Session;
+    const timeless = { ...first, id: 50, since: "" };
+    expect(ids(groupSessions([timeless, first], null).working)).toEqual([1, 50]);
+  });
+});
+
+describe("fleetGroups", () => {
+  it("groups the sessions of the shown workspaces, whatever the fleet's filter", () => {
+    const groups = fleetGroups(fixtureSnapshot(NOW));
+    expect(ids(groups.needs_you)).toEqual([4, 2]);
+    expect(ids(groups.working)).toEqual([1, 6, 3]);
+  });
+
+  it("leaves out the sessions of a workspace the fleet does not show", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    const [first, second] = snapshot.workspaces ?? [];
+    if (!first || !second) throw new Error("the fixture has two workspaces");
+    const hidden: Snapshot = { ...snapshot, workspaces: [first, { ...second, shown: false }] };
+    const groups = fleetGroups(hidden);
+    expect(ids(groups.needs_you)).toEqual([2]);
+    expect(ids(groups.paused)).toEqual([]);
+  });
+});
+
+describe("nextInGroup", () => {
+  const groups = fleetGroups(fixtureSnapshot(NOW));
+
+  it("is the session after the current one, wrapping to the first", () => {
+    expect(nextInGroup(groups, "working", 1)?.id).toBe(6);
+    expect(nextInGroup(groups, "working", 3)?.id).toBe(1);
+  });
+
+  it("is the first when the current session is not in the group or there is none", () => {
+    expect(nextInGroup(groups, "needs_you", 7)?.id).toBe(4);
+    expect(nextInGroup(groups, "needs_you", null)?.id).toBe(4);
+  });
+
+  it("is undefined for an empty group", () => {
+    expect(nextInGroup(emptyGroups(), "working", 1)).toBeUndefined();
+  });
+});
+```
+
+Fails without: `GROUPS`: the order or a title; `flattens the sessions`: `allSessions`'s `flatMap`; `copes with no sessions`: the `?? {}` and `?? []`; `lists the workspaces the daemon shows`: the `shown !== false` filter (both the hidden and the flagless side) and the `?? []`; `orders Needs you ...`: the ascending sort for `needs_you` or the descending sort of the rest; `keeps one workspace's sessions`: the `workspace !== null && s.workspace !== workspace` skip; `lists a group this build does not know under Paused`: the `isGroup` fallback; `sorts a session with no time last`: the `|| 0` on an unparsable time; `groups the sessions of the shown workspaces` and `leaves out the sessions of a workspace the fleet does not show`: the `shown` set in `fleetGroups`; the `nextInGroup` tests: the wrap (`% list.length`), the `-1 + 1` start for a stranger, the empty guard.
+
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/fleet/groups.test.ts
+```
+
+Expected: `FAIL src/fleet/groups.test.ts` with `Failed to resolve import "./groups" from "src/fleet/groups.test.ts". Does the file exist?`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/fleet/groups.ts`:
+
+```ts
+// The fleet's grouping, ported from the classic app's fleet.mjs: the four groups, their order, and
+// the sessions a count in the footer cycles through.
+import type { Session, SessionGroup, Snapshot, Workspace } from "@/api/gen";
+
+export type FleetGroups = Record<SessionGroup, Session[]>;
+
+export const GROUPS: { key: SessionGroup; title: string }[] = [
+  { key: "needs_you", title: "Needs you" },
+  { key: "your_turn", title: "Your turn" },
+  { key: "working", title: "Working" },
+  { key: "paused", title: "Paused" },
+];
+
+export function emptyGroups(): FleetGroups {
+  return { needs_you: [], your_turn: [], working: [], paused: [] };
+}
+
+/** Every session of every workspace, as the snapshot lists them. */
+export function allSessions(snapshot: Snapshot): Session[] {
+  return Object.values(snapshot.sessions ?? {}).flatMap((list) => list ?? []);
+}
+
+/**
+ * The workspaces the fleet lists, in the daemon's order (the open tabs first). One without the
+ * flag, from an older daemon, is shown.
+ */
+export function shownWorkspaces(snapshot: Snapshot): Workspace[] {
+  return (snapshot.workspaces ?? []).filter((w) => w.shown !== false);
+}
+
+function isGroup(group: string): group is SessionGroup {
+  return GROUPS.some((g) => g.key === group);
+}
+
+const since = (s: Session): number => Date.parse(s.since) || 0;
+
+/**
+ * Groups the sessions: Needs you with the longest wait first, the others newest first. A workspace
+ * of null keeps every workspace; a group this build does not know is listed under Paused.
+ */
+export function groupSessions(sessions: Session[], workspace: number | null): FleetGroups {
+  const out = emptyGroups();
+  for (const s of sessions) {
+    if (workspace !== null && s.workspace !== workspace) continue;
+    out[isGroup(s.group) ? s.group : "paused"].push(s);
+  }
+  out.needs_you.sort((a, b) => since(a) - since(b));
+  for (const key of ["your_turn", "working", "paused"] as const) {
+    out[key].sort((a, b) => since(b) - since(a));
+  }
+  return out;
+}
+
+/**
+ * Groups the sessions of the shown workspaces as the fleet does, whatever the fleet's workspace
+ * filter: the footer's counts and the sessions a count's tap cycles through.
+ */
+export function fleetGroups(snapshot: Snapshot): FleetGroups {
+  const shown = new Set(shownWorkspaces(snapshot).map((w) => w.id));
+  return groupSessions(
+    allSessions(snapshot).filter((s) => shown.has(s.workspace)),
+    null,
+  );
+}
+
+/**
+ * The session a count's tap opens: the one after currentId in the group's order, wrapping to the
+ * first, or the first when currentId is not in the group; undefined for an empty group.
+ */
+export function nextInGroup(
+  groups: FleetGroups,
+  group: SessionGroup,
+  currentId: number | null,
+): Session | undefined {
+  const list = groups[group];
+  if (list.length === 0) return undefined;
+  const at = list.findIndex((s) => s.id === currentId);
+  return list[(at + 1) % list.length];
+}
+```
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/fleet/groups.ts src/fleet/groups.test.ts
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/fleet/groups.test.ts && pnpm run check
+```
+
+Expected: `Tests  13 passed (13)` and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/fleet/groups.ts internal/web/ui/src/fleet/groups.test.ts && git commit -m "feat(web): the new app's fleet grouping" -- internal/web/ui/src/fleet/groups.ts internal/web/ui/src/fleet/groups.test.ts
+```
+
+### Task 9.6: the store: `useFleet` and its selectors
+
+**Files:**
+- Modify: `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`
+- Create: `internal/web/ui/src/store/fleet.ts`
+- Create: `internal/web/ui/src/store/fleet.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/store/fleet.test.ts`:
+
+```ts
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Notice, Session } from "@/api/gen";
+import { fixtureSnapshot } from "@/fixtures";
+import { useFleet, useFleetGroups, useLink, useSession } from "./fleet";
+import { clearSnapshot } from "./persist";
+
+vi.mock("./persist");
+
+const NOW = Date.parse("2026-11-18T12:00:00Z");
+const RESET = { snapshot: null, stale: true, link: "connecting", updated: 0 } as const;
+const store = () => useFleet.getState();
+const sessionsOf = (workspace: number): Session[] =>
+  fixtureSnapshot(NOW).sessions?.[String(workspace)] ?? [];
+const notice = (text: string): Notice => ({ text, error: false, at: "2026-11-18T12:00:00Z" });
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.setSystemTime(NOW);
+  useFleet.setState(RESET);
+  vi.mocked(clearSnapshot).mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
+
+describe("the store", () => {
+  it("starts empty, stale and connecting", () => {
+    expect(store()).toMatchObject({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  });
+
+  it("installs a snapshot, goes live and stamps the time", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    store().apply("snapshot", snapshot);
+    expect(store().snapshot).toBe(snapshot);
+    expect(store()).toMatchObject({ stale: false, link: "live", updated: NOW });
+  });
+
+  it("replaces one workspace's sessions on a sessions event and keeps the others", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    const second = store().snapshot?.sessions?.["2"];
+    const only = sessionsOf(1).slice(0, 1);
+    vi.advanceTimersByTime(500);
+    store().apply("sessions", { workspace: 1, sessions: only, badge: 1 });
+    expect(store().snapshot?.sessions?.["1"]).toEqual(only);
+    expect(store().snapshot?.sessions?.["2"]).toBe(second);
+    expect(store().updated).toBe(NOW + 500);
+  });
+
+  it("ignores a sessions event that arrives before any snapshot", () => {
+    store().apply("sessions", { workspace: 1, sessions: sessionsOf(1), badge: 0 });
+    expect(store()).toMatchObject({ snapshot: null, updated: 0 });
+  });
+
+  it("drops the sessions of a workspace that closed on a workspaces event", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    store().apply("snapshot", snapshot);
+    const open = (snapshot.workspaces ?? []).slice(0, 1);
+    store().apply("workspaces", { workspaces: open, badge: 0 });
+    expect(Object.keys(store().snapshot?.sessions ?? {})).toEqual(["1"]);
+    expect(store().snapshot?.workspaces).toEqual(open);
+  });
+
+  it("replaces usage, quick replies and the device on their events", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    store().apply("usage", { usage: [] });
+    store().apply("quick_replies", { quick_replies: ["ok"] });
+    const device = {
+      name: "iPad",
+      notify: { waiting: false, finished: true, paused_until: "" },
+      push: "",
+    };
+    store().apply("device", device);
+    expect(store().snapshot?.usage).toEqual([]);
+    expect(store().snapshot?.quick_replies).toEqual(["ok"]);
+    expect(store().snapshot?.device).toEqual(device);
+  });
+
+  it("keeps the last 20 notices", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    for (let i = 0; i < 25; i++) store().apply("notice", notice(`n${i}`));
+    const texts = (store().snapshot?.notices ?? []).map((n) => n.text);
+    expect(texts).toHaveLength(20);
+    expect(texts[0]).toBe("n5");
+    expect(texts[19]).toBe("n24");
+  });
+
+  it("stamps the time on a ping and changes nothing on a bye", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    store().apply("snapshot", snapshot);
+    vi.advanceTimersByTime(7000);
+    store().apply("ping", {});
+    expect(store().updated).toBe(NOW + 7000);
+    expect(store().snapshot).toBe(snapshot);
+    vi.advanceTimersByTime(7000);
+    store().apply("bye", {});
+    expect(store().updated).toBe(NOW + 7000);
+    expect(store().snapshot).toBe(snapshot);
+  });
+
+  it.each([
+    ["connecting", true],
+    ["live", false],
+    ["restarting", true],
+    ["offline", true],
+  ] as const)("setLink(%s) leaves stale %s", (state, stale) => {
+    store().setLink(state);
+    expect(store()).toMatchObject({ link: state, stale });
+  });
+
+  it("loads a saved snapshot with its time and keeps it stale", () => {
+    const saved = fixtureSnapshot(NOW);
+    store().load(saved, 1234);
+    expect(store()).toMatchObject({
+      snapshot: saved,
+      updated: 1234,
+      stale: true,
+      link: "connecting",
+    });
+  });
+
+  it("does not load a saved snapshot over a live one", () => {
+    const live = fixtureSnapshot(NOW);
+    store().apply("snapshot", live);
+    store().load(fixtureSnapshot(NOW - 1000), 1);
+    expect(store().snapshot).toBe(live);
+  });
+
+  it("clears the store and the saved snapshot", async () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    await store().clear();
+    expect(store()).toMatchObject({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+    expect(clearSnapshot).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the selectors", () => {
+  it("useSession finds a session by id, and nothing for an unknown or undefined id", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    expect(renderHook(() => useSession(2)).result.current?.title).toBe("sandbox-ask");
+    expect(renderHook(() => useSession(999)).result.current).toBeUndefined();
+    expect(renderHook(() => useSession(undefined)).result.current).toBeUndefined();
+  });
+
+  it("useSession follows a change to its session and ignores the rest", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    const { result } = renderHook(() => useSession(2));
+    const before = result.current;
+    act(() => {
+      store().apply("sessions", { workspace: 2, sessions: sessionsOf(2), badge: 1 });
+    });
+    expect(result.current).toBe(before);
+    const renamed = sessionsOf(1).map((s) => (s.id === 2 ? { ...s, title: "renamed" } : s));
+    act(() => {
+      store().apply("sessions", { workspace: 1, sessions: renamed, badge: 1 });
+    });
+    expect(result.current?.title).toBe("renamed");
+  });
+
+  it("useFleetGroups is empty before a snapshot and groups the fleet after one", () => {
+    const { result } = renderHook(() => useFleetGroups());
+    expect(result.current.needs_you).toEqual([]);
+    act(() => {
+      store().apply("snapshot", fixtureSnapshot(NOW));
+    });
+    expect(result.current.needs_you.map((s) => s.id)).toEqual([4, 2]);
+    expect(result.current.working.map((s) => s.id)).toEqual([1, 6, 3]);
+  });
+
+  it("useFleetGroups gives the same object again while the snapshot is the same", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    const { result, rerender } = renderHook(() => useFleetGroups());
+    const before = result.current;
+    rerender();
+    expect(result.current).toBe(before);
+    act(() => {
+      store().apply("ping", {});
+    });
+    expect(result.current).toBe(before);
+  });
+
+  it("useLink gives the link and stale, and the same object while neither changes", () => {
+    const { result } = renderHook(() => useLink());
+    expect(result.current).toEqual({ state: "connecting", stale: true });
+    const before = result.current;
+    act(() => {
+      store().apply("ping", {});
+    });
+    expect(result.current).toBe(before);
+    act(() => {
+      store().setLink("live");
+    });
+    expect(result.current).toEqual({ state: "live", stale: false });
+  });
+});
+```
+
+Fails without: `starts empty, stale and connecting`: the initial state; `installs a snapshot`: the `snapshot` case (its `link: "live"`, `stale: false` or `updated`); `replaces one workspace's sessions`: the keyed replacement (`[String(workspace)]`) or the `updated` stamp; `ignores a sessions event that arrives before any snapshot`: the `current === null` guard in `change`; `drops the sessions of a workspace that closed`: the `open.has(id)` filter; `replaces usage, quick replies and the device`: each of the three cases; `keeps the last 20 notices`: `slice(-RECENT_NOTICES)`; `stamps the time on a ping`: the `ping` and `bye` cases; `setLink(%s)`: `stale: state !== "live"`; `loads a saved snapshot`: `load`'s install and its leaving `stale` alone; `does not load a saved snapshot over a live one`: `load`'s `snapshot !== null` guard; `clears the store and the saved snapshot`: `clear`'s reset or its `clearSnapshot()` call; the `useSession` tests: the `find` by id, the `undefined` guard, and that the selector returns the session itself (a fresh object would re-render on every event); `useFleetGroups is empty before a snapshot`: the `emptyGroups()` branch and the grouping; `useFleetGroups gives the same object again`: the `useMemo` over the snapshot (without it each render groups the fleet into a new object and `toBe` fails; a ping changes `updated` but not `snapshot`); `useLink`: `useShallow` (without it a new object on every store change re-renders on a ping).
+
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm add zustand && pnpm exec vitest run src/store/fleet.test.ts
+```
+
+Expected: `FAIL src/store/fleet.test.ts` with `Failed to resolve import "./fleet" from "src/store/fleet.test.ts". Does the file exist?`.
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/store/fleet.ts`:
+
+```ts
+// The live store (spec §24): the snapshot and the link state, changed by each stream event.
+// Components read it through selectors, so an event re-renders only what read the changed data.
+import { useMemo } from "react";
+import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
+import type { Session, Snapshot, StreamEvents } from "@/api/gen";
+import type { LinkState } from "@/api/stream";
+import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
+import { clearSnapshot } from "./persist";
+
+export interface FleetState {
+  snapshot: Snapshot | null;
+  stale: boolean;
+  link: LinkState;
+  updated: number;
+  apply: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void;
+  setLink: (state: LinkState) => void;
+  load: (saved: Snapshot, updated: number) => void;
+  clear: () => Promise<void>;
+}
+
+type AnyEvent = {
+  [E in keyof StreamEvents]: { name: E; data: StreamEvents[E] };
+}[keyof StreamEvents];
+
+// The snapshot keeps the last 20 notices.
+const RECENT_NOTICES = 20;
+
+// The timer of the save waiting to run (scheduled by startFleet). clear() must cancel it, so it
+// lives beside the store.
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+function cancelSave(): void {
+  if (saveTimer !== undefined) {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+  }
+}
+
+// applied is what one stream event changes. A snapshot installs the view and says it is live; a
+// ping only stamps the time; an event that edits the snapshot is ignored before the first one.
+function applied(state: FleetState, event: AnyEvent, now: number): Partial<FleetState> {
+  const current = state.snapshot;
+  const change = (edit: (snapshot: Snapshot) => Snapshot): Partial<FleetState> =>
+    current === null ? {} : { snapshot: edit(current), updated: now };
+
+  switch (event.name) {
+    case "snapshot":
+      return { snapshot: event.data, updated: now, link: "live", stale: false };
+    case "ping":
+      return { updated: now };
+    case "bye":
+      return {};
+    case "sessions": {
+      const { workspace, sessions } = event.data;
+      return change((s) => ({
+        ...s,
+        sessions: { ...(s.sessions ?? {}), [String(workspace)]: sessions },
+      }));
+    }
+    case "workspaces": {
+      const { workspaces } = event.data;
+      // A closed workspace sends no sessions event: drop its sessions here. The keys are strings of
+      // numeric IDs.
+      const open = new Set((workspaces ?? []).map((w) => String(w.id)));
+      return change((s) => {
+        const kept: Record<string, Session[] | null> = {};
+        for (const [id, list] of Object.entries(s.sessions ?? {})) {
+          if (open.has(id)) kept[id] = list;
+        }
+        return { ...s, workspaces, sessions: kept };
+      });
+    }
+    case "usage": {
+      const { usage } = event.data;
+      return change((s) => ({ ...s, usage }));
+    }
+    case "quick_replies": {
+      const { quick_replies } = event.data;
+      return change((s) => ({ ...s, quick_replies }));
+    }
+    case "device": {
+      const device = event.data;
+      return change((s) => ({ ...s, device }));
+    }
+    case "notice": {
+      const notice = event.data;
+      return change((s) => ({
+        ...s,
+        notices: [...(s.notices ?? []), notice].slice(-RECENT_NOTICES),
+      }));
+    }
+  }
+}
+
+export const useFleet = create<FleetState>()((set, get) => ({
+  snapshot: null,
+  stale: true,
+  link: "connecting",
+  updated: 0,
+
+  apply(name, data) {
+    const event = { name, data } as unknown as AnyEvent;
+    const patch = applied(get(), event, Date.now());
+    if (Object.keys(patch).length > 0) set(patch);
+  },
+
+  setLink(state) {
+    set({ link: state, stale: state !== "live" });
+  },
+
+  // A cold start's saved snapshot: stale until the stream's first one, and never over a live view.
+  load(saved, updated) {
+    if (get().snapshot !== null) return;
+    set({ snapshot: saved, updated });
+  },
+
+  // Forgets everything the phone holds. A pending save is cancelled first, so it can't write the
+  // revoked device's fleet back after the clear.
+  async clear() {
+    cancelSave();
+    set({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+    await clearSnapshot();
+  },
+}));
+
+/** The session with this id, or undefined (for an undefined id, an unknown one, or no snapshot). */
+export function useSession(id: number | undefined): Session | undefined {
+  return useFleet((s) =>
+    id === undefined || s.snapshot === null
+      ? undefined
+      : allSessions(s.snapshot).find((x) => x.id === id),
+  );
+}
+
+/** The fleet's sessions of the shown workspaces in their four groups; empty before a snapshot. */
+export function useFleetGroups(): FleetGroups {
+  const snapshot = useFleet((s) => s.snapshot);
+  return useMemo(() => (snapshot === null ? emptyGroups() : fleetGroups(snapshot)), [snapshot]);
+}
+
+/** The stream's link state and whether the view is stale (every state but live). */
+export function useLink(): { state: LinkState; stale: boolean } {
+  return useFleet(useShallow((s) => ({ state: s.link, stale: s.stale })));
+}
+```
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/store/fleet.ts src/store/fleet.test.ts
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/store/fleet.test.ts && pnpm run check
+```
+
+Expected: `Tests  20 passed (20)` and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/store/fleet.ts internal/web/ui/src/store/fleet.test.ts && git commit -m "feat(web): the new app's live store and its selectors" -- internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml internal/web/ui/src/store/fleet.ts internal/web/ui/src/store/fleet.test.ts
+```
+
+### Task 9.7: `startFleet`
+
+**Files:**
+- Modify: `internal/web/ui/src/store/fleet.ts`
+- Create: `internal/web/ui/src/store/startFleet.test.ts`
+- Modify: `internal/web/dist/` (rebuilt when the story's modules add a class Tailwind finds)
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/store/startFleet.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Notice, Snapshot } from "@/api/gen";
+import { queryClient } from "@/api/queries";
+import { emitStopping, emitUnpaired, onNotices } from "@/api/request";
+import { connectStream, type StreamHandlers } from "@/api/stream";
+import { fixtureSnapshot } from "@/fixtures";
+import { setBadge } from "./badge";
+import { startFleet, useFleet } from "./fleet";
+import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
+
+vi.mock("@/api/stream");
+vi.mock("./badge");
+vi.mock("./persist");
+
+type Saved = { snapshot: Snapshot; updated: number };
+
+const NOW = Date.parse("2026-11-18T12:00:00Z");
+const closeStream = vi.fn();
+const stops: (() => void)[] = [];
+let handlers: StreamHandlers;
+
+const store = () => useFleet.getState();
+const settle = () => vi.advanceTimersByTimeAsync(0);
+const notice = (text: string): Notice => ({ text, error: false, at: "2026-11-18T12:00:00Z" });
+
+function start(): () => void {
+  const stop = startFleet();
+  stops.push(stop);
+  return stop;
+}
+
+// A load that stays pending until the test resolves it.
+function pendingLoad(): (saved: Saved) => void {
+  let resolveLoad: (saved: Saved) => void = () => undefined;
+  vi.mocked(loadSnapshot).mockReturnValue(
+    new Promise<Saved>((resolve) => {
+      resolveLoad = resolve;
+    }),
+  );
+  return (saved) => {
+    resolveLoad(saved);
+  };
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.setSystemTime(NOW);
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  vi.mocked(loadSnapshot).mockResolvedValue(null);
+  vi.mocked(clearSnapshot).mockResolvedValue(undefined);
+  vi.mocked(connectStream).mockImplementation((h) => {
+    handlers = h;
+    return closeStream;
+  });
+});
+
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
+  queryClient.clear();
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
+
+describe("startFleet", () => {
+  it("loads the saved snapshot into a stale store", async () => {
+    const saved = fixtureSnapshot(NOW);
+    vi.mocked(loadSnapshot).mockResolvedValue({ snapshot: saved, updated: 1234 });
+    start();
+    await settle();
+    expect(store()).toMatchObject({ snapshot: saved, updated: 1234, stale: true });
+  });
+
+  it("does not load the saved snapshot over a live one", async () => {
+    const resolveLoad = pendingLoad();
+    start();
+    const live = fixtureSnapshot(NOW);
+    handlers.onEvent("snapshot", live);
+    resolveLoad({ snapshot: fixtureSnapshot(NOW - 5000), updated: 1 });
+    await settle();
+    expect(store().snapshot).toBe(live);
+  });
+
+  it("drops a saved snapshot that was still loading when the device was unpaired", async () => {
+    const resolveLoad = pendingLoad();
+    start();
+    emitUnpaired();
+    resolveLoad({ snapshot: fixtureSnapshot(NOW), updated: 1 });
+    await settle();
+    expect(store().snapshot).toBeNull();
+  });
+
+  it("connects the stream into the store", () => {
+    start();
+    expect(connectStream).toHaveBeenCalledOnce();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    handlers.onLink("live");
+    expect(store()).toMatchObject({ link: "live", stale: false });
+    handlers.onLink("restarting");
+    expect(store()).toMatchObject({ link: "restarting", stale: true });
+  });
+
+  it("sets the badge from the snapshot, sessions and workspaces events only", () => {
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), badge: 3 });
+    expect(setBadge).toHaveBeenLastCalledWith(3);
+    handlers.onEvent("sessions", { workspace: 1, sessions: [], badge: 1 });
+    expect(setBadge).toHaveBeenLastCalledWith(1);
+    handlers.onEvent("workspaces", { workspaces: [], badge: 0 });
+    expect(setBadge).toHaveBeenLastCalledWith(0);
+    handlers.onEvent("device", {
+      name: "x",
+      notify: { waiting: true, finished: true, paused_until: "" },
+      push: "",
+    });
+    handlers.onEvent("ping", {});
+    expect(setBadge).toHaveBeenCalledTimes(3);
+  });
+
+  it("saves at most once a second, the latest state", async () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    await vi.advanceTimersByTimeAsync(300);
+    handlers.onEvent("sessions", { workspace: 1, sessions: [], badge: 0 });
+    await vi.advanceTimersByTimeAsync(300);
+    handlers.onEvent("sessions", { workspace: 2, sessions: [], badge: 0 });
+    await vi.advanceTimersByTimeAsync(399);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(saveSnapshot).toHaveBeenCalledOnce();
+    expect(saveSnapshot).toHaveBeenLastCalledWith(store().snapshot, NOW + 600);
+    await vi.advanceTimersByTimeAsync(200);
+    handlers.onEvent("usage", { usage: [] });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(saveSnapshot).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(saveSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves nothing for a ping, a bye or a change of link", async () => {
+    start();
+    handlers.onEvent("ping", {});
+    handlers.onEvent("bye", {});
+    handlers.onLink("offline");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("hands each stream notice to the onNotices listeners and keeps it", () => {
+    const heard: Notice[][] = [];
+    const off = onNotices((notices) => {
+      heard.push(notices);
+    });
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    const n = notice("stash kept: abc123");
+    handlers.onEvent("notice", n);
+    expect(heard).toEqual([[n]]);
+    expect(store().snapshot?.notices?.at(-1)).toEqual(n);
+    off();
+  });
+
+  it("clears the store, the saved snapshot, the cached queries and the badge, and closes the stream, when unpaired", () => {
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), badge: 4 });
+    queryClient.setQueryData(["turns", 7], { turns: [] });
+    emitUnpaired();
+    expect(store()).toMatchObject({ snapshot: null, stale: true, updated: 0 });
+    expect(clearSnapshot).toHaveBeenCalledOnce();
+    expect(closeStream).toHaveBeenCalledOnce();
+    expect(queryClient.getQueryData(["turns", 7])).toBeUndefined();
+    expect(setBadge).toHaveBeenLastCalledWith(0);
+  });
+
+  it("marks the link restarting when a request is answered with the stopping text, until the stream is live", () => {
+    start();
+    handlers.onLink("live");
+    handlers.onLink("offline");
+    emitStopping();
+    expect(store()).toMatchObject({ link: "restarting", stale: true });
+    handlers.onLink("offline");
+    expect(store().link).toBe("restarting");
+    handlers.onLink("live");
+    expect(store().link).toBe("live");
+    handlers.onLink("offline");
+    expect(store().link).toBe("offline");
+  });
+
+  it("leaves a live link alone when a request is answered with the stopping text", () => {
+    start();
+    handlers.onLink("live");
+    emitStopping();
+    expect(store().link).toBe("live");
+    handlers.onLink("offline");
+    expect(store().link).toBe("offline");
+  });
+
+  it("lets a clear cancel the save that was waiting", async () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    expect(vi.getTimerCount()).toBe(1);
+    await store().clear();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing while the store holds no snapshot", async () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    useFleet.setState({ snapshot: null });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("stops the stream, the unpaired listener and the pending save", async () => {
+    const stop = start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    stop();
+    expect(closeStream).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+    queryClient.setQueryData(["kept"], 1);
+    emitUnpaired();
+    expect(clearSnapshot).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(["kept"])).toBe(1);
+    useFleet.setState({ link: "offline" });
+    emitStopping();
+    expect(store().link).toBe("offline");
+  });
+
+  it("stops the previous start when started again", () => {
+    start();
+    start();
+    expect(connectStream).toHaveBeenCalledTimes(2);
+    expect(closeStream).toHaveBeenCalledOnce();
+  });
+});
+```
+
+Fails without: `loads the saved snapshot into a stale store`: the `loadSnapshot().then` that calls `load`; `does not load the saved snapshot over a live one`: `load`'s live-snapshot guard; `drops a saved snapshot that was still loading when the device was unpaired`: the `epoch !== cleared` check; `connects the stream into the store`: `onEvent` applying and `onLink` calling `setLink`; `sets the badge ...`: the `setBadge` calls in the three cases, or one added to another case; `saves at most once a second, the latest state`: the throttle (a debounce never saves while events keep coming; no timer saves every event) and the save reading the store when the timer fires, not when it was set; `saves nothing for a ping, a bye or a change of link`: `scheduleSave` called for those; `hands each stream notice to the onNotices listeners`: `emitNotices([event.data])` in the `notice` case; `clears the store, the saved snapshot, the cached queries and the badge...`: the `onUnpaired` subscription (`closeStream()`, `clear()`, `queryClient.clear()` and `setBadge(0)`, each asserted on its own); `marks the link restarting when a request is answered with the stopping text`: the `onStopping` subscription, or the `stopping` flag that keeps a later `offline` report as `restarting`, or its reset on `live`; `leaves a live link alone when a request is answered with the stopping text`: the `link === "live"` guard in the subscription (without it a request's 503 on a live stream leaves the link restarting until the stream drops); `lets a clear cancel the save that was waiting`: `cancelSave()` in `clear` (the timer count stays 1; the emptied store's `snapshot !== null` guard alone would save nothing, which is why the test counts the timer); `writes nothing while the store holds no snapshot`: the `snapshot !== null` guard in the saver; `stops the stream, the unpaired listener and the pending save`: each of `stop`'s teardowns (`closeStream()`, `offUnpaired()`, `offStopping()` and `cancelSave()`); `stops the previous start when started again`: the `running?.()` call.
+
+- [ ] **Step 2: Run it to see it fail**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/store/startFleet.test.ts
+```
+
+Expected: `FAIL src/store/startFleet.test.ts`: `startFleet` is not exported from `./fleet` (each test reports `TypeError: startFleet is not a function`; `pnpm run typecheck` says `Module '"./fleet"' has no exported member 'startFleet'`).
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/ui/src/store/fleet.ts`, replace the imports
+
+```ts
+import type { Session, Snapshot, StreamEvents } from "@/api/gen";
+import type { LinkState } from "@/api/stream";
+import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
+import { clearSnapshot } from "./persist";
+```
+
+with
+
+```ts
+import type { Session, Snapshot, StreamEvents } from "@/api/gen";
+import { queryClient } from "@/api/queries";
+import { emitNotices, onStopping, onUnpaired } from "@/api/request";
+import { connectStream, type LinkState } from "@/api/stream";
+import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
+import { setBadge } from "./badge";
+import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
+```
+
+Replace the comment and declaration
+
+```ts
+// The timer of the save waiting to run (scheduled by startFleet). clear() must cancel it, so it
+// lives beside the store.
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+```
+
+with
+
+```ts
+// The timer of the save waiting to run (scheduled by startFleet). clear() must cancel it, so it
+// lives beside the store.
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+// How many times the store has been cleared: a load that began before a clear is the revoked
+// device's snapshot and is dropped.
+let cleared = 0;
+```
+
+In `clear`, replace
+
+```ts
+  async clear() {
+    cancelSave();
+```
+
+with
+
+```ts
+  async clear() {
+    cleared += 1;
+    cancelSave();
+```
+
+Append at the end of the file, after `useLink`:
+
+```ts
+// The snapshot is saved at most once a second: sessions events come up to four a second.
+const SAVE_EVERY = 1000;
+
+// scheduleSave saves the store's latest state SAVE_EVERY after the first change since the last
+// save: a throttle, not a debounce, which would starve while events keep coming. The timer reads
+// the store when it fires, and writes nothing while the store holds no snapshot, so a save
+// scheduled before a clear never lands.
+function scheduleSave(): void {
+  if (saveTimer !== undefined) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    const { snapshot, updated } = useFleet.getState();
+    if (snapshot !== null) saveSnapshot(snapshot, updated);
+  }, SAVE_EVERY);
+}
+
+// afterEvent is what an event does besides changing the store: the badge, the save, the toast.
+function afterEvent(event: AnyEvent): void {
+  switch (event.name) {
+    case "snapshot":
+      // The first snapshot of a launch is also where the launch-time checks run (the shell's
+      // upgrade, the push subscription).
+      setBadge(event.data.badge);
+      scheduleSave();
+      break;
+    case "sessions":
+    case "workspaces":
+      setBadge(event.data.badge);
+      scheduleSave();
+      break;
+    case "usage":
+    case "quick_replies":
+    case "device":
+      scheduleSave();
+      break;
+    case "notice":
+      scheduleSave();
+      emitNotices([event.data]);
+      break;
+    case "ping":
+    case "bye":
+      break;
+  }
+}
+
+let running: (() => void) | undefined;
+
+/**
+ * Starts the fleet: loads the saved snapshot (the view is stale until the stream's first one),
+ * connects the stream into the store, saves at most once a second, sets the badge, and hands each
+ * stream notice to the onNotices listeners. A request's 503 with the daemon's stopping text, while
+ * the stream is down, keeps the link at "restarting" until the stream is live again. When the
+ * device is no longer paired (any request's 401 or the stream's) it closes the stream and clears the
+ * store, the saved snapshot, the cached queries and the badge; it never navigates. Starting again
+ * stops the previous start. It returns its stop.
+ */
+export function startFleet(): () => void {
+  running?.();
+  let stopped = false;
+  const epoch = cleared;
+  // Set by a request's stopping 503 while the stream is down: the daemon is restarting, so the link
+  // says so (not "offline") until the stream is live again.
+  let stopping = false;
+
+  void loadSnapshot().then((saved) => {
+    // A clear since the load began is an unpairing: the saved fleet is the revoked device's.
+    if (stopped || saved === null || epoch !== cleared) return;
+    useFleet.getState().load(saved.snapshot, saved.updated);
+  });
+
+  const closeStream = connectStream({
+    onEvent(name, data) {
+      useFleet.getState().apply(name, data);
+      afterEvent({ name, data } as unknown as AnyEvent);
+    },
+    onLink(state) {
+      if (state === "live") stopping = false;
+      useFleet.getState().setLink(stopping && state === "offline" ? "restarting" : state);
+    },
+  });
+
+  // A live stream is left alone: the daemon's bye already says "restarting" if it is stopping.
+  const offStopping = onStopping(() => {
+    if (useFleet.getState().link === "live") return;
+    stopping = true;
+    useFleet.getState().setLink("restarting");
+  });
+
+  const offUnpaired = onUnpaired(() => {
+    closeStream();
+    void useFleet.getState().clear();
+    // Nothing of the revoked pairing outlives it: the turns, diffs and logs the query client
+    // cached would come back if the app were paired again before a reload, and so would the badge.
+    queryClient.clear();
+    setBadge(0);
+  });
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    closeStream();
+    offUnpaired();
+    offStopping();
+    cancelSave();
+    if (running === stop) running = undefined;
+  };
+  running = stop;
+  return stop;
+}
+```
+
+Then:
+
+```bash
+cd internal/web/ui && pnpm exec prettier --write src/store/fleet.ts src/store/startFleet.test.ts
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+```bash
+cd internal/web/ui && pnpm exec vitest run src/store/startFleet.test.ts src/store/fleet.test.ts && pnpm run check
+```
+
+Expected: `Test Files  2 passed (2)`, `Tests  35 passed (35)`; `pnpm run check` exits 0.
+
+Then rebuild the bundle. The story's modules are not imported by the entry yet, but Tailwind scans every non-test source for class candidates (a `.filter(`, a `"hidden"`), so the built stylesheet can change though nothing here renders:
+
+```bash
+cd internal/web/ui && pnpm run build && pnpm run dist:check && git status --short ../dist
+```
+
+Expected: `dist:check` exits 0; `git status` lists a changed or new file under `internal/web/dist/` when Tailwind found a new class, and nothing when it did not. Either is right: commit what it lists.
+
+Then the story's Go gates, since Task 9.4 changed fixtures the Go tests read:
+
+```bash
+bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi' && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...
+```
+
+Expected: no output from the first command, then `ok` for every package.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/store/startFleet.test.ts internal/web/dist && git commit -m "feat(web): startFleet connects the stream, the store, the saver and the badge" -- internal/web/ui/src/store/fleet.ts internal/web/ui/src/store/startFleet.test.ts internal/web/dist
+```
+
+## Story 10: Routing and panels: every classic URL, the panel registry, the placeholder and the shell's frame
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/app/panels.ts`, `internal/web/ui/src/app/panels.test.ts`, `internal/web/ui/src/app/routes.tsx`, `internal/web/ui/src/app/routes.test.ts`, `internal/web/ui/src/app/shell.tsx`, `internal/web/ui/src/app/shell.test.tsx`, `internal/web/ui/src/panels/index.ts`, `internal/web/ui/src/main.tsx`, `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`, `internal/web/dist/`
+- **Interfaces:** exposes `PanelId`, `PanelProps`, `Panel`, `definePanel`, `panelFor`, `sessionTabs`, `normalizeHash`, `routeOf`, `hrefFor` and the route keys, `useRoute`, `router`, `PanelHost`, `Placeholder`, `AppShell`, `main.tsx`, `src/panels/index.ts`; uses Story 4's `#app`, Story 6's `switchApp`, Story 8's components and stylesheet import, Story 9's `startFleet`, `useSession`, `useLink`, `onUnpaired` and `queryClient`
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+- **Review:** deep
+- **Form:** full (every classic URL must resolve to its view, push links included)
+
+The new app draws one panel per route. `panels.ts` holds the registry the panels register in (`definePanel`) and the session tabs read; `routes.tsx` resolves every classic URL, and the app's own `#/…` links, to a panel (`normalizeHash`, `routeOf`, `hrefFor`, `useRoute`) and builds the TanStack router over hash history; `shell.tsx` holds `PanelHost` (a panel inside an error boundary, or the `Placeholder` when none is registered for the id, which names the screen and switches back to the classic app) and `AppShell` (the pinned header, `main` and the pinned footer, a splash while the store holds no snapshot); `main.tsx` starts the fleet store and renders the router inside Base UI's `CSPProvider` and the query provider. No panel is registered in this part until Story 13, so every other route draws the placeholder. The router only matches and keeps the history: `routeOf` is the one place that decides which panel a hash means, and `useRoute` reads the window's hash (so any component, in or out of the router, sees the same route). The tests are Vitest files under `internal/web/ui/src/app/`. Each command runs from the repository root and enters `internal/web/ui` for `pnpm`. The commits use the repo's Conventional style, scoped `web`.
+
+### Task 10.1: The panel registry
+
+**Files:**
+- Create: `internal/web/ui/src/app/panels.ts`
+- Create: `internal/web/ui/src/app/panels.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/panels.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { Session } from "@/api/gen";
+import { fixtureSnapshot } from "@/fixtures";
+import { allSessions } from "@/fleet/groups";
+
+import { definePanel, panelFor, sessionTabs, type PanelProps } from "./panels";
+
+const Body = (): null => null;
+const props: PanelProps = { sessionId: undefined, params: {}, search: {} };
+
+// aSession is the fixture's first session with the given fields changed.
+function aSession(over: Partial<Session> = {}): Session {
+  const base = allSessions(fixtureSnapshot())[0];
+  if (base === undefined) throw new Error("the fixture holds no session");
+  return { ...base, ...over };
+}
+
+describe("the panel registry", () => {
+  it("finds a panel by its id once it is defined, and none before", () => {
+    expect(panelFor("pair")).toBeUndefined();
+    const panel = definePanel({ id: "pair", title: () => "Pairing", Body });
+    expect(panelFor("pair")).toBe(panel);
+  });
+
+  it("replaces a panel defined again under the same id", () => {
+    definePanel({ id: "new", title: () => "first", Body });
+    definePanel({ id: "new", title: () => "second", Body });
+    expect(panelFor("new")?.title(props)).toBe("second");
+  });
+
+  it("lists the tab panels that apply to a session, in tab order", () => {
+    // Defined out of order, so the sort is what orders them.
+    definePanel({ id: "info", title: () => "Info", tab: { order: 3, label: "info" }, Body });
+    definePanel({
+      id: "changes",
+      title: () => "Changes",
+      tab: { order: 2, label: "changes" },
+      appliesTo: (s) => s.claude,
+      Body,
+    });
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      appliesTo: (s) => s.claude,
+      Body,
+    });
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "mockup" },
+      appliesTo: () => false,
+      Body,
+    });
+    // A panel with no tab is never a session tab.
+    definePanel({ id: "flows", title: () => "Flows", Body });
+
+    expect(sessionTabs(aSession({ claude: true })).map((p) => p.id)).toEqual([
+      "turns",
+      "changes",
+      "info",
+    ]);
+    expect(sessionTabs(aSession({ claude: false })).map((p) => p.id)).toEqual(["info"]);
+  });
+});
+```
+
+Fails without: finds a panel by its id once it is defined: `panelFor` returning undefined, or `definePanel` not storing; replaces a panel: `registry.set` replaced by a first-wins insert; lists the tab panels: the `tab === undefined` skip removed (Flows would list), the `appliesTo` call removed (the non-Claude session would list the conversation and changes, and Mockup would list for both), or the sort removed (the order would be the definition order, info first).
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/panels.test.ts'`
+Expected: the file fails to load: `Error: Failed to resolve import "./panels" from "src/app/panels.test.ts". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/panels.ts`:
+
+```ts
+import type { ComponentType } from "react";
+
+import type { Session } from "@/api/gen";
+
+// PanelId names every screen of the classic app (spec §22); a panel is
+// registered under one of these, and a route no panel is registered for
+// draws the placeholder.
+export type PanelId =
+  | "fleet"
+  | "turns"
+  | "info"
+  | "changes"
+  | "mockup"
+  | "mockupFull"
+  | "agent"
+  | "job"
+  | "flow"
+  | "flowStory"
+  | "flowDoc"
+  | "flows"
+  | "new"
+  | "settings"
+  | "pair";
+
+// PanelProps is what the shell hands a panel's Head and Body: the session
+// the route names (Number(params.id), undefined without one), the route's
+// path values and its search, all strings (routeOf documents the keys).
+export interface PanelProps {
+  sessionId: number | undefined;
+  params: Record<string, string>;
+  search: Record<string, string>;
+}
+
+// Panel is one view. Head is its context row in the pinned header, Body its
+// screen; tab makes it one of a session's tabs (SessionTabs), shown for the
+// sessions appliesTo accepts (every session without it).
+export interface Panel {
+  id: PanelId;
+  title: (props: PanelProps) => string;
+  appliesTo?: (session: Session) => boolean;
+  tab?: { order: number; label: string };
+  Head?: ComponentType<PanelProps>;
+  Body: ComponentType<PanelProps>;
+}
+
+const registry = new Map<PanelId, Panel>();
+
+// definePanel registers a panel (a second definition of an id replaces the
+// first, as a hot reload needs) and returns it.
+export function definePanel(panel: Panel): Panel {
+  registry.set(panel.id, panel);
+  return panel;
+}
+
+// panelFor is the panel registered under id, or undefined.
+export function panelFor(id: PanelId): Panel | undefined {
+  return registry.get(id);
+}
+
+// sessionTabs are the tab panels that apply to the session, in tab order.
+export function sessionTabs(session: Session): Panel[] {
+  const tabs: Panel[] = [];
+  for (const panel of registry.values()) {
+    if (panel.tab === undefined) continue;
+    if (panel.appliesTo !== undefined && !panel.appliesTo(session)) continue;
+    tabs.push(panel);
+  }
+  return tabs.sort((a, b) => (a.tab?.order ?? 0) - (b.tab?.order ?? 0));
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/panels.ts src/app/panels.test.ts && pnpm exec vitest run src/app/panels.test.ts && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)` and `Tests  3 passed (3)`, then `pnpm run check` (typecheck, lint, format check, every Vitest file, `node --check public/sw.js`) exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/panels.ts internal/web/ui/src/app/panels.test.ts
+git commit -m "feat(web): the panel registry of the new app" -- internal/web/ui/src/app/panels.ts internal/web/ui/src/app/panels.test.ts
+```
+
+### Task 10.2: Every classic URL as a route
+
+**Files:**
+- Create: `internal/web/ui/src/app/routes.tsx`
+- Create: `internal/web/ui/src/app/routes.test.ts`
+
+`routes.tsx` holds the pure part here (the hash functions); Task 10.4 adds the router and the hooks to the same file. The classic parser (`parseRoute` in `internal/web/static/js/app.mjs`) is the reference: the same patterns, the same refusals (an agent ID outside `[A-Za-z0-9_-]`, a job `0`, `#s/<id>/full` without a mockup), and anything else is the fleet. The keys (Names contract): params `id` (the session's ID as written), `agent`, `job`, `story`, `doc`; search `plan` (always present on the three flow panels, `""` when the URL has none) and `at` (on `flowDoc`, likewise).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/routes.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { PanelId } from "./panels";
+import { hrefFor, normalizeHash, panelProps, routeOf, type RouteState } from "./routes";
+
+function route(
+  panel: PanelId,
+  params: Record<string, string> = {},
+  search: Record<string, string> = {},
+): RouteState {
+  return { panel, params, search };
+}
+
+describe("normalizeHash", () => {
+  it.each([
+    ["#s/5", "#/s/5"],
+    ["#s/5/info", "#/s/5/info"],
+    ["#s/5/flow?plan=p.md", "#/s/5/flow?plan=p.md"],
+    ["#flows", "#/flows"],
+    ["#new", "#/new"],
+    ["#s/5/turns", "#/s/5"],
+    ["#/s/5/turns", "#/s/5"],
+    ["#/s/50/turns", "#/s/50"],
+    ["#/s/5", "#/s/5"],
+    ["#/s/5/info", "#/s/5/info"],
+    ["#/", "#/"],
+    ["#", "#"],
+    ["", ""],
+    // Only the exact old address is rewritten.
+    ["#/s/5/turns/full", "#/s/5/turns/full"],
+    ["#/s/5/turnsx", "#/s/5/turnsx"],
+  ])("%j becomes %j", (hash, want) => {
+    expect(normalizeHash(hash)).toBe(want);
+  });
+});
+
+describe("routeOf", () => {
+  const cases: [string, RouteState][] = [
+    ["", route("fleet")],
+    ["#", route("fleet")],
+    ["#/", route("fleet")],
+    ["#s/5", route("turns", { id: "5" })],
+    ["#/s/5", route("turns", { id: "5" })],
+    // The conversation's old address, and a push link (`/#s/<id>`).
+    ["#s/5/turns", route("turns", { id: "5" })],
+    ["#/s/5/turns", route("turns", { id: "5" })],
+    ["#s/5/info", route("info", { id: "5" })],
+    ["#/s/5/info", route("info", { id: "5" })],
+    ["#s/5/diff", route("changes", { id: "5" })],
+    // A push link while the session's mockup is fresh (`/#s/<id>/mockup`).
+    ["#s/5/mockup", route("mockup", { id: "5" })],
+    ["#/s/5/mockup", route("mockup", { id: "5" })],
+    ["#s/5/mockup/full", route("mockupFull", { id: "5" })],
+    ["#/s/5/mockup/full", route("mockupFull", { id: "5" })],
+    ["#s/5/agent/a1_b-2", route("agent", { id: "5", agent: "a1_b-2" })],
+    ["#s/5/job/12", route("job", { id: "5", job: "12" })],
+    ["#s/5/flow", route("flow", { id: "5" }, { plan: "" })],
+    ["#s/5/flow?plan=docs%2Fp.md", route("flow", { id: "5" }, { plan: "docs/p.md" })],
+    ["#/s/5/flow/3?plan=p", route("flowStory", { id: "5", story: "3" }, { plan: "p" })],
+    [
+      "#s/5/flow/doc/spec.md?plan=p&at=abc",
+      route("flowDoc", { id: "5", doc: "spec.md" }, { plan: "p", at: "abc" }),
+    ],
+    [
+      "#s/5/flow/doc/spec.md",
+      route("flowDoc", { id: "5", doc: "spec.md" }, { plan: "", at: "" }),
+    ],
+    // `flow/doc` alone is a story called "doc", as in the classic parser.
+    ["#s/5/flow/doc", route("flowStory", { id: "5", story: "doc" }, { plan: "" })],
+    ["#flows", route("flows")],
+    ["#/flows", route("flows")],
+    ["#new", route("new")],
+    ["#settings", route("settings")],
+    ["#/settings", route("settings")],
+    ["#pair", route("pair")],
+    ["#/pair", route("pair")],
+  ];
+
+  it.each(cases)("%j opens %j", (hash, want) => {
+    expect(routeOf(hash)).toEqual(want);
+  });
+
+  it.each([
+    "#nonsense",
+    "#constructor",
+    "#s/x",
+    "#s/5/agent/bad id",
+    "#s/5/agent/a/b",
+    "#s/5/job/0",
+    "#s/5/job/x",
+    // `full` belongs to the mockup alone.
+    "#s/5/full",
+    "#s/5/info/full",
+    "#s/5/turns/full",
+    "#/s/5/unknown",
+  ])("%j is the fleet", (hash) => {
+    expect(routeOf(hash)).toEqual(route("fleet"));
+  });
+});
+
+describe("hrefFor", () => {
+  it.each<[PanelId, Record<string, string>, Record<string, string>, string]>([
+    ["fleet", {}, {}, "#/"],
+    ["turns", { id: "5" }, {}, "#/s/5"],
+    ["info", { id: "5" }, {}, "#/s/5/info"],
+    ["changes", { id: "5" }, {}, "#/s/5/diff"],
+    ["mockup", { id: "5" }, {}, "#/s/5/mockup"],
+    ["mockupFull", { id: "5" }, {}, "#/s/5/mockup/full"],
+    ["agent", { id: "5", agent: "a1" }, {}, "#/s/5/agent/a1"],
+    ["job", { id: "5", job: "12" }, {}, "#/s/5/job/12"],
+    ["flow", { id: "5" }, {}, "#/s/5/flow"],
+    ["flow", { id: "5" }, { plan: "docs/p.md" }, "#/s/5/flow?plan=docs%2Fp.md"],
+    ["flowStory", { id: "5", story: "3" }, { plan: "p" }, "#/s/5/flow/3?plan=p"],
+    [
+      "flowDoc",
+      { id: "5", doc: "spec.md" },
+      { plan: "p", at: "abc" },
+      "#/s/5/flow/doc/spec.md?plan=p&at=abc",
+    ],
+    [
+      "flowDoc",
+      { id: "5", doc: "spec.md" },
+      { plan: "p", at: "" },
+      "#/s/5/flow/doc/spec.md?plan=p",
+    ],
+    ["flows", {}, {}, "#/flows"],
+    ["new", {}, {}, "#/new"],
+    ["settings", {}, {}, "#/settings"],
+    ["pair", {}, {}, "#/pair"],
+  ])("%s %j %j is %s", (panel, params, search, want) => {
+    expect(hrefFor(panel, params, search)).toBe(want);
+  });
+
+  it("opens the panel and path values it was built from", () => {
+    const panels: [PanelId, Record<string, string>, Record<string, string>][] = [
+      ["fleet", {}, {}],
+      ["turns", { id: "5" }, {}],
+      ["info", { id: "5" }, {}],
+      ["changes", { id: "5" }, {}],
+      ["mockup", { id: "5" }, {}],
+      ["mockupFull", { id: "5" }, {}],
+      ["agent", { id: "5", agent: "a-1" }, {}],
+      ["job", { id: "5", job: "7" }, {}],
+      ["flow", { id: "5" }, { plan: "docs/p.md" }],
+      ["flowStory", { id: "5", story: "A5" }, { plan: "docs/p.md" }],
+      ["flowDoc", { id: "5", doc: "a b.md" }, { plan: "docs/p.md", at: "x y" }],
+      ["flows", {}, {}],
+      ["new", {}, {}],
+      ["settings", {}, {}],
+      ["pair", {}, {}],
+    ];
+    for (const [panel, params, search] of panels) {
+      const got = routeOf(hrefFor(panel, params, search));
+      expect(got.panel).toBe(panel);
+      expect(got.params).toEqual(params);
+      expect(got.search).toMatchObject(search);
+    }
+  });
+});
+
+describe("panelProps", () => {
+  it("takes the session from the id, and none without one", () => {
+    expect(panelProps(route("info", { id: "12" }))).toEqual({
+      sessionId: 12,
+      params: { id: "12" },
+      search: {},
+    });
+    expect(panelProps(route("settings")).sessionId).toBeUndefined();
+  });
+});
+```
+
+Fails without: normalizeHash: the slash insertion removed (`#s/5` and `#flows` stay), the `turns` rewrite removed (`#/s/5/turns` stays), or the rewrite loosened to a prefix match (`#/s/5/turns/full` and `#/s/5/turnsx` change); routeOf's table: any classic pattern dropped or its panel mapped wrong; the `#nonsense` and `#constructor` rows: the fallback removed, or the four plain names looked up in an object (a prototype key); the agent, job and `full` rows: the `AGENT_ID` test, the job's `[1-9]\d*`, or the `main[3] === undefined || main[2] === "mockup"` guard removed; hrefFor: a path, a segment's `encodeURIComponent` or the empty-value skip removed; the round-trip test: hrefFor and routeOf disagreeing on a panel's path or on how a search value is encoded; panelProps: `Number(params.id)` replaced by the string or the undefined case dropped.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/routes.test.ts'`
+Expected: the file fails to load: `Error: Failed to resolve import "./routes" from "src/app/routes.test.ts". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/routes.tsx`:
+
+```tsx
+import type { PanelId, PanelProps } from "./panels";
+
+// RouteState is a hash resolved: the panel it opens, the path values it
+// holds (id, agent, job, story, doc) and its search (plan, at).
+export interface RouteState {
+  panel: PanelId;
+  params: Record<string, string>;
+  search: Record<string, string>;
+}
+
+// AGENT_ID is what an agent id may hold for the app to link to its screen
+// (the classic app's session.mjs says the same).
+const AGENT_ID = /^[A-Za-z0-9_-]+$/;
+
+// normalizeHash is a hash in the app's own form: `#s/<id>…` (as a push and
+// the classic app write it) becomes `#/s/<id>…`, as does every slashless
+// address (`#flows`), and the conversation's old address `#/s/<id>/turns`
+// becomes `#/s/<id>`. "", "#" and "#/" are left as they are.
+export function normalizeHash(hash: string): string {
+  const slashed = /^#[^/]/.test(hash) ? "#/" + hash.slice(1) : hash;
+  return slashed.replace(/^#\/s\/(\d+)\/turns$/, "#/s/$1");
+}
+
+function plain(panel: PanelId): RouteState {
+  return { panel, params: {}, search: {} };
+}
+
+function decode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+// routeOf is the panel a hash opens (the classic URLs in either form, the
+// conversation's old address included), with its path values and search.
+// Anything it does not know is the fleet, as in the classic app.
+export function routeOf(hash: string): RouteState {
+  const h = normalizeHash(hash).replace(/^#\/?/, "");
+  switch (h) {
+    case "new":
+    case "settings":
+    case "pair":
+    case "flows":
+      return plain(h);
+  }
+
+  const flow = h.match(/^s\/(\d+)\/flow(?:\/(doc\/([^/?]+)|[^/?]+))?(?:\?(.*))?$/);
+  if (flow) {
+    const id = flow[1] ?? "";
+    const query = new URLSearchParams(flow[4] ?? "");
+    const plan = query.get("plan") ?? "";
+    if (flow[3] !== undefined) {
+      return {
+        panel: "flowDoc",
+        params: { id, doc: decode(flow[3]) },
+        search: { plan, at: query.get("at") ?? "" },
+      };
+    }
+    if (flow[2] !== undefined) {
+      return { panel: "flowStory", params: { id, story: decode(flow[2]) }, search: { plan } };
+    }
+    return { panel: "flow", params: { id }, search: { plan } };
+  }
+
+  const agent = h.match(/^s\/(\d+)\/agent\/([^/]+)$/);
+  if (agent && AGENT_ID.test(agent[2] ?? "")) {
+    return { panel: "agent", params: { id: agent[1] ?? "", agent: agent[2] ?? "" }, search: {} };
+  }
+
+  const job = h.match(/^s\/(\d+)\/job\/([1-9]\d*)$/);
+  if (job) {
+    return { panel: "job", params: { id: job[1] ?? "", job: job[2] ?? "" }, search: {} };
+  }
+
+  const main = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup|info))?(\/full)?$/);
+  if (main && (main[3] === undefined || main[2] === "mockup")) {
+    const params = { id: main[1] ?? "" };
+    if (main[3] !== undefined) return { panel: "mockupFull", params, search: {} };
+    const named: Partial<Record<string, PanelId>> = {
+      diff: "changes",
+      mockup: "mockup",
+      info: "info",
+    };
+    return { panel: named[main[2] ?? ""] ?? "turns", params, search: {} };
+  }
+
+  return plain("fleet");
+}
+
+// hrefFor is the app's own link to a panel, `#/…`: params holds the path
+// values the panel takes (id, agent, job, story, doc) and search its search
+// (plan, at), an empty search value left out.
+export function hrefFor(
+  panel: PanelId,
+  params: Record<string, string> = {},
+  search: Record<string, string> = {},
+): string {
+  const seg = (key: string): string => encodeURIComponent(params[key] ?? "");
+  const session = `/s/${seg("id")}`;
+  const paths: Record<PanelId, string> = {
+    fleet: "/",
+    turns: session,
+    info: `${session}/info`,
+    changes: `${session}/diff`,
+    mockup: `${session}/mockup`,
+    mockupFull: `${session}/mockup/full`,
+    agent: `${session}/agent/${seg("agent")}`,
+    job: `${session}/job/${seg("job")}`,
+    flow: `${session}/flow`,
+    flowStory: `${session}/flow/${seg("story")}`,
+    flowDoc: `${session}/flow/doc/${seg("doc")}`,
+    flows: "/flows",
+    new: "/new",
+    settings: "/settings",
+    pair: "/pair",
+  };
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) {
+    if (value !== "") query.set(key, value);
+  }
+  const text = query.toString();
+  return "#" + paths[panel] + (text === "" ? "" : "?" + text);
+}
+
+// panelProps is what a panel is handed for a route.
+export function panelProps(route: RouteState): PanelProps {
+  return {
+    sessionId: route.params.id === undefined ? undefined : Number(route.params.id),
+    params: route.params,
+    search: route.search,
+  };
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/routes.tsx src/app/routes.test.ts && pnpm exec vitest run src/app/routes.test.ts && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)`, and `pnpm run check` exits 0. (`routeOf("#s/5/flow/doc/spec.md")` is the `flowDoc` row, `routeOf("#s/5/flow/doc")` the `flowStory` one.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/routes.tsx internal/web/ui/src/app/routes.test.ts
+git commit -m "feat(web): resolve every classic URL to a panel" -- internal/web/ui/src/app/routes.tsx internal/web/ui/src/app/routes.test.ts
+```
+
+### Task 10.3: PanelHost, the error boundary and the placeholder
+
+**Files:**
+- Create: `internal/web/ui/src/app/shell.tsx`
+- Create: `internal/web/ui/src/app/shell.test.tsx`
+
+`shell.tsx` imports `hrefFor` from `routes.tsx`, and Task 10.4 makes `routes.tsx` import `AppShell` and `PanelHost` back: a cycle, safe because each side uses the other's names only inside function bodies. The placeholder's switch is a plain button here; Story 11 turns it into the `app.backToClassic` command.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/shell.test.tsx`:
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { definePanel, type PanelProps } from "./panels";
+import { PanelHost, Placeholder } from "./shell";
+import { switchApp } from "./switchApp";
+
+vi.mock("./switchApp", () => ({ switchApp: vi.fn(() => Promise.resolve("switched")) }));
+
+const props: PanelProps = { sessionId: 5, params: { id: "5" }, search: {} };
+
+afterEach(() => {
+  vi.mocked(switchApp).mockClear();
+});
+
+describe("Placeholder", () => {
+  it("names the screen, links back to the fleet and offers the classic app", async () => {
+    render(<Placeholder panel="flows" />);
+
+    expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /fleet/ })).toHaveAttribute("href", "#/");
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to classic" }));
+    expect(switchApp).toHaveBeenCalledWith("classic");
+  });
+});
+
+describe("PanelHost", () => {
+  it("draws the placeholder for a panel nothing registered", () => {
+    render(<PanelHost panel="flowDoc" props={props} />);
+    expect(screen.getByRole("heading", { name: "Flow document" })).toBeInTheDocument();
+  });
+
+  it("draws a registered panel's body with its props", () => {
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      Body: (p: PanelProps) => <p>session {p.sessionId}</p>,
+    });
+    render(<PanelHost panel="info" props={props} />);
+    expect(screen.getByText("session 5")).toBeInTheDocument();
+  });
+
+  it("shows what failed and a reload for a panel that throws, and recovers on another route", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "changes",
+        title: () => "Changes",
+        Body: (p: PanelProps) => {
+          if (p.params.id === "1") throw new Error("boom");
+          return <p>fine</p>;
+        },
+      });
+      const { rerender } = render(
+        <PanelHost panel="changes" props={{ sessionId: 1, params: { id: "1" }, search: {} }} />,
+      );
+
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("Changes failed to draw");
+      expect(alert).toHaveTextContent("boom");
+      expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+
+      // Another session's changes is another route: the boundary starts over.
+      rerender(
+        <PanelHost panel="changes" props={{ sessionId: 2, params: { id: "2" }, search: {} }} />,
+      );
+      expect(screen.getByText("fine")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+```
+
+Fails without: names the screen, links back: `SCREEN_NAMES` wrong for a panel, the fleet link removed, or the button not calling `switchApp("classic")`; draws the placeholder for a panel nothing registered: the `panelFor` check removed (a missing panel would throw on `entry.Body`); draws a registered panel's body: `Body` not given the props; shows what failed: the `Boundary` removed (the throw would reach the test), its message or Reload button dropped; recovers on another route: the `key={resetKey(…)}` on the boundary removed (the error state would stick).
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/shell.test.tsx'`
+Expected: the file fails to load: `Error: Failed to resolve import "./shell" from "src/app/shell.test.tsx". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/shell.tsx`:
+
+```tsx
+import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
+
+import { Button } from "@/components/ui/button";
+
+import { panelFor, type PanelId, type PanelProps } from "./panels";
+import { hrefFor } from "./routes";
+import { switchApp } from "./switchApp";
+
+// SCREEN_NAMES is what each screen is called where the app names it: the
+// placeholder's heading and an error boundary's message.
+const SCREEN_NAMES: Record<PanelId, string> = {
+  fleet: "Fleet",
+  turns: "Conversation",
+  info: "Info",
+  changes: "Changes",
+  mockup: "Mockup",
+  mockupFull: "Mockup",
+  agent: "Subagent",
+  job: "Job",
+  flow: "Flow",
+  flowStory: "Flow story",
+  flowDoc: "Flow document",
+  flows: "Flows",
+  new: "New session",
+  settings: "Settings",
+  pair: "Pairing",
+};
+
+// resetKey changes with the route, so a boundary that caught an error starts
+// over once the route is another one.
+function resetKey(panel: PanelId, props: PanelProps): string {
+  return `${panel}/${JSON.stringify(props.params)}`;
+}
+
+interface BoundaryProps {
+  what: string;
+  // fallback replaces the failed subtree; without it the boundary shows what
+  // failed and a reload.
+  fallback?: ReactNode;
+  children: ReactNode;
+}
+
+interface BoundaryState {
+  error: Error | null;
+}
+
+// Boundary keeps one broken view from blanking the app (spec §29): the
+// header, the footer and every other panel keep working.
+class Boundary extends Component<BoundaryProps, BoundaryState> {
+  state: BoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: unknown): BoundaryState {
+    return { error: error instanceof Error ? error : new Error(String(error)) };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error(`loom: ${this.props.what} failed to draw`, error, info.componentStack);
+  }
+
+  render(): ReactNode {
+    const { error } = this.state;
+    if (error === null) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
+    return (
+      <div
+        role="alert"
+        className="m-4 flex flex-col items-start gap-2 rounded-lg border border-error p-4"
+      >
+        <p className="font-semibold">{this.props.what} failed to draw.</p>
+        <p className="font-mono text-xs break-words text-muted-foreground">{error.message}</p>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            window.location.reload();
+          }}
+        >
+          Reload
+        </Button>
+      </div>
+    );
+  }
+}
+
+// Placeholder draws a route no panel is registered for: it names the screen
+// and offers the way back to the classic app (spec §7).
+export function Placeholder({ panel }: { panel: PanelId }): ReactElement {
+  const name = SCREEN_NAMES[panel];
+  return (
+    <section className="flex flex-col items-start gap-3 px-4 py-8">
+      {panel === "fleet" ? null : (
+        <a href={hrefFor("fleet")} className="text-sm text-muted-foreground">
+          ‹ fleet
+        </a>
+      )}
+      <h1 className="text-lg font-semibold">{name}</h1>
+      <p className="text-muted-foreground">
+        {name} is not in the new app yet. It is in the classic one.
+      </p>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void switchApp("classic");
+        }}
+      >
+        Back to classic
+      </Button>
+    </section>
+  );
+}
+
+// PanelHost draws the panel registered under `panel` inside an error
+// boundary, or the placeholder when none is.
+export function PanelHost({ panel, props }: { panel: PanelId; props: PanelProps }): ReactElement {
+  const entry = panelFor(panel);
+  if (entry === undefined) return <Placeholder panel={panel} />;
+  return (
+    <Boundary key={resetKey(panel, props)} what={SCREEN_NAMES[panel]}>
+      <entry.Body {...props} />
+    </Boundary>
+  );
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/shell.tsx src/app/shell.test.tsx && pnpm exec vitest run src/app/shell.test.tsx && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)` and `Tests  4 passed (4)`; `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/shell.tsx internal/web/ui/src/app/shell.test.tsx
+git commit -m "feat(web): the panel host, its error boundary and the placeholder" -- internal/web/ui/src/app/shell.tsx internal/web/ui/src/app/shell.test.tsx
+```
+
+### Task 10.4: The router, `useRoute` and the shell's frame
+
+**Files:**
+- Modify: `internal/web/ui/src/app/routes.tsx` (the first line, and an append)
+- Modify: `internal/web/ui/src/app/shell.tsx` (the first imports, and an append)
+- Modify: `internal/web/ui/package.json`, `internal/web/ui/pnpm-lock.yaml`
+- Modify: `internal/web/ui/src/app/routes.test.ts`, `internal/web/ui/src/app/shell.test.tsx`
+
+`useRoute` reads `window.location.hash` through `useSyncExternalStore` and re-reads on `hashchange`, `popstate` and the router's own history, so it works in any component, inside the router or not, and a hash the router canonicalises (a `replace`) still reaches it. `settleHash` rewrites a slashless or legacy hash in place before the router first reads it (spec §27); `watchHash` does the same for a hash set while the app runs (a push link opened in an app already open), through `location.replace`, so the router follows the `hashchange` it fires. The router has one route per panel, all drawing `RoutedPanel` (the panel `routeOf` names, which also holds the fallback for an unknown hash through `defaultNotFoundComponent`), under a root route drawing `AppShell`. Search is parsed and written as plain strings (`URLSearchParams`), not TanStack's JSON default, so `?plan=1` stays the string `"1"` and the canonical form is the one `hrefFor` writes.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/ui/src/app/routes.test.ts`, replace the import lines
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { PanelId } from "./panels";
+import { hrefFor, normalizeHash, panelProps, routeOf, type RouteState } from "./routes";
+```
+
+with
+
+```ts
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { PanelId } from "./panels";
+import {
+  goToPairing,
+  hrefFor,
+  normalizeHash,
+  panelProps,
+  routeOf,
+  settleHash,
+  useRoute,
+  watchHash,
+  type RouteState,
+} from "./routes";
+
+afterEach(() => {
+  window.history.replaceState(null, "", window.location.pathname);
+});
+```
+
+and append to the file:
+
+```ts
+describe("settleHash", () => {
+  it("rewrites a slashless hash and the old conversation address in place", () => {
+    window.history.replaceState(null, "", "#s/5/turns");
+    settleHash();
+    expect(window.location.hash).toBe("#/s/5");
+
+    window.history.replaceState(null, "", "#flows");
+    settleHash();
+    expect(window.location.hash).toBe("#/flows");
+  });
+
+  it("leaves a hash already in the app's form, and no hash, alone", () => {
+    window.history.replaceState(null, "", "#/s/5/info");
+    settleHash();
+    expect(window.location.hash).toBe("#/s/5/info");
+
+    window.history.replaceState(null, "", window.location.pathname);
+    settleHash();
+    expect(window.location.hash).toBe("");
+  });
+});
+
+describe("watchHash", () => {
+  it("rewrites a hash set while it watches, and nothing after it stops", () => {
+    const stop = watchHash();
+    window.history.replaceState(null, "", "#s/5/turns");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(window.location.hash).toBe("#/s/5");
+
+    stop();
+    window.history.replaceState(null, "", "#s/6/turns");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(window.location.hash).toBe("#s/6/turns");
+  });
+});
+
+describe("goToPairing", () => {
+  it("opens the pairing route", () => {
+    goToPairing();
+    expect(window.location.hash).toBe("#/pair");
+  });
+});
+
+describe("useRoute", () => {
+  it("follows the hash", () => {
+    window.history.replaceState(null, "", "#/s/5/info");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current).toEqual({ panel: "info", params: { id: "5" }, search: {} });
+
+    act(() => {
+      window.history.replaceState(null, "", "#/s/6/diff");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(result.current).toEqual({ panel: "changes", params: { id: "6" }, search: {} });
+  });
+
+  it("resolves a hash in the classic form", () => {
+    window.history.replaceState(null, "", "#s/5/mockup");
+    const { result } = renderHook(() => useRoute());
+    expect(result.current.panel).toBe("mockup");
+  });
+});
+```
+
+Fails without: settleHash: the `replaceState` removed (the hash stays `#s/5/turns`) or applied to a hash already normalized; watchHash: the listener removed, `location.replace` skipped, or the returned stop not removing the listener; goToPairing: the hash not set to `hrefFor("pair")`; useRoute: the subscription to `hashchange` removed (the second `expect` would still see the first route), or the hash not normalized by `routeOf` (the classic form row).
+
+In `internal/web/ui/src/app/shell.test.tsx`, replace the import lines
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { definePanel, type PanelProps } from "./panels";
+import { PanelHost, Placeholder } from "./shell";
+import { switchApp } from "./switchApp";
+```
+
+with
+
+```tsx
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import type { ReactElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { fixtureSnapshot } from "@/fixtures";
+import { useFleet } from "@/store/fleet";
+
+import { definePanel, type PanelProps } from "./panels";
+import { router } from "./routes";
+import { AppShell, PanelHost, Placeholder } from "./shell";
+import { switchApp } from "./switchApp";
+```
+
+and replace
+
+```tsx
+afterEach(() => {
+  vi.mocked(switchApp).mockClear();
+});
+```
+
+with
+
+```tsx
+afterEach(() => {
+  vi.mocked(switchApp).mockClear();
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  window.history.replaceState(null, "", window.location.pathname);
+});
+```
+
+then append:
+
+```tsx
+// shellAt draws AppShell at the hash, over a one-route router of its own
+// (memory history), whose only screen is `outlet`.
+function shellAt(hash: string, outlet: ReactElement = <p>outlet</p>) {
+  window.history.replaceState(null, "", hash);
+  const root = createRootRoute({ component: AppShell });
+  const index = createRoute({ getParentRoute: () => root, path: "/", component: () => outlet });
+  const testRouter = createRouter({
+    routeTree: root.addChildren([index]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  return render(<RouterProvider router={testRouter} />);
+}
+
+const header = () => document.querySelector('[data-slot="header"]');
+const footer = () => document.querySelector('[data-slot="footer"]');
+
+describe("AppShell", () => {
+  it.each([
+    ["connecting", "Connecting…"],
+    ["restarting", "loom is restarting…"],
+    ["offline", "Can't reach loom. Retrying…"],
+  ] as const)("while %s with no snapshot it draws the splash and no chrome", async (link, text) => {
+    useFleet.setState({ link });
+    shellAt("#/");
+
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("outlet")).toBeNull();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("draws pairing without a snapshot, and without chrome", async () => {
+    shellAt("#/pair");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("draws the panel's head in the header, the screen in main and the footer slot", async () => {
+    definePanel({
+      id: "fleet",
+      title: () => "Fleet",
+      Head: () => <p>fleet head</p>,
+      Body: () => null,
+    });
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    shellAt("#/");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(header()).toHaveTextContent("fleet head");
+    expect(document.querySelector("main")).toHaveTextContent("outlet");
+    expect(footer()).not.toBeNull();
+  });
+
+  it("draws the full mockup with neither header nor footer", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    shellAt("#/s/5/mockup/full");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(header()).toBeNull();
+    expect(footer()).toBeNull();
+  });
+
+  it("keeps the screen and the footer when the head throws", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "fleet",
+        title: () => "Fleet",
+        Head: () => {
+          throw new Error("head boom");
+        },
+        Body: () => null,
+      });
+      useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+      shellAt("#/");
+
+      expect(await screen.findByText("outlet")).toBeInTheDocument();
+      expect(header()).not.toBeNull();
+      expect(header()).not.toHaveTextContent("head boom");
+      expect(footer()).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("router", () => {
+  it("draws the placeholder of a route no panel is registered for", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate({ to: "/settings" });
+    });
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/settings");
+  });
+});
+```
+
+Fails without: the splash rows: the splash text for a link state, or the chrome gated on a snapshot, removed; draws pairing without a snapshot: the `pair` exception removed (it would show the splash); draws the panel's head: `Head` not rendered into the header slot, `Outlet` not in `main`, or the footer slot dropped; draws the full mockup with neither: the `mockupFull` exclusion from `chromed` removed; keeps the screen and the footer when the head throws: the boundary around `Head` removed (the throw would blank the shell); router: a route missing for `/settings`, `RoutedPanel` not drawing `PanelHost`, or `useRoute` not following the router's history.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/routes.test.ts src/app/shell.test.tsx'`
+Expected: both files fail to load: `Error: Failed to resolve import "@tanstack/react-router" from "src/app/shell.test.tsx". Does the file exist?` and, once the package is installed, `SyntaxError: The requested module './routes' does not provide an export named 'goToPairing'`.
+
+- [ ] **Step 3: Implement**
+
+Install the router (it adds `@tanstack/react-router` to `package.json` and the lockfile):
+
+Run: `bash -c 'cd internal/web/ui && pnpm add @tanstack/react-router'`
+
+In `internal/web/ui/src/app/routes.tsx`, replace the first line
+
+```tsx
+import type { PanelId, PanelProps } from "./panels";
+```
+
+with
+
+```tsx
+import {
+  createHashHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
+import { useMemo, useSyncExternalStore, type ReactElement } from "react";
+
+import type { PanelId, PanelProps } from "./panels";
+import { AppShell, PanelHost } from "./shell";
+```
+
+and append to the end of the file:
+
+```tsx
+// settleHash rewrites a slashless or legacy hash in place (`#s/5/turns` is
+// `#/s/5`), so the router first reads the app's own form (spec §27). No hash
+// entry is added.
+export function settleHash(): void {
+  const next = normalizeHash(window.location.hash);
+  if (next !== window.location.hash) window.history.replaceState(null, "", next);
+}
+
+// watchHash does the same for a hash set while the app runs (a push link
+// opened in an app that is already open): `location.replace` swaps the
+// history entry and fires the `hashchange` the router follows. It returns
+// its stop.
+export function watchHash(): () => void {
+  const onChange = (): void => {
+    const next = normalizeHash(window.location.hash);
+    if (next !== window.location.hash) window.location.replace(next);
+  };
+  window.addEventListener("hashchange", onChange);
+  return () => {
+    window.removeEventListener("hashchange", onChange);
+  };
+}
+
+// goToPairing opens the pairing route: main.tsx runs it when a request or the
+// stream answers 401.
+export function goToPairing(): void {
+  window.location.hash = hrefFor("pair");
+}
+
+// PATHS is each panel's route in the router's own pattern (`$name` is a path
+// value). routeOf, not these patterns, decides which panel a hash opens;
+// they only give the router something to match.
+const PATHS: Record<PanelId, string> = {
+  fleet: "/",
+  turns: "/s/$id",
+  info: "/s/$id/info",
+  changes: "/s/$id/diff",
+  mockup: "/s/$id/mockup",
+  mockupFull: "/s/$id/mockup/full",
+  agent: "/s/$id/agent/$agent",
+  job: "/s/$id/job/$job",
+  flow: "/s/$id/flow",
+  flowStory: "/s/$id/flow/$story",
+  flowDoc: "/s/$id/flow/doc/$doc",
+  flows: "/flows",
+  new: "/new",
+  settings: "/settings",
+  pair: "/pair",
+};
+
+// Search is plain strings, written as hrefFor writes it, so a router that
+// canonicalises the URL finds nothing to change.
+function parseSearch(search: string): Record<string, string> {
+  return Object.fromEntries(new URLSearchParams(search));
+}
+
+function stringifySearch(search: Record<string, unknown>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) {
+    if (typeof value === "string" && value !== "") query.set(key, value);
+  }
+  const text = query.toString();
+  return text === "" ? "" : "?" + text;
+}
+
+// RoutedPanel is every route's screen: the panel the hash opens.
+function RoutedPanel(): ReactElement {
+  const route = useRoute();
+  return <PanelHost panel={route.panel} props={panelProps(route)} />;
+}
+
+settleHash();
+
+const rootRoute = createRootRoute({ component: () => <AppShell /> });
+
+// router is the app's router: hash history, the shell as the root route and
+// one route per panel. A hash no pattern matches draws the fleet's route,
+// which is what routeOf answers for it.
+export const router = createRouter({
+  routeTree: rootRoute.addChildren(
+    Object.values(PATHS).map((path) =>
+      createRoute({ getParentRoute: () => rootRoute, path, component: RoutedPanel }),
+    ),
+  ),
+  history: createHashHistory(),
+  parseSearch,
+  stringifySearch,
+  defaultNotFoundComponent: RoutedPanel,
+});
+
+function subscribeToHash(onChange: () => void): () => void {
+  window.addEventListener("hashchange", onChange);
+  window.addEventListener("popstate", onChange);
+  const stopHistory = router.history.subscribe(onChange);
+  return () => {
+    window.removeEventListener("hashchange", onChange);
+    window.removeEventListener("popstate", onChange);
+    stopHistory();
+  };
+}
+
+// useRoute is the current route as routeOf gives it, re-rendering on each
+// navigation.
+export function useRoute(): RouteState {
+  const hash = useSyncExternalStore(
+    subscribeToHash,
+    () => window.location.hash,
+    () => "",
+  );
+  return useMemo(() => routeOf(hash), [hash]);
+}
+```
+
+In `internal/web/ui/src/app/shell.tsx`, replace the first four import lines
+
+```tsx
+import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
+
+import { Button } from "@/components/ui/button";
+
+import { panelFor, type PanelId, type PanelProps } from "./panels";
+import { hrefFor } from "./routes";
+import { switchApp } from "./switchApp";
+```
+
+with
+
+```tsx
+import { Outlet } from "@tanstack/react-router";
+import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
+
+import type { LinkState } from "@/api/stream";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useFleet, useLink } from "@/store/fleet";
+
+import { panelFor, type PanelId, type PanelProps } from "./panels";
+import { hrefFor, panelProps, useRoute } from "./routes";
+import { switchApp } from "./switchApp";
+```
+
+and append to the end of the file:
+
+```tsx
+// SPLASH is what the screen says while the store holds no snapshot: the
+// link's state, in the classic app's words.
+const SPLASH: Record<LinkState, string> = {
+  connecting: "Connecting…",
+  live: "Connecting…",
+  restarting: "loom is restarting…",
+  offline: "Can't reach loom. Retrying…",
+};
+
+// AppShell is the app's frame: the pinned header (the panel's Head), main
+// (the router's outlet, or the splash while the store holds no snapshot,
+// except on pairing) and the pinned footer. Pairing and the full mockup
+// have no header or footer, and neither has a screen with no snapshot.
+export function AppShell(): ReactElement {
+  const route = useRoute();
+  const props = panelProps(route);
+  const hasSnapshot = useFleet((s) => s.snapshot !== null);
+  const { state } = useLink();
+  const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
+  const waiting = !hasSnapshot && route.panel !== "pair";
+  const Head = panelFor(route.panel)?.Head;
+
+  return (
+    <div
+      className={cn(
+        "mx-auto flex min-h-dvh w-full max-w-[40rem] flex-col bg-background text-foreground",
+        !chromed && "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
+      )}
+    >
+      {chromed ? (
+        <header
+          data-slot="header"
+          className="sticky top-0 z-30 flex-none border-b border-border bg-background pt-[calc(env(safe-area-inset-top)+8px)]"
+        >
+          {Head === undefined ? null : (
+            <Boundary
+              key={resetKey(route.panel, props)}
+              what={`The ${SCREEN_NAMES[route.panel]} header`}
+              fallback={null}
+            >
+              <Head {...props} />
+            </Boundary>
+          )}
+        </header>
+      ) : null}
+      <main className="flex flex-1 flex-col">
+        {waiting ? (
+          <div role="status" className="px-4 py-12 text-center text-muted-foreground">
+            {SPLASH[state]}
+          </div>
+        ) : (
+          <Outlet />
+        )}
+      </main>
+      {chromed ? (
+        <footer
+          data-slot="footer"
+          className="sticky bottom-0 z-30 flex-none border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
+        />
+      ) : null}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/routes.tsx src/app/routes.test.ts src/app/shell.tsx src/app/shell.test.tsx && pnpm exec vitest run src/app/ && pnpm run check'`
+Expected: Vitest prints `Test Files  3 passed (3)` for `src/app/` (panels, routes, shell), and `pnpm run check` exits 0. If the only failure is the `router` test (`router.navigate` types or the placeholder's heading not found), the router's history is not following the navigation: check that `useRoute` re-reads on the `router.history` subscription.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the router over hash history, useRoute and the shell's frame" -- internal/web/ui/src/app/routes.tsx internal/web/ui/src/app/routes.test.ts internal/web/ui/src/app/shell.tsx internal/web/ui/src/app/shell.test.tsx internal/web/ui/package.json internal/web/ui/pnpm-lock.yaml
+```
+
+### Task 10.5: `main.tsx`, the panel index and the rebuilt bundle
+
+**Files:**
+- Create: `internal/web/ui/src/panels/index.ts`
+- Modify: `internal/web/ui/src/main.tsx` (rewritten whole)
+- Modify: `internal/web/dist/` (rebuilt)
+
+`main.tsx` is Story 4's minimal render with Story 8's `import "./styles/app.css"`; this task rewrites it whole and keeps that import. No unit test covers it (it is the page's entry); `pnpm run check` typechecks and lints it, `dist:check` pins the bundle, and webshot renders the built app under the real CSP, which fails on a console error, a CSP violation or an unanswered route.
+
+- [ ] **Step 1: Write the panel index**
+
+Create `internal/web/ui/src/panels/index.ts`:
+
+```ts
+// Each panel module is imported here for its definePanel registration.
+// Stories and parts that add a panel add a line; until Story 13 registers the
+// fleet, every route draws the placeholder.
+export {};
+```
+
+- [ ] **Step 2: Write `main.tsx`**
+
+Replace the content of `internal/web/ui/src/main.tsx` with:
+
+```tsx
+import { CSPProvider } from "@base-ui/react/csp-provider";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+
+import "./styles/app.css";
+import "@/panels";
+
+import { queryClient } from "@/api/queries";
+import { onUnpaired } from "@/api/request";
+import { goToPairing, router, watchHash } from "@/app/routes";
+import { startFleet } from "@/store/fleet";
+
+const mount = document.getElementById("app");
+if (mount === null) throw new Error("loom: the page has no #app element");
+
+const stopHash = watchHash();
+const stopFleet = startFleet();
+const stopUnpaired = onUnpaired(goToPairing);
+
+// Base UI's CSPProvider keeps its components from writing <style> elements,
+// which the app's Content-Security-Policy refuses (spec §33).
+createRoot(mount).render(
+  <StrictMode>
+    <CSPProvider disableStyleElements>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </CSPProvider>
+  </StrictMode>,
+);
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopHash();
+    stopFleet();
+    stopUnpaired();
+  });
+}
+```
+
+- [ ] **Step 3: Check it**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/main.tsx src/panels/index.ts && pnpm run check'`
+Expected: exits 0 (typecheck, lint, format check, every Vitest file, `node --check public/sw.js`).
+
+- [ ] **Step 4: Rebuild the bundle and render it**
+
+Run: `bash -c 'cd internal/web/ui && pnpm run build && pnpm run dist:check'`
+Expected: Vite prints its build summary; `dist:check` exits 0 (the committed bundle equals a fresh build once the rebuilt files are in the tree).
+
+Run: `bash -c 'd=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+Expected: exits 0 with no console error, CSP violation or unanswered route reported: webshot renders the new app's routes, and with no panel registered each draws the placeholder (or, for a route webshot fixes a session for, the splash until the canned stream answers).
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+Expected: `ok  github.com/aidan-bailey/loom/internal/web`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/panels/index.ts internal/web/dist
+git commit -m "feat(web): the app's entry starts the fleet and draws the router" -- internal/web/ui/src/panels/index.ts internal/web/ui/src/main.tsx internal/web/dist
+```
+
+## Story 11: Commands and the chrome: the registry, the command button, the confirmation sheet, toasts, the header and the footer
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/app/commands.ts`, `internal/web/ui/src/app/commands.test.ts`, `internal/web/ui/src/app/CommandButton.tsx`, `internal/web/ui/src/app/ConfirmSheet.tsx`, `internal/web/ui/src/app/ConfirmSheet.test.tsx`, `internal/web/ui/src/app/toasts.ts`, `internal/web/ui/src/app/toasts.test.ts`, `internal/web/ui/src/app/shell.tsx`, `internal/web/ui/src/app/shell.test.tsx`, `internal/web/ui/src/main.tsx`, `internal/web/dist/`
+- **Interfaces:** exposes `CommandContext`, `ConfirmSpec`, `Command` (with `offline`), `defineCommand`, `commandById`, `useCommandContext`, `runCommand`, `CommandButton`, `ConfirmSheet`, `showNotices`, `showOutcome`, `showMessage`, `app.backToClassic`, `ContextRow`, `SessionTabs`, `StatusRow`; uses Story 6's `switchApp`, Story 8's components, `toastManager` and `Toaster`, Story 9's `useFleet`, `useLink`, `LinkState`, `useFleetGroups`, `fleetGroups`, `allSessions`, `nextInGroup` and `onNotices`, Story 10's `Placeholder`, `AppShell`, `useRoute`, `panelProps`, `hrefFor` and `sessionTabs`
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+- **Review:** deep
+- **Form:** full (the enablement and confirmation every action goes through)
+
+Every action of the new app is a command registered with `defineCommand` and drawn by `CommandButton`, so its label, enablement, confirmation and toasts are uniform. `commands.ts` holds the registry, the context (`useCommandContext`: the route's session, the link, `stale`, the panel) and `runCommand`: a command runs only when `commandEnabled` (off while the snapshot is stale, except a command marked `offline`, and off when its own `when` says so), asks `ConfirmSheet` first when it has a `confirm` (and checks the enablement again against the store after a yes, since the view may have gone stale while the sheet was open), runs one command at a time per session through an in-flight set that `CommandButton` reads, and turns anything its `run` throws into an error toast. `ConfirmSheet.tsx` is the one confirmation drawer (built on Story 8's Base UI `Drawer`), driven through `askConfirm`, which `runCommand` awaits; `toasts.ts` turns notices, outcomes and plain messages into toasts through Story 8's `toastManager`, every notice sticky so Kill's and Resume's stash notices are never dropped. The placeholder's switch becomes the `app.backToClassic` command, the only `offline` one, because the switch has to work with the daemon down (spec §4) and on `#/pair` after a 401 has cleared the store. `shell.tsx` gains the header's `ContextRow` and `SessionTabs`, the footer's `StatusRow` (the link's pill, `loom@<host>` and a count per group that opens the group's next session, hidden while a text field has focus), and `AppShell` mounts `ConfirmSheet` and `Toaster` once. `main.tsx` subscribes `showNotices` to `onNotices` (through `watchNotices`), which carries both the responses' notices and, from `startFleet`, the stream's. Vitest covers the enablement, the confirmation flow, the toasts and the chrome. The panels (and so the session tabs) are registered by later stories: the tests register their own. Each command runs from the repository root and enters `internal/web/ui` for `pnpm`. The commits use the repo's Conventional style, scoped `web`.
+
+### Task 11.1: Toasts
+
+**Files:**
+- Create: `internal/web/ui/src/app/toasts.ts`
+- Create: `internal/web/ui/src/app/toasts.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/toasts.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Notice, Outcome } from "@/api/gen";
+import { onNotices } from "@/api/request";
+import { toastManager } from "@/components/ui/toast";
+
+import { showMessage, showNotices, showOutcome, watchNotices } from "./toasts";
+
+vi.mock("@/api/request", () => ({ onNotices: vi.fn() }));
+
+function spyOnAdd() {
+  return vi.spyOn(toastManager, "add").mockImplementation(() => "toast");
+}
+
+let add: ReturnType<typeof spyOnAdd>;
+
+beforeEach(() => {
+  add = spyOnAdd();
+});
+
+afterEach(() => {
+  add.mockRestore();
+});
+
+function notice(text: string, error = false): Notice {
+  return { text, error, at: "2026-11-18T12:00:00Z" };
+}
+
+describe("showNotices", () => {
+  it("shows every notice, each until dismissed", () => {
+    showNotices([
+      notice("Stashed your changes as 1a2b3c4 on loom/x."),
+      notice("Resumed from stash 9f8e7d6."),
+      notice("The worktree is locked.", true),
+    ]);
+
+    expect(add).toHaveBeenCalledTimes(3);
+    expect(add).toHaveBeenNthCalledWith(1, expect.objectContaining({ description: "Stashed your changes as 1a2b3c4 on loom/x.", timeout: 0, type: "info" }));
+    expect(add).toHaveBeenNthCalledWith(2, expect.objectContaining({ description: "Resumed from stash 9f8e7d6.", timeout: 0 }));
+    expect(add).toHaveBeenNthCalledWith(3, expect.objectContaining({ description: "The worktree is locked.", timeout: 0, type: "error", priority: "high" }));
+  });
+
+  it("shows nothing for no notices", () => {
+    showNotices([]);
+    expect(add).not.toHaveBeenCalled();
+  });
+});
+
+describe("showMessage", () => {
+  it("fades a plain message", () => {
+    showMessage("Copied.");
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: "Copied.", type: "info", timeout: 4000 }));
+  });
+
+  it("keeps an error until it is dismissed", () => {
+    showMessage("That didn't work.", true);
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: "That didn't work.", type: "error", timeout: 0, priority: "high" }));
+  });
+});
+
+describe("showOutcome", () => {
+  it.each<[string, Outcome<unknown>, string | null, boolean]>([
+    ["ok", { kind: "ok", status: 200, value: {}, notices: [notice("seen already")] }, null, false],
+    ["unpaired", { kind: "unpaired" }, null, false],
+    ["pending", { kind: "pending" }, "Merge is still running. Its outcome will follow.", false],
+    ["refused", { kind: "refused", status: 409, message: "session is not paused" }, "session is not paused", true],
+    ["refused with no text", { kind: "refused", status: 400, message: "" }, "Merge didn't work.", true],
+    ["stopping", { kind: "stopping", message: "loom is stopping" }, "loom is stopping", true],
+    ["timeout", { kind: "timeout", message: "" }, "Merge timed out.", true],
+    ["failed", { kind: "failed", status: 500, message: "internal error" }, "internal error", true],
+    ["failed with no answer", { kind: "failed", status: 0, message: "" }, "Can't reach loom. Try again when it is back.", true],
+  ])("%s", (_name, outcome, want, error) => {
+    showOutcome(outcome, "Merge");
+
+    if (want === null) {
+      // An ok outcome's notices already reached onNotices; showing them here
+      // would toast each one twice.
+      expect(add).not.toHaveBeenCalled();
+      return;
+    }
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: want, type: error ? "error" : "info" }));
+  });
+});
+
+describe("watchNotices", () => {
+  it("shows what onNotices delivers, and returns its unsubscribe", () => {
+    const unsubscribe = vi.fn();
+    vi.mocked(onNotices).mockImplementation((listener) => {
+      listener([notice("from the stream")]);
+      return unsubscribe;
+    });
+
+    const stop = watchNotices();
+
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: "from the stream", timeout: 0 }));
+    expect(stop).toBe(unsubscribe);
+  });
+});
+```
+
+Fails without: showNotices: a notice skipped (the count), a `timeout` other than 0 (a stash notice would fade), the error type or priority dropped; shows nothing for no notices: a toast added for an empty list; showMessage: the 4000 fade or the error's `timeout: 0` changed; showOutcome: the `ok` or `unpaired` case showing a toast (a double toast of the notices), a missing case's text (`pending`, the refusals' fallback texts, `stopping`, `timeout`, the network `failed` text), or the error flag on a refusal dropped; watchNotices: `onNotices` not given `showNotices`, or its unsubscribe not returned.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/toasts.test.ts'`
+Expected: the file fails to load: `Error: Failed to resolve import "./toasts" from "src/app/toasts.test.ts". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/toasts.ts`:
+
+```ts
+import type { Notice, Outcome } from "@/api/gen";
+import { onNotices } from "@/api/request";
+import { toastManager } from "@/components/ui/toast";
+
+// FADE_MS is how long a plain message stays. A notice, and an error, stay
+// until dismissed: a stash notice names a SHA that may be the only record of
+// the work.
+const FADE_MS = 4000;
+
+function add(text: string, error: boolean, sticky: boolean): void {
+  toastManager.add({
+    description: text,
+    type: error ? "error" : "info",
+    timeout: sticky ? 0 : FADE_MS,
+    priority: error ? "high" : "low",
+  });
+}
+
+// showNotices toasts every notice, each until dismissed (Kill's and Resume's
+// stash notices are never dropped).
+export function showNotices(notices: Notice[]): void {
+  for (const n of notices) add(n.text, n.error, true);
+}
+
+// showMessage toasts a plain message: it fades, unless it is an error.
+export function showMessage(text: string, error = false): void {
+  add(text, error, error);
+}
+
+// showOutcome toasts what an outcome that is not a success says, in the
+// classic app's words; `what` names the action. An ok outcome shows nothing:
+// its notices already went through onNotices. An unpaired one shows nothing
+// either: the app is on its way to pairing.
+export function showOutcome(outcome: Outcome<unknown>, what: string): void {
+  switch (outcome.kind) {
+    case "ok":
+    case "unpaired":
+      return;
+    case "pending":
+      showMessage(`${what} is still running. Its outcome will follow.`);
+      return;
+    case "refused":
+      showMessage(outcome.message || `${what} didn't work.`, true);
+      return;
+    case "stopping":
+      showMessage(outcome.message || "loom is restarting. Try again in a moment.", true);
+      return;
+    case "timeout":
+      showMessage(outcome.message || `${what} timed out.`, true);
+      return;
+    case "failed":
+      showMessage(outcome.message || "Can't reach loom. Try again when it is back.", true);
+      return;
+  }
+}
+
+// watchNotices toasts every notice onNotices delivers (a response's, and the
+// stream's) until the returned stop is called. main.tsx calls it once.
+export function watchNotices(): () => void {
+  return onNotices(showNotices);
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/toasts.ts src/app/toasts.test.ts && pnpm exec vitest run src/app/toasts.test.ts && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)`; `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/toasts.ts internal/web/ui/src/app/toasts.test.ts
+git commit -m "feat(web): toasts for notices, outcomes and messages" -- internal/web/ui/src/app/toasts.ts internal/web/ui/src/app/toasts.test.ts
+```
+
+### Task 11.2: The confirmation sheet
+
+**Files:**
+- Create: `internal/web/ui/src/app/ConfirmSheet.tsx`
+- Create: `internal/web/ui/src/app/ConfirmSheet.test.tsx`
+
+`ConfirmSpec` is defined here and re-exported by `commands.ts` (Task 11.3), so this task does not depend on it. `askConfirm(spec)` opens the sheet and resolves `true` on the action and `false` on Cancel, Escape or a tap outside; a newer ask replaces an open one (the older resolves `false`), so a sheet never answers for another command's ask. The action's own work is not the sheet's: it closes at once and the command runs, and `runCommand`'s in-flight set (Task 11.3), which `CommandButton` (Task 11.4) reads to keep its button off, means a double tap sends one request.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/ConfirmSheet.test.tsx`:
+
+```tsx
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { askConfirm, ConfirmSheet, type ConfirmSpec } from "./ConfirmSheet";
+
+const kill: ConfirmSpec = {
+  title: "Kill session",
+  body: "Removes the worktree /w/x and ends the tmux session loom_x.",
+  action: "Kill",
+  destructive: true,
+};
+
+// ask opens the sheet with spec and returns the promise askConfirm gave.
+function ask(spec: ConfirmSpec): Promise<boolean> {
+  let answer = Promise.resolve(false);
+  act(() => {
+    answer = askConfirm(spec);
+  });
+  return answer;
+}
+
+describe("ConfirmSheet", () => {
+  it("draws nothing while nobody asks", () => {
+    render(<ConfirmSheet />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("names what the command does, and resolves true on its action", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(kill);
+
+    expect(await screen.findByText("Kill session")).toBeInTheDocument();
+    expect(screen.getByText(/Removes the worktree \/w\/x/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Kill" }));
+    expect(await answer).toBe(true);
+    await waitFor(() => {
+      expect(screen.queryByText("Kill session")).toBeNull();
+    });
+  });
+
+  it("resolves false on Cancel", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(kill);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(await answer).toBe(false);
+  });
+
+  it("resolves false on Escape", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(kill);
+    await screen.findByText("Kill session");
+
+    await userEvent.keyboard("{Escape}");
+    expect(await answer).toBe(false);
+  });
+
+  it("lets a newer ask replace an open one, which resolves false", async () => {
+    render(<ConfirmSheet />);
+    const first = ask(kill);
+    await screen.findByText("Kill session");
+
+    const second = ask({ title: "Push", body: "Pushes the branch.", action: "Push", destructive: false });
+
+    expect(await first).toBe(false);
+    expect(await screen.findByText("Pushes the branch.")).toBeInTheDocument();
+    expect(screen.queryByText("Kill session")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Push" }));
+    expect(await second).toBe(true);
+  });
+});
+```
+
+Fails without: names what the command does: the title, body or action not drawn from the spec; resolves true on its action: `answer(true)` not wired to the action button, or the sheet not closing; resolves false on Cancel: the Cancel button missing or resolving true; resolves false on Escape: `onOpenChange(false)` not answering false (the promise would never settle and the test would time out); lets a newer ask replace an open one: `askConfirm` not resolving the open ask false (`first` would never settle) or the sheet keeping the old spec.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/ConfirmSheet.test.tsx'`
+Expected: the file fails to load: `Error: Failed to resolve import "./ConfirmSheet" from "src/app/ConfirmSheet.test.tsx". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/ConfirmSheet.tsx`:
+
+```tsx
+import { useState, useSyncExternalStore, type ReactElement } from "react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+
+// ConfirmSpec is what a sheet says: what the command does (`body` may run
+// to several lines: the worktree's path, the tmux session), the action's
+// label, and whether the action is destructive (drawn as such).
+export interface ConfirmSpec {
+  title: string;
+  body: string;
+  action: string;
+  destructive: boolean;
+}
+
+interface Ask {
+  spec: ConfirmSpec;
+  resolve: (confirmed: boolean) => void;
+}
+
+// current is the open ask: at most one sheet is open at a time.
+let current: Ask | null = null;
+const listeners = new Set<() => void>();
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+// askConfirm opens the confirmation sheet and resolves true when the action
+// is chosen, false when the sheet is cancelled, dismissed or replaced by a
+// newer ask.
+export function askConfirm(spec: ConfirmSpec): Promise<boolean> {
+  current?.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    current = { spec, resolve };
+    emit();
+  });
+}
+
+function answer(confirmed: boolean): void {
+  const ask = current;
+  if (ask === null) return;
+  current = null;
+  emit();
+  ask.resolve(confirmed);
+}
+
+// ConfirmSheet is the one confirmation drawer: AppShell mounts it once, and
+// every command with a `confirm` opens it through runCommand. The last spec
+// stays drawn after an answer, until the drawer's close has finished and it
+// unmounts its content, so the exit transition plays over the sheet and not
+// over an empty one.
+export function ConfirmSheet(): ReactElement {
+  const ask = useSyncExternalStore(subscribe, () => current);
+  const [last, setLast] = useState<ConfirmSpec | null>(null);
+  if (ask !== null && ask.spec !== last) setLast(ask.spec);
+  const spec = ask === null ? last : ask.spec;
+  return (
+    <Drawer
+      open={ask !== null}
+      onOpenChange={(open) => {
+        if (!open) answer(false);
+      }}
+    >
+      {spec === null ? null : (
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>{spec.title}</DrawerTitle>
+            <DrawerDescription className="break-words whitespace-pre-line">
+              {spec.body}
+            </DrawerDescription>
+          </DrawerHeader>
+          <DrawerFooter>
+            <Button
+              size="lg"
+              variant={spec.destructive ? "destructive" : "default"}
+              onClick={() => {
+                answer(true);
+              }}
+            >
+              {spec.action}
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => {
+                answer(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      )}
+    </Drawer>
+  );
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/ConfirmSheet.tsx src/app/ConfirmSheet.test.tsx && pnpm exec vitest run src/app/ConfirmSheet.test.tsx && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)` and `Tests  5 passed (5)`; `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/ConfirmSheet.tsx internal/web/ui/src/app/ConfirmSheet.test.tsx
+git commit -m "feat(web): the confirmation sheet" -- internal/web/ui/src/app/ConfirmSheet.tsx internal/web/ui/src/app/ConfirmSheet.test.tsx
+```
+
+### Task 11.3: The command registry and `app.backToClassic`
+
+**Files:**
+- Create: `internal/web/ui/src/app/commands.ts`
+- Create: `internal/web/ui/src/app/commands.test.ts`
+
+`commands.ts` imports `useRoute` from `routes.tsx`, which imports `shell.tsx`; `shell.tsx` imports `CommandButton` (Task 11.4), which imports `commands.ts`. The cycle is safe: every import is used inside function bodies only.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/commands.test.ts`:
+
+```ts
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { toastManager } from "@/components/ui/toast";
+import { fixtureSnapshot } from "@/fixtures";
+import { allSessions } from "@/fleet/groups";
+import { useFleet } from "@/store/fleet";
+
+import {
+  commandById,
+  commandEnabled,
+  defineCommand,
+  runCommand,
+  useCommandBusy,
+  useCommandContext,
+  type CommandContext,
+} from "./commands";
+import { askConfirm } from "./ConfirmSheet";
+import { switchApp } from "./switchApp";
+
+vi.mock("./ConfirmSheet", async (original) => ({
+  ...(await original<typeof import("./ConfirmSheet")>()),
+  askConfirm: vi.fn(),
+}));
+vi.mock("./switchApp", () => ({ switchApp: vi.fn() }));
+
+function spyOnAdd() {
+  return vi.spyOn(toastManager, "add").mockImplementation(() => "toast");
+}
+
+let add: ReturnType<typeof spyOnAdd>;
+
+beforeEach(() => {
+  add = spyOnAdd();
+});
+
+afterEach(() => {
+  add.mockRestore();
+  vi.mocked(askConfirm).mockReset();
+  vi.mocked(switchApp).mockReset();
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  window.history.replaceState(null, "", window.location.pathname);
+});
+
+function ctx(over: Partial<CommandContext> = {}): CommandContext {
+  return { session: undefined, link: "live", stale: false, panel: "fleet", ...over };
+}
+
+describe("the registry", () => {
+  it("finds a command by its id, and none for an unknown one", () => {
+    const command = defineCommand({
+      id: "test.registry",
+      title: "Registry",
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+    expect(commandById("test.registry")).toBe(command);
+    expect(commandById("test.nothing")).toBeUndefined();
+  });
+
+  it("replaces a command defined again under the same id", () => {
+    defineCommand({ id: "test.again", title: "first", when: () => true, run: () => Promise.resolve() });
+    const second = defineCommand({ id: "test.again", title: "second", when: () => true, run: () => Promise.resolve() });
+    expect(commandById("test.again")).toBe(second);
+  });
+});
+
+describe("commandEnabled", () => {
+  const base = { id: "test.enabled", title: "t", run: () => Promise.resolve() };
+
+  it.each([
+    ["live and when true", { when: () => true }, ctx(), true],
+    ["stale", { when: () => true }, ctx({ stale: true }), false],
+    ["stale but offline", { when: () => true, offline: true }, ctx({ stale: true }), true],
+    ["when false", { when: () => false }, ctx(), false],
+    ["stale and offline, when false", { when: () => false, offline: true }, ctx({ stale: true }), false],
+  ])("%s", (_name, over, context, want) => {
+    expect(commandEnabled({ ...base, ...over }, context)).toBe(want);
+  });
+});
+
+describe("runCommand", () => {
+  function counting(over: { offline?: boolean; when?: () => boolean } = {}) {
+    const run = vi.fn((_ctx: CommandContext, _args: string) => Promise.resolve());
+    const command = defineCommand<string>({
+      id: "test.run",
+      title: "Run",
+      when: over.when ?? (() => true),
+      ...(over.offline === undefined ? {} : { offline: over.offline }),
+      run,
+    });
+    return { command, run };
+  }
+
+  it("runs an enabled command with its context and arguments", async () => {
+    const { command, run } = counting();
+    const context = ctx();
+    await runCommand(command, context, "args");
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(context, "args");
+  });
+
+  it("runs nothing while the snapshot is stale", async () => {
+    const { command, run } = counting();
+    await runCommand(command, ctx({ stale: true }), "args");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("runs an offline command while the snapshot is stale", async () => {
+    const { command, run } = counting({ offline: true });
+    await runCommand(command, ctx({ stale: true }), "args");
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("runs nothing when its own when says no", async () => {
+    const { command, run } = counting({ when: () => false });
+    await runCommand(command, ctx(), "args");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("asks the sheet first, with the spec built from the context and arguments, and runs on yes", async () => {
+    vi.mocked(askConfirm).mockResolvedValue(true);
+    const run = vi.fn((_ctx: CommandContext, _note: string) => Promise.resolve());
+    const command = defineCommand<string>({
+      id: "test.confirm",
+      title: "Send",
+      when: () => true,
+      confirm: (_ctx, note) => ({ title: "Send", body: note, action: "Send", destructive: false }),
+      run,
+    });
+    const context = ctx();
+    // The sheet's yes is checked against the store again, which is live here.
+    useFleet.setState({ stale: false, link: "live" });
+
+    await runCommand(command, context, "hello");
+
+    expect(askConfirm).toHaveBeenCalledWith({ title: "Send", body: "hello", action: "Send", destructive: false });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(context, "hello");
+  });
+
+  it("runs nothing when the sheet is declined", async () => {
+    vi.mocked(askConfirm).mockResolvedValue(false);
+    const run = vi.fn(() => Promise.resolve());
+    const command = defineCommand({
+      id: "test.declined",
+      title: "Kill",
+      when: () => true,
+      confirm: () => ({ title: "Kill", body: "", action: "Kill", destructive: true }),
+      run,
+    });
+
+    await runCommand(command, ctx(), undefined);
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("checks the enablement again after the sheet's yes, and runs nothing when the view went stale meanwhile", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    vi.mocked(askConfirm).mockImplementation(() => {
+      useFleet.getState().setLink("offline");
+      return Promise.resolve(true);
+    });
+    const run = vi.fn(() => Promise.resolve());
+    const command = defineCommand({
+      id: "test.staleWhileAsking",
+      title: "Kill",
+      when: () => true,
+      confirm: () => ({ title: "Kill", body: "", action: "Kill", destructive: true }),
+      run,
+    });
+
+    await runCommand(command, ctx(), undefined);
+
+    expect(askConfirm).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("nothing was done") as string, type: "error" }),
+    );
+  });
+
+  it("runs nothing after the sheet's yes when the session left the fleet meanwhile, and runs with the fresh context otherwise", async () => {
+    const snapshot = fixtureSnapshot();
+    const session = allSessions(snapshot)[0];
+    if (session === undefined) throw new Error("the fixture holds no session");
+    useFleet.setState({ snapshot, stale: false, link: "live" });
+    const run = vi.fn((_ctx: CommandContext, _args: undefined) => Promise.resolve());
+    const command = defineCommand({
+      id: "test.sessionGone",
+      title: "Kill",
+      when: (c) => c.session !== undefined,
+      confirm: () => ({ title: "Kill", body: "", action: "Kill", destructive: true }),
+      run,
+    });
+
+    vi.mocked(askConfirm).mockResolvedValueOnce(true);
+    await runCommand(command, ctx({ session }), undefined);
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[0].session?.id).toBe(session.id);
+
+    vi.mocked(askConfirm).mockImplementationOnce(() => {
+      useFleet.setState({ snapshot: { ...snapshot, sessions: {} } });
+      return Promise.resolve(true);
+    });
+    await runCommand(command, ctx({ session }), undefined);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("runs a command once at a time for one session: a second call while the first is in flight does nothing", async () => {
+    let finish: () => void = () => {};
+    const run = vi.fn(
+      (_ctx: CommandContext, _args: undefined) =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const command = defineCommand({ id: "test.inflight", title: "Once", when: () => true, run });
+    const busy = renderHook(() => useCommandBusy(command, ctx()));
+    expect(busy.result.current).toBe(false);
+
+    let first: Promise<void> = Promise.resolve();
+    act(() => {
+      first = runCommand(command, ctx(), undefined);
+    });
+    await runCommand(command, ctx(), undefined);
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(busy.result.current).toBe(true);
+
+    await act(async () => {
+      finish();
+      await first;
+    });
+    expect(busy.result.current).toBe(false);
+
+    let second: Promise<void> = Promise.resolve();
+    act(() => {
+      second = runCommand(command, ctx(), undefined);
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finish();
+      await second;
+    });
+  });
+
+  it("clears the in-flight mark when the run throws", async () => {
+    const run = vi.fn(() => Promise.reject(new Error("no")));
+    const command = defineCommand({ id: "test.inflightThrows", title: "Boom", when: () => true, run });
+
+    await runCommand(command, ctx(), undefined);
+    await runCommand(command, ctx(), undefined);
+
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks nothing for a command with no confirm, nor for a disabled one", async () => {
+    const plain = counting();
+    await runCommand(plain.command, ctx(), "args");
+    const confirming = defineCommand({
+      id: "test.disabled",
+      title: "Kill",
+      when: () => true,
+      confirm: () => ({ title: "Kill", body: "", action: "Kill", destructive: true }),
+      run: () => Promise.resolve(),
+    });
+    await runCommand(confirming, ctx({ stale: true }), undefined);
+    expect(askConfirm).not.toHaveBeenCalled();
+  });
+
+  it("toasts an error for a run that throws, and rejects nothing", async () => {
+    const command = defineCommand({
+      id: "test.throws",
+      title: "Boom",
+      when: () => true,
+      run: () => Promise.reject(new Error("the daemon said no")),
+    });
+
+    await expect(runCommand(command, ctx(), undefined)).resolves.toBeUndefined();
+
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: "the daemon said no", type: "error" }));
+  });
+});
+
+describe("app.backToClassic", () => {
+  function backToClassic() {
+    const command = commandById("app.backToClassic");
+    if (command === undefined) throw new Error("app.backToClassic is not defined");
+    return command;
+  }
+
+  it("is an offline command, on for every context", () => {
+    const command = backToClassic();
+    expect(command.offline).toBe(true);
+    for (const context of [ctx(), ctx({ stale: true, link: "offline" }), ctx({ panel: "pair" })]) {
+      expect(commandEnabled(command, context)).toBe(true);
+    }
+  });
+
+  it("switches to the classic app", async () => {
+    vi.mocked(switchApp).mockResolvedValue("switched");
+    await runCommand(backToClassic(), ctx({ stale: true }), undefined);
+    expect(switchApp).toHaveBeenCalledTimes(1);
+    expect(switchApp).toHaveBeenCalledWith("classic");
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("says the switch comes with the next launch when the worker could not update", async () => {
+    vi.mocked(switchApp).mockResolvedValue("deferred");
+    await runCommand(backToClassic(), ctx({ stale: true }), undefined);
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining("next time") as string }));
+  });
+});
+
+describe("useCommandContext", () => {
+  it("is the route's session, the link and the route's panel", () => {
+    const snapshot = fixtureSnapshot();
+    const session = allSessions(snapshot)[0];
+    if (session === undefined) throw new Error("the fixture holds no session");
+    useFleet.setState({ snapshot, stale: false, link: "live" });
+    window.history.replaceState(null, "", `#/s/${session.id}/info`);
+
+    const { result } = renderHook(() => useCommandContext());
+
+    expect(result.current).toEqual({ session, link: "live", stale: false, panel: "info" });
+  });
+
+  it("has no session on a route without one, or for an ID the fleet does not list", () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+
+    window.history.replaceState(null, "", "#/");
+    expect(renderHook(() => useCommandContext()).result.current.session).toBeUndefined();
+
+    window.history.replaceState(null, "", "#/s/999999/info");
+    expect(renderHook(() => useCommandContext()).result.current.session).toBeUndefined();
+  });
+
+  it("is stale, with the link's state, while the stream is down", () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: true, link: "offline" });
+
+    const { result } = renderHook(() => useCommandContext());
+
+    expect(result.current.stale).toBe(true);
+    expect(result.current.link).toBe("offline");
+  });
+});
+```
+
+Fails without: the registry rows: `defineCommand` not storing, or a first-wins insert; commandEnabled: the `offline` exemption removed (the offline row), the stale term removed (the stale row) or the `when` term removed (the two `when false` rows), each term separately; runCommand: the enablement check removed (a stale or `when`-false command would run), the confirm step skipped (the spec would never reach `askConfirm`) or its answer ignored (a declined command would run), the catch removed (the rejection would escape and nothing would toast); checks the enablement again after the sheet's yes: the second `commandEnabled` check on the fresh context removed (the stale-while-asking test would see `run` called, and the session-gone test a second run), or the fresh context not read from the store (the session-gone test: the old session stays in `ctx`); runs a command once at a time: the in-flight set removed or not cleared in `finally` (the in-flight test sees a second `run`, or the throws test sees only one), or `useCommandBusy` not notified (its hook never turns true); app.backToClassic: `offline` unset, `when` reading the link, the switch not run with `"classic"`, or the deferred message dropped (it must contain "next time"); useCommandContext: the session read from the wrong route key, `stale` or `link` not taken from the store, or the panel not taken from the route.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/commands.test.ts'`
+Expected: the file fails to load: `Error: Failed to resolve import "./commands" from "src/app/commands.test.ts". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/commands.ts`:
+
+```ts
+import { ArrowLeft, type LucideIcon } from "lucide-react";
+import { useMemo, useSyncExternalStore } from "react";
+
+import type { Session } from "@/api/gen";
+import type { LinkState } from "@/api/stream";
+import { allSessions } from "@/fleet/groups";
+import { useFleet, useLink, useSession } from "@/store/fleet";
+
+import { askConfirm, type ConfirmSpec } from "./ConfirmSheet";
+import type { PanelId } from "./panels";
+import { panelProps, useRoute } from "./routes";
+import { switchApp } from "./switchApp";
+import { showMessage } from "./toasts";
+
+export type { ConfirmSpec };
+
+// CommandContext is what a command's `when`, `title` and `confirm` read: the
+// route's session (undefined on a route without one), the link, whether the
+// snapshot is stale, and the panel on screen. `when` reads only these, never
+// a copy of the model's preconditions: the model decides, and a wrong guess
+// is its 409 (spec §23).
+export interface CommandContext {
+  session: Session | undefined;
+  link: LinkState;
+  stale: boolean;
+  panel: PanelId;
+}
+
+// Command is one action. `offline` marks a command that runs while the
+// snapshot is stale (a cold start, the daemon down, unpaired): only
+// app.backToClassic, since the switch works offline (spec §4).
+export interface Command<A = void> {
+  id: string;
+  title: string | ((ctx: CommandContext) => string);
+  icon?: LucideIcon;
+  offline?: boolean;
+  when: (ctx: CommandContext) => boolean;
+  confirm?: (ctx: CommandContext, args: A) => ConfirmSpec;
+  run: (ctx: CommandContext, args: A) => Promise<void>;
+}
+
+const registry = new Map<string, Command<unknown>>();
+
+// defineCommand registers a command (a second definition of an id replaces
+// the first, as a hot reload needs) and returns it.
+export function defineCommand<A = void>(command: Command<A>): Command<A> {
+  registry.set(command.id, command as unknown as Command<unknown>);
+  return command;
+}
+
+// commandById is the command registered under id, or undefined.
+export function commandById(id: string): Command<unknown> | undefined {
+  return registry.get(id);
+}
+
+// useCommandContext is the context of the route on screen.
+export function useCommandContext(): CommandContext {
+  const route = useRoute();
+  const { state, stale } = useLink();
+  const session = useSession(panelProps(route).sessionId);
+  return useMemo(
+    () => ({ session, link: state, stale, panel: route.panel }),
+    [session, state, stale, route.panel],
+  );
+}
+
+// commandEnabled reports whether the command may run in ctx: every command is
+// off while the snapshot is stale, except an offline one, and off when its own
+// `when` says so.
+export function commandEnabled<A>(command: Command<A>, ctx: CommandContext): boolean {
+  return (command.offline === true || !ctx.stale) && command.when(ctx);
+}
+
+// inflight is the set of commands being run, each keyed by its id and the
+// session it acts on: a second call while one is in flight does nothing, so a
+// command drawn twice, sibling buttons of one command or a re-tap after the
+// request was accepted send one request. CommandButton reads it through
+// useCommandBusy.
+const inflight = new Set<string>();
+const busyListeners = new Set<() => void>();
+
+function emitBusy(): void {
+  for (const listener of busyListeners) listener();
+}
+
+function subscribeBusy(listener: () => void): () => void {
+  busyListeners.add(listener);
+  return () => {
+    busyListeners.delete(listener);
+  };
+}
+
+function busyKey(command: { id: string }, ctx: CommandContext): string {
+  return `${command.id}\u0000${ctx.session === undefined ? "" : ctx.session.id}`;
+}
+
+// useCommandBusy reports whether the command is being run for ctx's session.
+export function useCommandBusy<A>(command: Command<A>, ctx: CommandContext): boolean {
+  const key = busyKey(command, ctx);
+  return useSyncExternalStore(subscribeBusy, () => inflight.has(key));
+}
+
+// freshContext is ctx with the store's link, staleness and copy of ctx's
+// session as they are now: what a confirmation sheet's yes is checked against,
+// since the stream may have dropped, or another device paused or killed the
+// session, while the sheet was open.
+function freshContext(ctx: CommandContext): CommandContext {
+  const { snapshot, stale, link } = useFleet.getState();
+  const id = ctx.session?.id;
+  const session =
+    id === undefined || snapshot === null ? undefined : allSessions(snapshot).find((s) => s.id === id);
+  return { ...ctx, session, stale, link };
+}
+
+// runCommand runs a command in ctx with args: nothing when it is not enabled
+// or when the same command is already running for the same session; else,
+// when it has a `confirm`, the confirmation sheet first (a declined sheet runs
+// nothing), then the enablement again against the store's current state (a
+// yes given after the view went stale, or the session changed, toasts that
+// nothing was done), then its `run` with that fresh context. A `run` that
+// throws is an error toast, never an unhandled rejection.
+export async function runCommand<A>(
+  command: Command<A>,
+  ctx: CommandContext,
+  args: A,
+): Promise<void> {
+  if (!commandEnabled(command, ctx)) return;
+  const key = busyKey(command, ctx);
+  if (inflight.has(key)) return;
+  inflight.add(key);
+  emitBusy();
+  try {
+    let at = ctx;
+    if (command.confirm !== undefined) {
+      if (!(await askConfirm(command.confirm(ctx, args)))) return;
+      at = freshContext(ctx);
+      if (!commandEnabled(command, at)) {
+        showMessage("loom changed while you were deciding, so nothing was done.", true);
+        return;
+      }
+    }
+    await command.run(at, args);
+  } catch (err) {
+    showMessage(err instanceof Error ? err.message : String(err), true);
+  } finally {
+    inflight.delete(key);
+    emitBusy();
+  }
+}
+
+// app.backToClassic is the switch back to the classic app, drawn by every
+// placeholder. It is offline: the cookie is set and the worker's update may
+// fail, in which case the switch comes with the next launch.
+defineCommand({
+  id: "app.backToClassic",
+  title: "Back to classic",
+  icon: ArrowLeft,
+  offline: true,
+  when: () => true,
+  run: async () => {
+    if ((await switchApp("classic")) === "deferred") {
+      showMessage("You're offline. loom switches to the classic app the next time it opens.");
+    }
+  },
+});
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/commands.ts src/app/commands.test.ts && pnpm exec vitest run src/app/commands.test.ts && pnpm run check'`
+Expected: Vitest prints `Test Files  1 passed (1)`; `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/commands.ts internal/web/ui/src/app/commands.test.ts
+git commit -m "feat(web): the command registry and the switch back to classic" -- internal/web/ui/src/app/commands.ts internal/web/ui/src/app/commands.test.ts
+```
+
+### Task 11.4: `CommandButton`, and the placeholder's switch as a command
+
+**Files:**
+- Create: `internal/web/ui/src/app/CommandButton.tsx`
+- Modify: `internal/web/ui/src/app/shell.tsx` (the `switchApp` import, and the placeholder's button)
+- Modify: `internal/web/ui/src/app/ConfirmSheet.test.tsx`
+
+`CommandButton` is tested with the sheet it opens, in `ConfirmSheet.test.tsx`; the placeholder's button is covered by Story 10's `Placeholder` test in `shell.test.tsx`, which keeps passing (the button's name is the command's title, `Back to classic`, and the click reaches `switchApp("classic")`).
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/ui/src/app/ConfirmSheet.test.tsx`, replace the import lines
+
+```tsx
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+
+import { askConfirm, ConfirmSheet, type ConfirmSpec } from "./ConfirmSheet";
+```
+
+with
+
+```tsx
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { Check } from "lucide-react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { fixtureSnapshot } from "@/fixtures";
+import { useFleet } from "@/store/fleet";
+
+import { CommandButton } from "./CommandButton";
+import { defineCommand, type CommandContext } from "./commands";
+import { askConfirm, ConfirmSheet, type ConfirmSpec } from "./ConfirmSheet";
+```
+
+and append to the file:
+
+```tsx
+afterEach(() => {
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
+  window.history.replaceState(null, "", window.location.pathname);
+});
+
+function live(): void {
+  useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+}
+
+describe("CommandButton", () => {
+  it("draws the command's title and runs it with the arguments on a click", async () => {
+    live();
+    const run = vi.fn((_ctx: CommandContext, _n: number) => Promise.resolve());
+    defineCommand<number>({ id: "test.button.run", title: "Do it", when: () => true, run });
+
+    render(<CommandButton id="test.button.run" args={7} />);
+    await userEvent.click(screen.getByRole("button", { name: "Do it" }));
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[1]).toBe(7);
+  });
+
+  it("takes a title that reads the context, and a label over the title", () => {
+    live();
+    defineCommand({
+      id: "test.button.title",
+      title: (ctx) => `Panel ${ctx.panel}`,
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+    window.history.replaceState(null, "", "#/settings");
+
+    const { rerender } = render(<CommandButton id="test.button.title" />);
+    expect(screen.getByRole("button", { name: "Panel settings" })).toBeInTheDocument();
+
+    rerender(<CommandButton id="test.button.title" label="Go" />);
+    expect(screen.getByRole("button", { name: "Go" })).toBeInTheDocument();
+  });
+
+  it("is an icon button named by the title when its size is icon", () => {
+    live();
+    defineCommand({
+      id: "test.button.icon",
+      title: "Mark",
+      icon: Check,
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+
+    render(<CommandButton id="test.button.icon" size="icon" />);
+
+    expect(screen.getByRole("button", { name: "Mark" }).textContent).toBe("");
+  });
+
+  it("is off while the snapshot is stale, and when its own when says no", async () => {
+    const run = vi.fn(() => Promise.resolve());
+    defineCommand({ id: "test.button.off", title: "Off", when: () => true, run });
+    defineCommand({ id: "test.button.no", title: "No", when: () => false, run });
+
+    // The store is stale until its first snapshot.
+    const { unmount } = render(<CommandButton id="test.button.off" />);
+    expect(screen.getByRole("button", { name: "Off" })).toBeDisabled();
+    unmount();
+
+    live();
+    render(<CommandButton id="test.button.no" />);
+    expect(screen.getByRole("button", { name: "No" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("stays on while the snapshot is stale for an offline command", () => {
+    defineCommand({
+      id: "test.button.offline",
+      title: "Offline",
+      offline: true,
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+
+    render(<CommandButton id="test.button.offline" />);
+
+    expect(screen.getByRole("button", { name: "Offline" })).toBeEnabled();
+  });
+
+  it("stays off while its command runs, so a double tap runs it once", async () => {
+    live();
+    let finish: () => void = () => {};
+    const run = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    defineCommand({ id: "test.button.busy", title: "Busy", when: () => true, run });
+
+    render(<CommandButton id="test.button.busy" />);
+    const button = screen.getByRole("button", { name: "Busy" });
+    await userEvent.click(button);
+    await userEvent.click(button);
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(button).toBeDisabled();
+
+    act(() => {
+      finish();
+    });
+    await waitFor(() => {
+      expect(button).toBeEnabled();
+    });
+  });
+
+  it("opens the sheet for a command with a confirm, and runs it only on the action", async () => {
+    live();
+    const run = vi.fn((_ctx: CommandContext, _name: string) => Promise.resolve());
+    defineCommand<string>({
+      id: "test.button.confirm",
+      title: "Kill",
+      when: () => true,
+      confirm: (_ctx, name) => ({
+        title: `Kill ${name}`,
+        body: "Removes the worktree.",
+        action: "Kill it",
+        destructive: true,
+      }),
+      run,
+    });
+
+    render(
+      <>
+        <ConfirmSheet />
+        <CommandButton id="test.button.confirm" args="x" />
+      </>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Kill" }));
+    expect(await screen.findByText("Kill x")).toBeInTheDocument();
+    expect(run).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Kill x")).toBeNull();
+    });
+    expect(run).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Kill" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Kill it" }));
+    await waitFor(() => {
+      expect(run).toHaveBeenCalledOnce();
+    });
+    expect(run.mock.calls[0]?.[1]).toBe("x");
+  });
+
+  it("fails loudly for a command nothing defined", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() => render(<CommandButton id="test.button.nothing" />)).toThrow("unknown command");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+```
+
+Fails without: draws the command's title and runs it: `runCommand` not called with `args`, or the title not drawn; takes a title that reads the context: the title function not called with the context, or `label` not preferred; is an icon button: the `size === "icon"` text suppression or the `aria-label` dropped; is off while stale: `commandEnabled` not applied to `disabled` (the stale term, and the `when` term, each separately); stays on for an offline command: the `offline` exemption dropped from the button; stays off while its command runs: `useCommandBusy` not read into `disabled`, or `runCommand` not marking the command in flight or not clearing it when the run ends; opens the sheet: the confirmation skipped (the command would run on the first click), or run on Cancel; fails loudly: an unknown id drawing nothing.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/ConfirmSheet.test.tsx'`
+Expected: the file fails to load: `Error: Failed to resolve import "./CommandButton" from "src/app/ConfirmSheet.test.tsx". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/CommandButton.tsx`:
+
+```tsx
+import type { ReactElement } from "react";
+
+import { Button } from "@/components/ui/button";
+
+import {
+  commandById,
+  commandEnabled,
+  runCommand,
+  useCommandBusy,
+  useCommandContext,
+} from "./commands";
+
+// CommandButton draws a registered command as a button: its title (or
+// `label`), its icon, off when the command is not enabled and while the
+// command is in flight for the route's session (runCommand's in-flight set, so
+// every button of the command goes off together and a double tap runs it
+// once). Confirmation and toasts are runCommand's, so every command behaves
+// alike.
+export function CommandButton({
+  id,
+  args,
+  variant,
+  size,
+  label,
+}: {
+  id: string;
+  args?: unknown;
+  variant?: "default" | "secondary" | "ghost" | "outline" | "destructive";
+  size?: "default" | "sm" | "lg" | "icon";
+  label?: string;
+}): ReactElement {
+  const ctx = useCommandContext();
+  const command = commandById(id);
+  if (command === undefined) throw new Error(`loom: unknown command ${id}`);
+  const busy = useCommandBusy(command, ctx);
+
+  const title = typeof command.title === "function" ? command.title(ctx) : command.title;
+  const Icon = command.icon;
+
+  const run = (): void => {
+    void runCommand(command, ctx, args);
+  };
+
+  return (
+    <Button
+      variant={variant}
+      size={size}
+      disabled={busy || !commandEnabled(command, ctx)}
+      aria-label={size === "icon" ? title : undefined}
+      onClick={run}
+    >
+      {Icon === undefined ? null : <Icon aria-hidden="true" />}
+      {size === "icon" ? null : (label ?? title)}
+    </Button>
+  );
+}
+```
+
+In `internal/web/ui/src/app/shell.tsx`, replace the import line
+
+```tsx
+import { switchApp } from "./switchApp";
+```
+
+with
+
+```tsx
+import { CommandButton } from "./CommandButton";
+```
+
+and replace the placeholder's button
+
+```tsx
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void switchApp("classic");
+        }}
+      >
+        Back to classic
+      </Button>
+    </section>
+```
+
+with
+
+```tsx
+      <CommandButton id="app.backToClassic" variant="secondary" />
+    </section>
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/CommandButton.tsx src/app/shell.tsx src/app/ConfirmSheet.test.tsx && pnpm exec vitest run src/app/ && pnpm run check'`
+Expected: every test file under `src/app/` passes (panels, routes, shell, toasts, ConfirmSheet, commands and any the earlier stories left there), and `pnpm run check` exits 0. `shell.test.tsx`'s `Placeholder` test still passes through the command.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/CommandButton.tsx
+git commit -m "feat(web): the command button, and the placeholder's switch as a command" -- internal/web/ui/src/app/CommandButton.tsx internal/web/ui/src/app/shell.tsx internal/web/ui/src/app/ConfirmSheet.test.tsx
+```
+
+### Task 11.5: The header's context row and tabs, the footer's status row
+
+**Files:**
+- Modify: `internal/web/ui/src/app/shell.tsx`
+- Modify: `internal/web/ui/src/app/shell.test.tsx`
+
+`ContextRow` is the header's first row (an optional way back, the title as the one `h1`, the actions); `SessionTabs` the session's views under it, from the registry's tab panels that apply to the session, plus the current one when it is not among them (a session that pauses on its changes keeps the tab under the user), and nothing for a lone tab; `StatusRow` the footer's row. `AppShell` shows the tabs under the head for the session routes, the status row in the footer (hidden while a text field has focus: the keyboard is up), and mounts `ConfirmSheet` and `Toaster` once. `SessionTabs` returns an empty fragment for fewer than two tabs.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/ui/src/app/shell.test.tsx`, replace the import lines
+
+```tsx
+import { fixtureSnapshot } from "@/fixtures";
+import { useFleet } from "@/store/fleet";
+
+import { definePanel, type PanelProps } from "./panels";
+import { router } from "./routes";
+import { AppShell, PanelHost, Placeholder } from "./shell";
+import { switchApp } from "./switchApp";
+```
+
+with
+
+```tsx
+import type { Session, SessionGroup, Snapshot } from "@/api/gen";
+import { fixtureSnapshot } from "@/fixtures";
+import { allSessions, shownWorkspaces } from "@/fleet/groups";
+import { useFleet } from "@/store/fleet";
+
+import { askConfirm } from "./ConfirmSheet";
+import { definePanel, type PanelProps } from "./panels";
+import { router } from "./routes";
+import { AppShell, ContextRow, PanelHost, Placeholder, SessionTabs, StatusRow } from "./shell";
+import { switchApp } from "./switchApp";
+import { showMessage } from "./toasts";
+```
+
+and append to the file:
+
+```tsx
+// withGroups is the fixture with only these sessions, ids 100, 101, … in the
+// first shown workspace, each of the given group, `since` ascending in that
+// order (so the first needs_you has waited longest), all running Claude.
+function withGroups(groups: SessionGroup[]): Snapshot {
+  const snapshot = fixtureSnapshot();
+  const workspace = shownWorkspaces(snapshot)[0];
+  const base = allSessions(snapshot)[0];
+  if (workspace === undefined || base === undefined) throw new Error("the fixture holds none");
+  const sessions: Session[] = groups.map((group, i) => ({
+    ...base,
+    id: 100 + i,
+    workspace: workspace.id,
+    group,
+    claude: true,
+    since: new Date(Date.UTC(2026, 10, 18, 12, i)).toISOString(),
+  }));
+  return { ...snapshot, host: "devbox", sessions: { [String(workspace.id)]: sessions } };
+}
+
+function live(snapshot: Snapshot): void {
+  useFleet.setState({ snapshot, stale: false, link: "live", updated: Date.now() });
+}
+
+describe("ContextRow", () => {
+  it("draws the title as the h1, the actions, and a way back named by where it goes", () => {
+    definePanel({ id: "info", title: () => "Info", tab: { order: 3, label: "info" }, Body: () => null });
+
+    const { rerender } = render(
+      <ContextRow title="Fleet" back="#/" actions={<button type="button">New</button>} />,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Fleet" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /fleet/ })).toHaveAttribute("href", "#/");
+
+    rerender(<ContextRow title="Changes" back="#/s/5/info" />);
+    expect(screen.getByRole("link", { name: /info/ })).toHaveAttribute("href", "#/s/5/info");
+  });
+
+  it("draws no way back without one", () => {
+    render(<ContextRow title="Settings" />);
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+});
+
+describe("SessionTabs", () => {
+  function tabPanels(): void {
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      appliesTo: (s) => s.claude,
+      Body: () => null,
+    });
+    definePanel({
+      id: "changes",
+      title: () => "Changes",
+      tab: { order: 2, label: "changes" },
+      appliesTo: (s) => s.claude,
+      Body: () => null,
+    });
+    definePanel({ id: "info", title: () => "Info", tab: { order: 3, label: "info" }, Body: () => null });
+  }
+
+  function aSession(claude: boolean): Session {
+    const base = allSessions(fixtureSnapshot())[0];
+    if (base === undefined) throw new Error("the fixture holds no session");
+    return { ...base, id: 7, claude };
+  }
+
+  it("links the tabs that apply, in order, and marks the current one", () => {
+    tabPanels();
+    window.history.replaceState(null, "", "#/s/7/info");
+
+    render(<SessionTabs session={aSession(true)} />);
+
+    const links = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole("link");
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["conversation", "#/s/7"],
+      ["changes", "#/s/7/diff"],
+      ["info", "#/s/7/info"],
+    ]);
+    expect(screen.getByRole("link", { name: "info" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "changes" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("draws no row for a lone tab", () => {
+    tabPanels();
+    window.history.replaceState(null, "", "#/s/7/info");
+
+    render(<SessionTabs session={aSession(false)} />);
+
+    expect(screen.queryByRole("navigation")).toBeNull();
+  });
+
+  it("keeps the tab under the user when it no longer applies", () => {
+    tabPanels();
+    window.history.replaceState(null, "", "#/s/7/diff");
+
+    render(<SessionTabs session={aSession(false)} />);
+
+    const links = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole("link");
+    expect(links.map((a) => a.textContent)).toEqual(["changes", "info"]);
+    expect(screen.getByRole("link", { name: "changes" })).toHaveAttribute("aria-current", "page");
+  });
+});
+
+describe("StatusRow", () => {
+  it.each([
+    ["live", "LIVE"],
+    ["connecting", "CONNECTING"],
+    ["restarting", "RESTARTING"],
+    ["offline", "OFFLINE"],
+  ] as const)("says the link is %s", (link, pill) => {
+    useFleet.setState({ snapshot: withGroups(["working"]), stale: link !== "live", link });
+    render(<StatusRow />);
+    expect(screen.getByText(pill)).toBeInTheDocument();
+  });
+
+  it("names the host, and when the daemon was last heard while offline", () => {
+    const updated = Date.UTC(2026, 10, 18, 12, 5);
+    useFleet.setState({ snapshot: withGroups(["working"]), stale: true, link: "offline", updated });
+    render(<StatusRow />);
+
+    // ICU puts a narrow no-break space before "PM" on Node 22, and Testing
+    // Library normalises only the node's text: normalise the expected one too.
+    const clock = new Date(updated)
+      .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      .replace(/\s+/g, " ");
+    expect(screen.getByText(`devbox · ${clock}`)).toBeInTheDocument();
+  });
+
+  it("counts each group, and draws a zero count as no button", () => {
+    live(withGroups(["needs_you", "needs_you", "your_turn", "paused"]));
+    render(<StatusRow />);
+
+    expect(screen.getByRole("button", { name: "2 need you: open the next" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 your turn: open the next" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /working/ })).toBeNull();
+  });
+
+  it("opens a group's longest-waiting session, then the next one after the session on screen", async () => {
+    live(withGroups(["needs_you", "needs_you"]));
+    window.history.replaceState(null, "", "#/");
+    const { unmount } = render(<StatusRow />);
+    await userEvent.click(screen.getByRole("button", { name: "2 need you: open the next" }));
+    expect(window.location.hash).toBe("#/s/100");
+    unmount();
+
+    window.history.replaceState(null, "", "#/s/100");
+    const second = render(<StatusRow />);
+    await userEvent.click(screen.getByRole("button", { name: "2 need you: open the next" }));
+    expect(window.location.hash).toBe("#/s/101");
+    second.unmount();
+
+    window.history.replaceState(null, "", "#/s/101");
+    render(<StatusRow />);
+    await userEvent.click(screen.getByRole("button", { name: "2 need you: open the next" }));
+    expect(window.location.hash).toBe("#/s/100");
+  });
+
+  it("keeps the counts as buttons from the cached snapshot while the stream is down", () => {
+    useFleet.setState({ snapshot: withGroups(["needs_you"]), stale: true, link: "offline" });
+    render(<StatusRow />);
+    expect(screen.getByRole("button", { name: "1 need you: open the next" })).toBeEnabled();
+  });
+});
+
+describe("AppShell's chrome", () => {
+  it("draws a session's tabs under the head, and the status row in the footer", async () => {
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      Body: () => null,
+    });
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      tab: { order: 3, label: "info" },
+      Head: () => <p>info head</p>,
+      Body: () => null,
+    });
+    live(withGroups(["needs_you"]));
+    shellAt("#/s/100/info");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(header()).toHaveTextContent("info head");
+    expect(within(header() as HTMLElement).getByRole("navigation", { name: "Session views" })).toBeInTheDocument();
+    expect(footer()).toHaveTextContent("LIVE");
+    expect(footer()).toHaveTextContent("loom@devbox");
+  });
+
+  it("draws no tabs for a session the fleet does not list", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/s/999999/info");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Session views" })).toBeNull();
+  });
+
+  it("hides the footer while a text field has focus, and brings it back after", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/", <input aria-label="reply" />);
+
+    const field = await screen.findByLabelText("reply");
+    expect(footer()).not.toBeNull();
+
+    await userEvent.click(field);
+    expect(footer()).toBeNull();
+
+    await userEvent.click(document.body);
+    expect(footer()).not.toBeNull();
+  });
+
+  it("keeps the footer for a button that has focus", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/", <button type="button">go</button>);
+
+    await userEvent.click(await screen.findByRole("button", { name: "go" }));
+    expect(footer()).not.toBeNull();
+  });
+
+  it("mounts the confirmation sheet and the toaster once", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/");
+    await screen.findByText("outlet");
+
+    let answer = Promise.resolve(true);
+    act(() => {
+      answer = askConfirm({ title: "Kill session", body: "Ends it.", action: "Kill", destructive: true });
+    });
+    expect(await screen.findByText("Kill session")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await answer).toBe(false);
+
+    act(() => {
+      showMessage("Stashed as 1a2b3c4.");
+    });
+    expect(await screen.findByText("Stashed as 1a2b3c4.")).toBeInTheDocument();
+  });
+});
+```
+
+and add `within` to the Testing Library import at the top of the file: replace
+
+```tsx
+import { act, render, screen } from "@testing-library/react";
+```
+
+with
+
+```tsx
+import { act, render, screen, within } from "@testing-library/react";
+```
+
+Fails without: ContextRow: the title not the `h1`, the actions not drawn, the back link's href or its label (fleet for `#/`, the tab's label for a tab panel's href); SessionTabs: the registry not read (`sessionTabs`), the order, the `aria-current` mark, the lone-tab rule (`length <= 1`), or the current-tab inclusion; StatusRow: a pill's text, the host (`loom@<host>`), the offline clock, a count's glyph or label, the zero count drawn as a button, `nextInGroup` not given the route's session (the second and third taps would repeat the first), the cached counts disabled when not live; AppShell's chrome: `SessionTabs` not mounted under the head, the status row missing from the footer, the footer kept while a text field has focus (or hidden for a button), or `ConfirmSheet` or `Toaster` not mounted by `AppShell` (the ask would never show, nor the message).
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/shell.test.tsx'`
+Expected: fails to compile or run: `SyntaxError: The requested module './shell' does not provide an export named 'ContextRow'` (and the `StatusRow`, `SessionTabs` ones).
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/ui/src/app/shell.tsx`, replace the import line
+
+```tsx
+import { Component, type ErrorInfo, type ReactElement, type ReactNode } from "react";
+```
+
+with
+
+```tsx
+import {
+  Component,
+  useEffect,
+  useState,
+  type ErrorInfo,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+```
+
+replace
+
+```tsx
+import type { LinkState } from "@/api/stream";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useFleet, useLink } from "@/store/fleet";
+
+import { panelFor, type PanelId, type PanelProps } from "./panels";
+import { hrefFor, panelProps, useRoute } from "./routes";
+import { CommandButton } from "./CommandButton";
+```
+
+with
+
+```tsx
+import type { Session, SessionGroup } from "@/api/gen";
+import type { LinkState } from "@/api/stream";
+import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/toast";
+import { fleetGroups, nextInGroup } from "@/fleet/groups";
+import { cn } from "@/lib/utils";
+import { useFleet, useFleetGroups, useLink, useSession } from "@/store/fleet";
+
+import { CommandButton } from "./CommandButton";
+import { ConfirmSheet } from "./ConfirmSheet";
+import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
+import { hrefFor, panelProps, routeOf, useRoute } from "./routes";
+```
+
+In `AppShell`, replace
+
+```tsx
+  const { state } = useLink();
+  const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
+```
+
+with
+
+```tsx
+  const { state } = useLink();
+  const session = useSession(props.sessionId);
+  const typing = useTextFieldFocus();
+  const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
+```
+
+replace
+
+```tsx
+              <Head {...props} />
+            </Boundary>
+          )}
+        </header>
+```
+
+with
+
+```tsx
+              <Head {...props} />
+            </Boundary>
+          )}
+          {session !== undefined && TABBED.has(route.panel) ? (
+            <SessionTabs session={session} />
+          ) : null}
+        </header>
+```
+
+and replace the footer and the end of the component
+
+```tsx
+      {chromed ? (
+        <footer
+          data-slot="footer"
+          className="sticky bottom-0 z-30 flex-none border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
+        />
+      ) : null}
+    </div>
+  );
+}
+```
+
+with
+
+```tsx
+      {chromed && !typing ? (
+        <footer
+          data-slot="footer"
+          className={cn(
+            "sticky bottom-0 z-30 flex-none border-t border-border bg-card pb-[env(safe-area-inset-bottom)]",
+            state === "offline" && "border-t-error",
+          )}
+        >
+          <StatusRow />
+        </footer>
+      ) : null}
+      <ConfirmSheet />
+      <Toaster />
+    </div>
+  );
+}
+
+// NON_TEXT_INPUTS are the input types that bring up no keyboard.
+const NON_TEXT_INPUTS = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+function isTextField(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(target.type);
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+// useTextFieldFocus is true while a text field has focus: the keyboard is up,
+// so the footer gives its room to the text (spec §34).
+function useTextFieldFocus(): boolean {
+  const [typing, setTyping] = useState(() => isTextField(document.activeElement));
+  useEffect(() => {
+    const focusIn = (e: FocusEvent): void => {
+      setTyping(isTextField(e.target));
+    };
+    const focusOut = (e: FocusEvent): void => {
+      setTyping(isTextField(e.relatedTarget));
+    };
+    document.addEventListener("focusin", focusIn);
+    document.addEventListener("focusout", focusOut);
+    return () => {
+      document.removeEventListener("focusin", focusIn);
+      document.removeEventListener("focusout", focusOut);
+    };
+  }, []);
+  return typing;
+}
+
+// TABBED are the routes that show a session's tabs under their head.
+const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
+  "turns",
+  "info",
+  "changes",
+  "mockup",
+  "flow",
+  "flowStory",
+  "flowDoc",
+]);
+
+// ContextRow is the header's first row: an optional way back (an href, named
+// by where it goes: "fleet", or the label of the tab it opens), the screen's
+// title as its one h1, and the screen's actions.
+export function ContextRow({
+  title,
+  back,
+  actions,
+}: {
+  title: string;
+  back?: string;
+  actions?: ReactNode;
+}): ReactElement {
+  return (
+    <div className="flex min-h-11 items-center gap-2 px-4">
+      {back === undefined ? null : (
+        <a href={back} className="flex min-h-11 flex-none items-center text-sm text-muted-foreground">
+          ‹ {backLabel(back)}
+        </a>
+      )}
+      <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{title}</h1>
+      {actions}
+    </div>
+  );
+}
+
+function backLabel(href: string): string {
+  const { panel } = routeOf(href);
+  return panel === "fleet" ? "fleet" : (panelFor(panel)?.tab?.label ?? "back");
+}
+
+// tabOf is the tab a route lights: a flow's row and document light the flow
+// tab, the full mockup the mockup tab.
+function tabOf(panel: PanelId): PanelId {
+  if (panel === "flowStory" || panel === "flowDoc") return "flow";
+  if (panel === "mockupFull") return "mockup";
+  return panel;
+}
+
+function byTabOrder(a: Panel, b: Panel): number {
+  return (a.tab?.order ?? 0) - (b.tab?.order ?? 0);
+}
+
+// SessionTabs are a session's views under its context row: the registry's tab
+// panels that apply to it, plus the one on screen when it is not among them (a
+// session that pauses on its changes keeps the tab under the user). Fewer
+// than two draw no row.
+export function SessionTabs({ session }: { session: Session }): ReactElement {
+  const route = useRoute();
+  const current = tabOf(route.panel);
+  const tabs = sessionTabs(session);
+  const here = panelFor(current);
+  if (here?.tab !== undefined && !tabs.some((t) => t.id === current)) {
+    tabs.push(here);
+    tabs.sort(byTabOrder);
+  }
+  if (tabs.length < 2) return <></>;
+  return (
+    <nav aria-label="Session views" className="flex gap-1 overflow-x-auto px-2">
+      {tabs.map((tab) => (
+        <a
+          key={tab.id}
+          href={hrefFor(tab.id, { id: String(session.id) })}
+          aria-current={tab.id === current ? "page" : undefined}
+          className={cn(
+            "flex min-h-11 items-center border-b-2 border-transparent px-3 text-sm text-muted-foreground",
+            tab.id === current && "border-foreground text-foreground",
+          )}
+        >
+          {tab.tab?.label ?? tab.id}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+const PILL: Record<LinkState, string> = {
+  live: "LIVE",
+  connecting: "CONNECTING",
+  restarting: "RESTARTING",
+  offline: "OFFLINE",
+};
+
+const PILL_TONE: Record<LinkState, string> = {
+  live: "bg-working",
+  connecting: "bg-muted-foreground",
+  restarting: "bg-attention",
+  offline: "bg-error",
+};
+
+// COUNTED are the groups the status row counts, in its order.
+const COUNTED: { key: SessionGroup; glyph: string; words: string; tone: string }[] = [
+  { key: "needs_you", glyph: "●", words: "need you", tone: "text-attention" },
+  { key: "your_turn", glyph: "◆", words: "your turn", tone: "text-turn" },
+  { key: "working", glyph: "◐", words: "working", tone: "text-working" },
+];
+
+// clock is the time of day of a ms timestamp.
+function clock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// StatusRow is the footer's row: the link's pill, loom@host (with the time of
+// the last update while offline) and a count per group over the shown
+// workspaces. A count opens the group's next session: the one after the
+// session on screen, in the group's order at the tap, wrapping, or the first.
+// While the stream is down the counts are the cached snapshot's, drawn faint
+// and still buttons; a zero is no button.
+export function StatusRow(): ReactElement {
+  const { state } = useLink();
+  const host = useFleet((s) => s.snapshot?.host ?? "");
+  const updated = useFleet((s) => s.updated);
+  const groups = useFleetGroups();
+  const route = useRoute();
+  const when = state === "offline" && updated > 0 ? ` · ${clock(updated)}` : "";
+
+  const open = (group: SessionGroup): void => {
+    const snapshot = useFleet.getState().snapshot;
+    if (snapshot === null) return;
+    const current = panelProps(route).sessionId ?? null;
+    const next = nextInGroup(fleetGroups(snapshot), group, current);
+    if (next !== undefined) window.location.hash = hrefFor("turns", { id: String(next.id) });
+  };
+
+  return (
+    <div className="flex min-h-11 items-center gap-1 px-4 text-xs">
+      <span
+        aria-live="polite"
+        className={cn("mr-1 flex-none rounded-sm px-1.5 font-bold text-background", PILL_TONE[state])}
+      >
+        {PILL[state]}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono">
+        {host === "" ? (
+          "loom"
+        ) : (
+          <>
+            <span className="text-muted-foreground">loom@</span>
+            {host}
+          </>
+        )}
+        {when}
+      </span>
+      {COUNTED.map((g) => {
+        const n = groups[g.key].length;
+        const tone = cn(
+          "flex min-h-11 flex-none items-center gap-1 px-2 tabular-nums",
+          g.tone,
+          state !== "live" && "opacity-60",
+        );
+        const inner = (
+          <>
+            <span aria-hidden="true">{g.glyph}</span>
+            {n}
+          </>
+        );
+        if (n === 0) {
+          return (
+            <span key={g.key} className={cn(tone, "opacity-40")}>
+              {inner}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={g.key}
+            type="button"
+            aria-label={`${n} ${g.words}: open the next`}
+            className={tone}
+            onClick={() => {
+              open(g.key);
+            }}
+          >
+            {inner}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run them to see them pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/shell.tsx src/app/shell.test.tsx && pnpm exec vitest run src/app/ && pnpm run check'`
+Expected: every test file under `src/app/` passes, and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the header's context row and tabs, the footer's status row" -- internal/web/ui/src/app/shell.tsx internal/web/ui/src/app/shell.test.tsx
+```
+
+### Task 11.6: Toasts wired in `main.tsx`, and the rebuilt bundle
+
+**Files:**
+- Modify: `internal/web/ui/src/main.tsx`
+- Modify: `internal/web/dist/` (rebuilt)
+
+`watchNotices` is tested in Task 11.1; this task starts it. As in Story 10, `main.tsx` has no unit test: `pnpm run check` typechecks and lints it, `dist:check` pins the bundle, and webshot renders the built app under the real CSP (`Toaster`, `ConfirmSheet` and the footer are now in the page).
+
+- [ ] **Step 1: Wire `watchNotices`**
+
+In `internal/web/ui/src/main.tsx`, replace the import line
+
+```tsx
+import { goToPairing, router, watchHash } from "@/app/routes";
+```
+
+with
+
+```tsx
+import { goToPairing, router, watchHash } from "@/app/routes";
+import { watchNotices } from "@/app/toasts";
+```
+
+replace
+
+```tsx
+const stopFleet = startFleet();
+```
+
+with
+
+```tsx
+const stopNotices = watchNotices();
+const stopFleet = startFleet();
+```
+
+and replace
+
+```tsx
+    stopFleet();
+    stopUnpaired();
+```
+
+with
+
+```tsx
+    stopNotices();
+    stopFleet();
+    stopUnpaired();
+```
+
+- [ ] **Step 2: Check it**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/main.tsx && pnpm run check'`
+Expected: exits 0.
+
+- [ ] **Step 3: Rebuild the bundle and render it**
+
+Run: `bash -c 'cd internal/web/ui && pnpm run build && pnpm run dist:check'`
+Expected: Vite prints its build summary; `dist:check` exits 0.
+
+Run: `bash -c 'd=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+Expected: exits 0 with no console error, CSP violation or unanswered route reported (the page now holds the toast viewport, the confirmation drawer's portal and the status row, none of which may write a `<style>` element).
+
+- [ ] **Step 4: Run the Go tests**
+
+Run: `CGO_ENABLED=0 go test ./internal/web/`
+Expected: `ok  github.com/aidan-bailey/loom/internal/web`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/dist
+git commit -m "feat(web): toast every notice the app hears" -- internal/web/ui/src/main.tsx internal/web/dist
+```
+
+## Story 12: The worker: registration, the shell upgrade, push and the launch-time subscription check
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/app/worker.ts`, `internal/web/ui/src/app/worker.test.ts`, `internal/web/ui/src/app/sw.test.ts`, `internal/web/push_test.go`, `internal/web/ui/src/main.tsx`, `internal/web/ui/src/store/fleet.ts`, `internal/web/ui/src/store/startFleet.test.ts`, `internal/web/dist/`, `internal/web/static_test.go`
+- **Interfaces:** exposes `registerWorker`, `shellBuild`, `upgradeShell`, `checkPushSubscription`; uses Story 4's worker and `nextStaticAssets`, Story 6's `cookieApp` and `page`, Story 9's store, `startFleet` and `api`, Story 11's `showMessage`
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
+- **Review:** deep
+- **Form:** full (the worker's caches, push display and update path; a wrong one shows a stale fleet or drops a push)
+
+The new app's worker, `public/sw.js`, is Story 4's whole port of the classic one (the shell cache `loom-next-<build>`, never `/api/`, every push a notification tagged by session, the badge, a tap opening the push's `url`, its own shell fetched as `?ui=next`), so this story changes none of it. It pins it, because a wrong worker shows a stale fleet or drops a push and nothing else fails: a Go test that the served worker gets its build and the tree's own file list, and a Vitest file that runs the worker's source against fakes (`sw.test.ts`, since the worker has no other harness), and it widens the existing push-payload test to read both workers, so a payload key the daemon adds cannot be shown by the classic worker and missed by the new one. The page's side is new, in `src/app/worker.ts`: `registerWorker()` registers `/sw.js?ui=<cookieApp()>` at every launch (spec §5: a switch deferred offline completes on the next launch) and reloads on `controllerchange` when the page was already controlled; `shellBuild()` reads the `loom-build` meta tag; `upgradeShell(build)` asks the worker to update, once per build, and reloads if nothing took over; `checkPushSubscription(device)` ports `push.mjs`'s `checkPush` onto the generated `api`. `startFleet`'s `onEvent` calls the upgrade when a snapshot's `build` differs from the shell's and the push check once per launch, after the first snapshot that asks for no upgrade, and `main.tsx` calls `registerWorker()`. The reload goes through Story 6's `page.reload`, so tests count reloads without navigating. The check's one toast, through Story 11's `showMessage`, is the classic one; its other failures stay silent as the classic check's do (a background check must not toast a refusal at every launch), so `showOutcome` is not used. The story's code holds none of the profile's landmine markers. Each command runs from the repository root and enters `internal/web/ui` for `pnpm`. The commits use the repo's Conventional style, scoped `web`.
+
+### Task 12.1: Pin the new tree's worker
+
+**Files:**
+- Modify: `internal/web/static_test.go` (after `TestStatic_ServiceWorkerCarriesTheBuildAndTheShell`)
+- Modify: `internal/web/push_test.go` (`TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents`)
+- Create: `internal/web/ui/src/app/sw.test.ts`
+
+Story 4's worker is complete, so these tests pass on arrival; Step 2 proves each can fail by breaking the worker for a moment.
+
+- [ ] **Step 1: Write the tests**
+
+In `internal/web/static_test.go`, after `TestStatic_ServiceWorkerCarriesTheBuildAndTheShell`, whose last lines are
+
+```go
+	require.ElementsMatch(t, want, shell)
+}
+```
+
+add (it uses Story 4's `nextStaticAssets` and `nextFiles`, and the imports the classic test already has):
+
+```go
+func TestStatic_NextServiceWorkerCarriesTheBuildAndTheShell(t *testing.T) {
+	sw := string(nextStaticAssets(t)["/sw.js"].body)
+	require.NotContains(t, sw, "__LOOM_")
+	require.Contains(t, sw, `const CACHE = "loom-next-" + BUILD;`, "the new worker caches under its own prefix")
+
+	buildLine := regexp.MustCompile(`(?m)^const BUILD = (.*);$`).FindStringSubmatch(sw)
+	require.NotNil(t, buildLine, "the new worker lost its BUILD line")
+	var gotBuild string
+	require.NoError(t, json.Unmarshal([]byte(buildLine[1]), &gotBuild))
+	require.Equal(t, "b-test", gotBuild)
+
+	shellLine := regexp.MustCompile(`(?m)^const SHELL = (.*);$`).FindStringSubmatch(sw)
+	require.NotNil(t, shellLine, "the new worker lost its SHELL line")
+	var shell []string
+	require.NoError(t, json.Unmarshal([]byte(shellLine[1]), &shell))
+
+	want := []string{"/"}
+	require.NoError(t, fs.WalkDir(nextFiles, "dist", func(name string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			want = append(want, strings.TrimPrefix(name, "dist"))
+		}
+		return err
+	}))
+	require.ElementsMatch(t, want, shell, "the shell list is the new tree's own files, not the classic one's")
+	for _, file := range []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"} {
+		require.Contains(t, shell, file, "the worker fetches these as ?ui=next, so they must be listed")
+	}
+}
+```
+
+Fails without: `TestStatic_NextServiceWorkerCarriesTheBuildAndTheShell`: the new worker's `const CACHE` line moved to another prefix (`loom-shell-`), its `BUILD` or `SHELL` line reshaped so `buildStaticAssets` cannot fill it, a tree whose list is built from `staticFiles` instead of `dist/`, or one of the four shell files missing from `dist/` (`manifest.webmanifest` dropped from `public/`).
+
+In `internal/web/push_test.go`, `TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents` reads only the classic worker. Replace these lines
+
+```go
+	sw, err := os.ReadFile("static/sw.js")
+	require.NoError(t, err)
+	for key := range keys {
+		assert.Contains(t, string(sw), "data."+key, "sw.js never reads the push payload's %q", key)
+	}
+	assert.Contains(t, string(sw), `addEventListener("push"`)
+	assert.Contains(t, string(sw), `addEventListener("notificationclick"`)
+}
+```
+
+with
+
+```go
+	for _, worker := range []string{"static/sw.js", "ui/public/sw.js"} {
+		sw, err := os.ReadFile(worker)
+		require.NoError(t, err)
+		for key := range keys {
+			assert.Contains(t, string(sw), "data."+key, "%s never reads the push payload's %q", worker, key)
+		}
+		assert.Contains(t, string(sw), `addEventListener("push"`, worker)
+		assert.Contains(t, string(sw), `addEventListener("notificationclick"`, worker)
+	}
+}
+```
+
+Fails without: `TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents`: the `ui/public/sw.js` entry of the list (a payload key or a handler missing from the new worker alone would pass), or the key and handler checks left outside the loop (they would read the classic worker only).
+
+Create `internal/web/ui/src/app/sw.test.ts`. It runs the worker's source (`?raw`, with the build and shell placeholders filled as the daemon fills them) as a function whose `self`, `caches`, `fetch` and `Request` are fakes, then fires the worker's events. The tsconfig gives no Node types, so the file uses no `node:` module, and it builds the function through the `Function` constructor held in a constant.
+
+```ts
+import { beforeEach, describe, expect, it } from "vitest";
+import source from "../../public/sw.js?raw";
+
+const ORIGIN = "https://loom.example";
+const SHELL = ["/", "/index.html", "/sw.js", "/manifest.webmanifest", "/assets/index-abc.js"];
+const CACHE = "loom-next-b-test";
+
+class FakeRequest {
+  readonly url: string;
+  readonly init: unknown;
+  constructor(url: string, init?: unknown) {
+    this.url = url;
+    this.init = init;
+  }
+}
+
+interface FakeWindow {
+  focus: () => Promise<void>;
+  navigate?: (url: string) => Promise<void>;
+}
+
+interface FakeEvent {
+  request?: { method: string; url: string; mode: string };
+  data?: { json: () => unknown } | null;
+  notification?: { close: () => void; data?: { url?: string } };
+  waitUntil: (work: Promise<unknown>) => void;
+  respondWith: (answer: Promise<unknown>) => void;
+}
+
+interface Fired {
+  answer: Promise<unknown> | undefined;
+}
+
+interface Harness {
+  fire: (type: string, event?: Partial<FakeEvent>) => Promise<Fired>;
+  stores: Map<string, Map<string, unknown>>;
+  fetched: string[];
+  failing: Set<string>;
+  shown: { title: string; options: Record<string, unknown> }[];
+  badges: (number | "cleared")[];
+  opened: string[];
+  windows: FakeWindow[];
+  stats: { skipped: number; claimed: number };
+}
+
+// The worker's source compiles to a function of the four globals it uses.
+const Compile = Function as unknown as new (...params: string[]) => (...args: unknown[]) => void;
+
+// boot runs the worker's source against fakes and returns what they recorded.
+function boot(): Harness {
+  const handlers = new Map<string, (event: FakeEvent) => void>();
+  const h: Harness = {
+    fire: async (type, event = {}) => {
+      const handler = handlers.get(type);
+      if (!handler) throw new Error(`the worker has no ${type} listener`);
+      const waits: Promise<unknown>[] = [];
+      const out: Fired = { answer: undefined };
+      handler({
+        ...event,
+        waitUntil: (work) => {
+          waits.push(work);
+        },
+        respondWith: (answer) => {
+          out.answer = answer;
+        },
+      });
+      await Promise.all(waits);
+      return out;
+    },
+    stores: new Map(),
+    fetched: [],
+    failing: new Set(),
+    shown: [],
+    badges: [],
+    opened: [],
+    windows: [],
+    stats: { skipped: 0, claimed: 0 },
+  };
+
+  const cachesApi = {
+    open: (name: string) => {
+      const entries = h.stores.get(name) ?? new Map<string, unknown>();
+      h.stores.set(name, entries);
+      return Promise.resolve({
+        put: (key: string, response: unknown) => {
+          entries.set(key, response);
+          return Promise.resolve();
+        },
+        match: (key: string) => Promise.resolve(entries.get(key)),
+      });
+    },
+    keys: () => Promise.resolve([...h.stores.keys()]),
+    delete: (name: string) => Promise.resolve(h.stores.delete(name)),
+  };
+
+  const fetchApi = (req: { url: string }) => {
+    h.fetched.push(req.url);
+    const ok = !h.failing.has(req.url);
+    return Promise.resolve({ ok, status: ok ? 200 : 500, from: req.url });
+  };
+
+  const self = {
+    location: { origin: ORIGIN },
+    registration: {
+      showNotification: (title: string, options: Record<string, unknown>) => {
+        h.shown.push({ title, options });
+        return Promise.resolve();
+      },
+    },
+    clients: {
+      claim: () => {
+        h.stats.claimed += 1;
+        return Promise.resolve();
+      },
+      matchAll: () => Promise.resolve(h.windows),
+      openWindow: (url: string) => {
+        h.opened.push(url);
+        return Promise.resolve(null);
+      },
+    },
+    navigator: {
+      setAppBadge: (count: number) => {
+        h.badges.push(count);
+        return Promise.resolve();
+      },
+      clearAppBadge: () => {
+        h.badges.push("cleared");
+        return Promise.resolve();
+      },
+    },
+    skipWaiting: () => {
+      h.stats.skipped += 1;
+      return Promise.resolve();
+    },
+    addEventListener: (type: string, handler: (event: FakeEvent) => void) => {
+      handlers.set(type, handler);
+    },
+  };
+
+  // The daemon fills these two placeholders when it serves the worker (buildStaticAssets).
+  const code = source
+    .replace('"__LOOM_BUILD__"', '"b-test"')
+    .replace('["__LOOM_SHELL__"]', JSON.stringify(SHELL));
+  const run = new Compile("self", "caches", "fetch", "Request", code);
+  run(self, cachesApi, fetchApi, FakeRequest);
+  return h;
+}
+
+const get = (url: string, mode = "cors") => ({ request: { method: "GET", url: ORIGIN + url, mode } });
+const pushOf = (data: unknown) => ({ data: { json: () => data } });
+
+let worker: Harness;
+
+beforeEach(() => {
+  worker = boot();
+});
+
+describe("install", () => {
+  it("fetches each shell file as ?ui=next and stores every one under its plain path", async () => {
+    await worker.fire("install");
+    expect(worker.fetched).toEqual([
+      "/?ui=next",
+      "/index.html?ui=next",
+      "/sw.js?ui=next",
+      "/manifest.webmanifest?ui=next",
+      "/assets/index-abc.js",
+    ]);
+    const cache = worker.stores.get(CACHE);
+    expect([...(cache?.keys() ?? [])].sort()).toEqual([...SHELL].sort());
+    expect(cache?.get("/")).toMatchObject({ from: "/?ui=next" });
+    expect(worker.stats.skipped).toBe(1);
+  });
+
+  it("fails, and so does not install, when a shell file will not load", async () => {
+    worker.failing.add("/index.html?ui=next");
+    await expect(worker.fire("install")).rejects.toThrow("/index.html?ui=next: 500");
+    expect(worker.stats.skipped).toBe(0);
+  });
+});
+
+describe("activate", () => {
+  it("deletes every other app's shell cache, keeps its own and others, and takes over", async () => {
+    for (const name of ["loom-shell-b-old", "loom-next-b-old", CACHE, "unrelated"]) {
+      worker.stores.set(name, new Map());
+    }
+    await worker.fire("activate");
+    expect([...worker.stores.keys()].sort()).toEqual([CACHE, "unrelated"].sort());
+    expect(worker.stats.claimed).toBe(1);
+  });
+});
+
+describe("fetch", () => {
+  it.each(["/api/v1/stream", "/api/v1/sessions/7/turns"])("never answers %s", async (path) => {
+    const fired = await worker.fire("fetch", get(path));
+    expect(fired.answer).toBeUndefined();
+  });
+
+  it("leaves a write and another origin's request alone", async () => {
+    const post = await worker.fire("fetch", {
+      request: { method: "POST", url: ORIGIN + "/assets/index-abc.js", mode: "cors" },
+    });
+    const foreign = await worker.fire("fetch", {
+      request: { method: "GET", url: "https://elsewhere.example/assets/index-abc.js", mode: "cors" },
+    });
+    expect(post.answer).toBeUndefined();
+    expect(foreign.answer).toBeUndefined();
+  });
+
+  it("answers a navigation with the cached shell, whatever its path", async () => {
+    await worker.fire("install");
+    const fired = await worker.fire("fetch", get("/s/7", "navigate"));
+    await expect(fired.answer).resolves.toMatchObject({ from: "/?ui=next" });
+  });
+
+  it("answers a cached file from the cache and any other from the network", async () => {
+    await worker.fire("install");
+    worker.fetched.length = 0;
+    const cached = await worker.fire("fetch", get("/assets/index-abc.js"));
+    await expect(cached.answer).resolves.toMatchObject({ from: "/assets/index-abc.js" });
+    expect(worker.fetched).toEqual([]);
+
+    const other = await worker.fire("fetch", get("/assets/other.js"));
+    await expect(other.answer).resolves.toMatchObject({ from: ORIGIN + "/assets/other.js" });
+    expect(worker.fetched).toEqual([ORIGIN + "/assets/other.js"]);
+  });
+});
+
+describe("push", () => {
+  it("shows every push as a notification tagged by its session, and sets the badge", async () => {
+    await worker.fire(
+      "push",
+      pushOf({ kind: "waiting", session: 7, title: "api needs you", body: "Run the tests?", badge: 3, url: "/#s/7" }),
+    );
+    expect(worker.shown).toEqual([
+      {
+        title: "api needs you",
+        options: {
+          body: "Run the tests?",
+          tag: "session-7",
+          renotify: true,
+          icon: "/icons/icon-192.png",
+          data: { url: ORIGIN + "/#s/7" },
+        },
+      },
+    ]);
+    expect(worker.badges).toEqual([3]);
+  });
+
+  it("shows a push it cannot read, and leaves the badge alone", async () => {
+    await worker.fire("push", {
+      data: {
+        json: () => {
+          throw new SyntaxError("Unexpected end of JSON input");
+        },
+      },
+    });
+    await worker.fire("push", { data: null });
+    await worker.fire("push", pushOf(null));
+    await worker.fire("push", pushOf("not an object"));
+    expect(worker.shown).toHaveLength(4);
+    for (const shown of worker.shown) {
+      expect(shown.title).toBe("loom");
+      expect(shown.options).toMatchObject({
+        body: "Open loom to see what changed.",
+        tag: "loom",
+        data: { url: ORIGIN + "/" },
+      });
+    }
+    expect(worker.badges).toEqual([]);
+  });
+
+  it("words a waiting push with no title", async () => {
+    await worker.fire("push", pushOf({ kind: "waiting", session: 2 }));
+    expect(worker.shown[0]?.title).toBe("A session needs you");
+  });
+
+  it("clears the badge at 0, and leaves it alone for no count or a bad one", async () => {
+    await worker.fire("push", pushOf({ session: 1, badge: 0 }));
+    expect(worker.badges).toEqual(["cleared"]);
+    await worker.fire("push", pushOf({ session: 1 }));
+    await worker.fire("push", pushOf({ session: 1, badge: -1 }));
+    await worker.fire("push", pushOf({ session: 1, badge: 1.5 }));
+    expect(worker.badges).toEqual(["cleared"]);
+  });
+
+  it("opens the front page for a url on another origin", async () => {
+    await worker.fire("push", pushOf({ session: 1, url: "https://evil.example/#s/1" }));
+    expect(worker.shown[0]?.options).toMatchObject({ data: { url: ORIGIN + "/" } });
+  });
+});
+
+describe("notificationclick", () => {
+  const clicked = (url?: string) => {
+    const closed = { count: 0 };
+    return {
+      closed,
+      event: {
+        notification: {
+          close: () => {
+            closed.count += 1;
+          },
+          data: url === undefined ? undefined : { url },
+        },
+      },
+    };
+  };
+
+  it("closes the notification and opens a window on its url when none is open", async () => {
+    const { closed, event } = clicked(ORIGIN + "/#s/7");
+    await worker.fire("notificationclick", event);
+    expect(closed.count).toBe(1);
+    expect(worker.opened).toEqual([ORIGIN + "/#s/7"]);
+  });
+
+  it("brings an open window to the page instead of opening another", async () => {
+    const navigated: string[] = [];
+    worker.windows.push({
+      focus: () => Promise.resolve(),
+      navigate: (url) => {
+        navigated.push(url);
+        return Promise.resolve();
+      },
+    });
+    await worker.fire("notificationclick", clicked(ORIGIN + "/#s/7").event);
+    expect(navigated).toEqual([ORIGIN + "/#s/7"]);
+    expect(worker.opened).toEqual([]);
+  });
+
+  it("tries the next window, then opens one, when a window will not take the page", async () => {
+    worker.windows.push({ focus: () => Promise.reject(new Error("gone")) });
+    await worker.fire("notificationclick", clicked(ORIGIN + "/#s/7").event);
+    expect(worker.opened).toEqual([ORIGIN + "/#s/7"]);
+  });
+
+  it("opens the front page for a notification that carries no url", async () => {
+    await worker.fire("notificationclick", clicked().event);
+    expect(worker.opened).toEqual([ORIGIN + "/"]);
+  });
+});
+```
+
+Fails without: `fetches each shell file as ?ui=next…`: the worker fetching a shell file without `?ui=${TREE}` (it would cache whichever tree the cookie names), storing under the asked URL instead of the plain path, or no `skipWaiting`; `fails, and so does not install…`: the `response.ok` check (a 500 cached as the shell); `deletes every other app's shell cache…`: either prefix missing from `PREFIXES`, the `key !== CACHE` test, or no `clients.claim()`; `never answers %s`: the `/api/` check in the fetch handler (the cache would serve a stale fleet as live); `leaves a write and another origin's request alone`: the method or origin check; `answers a navigation with the cached shell…`: the `req.mode === "navigate" ? "/"` key; `answers a cached file…`: the cache-first match with a network fallback; `shows every push…`: the tag, `renotify`, the icon, `pushTarget` or `setBadge`; `shows a push it cannot read…`: the try/catch around `json()` (the throwing push), the `event.data` test (the `data: null` push), or the object check, which the `pushOf(null)` push catches (a `null` body would throw reading `.title`; a string's fields read as undefined without it, so `pushOf("not an object")` alone would not), so iOS would drop the subscription of a worker that shows nothing; `words a waiting push with no title`: the `waiting` title; `clears the badge at 0…`: the integer and range check; `opens the front page for a url on another origin`: the origin check in `pushTarget`; the four `notificationclick` tests: the close, the focus-and-navigate loop, its try/catch and the `openWindow` fallback, and `pushTarget("/")` for a notification with no data.
+
+- [ ] **Step 2: Run them, then break the worker to see them fail**
+
+Run: `bash -c 'CGO_ENABLED=0 go test ./internal/web/ -run "TestStatic_NextServiceWorker|TestPush_ServiceWorkerReadsEveryPayloadKey" && cd internal/web/ui && pnpm exec prettier --write src/app/sw.test.ts && pnpm exec vitest run src/app/sw.test.ts'`
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web`, then `Test Files  1 passed (1)` with every test passing (they pass against Story 4's worker).
+
+Then, in `internal/web/ui/public/sw.js` (the file Vitest runs), change `startsWith("/api/")` to `startsWith("/apix/")` and run `cd internal/web/ui && pnpm exec vitest run src/app/sw.test.ts`. Expected: `FAIL ... never answers /api/v1/stream` (`expected Promise{…} to be undefined`). Undo it with `git checkout internal/web/ui/public/sw.js`.
+
+The Go test reads the worker the daemon embeds, the committed `internal/web/dist/sw.js` (rebuilt only by `pnpm run build`), so break that copy: in `internal/web/dist/sw.js`, change `const CACHE = "loom-next-" + BUILD;` to `"loom-shell-" + BUILD`, and run `CGO_ENABLED=0 go test ./internal/web/ -run TestStatic_NextServiceWorker`. Expected: `FAIL`, `the new worker caches under its own prefix`. Undo it with `git checkout internal/web/dist/sw.js`.
+
+The push test reads the source, so break that: in `internal/web/ui/public/sw.js`, change `data.badge` to `data.badg`, and run `CGO_ENABLED=0 go test ./internal/web/ -run TestPush_ServiceWorkerReadsEveryPayloadKey`. Expected: `FAIL`, `ui/public/sw.js never reads the push payload's "badge"`. Undo it with `git checkout internal/web/ui/public/sw.js`; `git diff --stat internal/web/ui/public internal/web/dist` prints nothing.
+
+- [ ] **Step 3: Run the gates**
+
+Run: `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && CGO_ENABLED=0 go test ./internal/web/'`
+Expected: exits 0 (a test file does not change the bundle).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/sw.test.ts
+git commit -m "test(web): pin the new app's worker" -- internal/web/static_test.go internal/web/push_test.go internal/web/ui/src/app/sw.test.ts
+```
+
+### Task 12.2: `registerWorker`, `shellBuild` and `upgradeShell`
+
+**Files:**
+- Create: `internal/web/ui/src/app/worker.ts`
+- Test: `internal/web/ui/src/app/worker.test.ts`
+
+`worker.test.ts` mocks the modules `worker.ts` will import across both this task and Task 12.3 (`./switchApp`, `@/api/request`, `./toasts`), so Task 12.3 only appends. It fakes `navigator.serviceWorker` with recorders, as Story 6's test does.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/web/ui/src/app/worker.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerWorker, shellBuild, upgradeShell } from "./worker";
+
+const m = vi.hoisted(() => ({
+  cookieApp: vi.fn(),
+  reload: vi.fn(),
+  register: vi.fn(),
+  getRegistration: vi.fn(),
+  postPush: vi.fn(),
+  deletePush: vi.fn(),
+  showMessage: vi.fn(),
+}));
+
+vi.mock("./switchApp", () => ({ cookieApp: m.cookieApp, page: { reload: m.reload } }));
+vi.mock("@/api/request", () => ({ api: { postPush: m.postPush, deletePush: m.deletePush } }));
+vi.mock("./toasts", () => ({ showMessage: m.showMessage }));
+
+let listeners: { type: string; fn: () => void }[];
+
+interface WorkersFake {
+  controller?: object | null;
+  ready?: Promise<unknown>;
+}
+
+function installWorkers(parts: WorkersFake = {}): void {
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: {
+      controller: parts.controller ?? null,
+      ready: parts.ready ?? new Promise(() => undefined),
+      register: m.register,
+      getRegistration: m.getRegistration,
+      addEventListener: (type: string, fn: () => void) => {
+        listeners.push({ type, fn });
+      },
+    },
+  });
+}
+
+const settle = () => vi.advanceTimersByTimeAsync(0);
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.useFakeTimers();
+  listeners = [];
+  m.cookieApp.mockReturnValue("next");
+  m.register.mockResolvedValue({});
+  installWorkers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "serviceWorker");
+  sessionStorage.clear();
+  document.head.replaceChildren();
+});
+
+describe("registerWorker", () => {
+  it.each(["classic", "next"])("registers the worker for the cookie's app (%s)", (app) => {
+    m.cookieApp.mockReturnValue(app);
+    registerWorker();
+    expect(m.register).toHaveBeenCalledTimes(1);
+    expect(m.register).toHaveBeenCalledWith(`/sw.js?ui=${app}`);
+  });
+
+  it("reloads when a new worker takes over a page that was already controlled", () => {
+    installWorkers({ controller: {} });
+    registerWorker();
+    expect(listeners.map((l) => l.type)).toEqual(["controllerchange"]);
+    listeners[0]?.fn();
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reload when the first worker takes over a page that had none", () => {
+    registerWorker();
+    listeners[0]?.fn();
+    expect(m.reload).not.toHaveBeenCalled();
+  });
+
+  it("does nothing where there is no service worker", () => {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    expect(() => {
+      registerWorker();
+    }).not.toThrow();
+    expect(m.register).not.toHaveBeenCalled();
+  });
+
+  it("leaves a failed registration unremarked: the next launch tries again", async () => {
+    m.register.mockRejectedValue(new Error("offline"));
+    registerWorker();
+    await settle();
+    expect(m.reload).not.toHaveBeenCalled();
+  });
+});
+
+describe("shellBuild", () => {
+  it("is the loom-build meta tag's content", () => {
+    const meta = document.createElement("meta");
+    meta.name = "loom-build";
+    meta.content = "b-9";
+    document.head.append(meta);
+    expect(shellBuild()).toBe("b-9");
+  });
+
+  it("is empty when the page has no such tag", () => {
+    expect(shellBuild()).toBe("");
+  });
+});
+
+describe("upgradeShell", () => {
+  it("asks the registration to update, and reloads if nothing took over within 5 s", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    m.getRegistration.mockResolvedValue({ update });
+    upgradeShell("b-2");
+    await settle();
+    expect(update).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(m.reload).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reloads after 5 s when the update itself fails", async () => {
+    m.getRegistration.mockResolvedValue({ update: () => Promise.reject(new Error("offline")) });
+    upgradeShell("b-2");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks once per build, and again for the next one", async () => {
+    m.getRegistration.mockResolvedValue({ update: () => Promise.resolve() });
+    upgradeShell("b-2");
+    upgradeShell("b-2");
+    await settle();
+    expect(m.getRegistration).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("loom-next.upgrade")).toBe("b-2");
+    upgradeShell("b-3");
+    await settle();
+    expect(m.getRegistration).toHaveBeenCalledTimes(2);
+    expect(sessionStorage.getItem("loom-next.upgrade")).toBe("b-3");
+  });
+
+  it("does nothing for a build this tab already asked about", async () => {
+    sessionStorage.setItem("loom-next.upgrade", "b-2");
+    upgradeShell("b-2");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(m.getRegistration).not.toHaveBeenCalled();
+    expect(m.reload).not.toHaveBeenCalled();
+  });
+
+  it("reloads at once when there is no registration to update", async () => {
+    m.getRegistration.mockResolvedValue(undefined);
+    upgradeShell("b-2");
+    await settle();
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads when asking for the registration fails", async () => {
+    m.getRegistration.mockRejectedValue(new Error("no"));
+    upgradeShell("b-2");
+    await settle();
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads at once where there is no service worker", () => {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    upgradeShell("b-2");
+    expect(m.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("still asks when sessionStorage is unavailable, but leaves the reload to the worker", async () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("denied");
+      },
+    });
+    const update = vi.fn().mockResolvedValue(undefined);
+    m.getRegistration.mockResolvedValue({ update });
+    upgradeShell("b-2");
+    await settle();
+    expect(m.getRegistration).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(m.reload).not.toHaveBeenCalled();
+  });
+});
+```
+
+Fails without: `registers the worker for the cookie's app`: `/sw.js?ui=next` hard-coded, or `cookieApp()` not read (a deferred switch back would never complete); `reloads when a new worker takes over…`: the `controllerchange` listener, or the reload through `page.reload`; `does not reload when the first worker takes over…`: the `hadController` test (the first install would reload the page once for nothing); `does nothing where there is no service worker`: the `"serviceWorker" in navigator` check (it throws); `leaves a failed registration unremarked`: the `.catch` on `register`, or a reload on failure; `shellBuild`: the meta lookup and the `""` fallback; `asks the registration to update…`: `registration.update()` and the 5 s reload timer, which is the fallback when the new worker never takes over; `still reloads after 5 s when the update itself fails`: the `.catch` on `update` (an unhandled rejection) or the timer set only after the update resolves; `asks once per build…`: the sessionStorage guard (without it every reconnect's snapshot reloads the page, forever when the shell cannot update) and its key `loom-next.upgrade`; `does nothing for a build this tab already asked about`: the same guard; `reloads at once when there is no registration`, `reloads when asking for the registration fails` and `reloads at once where there is no service worker`: the three fallbacks, since a shell that cannot ask its worker still has to move to the new build; `still asks when sessionStorage is unavailable…`: the try/catch around the guard (the `update` call and the registration lookup), and the `remembered` test on the timer (a page that cannot record its ask would reload every 5 s for ever: each reload's first snapshot would start another timer).
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/worker.test.ts'`
+Expected: FAIL, `Failed to resolve import "./worker" from "src/app/worker.test.ts". Does the file exist?`
+
+- [ ] **Step 3: Implement**
+
+Create `internal/web/ui/src/app/worker.ts`:
+
+```ts
+// The app's service worker, seen from the page: registering it and asking it for a new shell. The
+// worker itself is public/sw.js (spec §28). The launch-time push check, which also needs the
+// registration, follows in this file.
+import { cookieApp, page } from "./switchApp";
+
+const UPGRADE_KEY = "loom-next.upgrade";
+
+// UPGRADE_RELOAD_MS is how long a page waits for the new worker to take over (which reloads it)
+// before it reloads itself.
+const UPGRADE_RELOAD_MS = 5000;
+
+// registerWorker registers the worker at every launch, as /sw.js?ui=<the cookie's app>: the new
+// app's worker while the device is on the new app, the classic one after a switch back that was
+// deferred offline, so the switch completes on the next launch (spec §5). A worker that takes over
+// a page that was already controlled is a new build or the other app's worker: the page reloads
+// to draw from it. The first worker to take over a page that had none changes nothing the page
+// has drawn.
+export function registerWorker(): void {
+  if (!("serviceWorker" in navigator)) return;
+  const workers = navigator.serviceWorker;
+  const hadController = workers.controller !== null;
+  workers.addEventListener("controllerchange", () => {
+    if (hadController) page.reload();
+  });
+  workers.register(`/sw.js?ui=${cookieApp()}`).catch(() => undefined);
+}
+
+// shellBuild is the build this page's shell was served for: the loom-build meta tag the daemon
+// fills into index.html.
+export function shellBuild(): string {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="loom-build"]');
+  return meta ? meta.content : "";
+}
+
+// upgradeShell runs when the daemon's build differs from the shell's: it asks the worker for the
+// new shell, which installs, takes over and reloads the page (registerWorker). Once per build per
+// tab, so a shell that cannot update does not reload forever. When the worker cannot be asked, or
+// does not take over within UPGRADE_RELOAD_MS, the page reloads itself, unless the ask could not be
+// recorded (no sessionStorage): each reload's first snapshot would then start another timer, so
+// such a page leaves the reload to the worker's takeover.
+export function upgradeShell(build: string): void {
+  let remembered = true;
+  try {
+    if (sessionStorage.getItem(UPGRADE_KEY) === build) return;
+    sessionStorage.setItem(UPGRADE_KEY, build);
+  } catch {
+    // No sessionStorage: the shell is still asked, on every call.
+    remembered = false;
+  }
+  if (!("serviceWorker" in navigator)) {
+    page.reload();
+    return;
+  }
+  navigator.serviceWorker
+    .getRegistration()
+    .then((registration) => {
+      if (registration === undefined) {
+        page.reload();
+        return;
+      }
+      registration.update().catch(() => undefined);
+      if (!remembered) return;
+      setTimeout(() => {
+        page.reload();
+      }, UPGRADE_RELOAD_MS);
+    })
+    .catch(() => {
+      page.reload();
+    });
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/worker.ts src/app/worker.test.ts && pnpm exec vitest run src/app/worker.test.ts && pnpm run check'`
+Expected: `Test Files  1 passed (1)` and `Tests  16 passed (16)` (six for `registerWorker`: its two rows and four more; two for `shellBuild`; eight for `upgradeShell`); `pnpm run check` exits 0. `dist:check` still passes at this point: nothing imports `worker.ts` yet.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/app/worker.ts internal/web/ui/src/app/worker.test.ts
+git commit -m "feat(web): register the worker by the cookie's app and ask it for a new shell" -- internal/web/ui/src/app/worker.ts internal/web/ui/src/app/worker.test.ts
+```
+
+### Task 12.3: `checkPushSubscription`
+
+**Files:**
+- Modify: `internal/web/ui/src/app/worker.ts`
+- Test: `internal/web/ui/src/app/worker.test.ts`
+
+The classic check (`push.mjs`'s `checkPush`): once per launch, after the first snapshot, while loom's state for the device (`device.push`) is `ok` or empty the phone's subscription is posted again, which changes nothing when it is the same and gives loom back one it lost. When the phone holds none, or may not notify, while loom holds one (`ok` or `failing: <status>`), loom drops its copy (`DELETE /api/v1/device/push`, which it records as expired) and the person is told. A subscription loom knows is bad (`expired` or `failing`) is left for the Settings button to replace. Anything the phone cannot answer (no push support, no active worker within 5 s, a throw) changes nothing. The check never rejects, and shows nothing on a failed call.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/ui/src/app/worker.test.ts`, replace the first two lines
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerWorker, shellBuild, upgradeShell } from "./worker";
+```
+
+with
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Device } from "@/api/gen";
+import { checkPushSubscription, registerWorker, shellBuild, upgradeShell } from "./worker";
+```
+
+and append at the end of the file:
+
+```ts
+const deviceOf = (push: string): Device => ({
+  name: "iphone",
+  notify: { waiting: true, finished: true, paused_until: "" },
+  push,
+});
+
+const SUBSCRIPTION_JSON = {
+  endpoint: "https://web.push.apple.com/abc",
+  expirationTime: null,
+  keys: { p256dh: "pk", auth: "au" },
+};
+
+// phone gives the page a worker that is ready, a notification permission and push support. held is
+// the subscription the phone holds (its toJSON), or null for none.
+function phone(held: object | null, permission: NotificationPermission = "granted") {
+  const getSubscription = vi
+    .fn()
+    .mockResolvedValue(held === null ? null : { toJSON: () => held });
+  installWorkers({ ready: Promise.resolve({ pushManager: { getSubscription } }) });
+  vi.stubGlobal("Notification", { permission });
+  vi.stubGlobal("PushManager", class {});
+  return getSubscription;
+}
+
+const dropped = { kind: "ok", status: 204, value: undefined, notices: [] };
+
+describe("checkPushSubscription", () => {
+  beforeEach(() => {
+    m.postPush.mockResolvedValue({ kind: "ok", status: 200, value: deviceOf("ok"), notices: [] });
+    m.deletePush.mockResolvedValue(dropped);
+  });
+
+  it.each<[string, string, NotificationPermission, boolean, "post" | "drop" | "none"]>([
+    ["posts the subscription again while loom's state is ok", "ok", "granted", true, "post"],
+    ["posts it again while loom holds none", "", "granted", true, "post"],
+    ["leaves an expired state for the button to replace", "expired", "granted", true, "none"],
+    ["leaves a failing state for the button to replace", "failing: 410", "granted", true, "none"],
+    ["has loom drop an ok subscription the phone has lost", "ok", "granted", false, "drop"],
+    ["has loom drop a failing subscription the phone has lost", "failing: 500", "granted", false, "drop"],
+    ["has loom drop its subscription when the phone may no longer notify", "ok", "denied", true, "drop"],
+    ["does nothing when neither side holds one", "", "granted", false, "none"],
+    ["does nothing for an expired state the phone has lost", "expired", "granted", false, "none"],
+  ])("%s", async (_name, state, permission, held, want) => {
+    phone(held ? SUBSCRIPTION_JSON : null, permission);
+    await checkPushSubscription(deviceOf(state));
+    expect(m.postPush).toHaveBeenCalledTimes(want === "post" ? 1 : 0);
+    expect(m.deletePush).toHaveBeenCalledTimes(want === "drop" ? 1 : 0);
+    expect(m.showMessage).toHaveBeenCalledTimes(want === "drop" ? 1 : 0);
+  });
+
+  it("posts the phone's subscription in the shape the daemon reads", async () => {
+    phone(SUBSCRIPTION_JSON);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.postPush).toHaveBeenCalledWith({
+      endpoint: "https://web.push.apple.com/abc",
+      expirationTime: null,
+      keys: { p256dh: "pk", auth: "au" },
+    });
+  });
+
+  it("tells the person when loom drops a subscription", async () => {
+    phone(null);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.showMessage).toHaveBeenCalledWith(
+      "Notifications stopped on this phone. Turn them on again in Settings.",
+      true,
+    );
+  });
+
+  it("says nothing when loom could not drop its subscription", async () => {
+    m.deletePush.mockResolvedValue({ kind: "failed", status: 0, message: "" });
+    phone(null);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).toHaveBeenCalledTimes(1);
+    expect(m.showMessage).not.toHaveBeenCalled();
+  });
+
+  it("posts nothing for a subscription that lacks its keys", async () => {
+    phone({ endpoint: "https://web.push.apple.com/abc", expirationTime: null });
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.postPush).not.toHaveBeenCalled();
+    expect(m.deletePush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing where the browser has no push", async () => {
+    const getSubscription = phone(null);
+    vi.stubGlobal("PushManager", undefined);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(getSubscription).not.toHaveBeenCalled();
+    expect(m.deletePush).not.toHaveBeenCalled();
+
+    vi.stubGlobal("PushManager", class {});
+    vi.stubGlobal("Notification", undefined);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(getSubscription).not.toHaveBeenCalled();
+
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    vi.stubGlobal("Notification", { permission: "granted" });
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no worker is active within 5 s", async () => {
+    vi.stubGlobal("Notification", { permission: "granted" });
+    vi.stubGlobal("PushManager", class {});
+    installWorkers();
+    const done = checkPushSubscription(deviceOf("ok"));
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(m.deletePush).not.toHaveBeenCalled();
+    expect(m.postPush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the phone cannot say what it holds", async () => {
+    const getSubscription = phone(null);
+    getSubscription.mockRejectedValue(new Error("no push service"));
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).not.toHaveBeenCalled();
+    expect(m.postPush).not.toHaveBeenCalled();
+  });
+});
+```
+
+Fails without: the table rows: `post` rows: the `state !== "ok" && state !== ""` guard dropped (an expired subscription would be replaced behind the button's back, or posted again and refused) or the post removed; `drop` rows: the `ok`/`failing` test, the permission test (`denied` with a subscription held), or the delete; `none` rows: a delete for a state that is not `ok` or `failing`; each row's `showMessage` count: the toast missing after a drop, or shown for a post; `posts the phone's subscription in the shape…`: `subscriptionBody` dropping `expirationTime` (the generated type requires the key) or reading the keys wrong; `tells the person…`: the toast's text or its error flag; `says nothing when loom could not drop…`: the `outcome.kind !== "ok"` guard, which would tell a person who was never unsubscribed; `posts nothing for a subscription that lacks its keys`: the keys check (the daemon would refuse it with a 400); `does nothing where the browser has no push`: the `PushManager` check (first part) and the `Notification` check (second part), either of which, removed, reaches `getSubscription`; the third part pins that a page with no service worker changes nothing, which the `"serviceWorker" in navigator` check and the try/catch around `activeRegistration` each give, so removing the first alone leaves it green; `does nothing when no worker is active within 5 s`: the 5 s race (a page with no active worker would wait for ever, and a `ready` that never settles would keep the check pending); `does nothing when the phone cannot say…`: the try/catch around `getSubscription`, which would reject out of the check.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/app/worker.test.ts'`
+Expected: FAIL, the new tests report `TypeError: checkPushSubscription is not a function` (`pnpm run typecheck` says `Module '"./worker"' has no exported member 'checkPushSubscription'`); the Task 12.2 tests still pass.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/ui/src/app/worker.ts`, replace the header comment and import
+
+```ts
+// The app's service worker, seen from the page: registering it and asking it for a new shell. The
+// worker itself is public/sw.js (spec §28). The launch-time push check, which also needs the
+// registration, follows in this file.
+import { cookieApp, page } from "./switchApp";
+```
+
+with
+
+```ts
+// The app's service worker, seen from the page: registering it, asking it for a new shell, and
+// the launch-time check of the phone's push subscription, which needs its registration. The worker
+// itself is public/sw.js (spec §28).
+import type { Device, SubscriptionBody } from "@/api/gen";
+import { api } from "@/api/request";
+import { cookieApp, page } from "./switchApp";
+import { showMessage } from "./toasts";
+```
+
+add, after `const UPGRADE_RELOAD_MS = 5000;`:
+
+```ts
+
+// READY_MS is how long the push check waits for an active worker before it gives up.
+const READY_MS = 5000;
+```
+
+and append at the end of the file:
+
+```ts
+
+function pushSupported(): boolean {
+  return (
+    "serviceWorker" in navigator &&
+    typeof Notification !== "undefined" &&
+    typeof PushManager !== "undefined"
+  );
+}
+
+// activeRegistration is the page's worker registration once its worker is active, or null when
+// none becomes active within READY_MS.
+async function activeRegistration(): Promise<ServiceWorkerRegistration | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(null);
+    }, READY_MS);
+  });
+  try {
+    return await Promise.race([navigator.serviceWorker.ready, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// subscriptionBody is the phone's subscription in the shape POST /api/v1/device/push reads, or
+// null when it lacks what the daemon would refuse it for.
+function subscriptionBody(subscription: PushSubscription): SubscriptionBody | null {
+  const json = subscription.toJSON();
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!json.endpoint || !p256dh || !auth) return null;
+  return {
+    endpoint: json.endpoint,
+    expirationTime: json.expirationTime ?? null,
+    keys: { p256dh, auth },
+  };
+}
+
+/**
+ * The launch-time check of the phone's push subscription (once per launch, after the first
+ * snapshot). Apple answers 201 to a subscription the phone has dropped, and drops the push, so
+ * loom cannot learn of a lost one from the push service: the phone tells it. While loom's state
+ * for the device (`push`) is "ok" or none, the phone's subscription is posted again, which changes
+ * nothing when it is the same and gives loom back one it lost. When the phone holds none, or may
+ * not notify, while loom holds one ("ok" or "failing: <status>"), loom drops its copy (recorded as
+ * expired) and the person is told. A subscription loom knows is bad ("expired" or "failing") is
+ * left for the Settings button to replace. Whatever the phone cannot answer changes nothing, a
+ * failed call shows nothing, and the check never rejects.
+ */
+export async function checkPushSubscription(device: Device): Promise<void> {
+  if (!pushSupported()) return;
+  let subscription: PushSubscription | null;
+  try {
+    const registration = await activeRegistration();
+    if (registration === null) return;
+    subscription = await registration.pushManager.getSubscription();
+  } catch {
+    return;
+  }
+  const state = device.push;
+  if (subscription !== null && Notification.permission === "granted") {
+    if (state !== "ok" && state !== "") return;
+    const body = subscriptionBody(subscription);
+    if (body !== null) await api.postPush(body);
+    return;
+  }
+  if (state !== "ok" && !state.startsWith("failing")) return;
+  const outcome = await api.deletePush();
+  if (outcome.kind !== "ok") return;
+  showMessage("Notifications stopped on this phone. Turn them on again in Settings.", true);
+}
+```
+
+- [ ] **Step 4: Run it to see it pass**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/app/worker.ts src/app/worker.test.ts && pnpm exec vitest run src/app/worker.test.ts && pnpm run check'`
+Expected: `Test Files  1 passed (1)`, every test passing (Task 12.2's 16, the nine table rows and the seven tests after them); `pnpm run check` exits 0. `dist:check` still passes: nothing imports `worker.ts` yet.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "feat(web): the launch-time check of the phone's push subscription" -- internal/web/ui/src/app/worker.ts internal/web/ui/src/app/worker.test.ts
+```
+
+### Task 12.4: Start the worker and the launch checks, and rebuild the bundle
+
+**Files:**
+- Modify: `internal/web/ui/src/store/fleet.ts` (`startFleet`, Story 9's)
+- Modify: `internal/web/ui/src/store/startFleet.test.ts` (Story 9's)
+- Modify: `internal/web/ui/src/main.tsx` (Story 11's version)
+- Modify: `internal/web/dist/` (rebuilt)
+
+`startFleet`'s `onEvent` runs, after each snapshot, the shell check (a snapshot whose `build` differs from `shellBuild()` asks the worker to update; an unknown build on either side asks for nothing) and, for the first snapshot of a start that asks for no upgrade, the push check (an upgrade reloads the page, which would take the check's toast with it; the reloaded page is a new launch and checks). A new `startFleet` is a new launch (Story 9's own tests start it once per test), so the once-per-launch flag lives in the call, not the module. `main.tsx` registers the worker. As in Stories 10 and 11, `main.tsx` has no unit test: `pnpm run check` typechecks and lints it, `dist:check` pins the bundle and webshot renders it.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `internal/web/ui/src/store/startFleet.test.ts`, replace the lines
+
+```ts
+import { connectStream, type StreamHandlers } from "@/api/stream";
+import { fixtureSnapshot } from "@/fixtures";
+```
+
+with
+
+```ts
+import { connectStream, type StreamHandlers } from "@/api/stream";
+import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
+import { fixtureSnapshot } from "@/fixtures";
+```
+
+replace
+
+```ts
+vi.mock("@/api/stream");
+```
+
+with
+
+```ts
+vi.mock("@/api/stream");
+vi.mock("@/app/worker", () => ({
+  checkPushSubscription: vi.fn(),
+  shellBuild: vi.fn(),
+  upgradeShell: vi.fn(),
+}));
+```
+
+replace the line in `beforeEach`
+
+```ts
+  vi.mocked(clearSnapshot).mockResolvedValue(undefined);
+```
+
+with
+
+```ts
+  vi.mocked(clearSnapshot).mockResolvedValue(undefined);
+  vi.mocked(shellBuild).mockReturnValue("");
+  vi.mocked(checkPushSubscription).mockResolvedValue(undefined);
+```
+
+and replace the last test and the end of the file
+
+```ts
+  it("stops the previous start when started again", () => {
+    start();
+    start();
+    expect(connectStream).toHaveBeenCalledTimes(2);
+    expect(closeStream).toHaveBeenCalledOnce();
+  });
+});
+```
+
+with
+
+```ts
+  it("stops the previous start when started again", () => {
+    start();
+    start();
+    expect(connectStream).toHaveBeenCalledTimes(2);
+    expect(closeStream).toHaveBeenCalledOnce();
+  });
+
+  it("asks the worker for the new shell when a snapshot's build is not the shell's", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-new" });
+    expect(upgradeShell).toHaveBeenCalledTimes(1);
+    expect(upgradeShell).toHaveBeenCalledWith("b-new");
+  });
+
+  it("asks for nothing when the snapshot's build is the shell's, or either build is unknown", () => {
+    start();
+    vi.mocked(shellBuild).mockReturnValue("b-1");
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-1" });
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "" });
+    vi.mocked(shellBuild).mockReturnValue("");
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-2" });
+    expect(upgradeShell).not.toHaveBeenCalled();
+  });
+
+  it("asks for a new shell on a snapshot only", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("sessions", { workspace: 1, sessions: [], badge: 0 });
+    handlers.onEvent("ping", {});
+    expect(upgradeShell).not.toHaveBeenCalled();
+    expect(checkPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("leaves the push check to the reloaded page when the snapshot asks for a new shell", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-new" });
+    expect(upgradeShell).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("checks the push subscription once per launch, with the first snapshot's device", () => {
+    start();
+    const first = fixtureSnapshot(NOW);
+    handlers.onEvent("snapshot", first);
+    handlers.onEvent("snapshot", {
+      ...fixtureSnapshot(NOW),
+      device: { ...first.device, push: "expired" },
+    });
+    expect(checkPushSubscription).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).toHaveBeenCalledWith(first.device);
+  });
+
+  it("checks again when started again: a new start is a new launch", () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    expect(checkPushSubscription).toHaveBeenCalledTimes(2);
+  });
+});
+```
+
+Fails without: `asks the worker for the new shell…`: the `upgradeShell` call in `onEvent` (a phone left on an old shell never updates it); `asks for nothing when…`: any term of the `build && shell && build !== shell` condition (an upgrade for the same build reloads the page on every launch, and one for an unknown build asks the worker for a shell it cannot compare); `asks for a new shell on a snapshot only`: the calls hung on every event instead of the snapshot; `leaves the push check to the reloaded page…`: the `!upgrading` term before the check (the check's "Notifications stopped" toast could be lost with the reload the upgrade starts, and the reloaded page would never say it again); `checks the push subscription once per launch…`: the `launched` flag (a check per reconnect) or the check reading a later snapshot's device; `checks again when started again`: the flag made module-wide.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec vitest run src/store/startFleet.test.ts'`
+Expected: FAIL: `asks the worker for the new shell…` and `leaves the push check to the reloaded page…` (`expected "spy" to be called 1 times, but got 0 times`), `checks the push subscription once per launch…` and `checks again when started again` (`expected "spy" to be called …`); Story 9's other tests in the file still pass.
+
+- [ ] **Step 3: Implement**
+
+In `internal/web/ui/src/store/fleet.ts`, replace
+
+```ts
+import { connectStream, type LinkState } from "@/api/stream";
+```
+
+with
+
+```ts
+import { connectStream, type LinkState } from "@/api/stream";
+import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
+```
+
+in `afterEvent`, replace
+
+```ts
+      // The first snapshot of a launch is also where the launch-time checks run (the shell's
+      // upgrade, the push subscription).
+```
+
+with
+
+```ts
+      // The launch-time checks that follow a snapshot run in startFleet's onEvent.
+```
+
+and in `startFleet`, replace
+
+```ts
+  const closeStream = connectStream({
+    onEvent(name, data) {
+      useFleet.getState().apply(name, data);
+      afterEvent({ name, data } as unknown as AnyEvent);
+    },
+```
+
+with
+
+```ts
+  // The push subscription is checked once per launch, after the first snapshot of this start.
+  let launched = false;
+
+  const closeStream = connectStream({
+    onEvent(name, data) {
+      useFleet.getState().apply(name, data);
+      const event = { name, data } as unknown as AnyEvent;
+      afterEvent(event);
+      if (event.name === "snapshot") {
+        // A snapshot from another build than the shell's asks the worker for the new shell (once
+        // per build); a build unknown on either side asks for nothing.
+        const shell = shellBuild();
+        const upgrading = Boolean(event.data.build && shell && event.data.build !== shell);
+        if (upgrading) upgradeShell(event.data.build);
+        // A page that is about to reload for a new shell leaves the check to its next launch.
+        if (!launched && !upgrading) {
+          launched = true;
+          void checkPushSubscription(event.data.device);
+        }
+      }
+    },
+```
+
+In `internal/web/ui/src/main.tsx` (Story 11's version), replace
+
+```tsx
+import { watchNotices } from "@/app/toasts";
+```
+
+with
+
+```tsx
+import { watchNotices } from "@/app/toasts";
+import { registerWorker } from "@/app/worker";
+```
+
+and replace
+
+```tsx
+const stopUnpaired = onUnpaired(goToPairing);
+```
+
+with
+
+```tsx
+const stopUnpaired = onUnpaired(goToPairing);
+registerWorker();
+```
+
+- [ ] **Step 4: Run it to see it pass, and check the page**
+
+Run: `bash -c 'cd internal/web/ui && pnpm exec prettier --write src/store/fleet.ts src/store/startFleet.test.ts src/main.tsx && pnpm exec vitest run src/store && pnpm run check'`
+Expected: Vitest reports every test of `fleet.test.ts` and `startFleet.test.ts` passing; `pnpm run check` exits 0.
+
+Run: `bash -c 'cd internal/web/ui && pnpm run build && pnpm run dist:check'`
+Expected: Vite prints its build summary; `dist:check` exits 0.
+
+Run: `bash -c 'd=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -out "$d"'`
+Expected: exits 0, with no console error, CSP violation or unanswered route (the page now registers its worker: webshot's browser bypasses workers, and a failed registration is caught).
+
+- [ ] **Step 5: Run the story's gates and commit**
+
+Run: `bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi' && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...`
+Expected: no output from the first command, then `ok` for every package, `internal/web` among them (its tests read the rebuilt `dist/`).
+
+```bash
+git add -N internal/web/dist
+git commit -m "feat(web): register the worker, upgrade the shell and check the push subscription at launch" -- internal/web/ui/src/store/fleet.ts internal/web/ui/src/store/startFleet.test.ts internal/web/ui/src/main.tsx internal/web/dist
+```
+
+## Story 13: The fleet panel
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/src/fleet/usage.ts`, `internal/web/ui/src/fleet/usage.test.ts`, `internal/web/ui/src/fleet/links.ts`, `internal/web/ui/src/fleet/links.test.ts`, `internal/web/ui/src/panels/fleet/index.tsx`, `internal/web/ui/src/panels/fleet/FleetHead.tsx`, `internal/web/ui/src/panels/fleet/SessionRow.tsx`, `internal/web/ui/src/panels/fleet/fleet.test.tsx`, `internal/web/ui/src/panels/index.ts`, `internal/web/dist/`
+- **Interfaces:** exposes `rowShare`, `opensMockup`, `sessionHref`, `SessionRow`, the `fleet` panel; uses Story 8's components, Story 9's store, groups and `fixtureSnapshot`, Story 10's `definePanel` and `hrefFor`, Story 11's `ContextRow` and `CommandButton`
+- **Verify:** `bash -c 'cd internal/web/ui && pnpm run check && pnpm run dist:check && cd ../../.. && d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -screens fleet -out "$d"'`
+- **Review:** deep
+- **Form:** brief (a port of `fleet.mjs`, whose behaviour the plan lists; the store and the grouping are Story 9's)
+
+The classic fleet screen ported to direction B (the "modern dev tool" option of `visual-direction.html`: cards of rows under group headings with count badges, a dot per row in the group's colour, tinted pills, monospace for diffstats and commands), as the `fleet` panel in `internal/web/ui/src/panels/fleet/`, with the two pure helpers the row needs, `rowShare` and `opensMockup`/`sessionHref`, in `src/fleet/`. It reads Story 9's store (`useFleet`) and grouping (`groupSessions`, `allSessions`, `shownWorkspaces`), registers through Story 10's `definePanel` and links with its `hrefFor`, puts its head in Story 11's `ContextRow`, and builds on Story 8's `ToggleGroup`, `Collapsible` and `Badge`. Every part the classic row shows is kept (the group dot, title, account share, age, wait reason and detail, last message, label, running agents, diffstat, PR, jobs label, flow chips, workspace), except the NEW mark, which comes in Part 2 with the conversation that marks a session seen. A row links to the session or, while its mockup is fresh, to the mockup (both placeholders in this part). The head's flows, settings and new-session controls are plain links, not commands: they act on nothing. The workspace filter is kept in `localStorage` under the classic app's own key and format (`loom.filter`, a JSON string holding a workspace ID or `""`), so it survives a switch between the apps. A value the app's unions don't know is shown, never dropped (spec §29): an unknown group lists under Paused (Story 9's `groupSessions`), and an unknown label, PR state or flow status shows its raw text. Touch targets are at least 44px and form text 16px (spec §34). Each task below gives the behaviour, the names it defines and uses, and each test by name; the developer writes the code and the tests, runs Prettier (`pnpm exec prettier --write <paths>`) before each commit, and keeps `pnpm run check` green after every task. `SessionRow` takes one optional prop beyond the contract's `{ session, usage }`, `chip?: string` (the workspace's name, which only the panel knows); it reads the usage staleness bound itself, `useFleet((s) => s.snapshot?.usage_stale_after_s)`.
+
+All tests are Vitest and Testing Library, `fixtureSnapshot(NOW)` (Story 9) with `NOW = Date.parse("2026-11-18T12:00:00Z")` building the fleet, loaded through `useFleet.getState().apply("snapshot", …)` the way the stream does (reset between tests with `useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 })`). The canned fleet: workspace 1 `loom` holds 1 `fix-pane-cursor` (working, 2m, Running, a PR #482 open with pending checks, jobs label `⚙ job 214`, a running agent `recon` and an idle one `verifier`, +212 −40, Claude, default account), 2 `sandbox-ask` (needs you, 18m, wait reason `Allow Bash` with detail `go test ./ui/... -run TestPane`, +14 −2), 3 `plain-shell` (working, 9m, Loading, not Claude) and 7 `a-very-long-session-title-that-will-not-fit-on-one-line` (your turn, 41m, last message `Done: the header is pinned.`, a fresh mockup); workspace 2 `flow` holds 4 `flow-docs` (needs you, 52m, reason `Plan approval`), 5 `flow-old` (paused, 72h) and 6 `flow-run` (working, 4m, account `work`, PR #31 merged, one flow 2/5 parked asking `blocked-decision`, spent 4.71). Usage: `default` 62% (5h), `work` 18% (5h), both sampled a minute ago, `usage_stale_after_s` 900.
+
+### Task 13.1: `rowShare`
+
+**Files:**
+- Create: `internal/web/ui/src/fleet/usage.ts`
+- Create: `internal/web/ui/src/fleet/usage.test.ts`
+
+- [ ] **Step 1: Write the failing tests** in `internal/web/ui/src/fleet/usage.test.ts`
+
+Behaviour of `rowShare(session: Session, usage: Usage[], staleAfterS?: number, now?: number): { text: string, amber: boolean } | null` (the classic `usage.mjs`'s `rowShare`, with the staleness bound and the clock as arguments):
+
+- Only a Claude session (`session.claude`) has a share: another program records no account, and the entry of the account `""` would read as the default account's.
+- The entry is the usage item whose `account` equals the session's, `""` standing for `"default"`.
+- The window is the entry's `five_hour`, else its `seven_day` (null for neither, and null for no entry).
+- `text` is the window's `pct` rounded to a whole percent with a `%`, or `reset` once its `resets_at` has passed (an unparsable or empty time has not passed).
+- `amber` is true when the raw `pct` (not the rounded one) is at least 80, the window has not reset, and the sample is not stale. A sample is stale when `staleAfterS` is given and above 0 and `now` minus its `at` is at least `staleAfterS` seconds (an unparsable `at` is not stale).
+- `now` defaults to `Date.now()`; no staleness check without `staleAfterS`.
+
+Tests (each with the usage items it needs, built inline):
+
+1. `shows the account's 5-hour share as a rounded percentage`: a Claude session with account `""` and a `default` entry at 62.4% gives `{ text: "62%", amber: false }`. Fails without: the `""` to `"default"` mapping, or the rounding.
+2. `reads a named account's entry`: account `work` gives the `work` entry's 18%, not the default's. Fails without: the account match.
+3. `has no share for a session that is not Claude`: the same data with `claude: false` gives null. Fails without: the `claude` guard.
+4. `falls back to the 7-day window when the account has no 5-hour one`: `five_hour` null, `seven_day` 31% gives `31%`. Fails without: the `seven_day` fallback.
+5. `has no share without a usage entry`: no item for the account gives null. Fails without: the null return for a missing entry.
+6. `has no share when the entry has neither window`: both windows null gives null. Fails without: the null return for no window.
+7. `turns amber from 80 percent of the raw value`: 80 gives amber; 79.9 gives text `80%` and not amber. Fails without: the threshold, or comparing the rounded value.
+8. `says reset, and is not amber, once the window has reset`: 90% with `resets_at` an hour before `now` gives `{ text: "reset", amber: false }`; with it an hour after, `{ text: "90%", amber: true }`. Fails without: the reset test, on either side.
+9. `is not amber for a stale sample, and only when a bound is given`: a 90% sample taken 15 minutes before `now`: with `staleAfterS` 900 not amber (the bound counts at equality), with 901 amber, with no bound amber. Fails without: the staleness term, its `>=`, or the no-bound case.
+10. `counts from the clock when no time is given`: with fake timers and a system time, a window that reset a minute earlier says `reset` without a `now` argument. Fails without: the `Date.now()` default.
+
+- [ ] **Step 2: Run them to see them fail**: `cd internal/web/ui && pnpm exec vitest run src/fleet/usage.test.ts` prints `Failed to resolve import "./usage"`.
+
+- [ ] **Step 3: Implement** `internal/web/ui/src/fleet/usage.ts` exporting `rowShare` as above, with the small helpers of `usage.mjs` it needs (an entry lookup, the shown window, the reset and stale tests) private to the file, and `HOT_PCT = 80`. Format it.
+
+- [ ] **Step 4: Run them to see them pass**: `cd internal/web/ui && pnpm exec vitest run src/fleet/usage.test.ts && pnpm run check` prints `Tests  10 passed (10)` and exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/fleet/usage.ts internal/web/ui/src/fleet/usage.test.ts && git commit -m "feat(web): the fleet row's account share" -- internal/web/ui/src/fleet/usage.ts internal/web/ui/src/fleet/usage.test.ts
+```
+
+### Task 13.2: `opensMockup` and `sessionHref`
+
+**Files:**
+- Create: `internal/web/ui/src/fleet/links.ts`
+- Create: `internal/web/ui/src/fleet/links.test.ts`
+
+- [ ] **Step 1: Write the failing tests** in `internal/web/ui/src/fleet/links.test.ts`
+
+Behaviour: `opensMockup(session: Session): boolean` is true when the session's brainstorm companion's screen changed in its latest turn (`session.mockup` is not null and its `fresh` is true) and no dialog waits on the session view, where it is answered (`session.asks` is empty or null); the daemon's push follows the same rule (`opensMockup` in `internal/web/triggers.go`). `sessionHref(session: Session): string` is `hrefFor("mockup", { id })` when `opensMockup` is true, else `hrefFor("turns", { id })`, with `id` the session's ID as a decimal string (Story 10's `hrefFor`: `#/s/<id>/mockup` and `#/s/<id>`).
+
+Tests (sessions taken from `fixtureSnapshot(NOW)` and changed with spreads):
+
+1. `opens the mockup for a fresh one with no open ask`: session 7. Fails without: the `fresh` term or the whole function.
+2. `does not open the mockup while a dialog waits`: session 7 with one ask in `asks`. Fails without: the `asks` term.
+3. `does not open a mockup that did not change in the latest turn`: `fresh: false`. Fails without: the `fresh` term.
+4. `does not open a mockup that is not there`: session 1 (`mockup` null). Fails without: the `mockup` null guard.
+5. `reads a null asks list as none`: session 7 with `asks: null` still opens. Fails without: the `?? []` on `asks`.
+6. `links a session to its conversation`: session 1 gives `#/s/1`. Fails without: the `turns` link.
+7. `links a session with a fresh mockup to the mockup`: session 7 gives `#/s/7/mockup`. Fails without: the `opensMockup` branch.
+8. `links to the conversation while a dialog waits, though the mockup is fresh`: session 7 with an ask gives `#/s/7`. Fails without: `sessionHref` using `opensMockup` (not `mockup?.fresh`).
+
+- [ ] **Step 2: Run them to see them fail**: `cd internal/web/ui && pnpm exec vitest run src/fleet/links.test.ts` prints `Failed to resolve import "./links"`.
+
+- [ ] **Step 3: Implement** `internal/web/ui/src/fleet/links.ts` exporting `opensMockup` and `sessionHref`. Format it.
+
+- [ ] **Step 4: Run them to see them pass**: `cd internal/web/ui && pnpm exec vitest run src/fleet/links.test.ts && pnpm run check` prints `Tests  8 passed (8)` and exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/fleet/links.ts internal/web/ui/src/fleet/links.test.ts && git commit -m "feat(web): where a fleet row links" -- internal/web/ui/src/fleet/links.ts internal/web/ui/src/fleet/links.test.ts
+```
+
+### Task 13.3: `SessionRow`
+
+**Files:**
+- Create: `internal/web/ui/src/panels/fleet/SessionRow.tsx`
+- Create: `internal/web/ui/src/panels/fleet/fleet.test.tsx`
+
+- [ ] **Step 1: Write the failing tests** in `internal/web/ui/src/panels/fleet/fleet.test.tsx` (Task 13.4 adds the panel's and the head's tests to this file)
+
+Behaviour of `SessionRow(props: { session: Session, usage: Usage[], chip?: string }): ReactElement`, one `<a href={sessionHref(session)}>` (a card item of at least 44px) holding:
+
+- Line 1: a dot coloured by the session's group (`needs_you` the attention token, `your_turn` turn, `working` working, any other group the muted one), with `aria-hidden`; the title, one line truncated; the account share when `rowShare(session, usage, staleAfterS)` gives one, in monospace, with `data-amber="true"` and the attention colour when `amber`; the age (`ago(session.since)`), muted.
+- A session in `needs_you`: line 2 with the wait reason (`wait.reason`, in an attention `Badge`) when it is not empty and the `chip` as a workspace `Badge` when given; a detail line (`wait.detail`, monospace, truncated) when it is not empty. Any other group: the last message (`last_message`, muted, one line truncated) when not empty, and no wait line.
+- A meta line of whatever the session holds, in this order: its `label` as a neutral `Badge` when it differs from the title of its group in `GROUPS` (`Not started`, an unknown status's own name); `N agent`/`N agents` for its running agents (`agents` not `idle`; nothing for 0; `agents` null reads as none); the diffstat `+<added> −<removed>` (U+2212) with the added count in `text-working` and the removed count in `text-error` (Story 8's `--diff-add` and `--diff-del` are 12%-alpha line tints, too faint as text on the dark background, so no `text-diff-*` class is used), monospace, when either is not 0; `PR #<number>` and the PR's mark (an open PR: `✓` in `text-working` for `passing`, `✗` in `text-error` for `failing`, `…` for `pending`, nothing for `none`; any other state its raw text, `draft`, `merged`, `closed`); each flow (`flows`, null reads as none) as a `Badge` with the text `flowChip(flow)` and `data-tone` `docs`, `attention` while the flow `asks`, `error` when its status is `lost` or `unreadable` is not empty; the `jobs_label` as a neutral monospace `Badge`; and, outside `needs_you`, the `chip` as a workspace `Badge`.
+
+Private to the file (exported only for the tests): `ago(iso: string, now?: number): string`, the classic `ago` (`now` under a minute, `<n>m` under an hour, `<n>h` under 48 hours, else `<n>d`, `""` for a time that doesn't parse; `now` defaults to `Date.now()`), and `flowChip(flow: FlowSummary): string`, the classic fleet chip: `flow · design` for stage `design` or `spec`; `flow · draft <drafted>/<total>` for status `drafting`; `flow · <status>` for `drafted` and `designed`; otherwise `flow <done>/<total>` followed by ` · ` and `asks` when `asks` is not empty, else `lost` for status `lost`, else the `phase` for a `running` status that has one, else the status (nothing for an empty status), and, when `spent` is a number, ` · $<spent>` with two decimals (four for an amount above 0 and below 0.01).
+
+Tests (the row rendered with `render(<SessionRow … />)` for a session of the canned fleet, `usage` the snapshot's; time pinned with `vi.setSystemTime`):
+
+1. `ago words a time as now, minutes, hours and days`: 30 s gives `now`, 59 s `now`, 60 s `1m`, 59 minutes `59m`, 60 minutes `1h`, 47 hours `47h`, 48 hours `2d`, 100 hours `4d`. Fails without: any boundary or unit in `ago`.
+2. `ago is empty for a time it cannot read`: `""` and `"soon"` give `""`. Fails without: the NaN guard.
+3. `flowChip words a flow by its stage and status`: a table: stage `design` gives `flow · design`; stage `spec` the same; status `drafting` with 3 of 4 gives `flow · draft 3/4`; `drafted` gives `flow · drafted`; `designed` gives `flow · designed`; a run `running` with phase `reviewing`, 2 of 5, spent 4.71 gives `flow 2/5 · reviewing · $4.71`; the same with `asks` `blocked-decision` gives `flow 2/5 · asks · $4.71`; `lost` gives `flow 2/5 · lost`; `running` without a phase gives `flow 2/5 · running`. Fails without: any branch of `flowChip`.
+4. `flowChip leaves out an empty status and a null spend, and writes a small spend with four decimals`: status `""` and `spent` null gives `flow 2/5`; `spent` 0.004 gives `flow 2/5 · done · $0.0040`. Fails without: the empty-status skip, the `typeof spent` check, or the four-decimal rule.
+5. `shows the title, wait reason and no last message on a needs-you row`: session 4: the title, `Plan approval` in the row, and (given a `last_message` added by a spread) that message absent. Fails without: the group split between the wait line and the last message.
+6. `shows the wait detail under a needs-you row's reason`: session 2: `Allow Bash` and `go test ./ui/... -run TestPane` both in the row. Fails without: the detail line.
+7. `shows every part of a working row`: session 1: the title, the share `62%`, the age `2m`, its last message (starting `Running the ui tests now.`), `+212` and `−40`, `1 agent`, `PR #482` with `…`, and `⚙ job 214`; no wait reason. Fails without: any of those parts, or the running-agent count counting the idle agent.
+8. `shows another account's share, a merged PR and the flow chip`: session 6: `18%`, `PR #31` with `merged` and no check mark, and `flow 2/5 · asks · $4.71` with `data-tone="attention"`. Fails without: the account lookup, the PR state text, or the chip's asks tone.
+9. `shows no share for a session that is not Claude`: session 3 has no `%` text. Fails without: `rowShare`'s Claude guard reaching the row.
+10. `tints the share amber from 80 percent`: usage with `default` at 85% gives `data-amber="true"` on session 1's share, and 62% does not. Fails without: the `amber` attribute.
+11. `marks an open PR's checks`: passing shows `✓`, failing `✗`, pending `…`, none no mark; a draft PR shows `draft`. Fails without: any branch of the mark.
+12. `shows the label only when it differs from the group's title`: session 1's `Working` under Working is not shown; a paused session with `label: "Not started"` shows it. Fails without: the `label !== title` test.
+13. `shows an unknown label as raw text`: a session whose `label` is `Mystery` shows `Mystery`. Fails without: dropping labels outside the known set.
+14. `counts several running agents`: two non-idle agents give `2 agents`; a null `agents` list gives none and does not throw. Fails without: the plural or the `?? []`.
+15. `puts the workspace on the reason line of a needs-you row and on the meta line of any other`: with `chip="loom"`, session 2 shows `loom` beside its reason, session 1 shows it in its meta line; without `chip` neither shows it. Fails without: either placement, or the `chip` guard.
+16. `tints a flow chip by its state`: a flow with `asks` empty has `data-tone="docs"`, one with status `lost` has `error`, one with a non-empty `unreadable` has `error`. Fails without: the tone rule.
+17. `links to the session, or to the mockup while it is fresh`: session 1's row `href` is `#/s/1`; session 7's is `#/s/7/mockup`. Fails without: `sessionHref` in the row.
+18. `shows a paused row with no meta line`: session 5 shows its title and age and no label badge, agents, diffstat, PR, chip or jobs. Fails without: a part drawn for an empty value.
+
+- [ ] **Step 2: Run them to see them fail**: `cd internal/web/ui && pnpm exec vitest run src/panels/fleet/fleet.test.tsx` prints `Failed to resolve import "./SessionRow"`.
+
+- [ ] **Step 3: Implement** `internal/web/ui/src/panels/fleet/SessionRow.tsx` exporting `SessionRow`, `ago` and `flowChip`, from Story 8's `Badge` and `cn`, Story 9's `useFleet` and `GROUPS`, `rowShare` and `sessionHref`. Format both files.
+
+- [ ] **Step 4: Run them to see them pass**: `cd internal/web/ui && pnpm exec vitest run src/panels/fleet/fleet.test.tsx && pnpm run check` prints `Tests  18 passed (18)` and exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/panels/fleet/SessionRow.tsx internal/web/ui/src/panels/fleet/fleet.test.tsx && git commit -m "feat(web): the fleet's session row" -- internal/web/ui/src/panels/fleet/SessionRow.tsx internal/web/ui/src/panels/fleet/fleet.test.tsx
+```
+
+### Task 13.4: the fleet panel and its head
+
+**Files:**
+- Create: `internal/web/ui/src/panels/fleet/FleetHead.tsx`
+- Create: `internal/web/ui/src/panels/fleet/index.tsx`
+- Modify: `internal/web/ui/src/panels/index.ts`
+- Modify: `internal/web/ui/src/panels/fleet/fleet.test.tsx`
+
+- [ ] **Step 1: Write the failing tests** by appending to `internal/web/ui/src/panels/fleet/fleet.test.tsx`
+
+Behaviour of the panel `fleet` (`definePanel({ id: "fleet", title: () => "Fleet", Head: FleetHead, Body: Fleet })`, registered when `src/panels/fleet/index.tsx` is imported; `src/panels/index.ts`, which Story 10 wrote as a comment and `export {};`, has `export {};` replaced by `import "./fleet";`):
+
+- `Fleet` (the body) reads the snapshot with `useFleet((s) => s.snapshot)`; with none it shows `Loading…`. It re-renders every 30 seconds, so ages and the shares' staleness move with the clock.
+- The shown workspaces are `shownWorkspaces(snapshot)`; the sessions listed are those of the shown workspaces. The active filter is `""` (all) or a workspace ID string, read once from `localStorage` key `loom.filter` (a JSON string, as the classic app's `pref("filter")` writes it); an ID that names no shown workspace counts as `""` for this render without erasing the stored value. The groups are `groupSessions(listed, active === "" ? null : Number(active))`.
+- With more than one shown workspace, a `ToggleGroup` (one item selected, `aria-label="Workspaces"`) holds an `all` item and one item per workspace, labelled `label || name`; choosing an item shows it and stores its ID (`""` for all) under `loom.filter` as JSON; choosing the selected workspace again selects all. With one shown workspace there is no filter.
+- Needs you, Your turn and Working each show, when not empty, a heading of the group's title and a count `Badge` (attention for Needs you, neutral for the others) over a card of `SessionRow`s in the group's order; Paused is a `Collapsible` closed by default whose trigger is its heading and count, holding its rows. A group with no sessions shows nothing.
+- With no sessions listed the panel says `No sessions.`, or `No sessions in this workspace.` under a workspace filter.
+- Each row gets `usage={snapshot.usage ?? []}` and, when the active filter is all and more than one workspace is shown, `chip` the session's workspace's `label || name`.
+- `FleetHead` is `ContextRow` with `title="Fleet"` and these `actions`, plain anchors of at least 44px: the text `flows` (`aria-label="Flows"`, `href` `hrefFor("flows")`) only when some listed session has flows; a settings icon (lucide `Settings`, `aria-label="Settings"`, `hrefFor("settings")`); and `+ New` (`hrefFor("new")`), which while the view is stale (`useLink().stale`) has `aria-disabled="true"`, a dimmed look and a click handler that calls `preventDefault()`.
+
+Tests:
+
+1. `lists Needs you, Your turn and Working with their counts, each in its group's order`: headings `Needs you`, `Your turn`, `Working` in that order with counts 2, 1, 3; the rows of Needs you are `flow-docs` then `sandbox-ask`, Your turn `a-very-long-session-title…`, Working `fix-pane-cursor`, `flow-run`, `plain-shell`. Fails without: the grouping, the order, or the counts.
+2. `folds Paused until it is opened`: `flow-old` is not in the document; clicking the `Paused` trigger shows it. Fails without: the `Collapsible`'s closed default.
+3. `shows the workspace filter only with more than one shown workspace`: the fixture has it, with `All`, `loom` and `flow`; with workspace 2 `shown: false` it is gone. Fails without: the `> 1` condition.
+4. `narrows to a workspace, stores the choice and restores it on the next launch`: choosing `flow` leaves `flow-docs`, `flow-old` (folded), `flow-run` and no `loom` session; `localStorage["loom.filter"]` is `"2"`; unmounting and rendering again shows the same narrowing. Fails without: the store write or the read at mount.
+5. `honours a filter the classic app stored`: `localStorage["loom.filter"] = JSON.stringify("1")` before render lists only workspace 1's sessions and selects `loom`. Fails without: the key or its JSON format.
+6. `reads a stored filter for a workspace that is not listed as all, and leaves it stored`: stored `"9"` lists everything and the value is still `"9"`. Fails without: the shown-workspace check, or an erase on read.
+7. `selects all again when the chosen workspace is chosen twice`: after choosing `flow` and `flow` again every session is listed and the stored value is `""`. Fails without: the empty-selection handling.
+8. `says there are no sessions`: a snapshot with no sessions shows `No sessions.`; filtered to a workspace with none, `No sessions in this workspace.`. Fails without: either message.
+9. `names the workspace on each row only while the fleet shows all of them`: with all selected the rows show `loom` and `flow`; narrowed to `flow` they show no workspace name. Fails without: the `chip` rule.
+10. `redraws every 30 seconds`: with fake timers (`Date` faked), session 1's age reads `2m`; advancing 90 s reads `3m`. Fails without: the interval.
+11. `lists a group this build does not know under Paused`: a session spread from session 1 with `group: "mystery"` is in Paused once opened. Fails without: Story 9's `groupSessions` fallback reaching the panel (the panel must not filter by `GROUPS` itself).
+12. `says Loading before the first snapshot`: with the store empty the body shows `Loading…`. Fails without: the null guard.
+13. `FleetHead shows the flows link only when a listed session has flows`: the fixture (session 6 has one) shows `Flows` linking to `#/flows`; with every session's `flows` set to `[]` or `null` it is absent. Fails without: the `some(flows)` condition.
+14. `FleetHead links settings and new to their panels`: `Settings` is `#/settings` and `+ New` is `#/new`; the title is `Fleet`. Fails without: either `hrefFor`.
+15. `+ New is dimmed and does nothing while the view is stale`: with the store stale the link has `aria-disabled="true"` and `fireEvent.click` on it returns false (the default was prevented); live, it has no `aria-disabled` and the click is not prevented. Fails without: the stale term of the handler or the attribute, on either side.
+16. `registers the fleet panel`: after `import "@/panels"`, `panelFor("fleet")` is defined with a `Head`, a `Body` and the title `Fleet`. Fails without: the `definePanel` call or the import line in `panels/index.ts`.
+
+- [ ] **Step 2: Run them to see them fail**: `cd internal/web/ui && pnpm exec vitest run src/panels/fleet/fleet.test.tsx` fails on the new imports (`Failed to resolve import "./index"` or `"./FleetHead"`).
+
+- [ ] **Step 3: Implement** `internal/web/ui/src/panels/fleet/FleetHead.tsx` (`FleetHead`) and `internal/web/ui/src/panels/fleet/index.tsx` (`Fleet`, and the `definePanel` call), and, in `internal/web/ui/src/panels/index.ts`, replace the line `export {};` with `import "./fleet";` (keep the comment above it). The `+ New` link and the flows and settings links are plain `<a>` elements styled with the tokens (Story 8's `cn`), since a link has no `Button` variant. Format all the files.
+
+- [ ] **Step 4: Run them to see them pass**: `cd internal/web/ui && pnpm exec vitest run src/panels/fleet/fleet.test.tsx && pnpm run check` prints `Tests  34 passed (34)` for the file (18 from Task 13.3 and 16 from this task) and `pnpm run check` exits 0.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/ui/src/panels/fleet/FleetHead.tsx internal/web/ui/src/panels/fleet/index.tsx && git commit -m "feat(web): the fleet panel and its head in the new app" -- internal/web/ui/src/panels/fleet/FleetHead.tsx internal/web/ui/src/panels/fleet/index.tsx internal/web/ui/src/panels/index.ts internal/web/ui/src/panels/fleet/fleet.test.tsx
+```
+
+### Task 13.5: rebuild the bundle and render the fleet
+
+**Files:**
+- Modify: `internal/web/dist/` (generated by `pnpm build`)
+
+- [ ] **Step 1: Build the bundle**: `cd internal/web/ui && pnpm run build`. The panel is now imported through `src/panels/index.ts`, so the bundle changes.
+
+- [ ] **Step 2: Check it is the bundle `dist:check` expects**: `cd internal/web/ui && pnpm run dist:check` exits 0.
+
+- [ ] **Step 3: Render the fleet in the new app under the real CSP**: `d=$(mktemp -d) && CGO_ENABLED=0 go run ./tools/webshot -app next -screens fleet -out "$d"` exits 0 (webshot exits 1 on a console error, a CSP violation or a route the canned loom can't answer) and writes the fleet screenshot into `$d`. Open it: direction B's cards under `Needs you`, `Your turn` and `Working` headings with count badges, `Paused` folded, the workspace filter on top, and the header's `Settings` and `+ New`. A runtime `<style>` from a component fails the CSP check here: fix its import rather than relaxing the policy.
+
+- [ ] **Step 4: Run the Go gates**, since the budget and static tests read the bundle:
+
+```bash
+bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi' && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...
+```
+
+Expected: no output from the first command, then `ok` for every package.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/dist && git commit -m "build(web): rebuild the new app's bundle with the fleet panel" -- internal/web/dist
+```
+
+## Story 14: CI for the new app, and the first-load budget
+
+- **Developer:** junior-dev
+- **Files:** `.github/workflows/web.yml`, `.github/workflows/build.yml`, `internal/web/static_budget_test.go`
+- **Interfaces:** exposes `TestDist_FirstLoadIsWithinBudget` and `firstLoadBudget`; uses Story 4's scripts and Story 7's `-app next`
+- **Verify:** `CGO_ENABLED=0 go test ./internal/web/ -run TestDist_FirstLoadIsWithinBudget`
+- **Review:** light (CI configuration and one size test)
+- **Form:** brief (configuration and one test)
+
+This story guards the new app in CI. A Go test sums the gzipped size of the entry script and every `modulepreload` that `internal/web/dist/index.html` names, and fails above `firstLoadBudget` (250,000 bytes), printing the measured size and the files counted (spec §15; the lazy route chunks are named by neither, so they never count). A new workflow, `.github/workflows/web.yml`, runs the app's gates on every change to the app, its bundle or webshot: pnpm's frozen install, `check`, `dist:check` (a stale bundle fails), then webshot over every route of the new app under the layer's CSP (spec §14). `build.yml` gains `internal/web/dist/**`, `internal/web/api.fields`, `docs/specs/web-api.md` and `internal/web/ui/src/api/gen.ts` in its paths, so the Go static tests (this budget, and Story 5's freshness and only-grow tests) run on a commit that changes only one of them. The story is brief: the two tasks give behaviour, names and tests, and the developer writes the code and the YAML. It uses Story 4's `nextStaticAssets` (the new tree as the daemon serves it), its `check` and `dist:check` scripts and its `packageManager` pin, and Story 7's `-app next`; it defines `firstLoadBudget` and `TestDist_FirstLoadIsWithinBudget` and nothing else another story uses. No landmine marker appears in the code it asks for; its developer runs at the default effort.
+
+### Task 14.1: the first-load budget test
+
+**Files:**
+- Create: `internal/web/static_budget_test.go`
+
+**Behaviour.** The file is in `package web`, test-only, and defines:
+
+- `const firstLoadBudget = 250_000`, with a comment saying it is the gzipped bytes the first load may cost (spec §15) and that the flow, job and mockup screens are lazy chunks that `index.html` names nowhere, so they don't count.
+- `func firstLoadFiles(index string) ([]string, error)`: the URL paths a cold load of `index` fetches as JavaScript, in document order and without repeats: the `src` of the `<script type="module">` tag first, then the `href` of every `<link>` tag whose `rel` is `modulepreload`. Each tag is matched whole and its attributes read one by one, so the order of Vite's attributes (`crossorigin` sits before or after `href`) does not matter. A page with no module script is an error (`index.html names no entry script`): a budget that counts nothing must not pass.
+- `func checkFirstLoad(assets map[string]staticAsset, budget int) error`: reads `assets["/index.html"]` (an error naming it when absent), takes `firstLoadFiles` of its body, gzips each named file's `body` with `compress/gzip` at `gzip.BestCompression` (an error naming the URL when `assets` lacks a file `index.html` names), and returns nil when the sum is at most `budget`. Over it, the error reads `first load is <sum> bytes gzipped, over the <budget> budget:` followed by each counted file and its gzipped size, one per line (`  /assets/index-<hash>.js: <n>`).
+
+**Tests,** all in `internal/web/static_budget_test.go`, testify `require`:
+
+- `TestDist_FirstLoadIsWithinBudget`: `require.NoError(t, checkFirstLoad(nextStaticAssets(t), firstLoadBudget))`, run on the committed bundle through Story 4's helper. Before it, `require.NotEmpty` on `firstLoadFiles` of the same `index.html` body, so a bundle whose entry the regexes stopped finding fails here and not through the sum.
+  Fails without: `TestDist_FirstLoadIsWithinBudget`: `firstLoadBudget` lowered under the bundle's real size (the error names the files), or `firstLoadFiles` finding no entry script in a real Vite `index.html`.
+- `TestFirstLoadFiles_NamesTheEntryAndEveryPreload`: a literal `index.html` with a `<script type="module" crossorigin src="/assets/index-a.js">`, two `modulepreload` links (one `rel="modulepreload" crossorigin href="/assets/vendor-b.js"`, one `crossorigin rel="modulepreload" href="/assets/query-c.js"`), a `rel="stylesheet"` link, a repeat of the first preload, and a `<script>` text that mentions `/assets/lazy-d.js`: `firstLoadFiles` returns exactly `["/assets/index-a.js", "/assets/vendor-b.js", "/assets/query-c.js"]`.
+  Fails without: `TestFirstLoadFiles_NamesTheEntryAndEveryPreload`: the preload scan dropped (the sum would then miss every vendor chunk), the entry read from the wrong tag, the repeat not removed, the stylesheet link counted, or attribute order assumed.
+- `TestFirstLoadFiles_NoEntryScriptIsAnError`: an `index.html` with a `modulepreload` link and no module script returns an error containing `no entry script`.
+  Fails without: `TestFirstLoadFiles_NoEntryScriptIsAnError`: the empty-entry check removed.
+- `TestCheckFirstLoad_FailsOverBudgetAndNamesTheFiles`: assets holding an `/index.html` that names `/assets/index-a.js` and one preload `/assets/vendor-b.js`, each body 4,000 incompressible bytes (`rand.New(rand.NewSource(1)).Read`, so gzip cannot shrink them), and a budget of 6,000: the error contains `over the 6000 budget` and both URLs. The same assets with a budget of 100,000 return nil. A lazy `/assets/lazy-d.js` of 500,000 random bytes in `assets` and unnamed by `index.html` changes neither answer.
+  Fails without: `TestCheckFirstLoad_FailsOverBudgetAndNamesTheFiles`: the comparison inverted or dropped (the over case returns nil), the sum counting only the entry (the 6,000 case passes), the sum counting every asset (the 100,000 case fails on the lazy file), or the error leaving out the files.
+- `TestCheckFirstLoad_RefusesAMissingFile`: an `/index.html` that names `/assets/gone.js` with no such asset returns an error containing `/assets/gone.js`; assets with no `/index.html` return an error containing `/index.html`.
+  Fails without: `TestCheckFirstLoad_RefusesAMissingFile`: either lookup treated as an empty file (the sum would then pass on a bundle that lost its entry).
+
+Use the helper `gzipLen(body []byte) int` (private to this file) for the sizes, and build the literal pages as Go raw strings.
+
+- [ ] **Step 1: Write the tests** as described above, in `internal/web/static_budget_test.go`, with `firstLoadBudget`, `firstLoadFiles`, `checkFirstLoad` and `gzipLen` not yet written.
+
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+CGO_ENABLED=0 go test ./internal/web/ -run 'TestDist_FirstLoadIsWithinBudget|TestFirstLoadFiles_|TestCheckFirstLoad_'
+```
+
+Expected: the package fails to compile, `./static_budget_test.go:...: undefined: firstLoadFiles` (and `undefined: checkFirstLoad`, `undefined: firstLoadBudget`).
+
+- [ ] **Step 3: Implement** `firstLoadBudget`, `firstLoadFiles`, `checkFirstLoad` and `gzipLen` in `internal/web/static_budget_test.go` as the behaviour above says. They are test-file code: no non-test file changes.
+
+- [ ] **Step 4: Run them to see them pass**
+
+```bash
+CGO_ENABLED=0 go test ./internal/web/ -run 'TestDist_FirstLoadIsWithinBudget|TestFirstLoadFiles_|TestCheckFirstLoad_' -v
+```
+
+Expected: every test `PASS`, then `ok  	github.com/aidan-bailey/loom/internal/web`. If `TestDist_FirstLoadIsWithinBudget` fails with a size over the budget, that is the bundle's, not this task's: report the printed size and files to the manager.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N internal/web/static_budget_test.go
+git commit -m "test(web): the new app's first load stays within 250 kB gzipped" -- internal/web/static_budget_test.go
+```
+
+### Task 14.2: `web.yml`, and `build.yml`'s paths
+
+**Files:**
+- Create: `.github/workflows/web.yml`
+- Modify: `.github/workflows/build.yml:5-20`
+
+**Behaviour: `build.yml`.** Its `paths` lists (one under `push`, one under `pull_request`) each end with
+
+```yaml
+      - 'flow/**'
+      - '.github/workflows/build.yml'
+```
+
+Add these four lines between those two lines in both lists, in this order:
+
+```yaml
+      - 'internal/web/dist/**'
+      - 'internal/web/api.fields'
+      - 'docs/specs/web-api.md'
+      - 'internal/web/ui/src/api/gen.ts'
+```
+
+so a commit that changes only the committed bundle, or only a generated API file (Story 5's output, which no Go file need change with), still runs the Go static tests: the budget for the bundle, Story 5's freshness and only-grow tests for the other three. Change nothing else in the file.
+
+**Behaviour: `web.yml`.** A new workflow named `Web`, in the shape of `docs.yml` and `e2e.yml` (a header comment saying what it guards and why `build.yml` cannot: no Go file changes when the bundle does):
+
+- `on`: `push` and `pull_request`, each `branches: [ main ]`, each with `paths` exactly `internal/web/ui/**`, `internal/web/dist/**`, `tools/webshot/**` and `.github/workflows/web.yml` (spec §14).
+- `permissions: contents: read`; one job `app`, named `pnpm check, bundle and webshot`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`.
+- Steps, in this order, with these names:
+  1. `actions/checkout@v4`.
+  2. `pnpm/action-setup@v4` with `package_json_file: internal/web/ui/package.json`: it reads the `packageManager` pin Story 4 wrote there, so no version is set in the workflow (two pins would drift).
+  3. `actions/setup-node@v4` with `node-version: 22`, `cache: pnpm` and `cache-dependency-path: internal/web/ui/pnpm-lock.yaml`.
+  4. `actions/setup-go@v5` with `go-version-file: go.mod` and `cache: true` (webshot is a Go program; `build.yml`'s pinned `1.23` is older than `go.mod`'s and not copied).
+  5. `Install` runs `pnpm install --frozen-lockfile` with `working-directory: internal/web/ui`.
+  6. `Check` runs `pnpm run check`, same directory.
+  7. `Bundle is fresh` runs `pnpm run dist:check`, same directory; a comment says a stale `dist/` fails here.
+  8. `Allow Chrome's sandbox` runs `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`; a comment says Ubuntu 24.04 runners restrict the user namespaces Chrome's sandbox needs and webshot passes no `--no-sandbox`, so without this the browser exits before the first screen.
+  9. `Render every route` runs `go run ./tools/webshot -app next -out "$RUNNER_TEMP/shots"` with `env: CGO_ENABLED: 0`; a comment says webshot exits 1 on a console error, a CSP violation, an uncaught exception or an API route the fixture cannot answer, and that the runner's `google-chrome` is the browser it finds.
+- No upload step: the PNGs are not an artifact; the exit code is the check.
+
+- [ ] **Step 1: Edit `build.yml`** as above.
+
+- [ ] **Step 2: Create `web.yml`** as above.
+
+- [ ] **Step 3: Check both files**
+
+There is no workflow runner here, so the checks are structural. Run:
+
+```bash
+grep -c "internal/web/dist/\*\*\|internal/web/api.fields\|docs/specs/web-api.md\|internal/web/ui/src/api/gen.ts" .github/workflows/build.yml
+grep -c "internal/web/dist/\*\*" .github/workflows/web.yml
+grep -n "pnpm install --frozen-lockfile\|pnpm run check\|pnpm run dist:check\|tools/webshot -app next" .github/workflows/web.yml
+git diff --stat -- .github/workflows/build.yml
+```
+
+Expected: `8` (the four `build.yml` lines in each `paths` list), `2` (`web.yml` lists the glob under `push` and under `pull_request`), then four lines in the order install, check, dist:check, webshot, then a diff stat of `8 insertions(+)` for `build.yml`.
+
+If `python3 -c 'import yaml'` runs on the machine, also parse both files with `python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/build.yml .github/workflows/web.yml` and expect no output; if it does not, skip this check.
+
+- [ ] **Step 4: Run the story's gate**
+
+```bash
+CGO_ENABLED=0 go test ./internal/web/ -run TestDist_FirstLoadIsWithinBudget
+```
+
+Expected: `ok  	github.com/aidan-bailey/loom/internal/web`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -N .github/workflows/web.yml
+git commit -m "ci(web): check the new app, its bundle and its routes, and run the Go tests on a bundle or generated-API change" -- .github/workflows/web.yml .github/workflows/build.yml
+```
+
+## Story 15: The rules and procedures for the new app and the table
+
+- **Developer:** intermediate-dev
+- **Files:** `internal/web/ui/CLAUDE.md`, `internal/web/CLAUDE.md`, `internal/web/README.md`, `docs/claude/web-layer.md`, `docs/claude/INDEX.md`, `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`, `docs/ARCHITECTURE.md`, `tools/claudemd/lint.go`, `tools/claudemd/lint_test.go`, `tools/claudemd/idents.go`, `tools/claudemd/idents_test.go`
+- **Interfaces:** none; uses every earlier story's names
+- **Verify:** `CGO_ENABLED=0 go test ./tools/claudemd/`
+- **Review:** light (docs, checked by the CLAUDE.md lint)
+- **Form:** brief (docs)
+
+This story writes the docs part 1 leaves behind: the new app's own rules (`internal/web/ui/CLAUDE.md`), the web layer's rules for the route table, the only-grow contract and the two trees (`internal/web/CLAUDE.md`), the procedures (`docs/claude/web-layer.md` and its row in `docs/claude/INDEX.md`), the README's facts (its route table becomes a pointer at the generated `docs/specs/web-api.md`, which carries each route's `doc`, and it describes the new app and the switch), the dev loop in `CONTRIBUTING.md`, the switch in `USAGE.md`, and the licence pointer in `NOTICE.md`, and `docs/ARCHITECTURE.md`'s two descriptions of `internal/web/`, which name both apps and the switch, and its tools row, which says `webshot` renders either app. Root `CLAUDE.md` does not change. It is a docs story with one tooling change, a guard: the CLAUDE.md lint (`tools/claudemd`) walks the whole tree, and pnpm's isolated layout already keeps every package under `node_modules/.pnpm/`, a dot directory the walk skips, behind symlinks it does not follow, but an npm or hoisted install writes real directories whose third-party READMEs would count as the repo's docs and fail `TestRepo_ClaudeMDStructure`; Task 15.1 makes the lint skip `node_modules` first (`tools/claudemd/lint.go`, `lint_test.go`, `idents.go` and `idents_test.go` are on the entry's Files line). The rule texts of Tasks 15.2 and 15.3 are given exactly, because both files have byte budgets and the lint reads their shape; the other tasks give what each doc must say. The text names the tests, files and steps by the contract's names, which earlier stories define: the lint resolves each test name and path, so these tasks come after them. No landmine marker appears in this story. Every command runs from the repository root. The commits use the repo's Conventional style.
+
+### Task 15.1: The CLAUDE.md lint skips `node_modules`
+
+**Files:**
+- Modify: `tools/claudemd/lint.go:185-190` (`ours` and its comment)
+- Modify: `tools/claudemd/idents.go:56-69` (`buildIndex`'s comment and `skip`)
+- Test: `tools/claudemd/lint_test.go:207`, `tools/claudemd/lint_test.go:251-252`, `tools/claudemd/idents_test.go:175-190`
+
+**Behaviour.** A dir named `node_modules` is third-party, like `vendor/`: `ours` returns true for it (so `findDocs`, `packageDirs` and the coverage check never see what an npm or hoisted install would put there; pnpm's own layout is already skipped behind `.pnpm/` and symlinks, so this is a guard), and `buildIndex` does not read its files (none of them is the repo's). Names defined: none. Names used: `ours`, `buildIndex`, the test helpers `with`, `minimal`, `problems`, `findings` (existing).
+
+- `tools/claudemd/lint.go`: in `ours`, replace
+
+```go
+	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+```
+
+with the same expression that also accepts `node_modules` (`name == "vendor" || name == "node_modules" || name == "testdata" || …`), and in the comment above it replace `vendor/ (third-party).` with `vendor/ and node_modules/ (third-party).`.
+- `tools/claudemd/idents.go`: in `buildIndex`'s `skip`, replace `return name == "vendor" || (strings.HasPrefix(name, ".") && name != ".github")` with the same expression that also accepts `name == "node_modules"`, and in the comment above replace `vendor/ and every other dot-dir not.` with `vendor/, node_modules/ and every other dot-dir not.`.
+
+**Tests** (edits to existing tests, so each case sits beside its siblings):
+- `TestCoverage` (the test whose loop is `for _, dir := range []string{"vendor/v", "testdata/t", "_old", ".loom/w"} {` at `lint_test.go:207`): add `"node_modules/n"` to the list.
+  Fails without: `TestCoverage`: `ours` not skipping `node_modules`, so `node_modules/n/x.go` is a Go package with no CLAUDE.md.
+- `TestDocSet_Readmes` (`lint_test.go:251`): add `"pkg/node_modules/README.md", gone` to the `skipped` tree and `node_modules/` to the message `"vendor/, testdata/, _dirs and dot-dirs hold no docs of ours"`.
+  Fails without: `TestDocSet_Readmes`: `ours` not skipping `node_modules`, so its README's broken link is reported.
+- `TestIndex_Dirs` (`idents_test.go:176`): add the file `"node_modules/n/n.js", "export const NodeModulesName = 1;\n"` to `files`, `` `NodeModulesName` `` to the `pkg/CLAUDE.md` line, the expected finding `"pkg/CLAUDE.md:3: NodeModulesName: not found in any source file (Markdown excluded)"`, and `node_modules/` to the comment above the test.
+  Fails without: `TestIndex_Dirs`: `buildIndex` reading `node_modules`, so `NodeModulesName` is found.
+
+- [ ] **Step 1: Write the three test edits** above.
+- [ ] **Step 2: Run them to see them fail:** `CGO_ENABLED=0 go test ./tools/claudemd/ -run 'TestCoverage$|TestDocSet_Readmes|TestIndex_Dirs'` fails in each of the three tests (a coverage problem for `node_modules/n`, a `broken link "gone.md"` for the README, a missing finding for `NodeModulesName`).
+- [ ] **Step 3: Implement** the two one-line changes and the two comments as described.
+- [ ] **Step 4: Run them to see them pass:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok  	github.com/aidan-bailey/loom/tools/claudemd`.
+- [ ] **Step 5: Commit:** `git commit -m "fix(claudemd): skip node_modules, as vendor/ is skipped" -- tools/claudemd/lint.go tools/claudemd/idents.go tools/claudemd/lint_test.go tools/claudemd/idents_test.go`
+
+### Task 15.2: `internal/web/ui/CLAUDE.md`
+
+**Files:**
+- Create: `internal/web/ui/CLAUDE.md`
+
+**Behaviour.** The lint requires the first line `# internal/web/ui`, every rule under a `## Rules` heading to name **Enforced** or **Convention**, no self-deferring phrase, at most 100 lines, 20,000 bytes and 1,200 bytes a line. Write the file as: the title; one paragraph (the app's source, React, TypeScript, Vite, Tailwind and shadcn on Base UI; `pnpm run build` writes it into `internal/web/dist/`, which the daemon embeds and serves to a device that chose it; the classic app in `internal/web/static/` stays beside it until cutover); the heading `## Rules when modifying this app`; and these eight rules, one line each, exactly as below (they hold spec §35, §15 and §33, §34 and §24's rules):
+
+```
+- **Never edit `internal/web/dist/` or `internal/web/ui/src/api/gen.ts` by hand; rebuild with `pnpm run build` and regenerate with `go generate ./internal/web`, and commit the result with the source change.** The bundle is what the daemon serves and `gen.ts` is the Go contract's TypeScript, so a hand edit is overwritten by the next build, and a source change committed without its bundle ships the old app. **Enforced** by `pnpm run dist:check` (CI's `web.yml`, the step "Bundle is fresh") for the bundle and by `TestContract_GeneratedFilesAreFresh` for `gen.ts`.
+- **Add a view only as a panel and an action only as a command.** A panel (`definePanel`, `internal/web/ui/src/app/panels.ts`) is imported from `internal/web/ui/src/panels/index.ts` and given its URL in `routeOf` and `hrefFor` (`internal/web/ui/src/app/routes.tsx`); a command (`defineCommand`, `internal/web/ui/src/app/commands.ts`) is drawn by `CommandButton`. The registries give every view its tab, error boundary and placeholder and every action its confirmation, toast and stale gate; a view or button wired by hand skips them and acts on a stale fleet. **Convention** — a button that acts on a snapshot the daemon has since changed.
+- **A command's `when` reads only the session's status, its `claude` flag, the route and the link state, and only an `offline` command runs while the snapshot is stale.** The model decides what is allowed and a wrong guess is its 409, shown as a toast; a copied precondition drifts, then offers what the daemon refuses or hides what it allows. Only `app.backToClassic` is `offline`, because the switch must work with the daemon down. **Enforced** for the stale gate by `internal/web/ui/src/app/commands.test.ts`; what `when` reads is **Convention** — a button that does nothing, or an action missing.
+- **Write no runtime `<style>`, no `style` attribute as markup and no HTML built from a string, and draw Claude's text from its tree (`blocks`) as elements and text nodes.** The Content-Security-Policy is `default-src 'self'`: it drops an injected style or inline attribute without a word, and a string put into the page renders whatever markup Claude's text holds. Import a component's CSS statically and keep `main.tsx`'s Base UI `CSPProvider` with `disableStyleElements`. **Enforced** for the shell by `TestStatic_NextIndexHasNoInlineScriptOrStyle` and for a violation at run time by webshot under the real policy (CI's `web.yml`, the step "Render every route"); the rest is **Convention** — a view that is blank or unstyled only on the phone.
+- **Take every colour and font from the tokens in `internal/web/ui/src/styles/app.css`, and keep form text at 16px, touch targets at 44px and the safe-area insets.** The skin is dark only, its tokens arranged so a light set drops in as a second block of the same names, and iOS zooms into a form control under 16px. **Enforced** for the tokens by `TestDist_TheSkinDefinesEveryToken`, which reads the built CSS; using a token rather than a literal, and the phone sizes, are **Convention** — a skin that cannot be re-themed, a page that zooms on focus.
+- **Keep the first load within `firstLoadBudget`: load a screen the first view does not need (flow, job, mockup) through a dynamic `import()`, so it builds into a chunk of its own.** `internal/web/static_budget_test.go` sums the gzipped entry script and every `modulepreload` that `internal/web/dist/index.html` names, and a heavier bundle slows every launch on a phone. **Enforced** by `TestDist_FirstLoadIsWithinBudget`.
+- **Take the type of every JSON shape the daemon sends from `gen.ts`, and never write one by hand.** A hand-written copy drifts from the Go struct and the app then reads a field that is gone with no error; the generated type fails the typecheck instead. **Enforced** for the fixtures by `internal/web/ui/src/fixtures.test.ts`, which holds each `tools/webshot/fixture` answer to its route's generated type; a hand-written copy is **Convention** — a screen that renders empty after a Go change.
+- **Leave the classic app (`internal/web/static/`) as it is until cutover, changing it only to keep the switch working.** Every paired device runs it until its owner switches, and it is the way back; a feature or fix written there is a second app to keep in step. **Convention** — a fix that lands in one app only.
+```
+
+Write the title, paragraph and heading in the file around those eight lines; each rule is one line (the fence above shows lines, not wrapping).
+
+- [ ] **Step 1: Write the file** as described.
+- [ ] **Step 2: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok`. A `path not found` or `no Go test function has this name` names a token that an earlier story should have made: report it to the manager, do not delete the rule.
+- [ ] **Step 3: Commit:** `git add -N internal/web/ui/CLAUDE.md`, then `git commit -m "docs(web): the new app's rules" -- internal/web/ui/CLAUDE.md`
+
+### Task 15.3: `internal/web/CLAUDE.md`
+
+**Files:**
+- Modify: `internal/web/CLAUDE.md:8`, `:21`, `:23`, `:30`, `:32`, `:33`
+
+**Behaviour.** The file is 17,958 of 20,000 bytes and 34 of 100 lines at REV. The route-checklist Convention (line 21, 362 bytes) and the never-rename Convention (line 33, 328 bytes) go; three rules (2,217 bytes) and four clause edits (about 200 bytes) come in against the 690 that go, which leaves about 300 bytes of headroom. Run `go run ./tools/claudemd -v` after the edit: if the file is over 20,000 bytes or a line over 1,200, shorten the new text, never an existing rule's enforcement list. The three new rules (one line each, exactly):
+
+```
+- **Declare every `/api/v1` route as one entry of `Layer.routes()` (`internal/web/routes.go`) with a typed handler, give its query a struct of `string` fields tagged `query`, and type each fixed-value string field as a string type that `unions()` lists.** `registerRoutes` wraps every entry but the `open` pair route in `authed`, the adapter owns decoding, statuses and the log line, and the generator reads the table to write `internal/web/ui/src/api/gen.ts` and `docs/specs/web-api.md`; a route mounted on the mux directly is unauthenticated and missing from both, `readQuery` fills only `string` fields, and a plain `string` gives the app no union to check. **Enforced** by `TestRoutes_OnlyPairIsOpen`, `TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice`, `TestRoutes_QueryTypesHoldOnlyStrings`, `TestRoutes_ClientNamesAreUnique`, `TestRoutes_EveryRouteHasADoc` and `TestUnions_EveryFixedValueFieldIsTyped`; a route mounted around the table is **Convention** — an API route anyone can call.
+- **Change the JSON the app reads only by adding: never remove, rename or retype a field, route, event or union value, and regenerate with `go generate ./internal/web` rather than editing `gen.ts`, `docs/specs/web-api.md` or `internal/web/api.fields`.** An installed app may run against a newer daemon until its worker updates, and an older app reading a renamed field shows nothing and fails no request. `api.fields` holds a line per shipped field, route, event and union value and the generator only appends; removing one means deleting its line by hand in the same commit, which a review sees. **Enforced** by `TestContract_FieldsOnlyGrow` and `TestContract_GeneratedFilesAreFresh`.
+- **Choose the tree a shell file gets only with `treeOf` (the `ui` parameter, else the `__Host-loom-ui` cookie), send `Vary: Cookie` with it, and let each tree's worker fetch its own shell with its `?ui=`.** Both apps share one origin: a shell cached under its URL alone shows a device the other app after a switch, and a worker fetching `/` without its `?ui=` caches the wrong shell. **Enforced** by `TestStatic_TheCookieChoosesTheTree`, `TestStatic_TheUIParameterChoosesTheTree`, `TestStatic_AssetsFallBackAcrossTrees` and `TestStatic_EachWorkerFetchesItsOwnShell`.
+```
+
+Placement and the other edits:
+- Line 21, the rule that begins `- **Add a route, a stream event or a push kind by the checklist in`: replace the whole line with the first new rule.
+- Line 33, the rule that begins `- **Change the JSON the app reads only by adding fields, and never rename or retype one in`: replace the whole line with the second new rule.
+- Insert the third new rule directly after line 30 (`- **Serve the app's shell public and free of data, …`), which is about the shell.
+- Line 8 (`authed`'s rule), its last clause: replace `that every route uses `authed` is **Convention** — an API route anyone can call.` with `a route mounted around the table without it is **Convention** — an API route anyone can call.`. (The table's own routes are guarded by the first new rule's tests.)
+- Line 30 (the shell rule, which the first three tasks of the new tree leave describing the classic app only), its last sentence: replace `**Enforced** for the shell and the modules by `TestStatic_IndexHasNoInlineScriptOrStyle` and `TestStatic_ModulesSetNoStyleAttribute`; **Convention**` with `**Enforced** for the classic app's shell and modules (`internal/web/static/`) by `TestStatic_IndexHasNoInlineScriptOrStyle` and `TestStatic_ModulesSetNoStyleAttribute`, and for the new app's shell by `TestStatic_NextIndexHasNoInlineScriptOrStyle`; **Convention**`. (The inserted third rule goes directly after this line.)
+- Line 32 (the `.mjs` rule): replace `- **Write the app's modules as `.mjs`, and keep` with `- **Write the classic app's modules (`internal/web/static/`) as `.mjs`, and keep`: the new app's modules are TypeScript, under `internal/web/ui/CLAUDE.md`'s rules, and an agent working there loads this file too.
+- Line 23 (the read-route rule): replace `through `l.read`, which stops tracking` with `through `call.read`, which stops tracking`: Story 2 deletes `l.read`, and `call.read` is `readReply`'s wait, which still drops the request once answered.
+
+Names used (all defined earlier): `Layer.routes`, `registerRoutes`, `readQuery`, `unions`, `treeOf`, `call.read`, the twelve tests named above, `TestStatic_NextIndexHasNoInlineScriptOrStyle` (Story 4) and `TestAPI_AReadIsNotTrackedOnceAnsweredAndATimedOutOneIs504` (kept).
+
+- [ ] **Step 1: Make the seven edits** above (three rules, then the clause edits of lines 8, 23, 30 and 32).
+- [ ] **Step 2: Check the budget:** `go run ./tools/claudemd -v` shows `internal/web/CLAUDE.md` under 100 lines and 20,000 bytes with no line over 1,200 bytes; `grep -n 'l\.read\b\|checklist in' internal/web/CLAUDE.md` prints nothing.
+- [ ] **Step 3: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok`.
+- [ ] **Step 4: Commit:** `git commit -m "docs(web): the route table, only-grow and two-tree rules" -- internal/web/CLAUDE.md`
+
+### Task 15.4: `docs/claude/web-layer.md` and its INDEX row
+
+**Files:**
+- Modify: `docs/claude/web-layer.md:3`, `:5-11` (Adding an API route), `:13-18` (Adding a stream event), `:20-25` (Adding a push kind, step 4), `:27-29` (Changing the JSON), `:31` (the Changing the app heading), `:39` (the webshot bullet), `:56` (Trying a change)
+- Modify: `docs/claude/INDEX.md:28` (the `web-layer.md` row)
+
+**Behaviour.** The guide keeps its sections on asks, traps and push; it changes as follows. Paths are written from the repo root (the lint resolves them).
+
+- Line 3: after `serves a phone app` add `(two: the classic one and the new React one, which a device picks)`.
+- **Adding an API route** (lines 5-11) is replaced by the table procedure, five numbered steps:
+  1. The Go types: a body and a response with `json` tags; a query type of `string` fields only, each tagged `query:"<name>"` (`readQuery` fills nothing else, `TestRoutes_QueryTypesHoldOnlyStrings`); each fixed-value string field a typed string listed in `unions()` with its values (`internal/web/unions.go`, `TestUnions_EveryFixedValueFieldIsTyped`).
+  2. The typed handler, `func (l *Layer) <name>(c *call, in In) (Out, error)`, beside its topic's file: `c.session()` for `{id}`; `c.act(send)` or `c.actCreated(send)` for a request that answers notices (a refusal is 409 with the model's text, a stopping daemon 503, a wait past `replyWait` 202 `{"pending": true}`; in the 202 and the 409 cases `settle` sends the notices raised so far to the device's stream, which keeps them, and returns them to the caller only when the request worked); `c.read(send)` for one whose `Reply` carries data (504 when `replyWait` runs out, the request dropped once answered); `&statusError{status, text}` for the handler's own refusals. Never copy the model's preconditions: `admit` decides, and the app's commands follow only the session's status. Check what the request carries as the Limits section of `internal/web/README.md` says.
+  3. The entry in `Layer.routes()` (`internal/web/routes.go`): `typed[In, Out](l, spec{method, path, log, client, ok, doc}, handler)`: `log` is the action its log line names, `client` a lowerCamelCase name unique in the table (the generated function's), `ok` the success status, and `doc` one to three sentences saying what the route does and refuses, limits included, which `docs/specs/web-api.md` prints beside it; `open` only for pairing; `page(...)` for an HTML page the client only builds the URL of.
+  4. `go generate ./internal/web`, then `CGO_ENABLED=0 go test ./internal/web/...`: the generator rewrites `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields` (its new lines are appended; commit them), and `TestContract_GeneratedFilesAreFresh` fails until it has run. Add a case to the route tests and, for a lifecycle action, to `e2e/web_test.go`.
+  5. The app: call it as `api.<client>(…)` (`internal/web/ui/src/api/request.ts`) from a command (a command's procedure below) or a TanStack Query read, and give webshot's canned loom a fixture and an `apiRoutes` entry (`tools/webshot/canned.go`) so the route answers there. The classic app is frozen: it learns nothing of a new route.
+- **Adding a stream event**: steps 1 and 2 stay (a sink publishes it; the `snapshot` carries what a reconnecting phone needs). Step 3 becomes: add the event's name and payload type to `streamEvents()` (`internal/web/stream.go`), then `go generate ./internal/web`; `gen.ts`'s `StreamEvents` gains the key, and the typecheck then fails in `KNOWN` (`internal/web/ui/src/api/stream.ts`) and in the store's `applied` (`internal/web/ui/src/store/fleet.ts`) until each handles it. The classic app ignores an event it has no handler for. Step 4 stays (the README's stream section).
+- **Adding a panel** (new section): the panel's module is `internal/web/ui/src/panels/<id>/index.tsx` calling `definePanel({ id, title, appliesTo, tab, Head, Body })`; a new id is added to `PanelId` (`internal/web/ui/src/app/panels.ts`) and given its URL in `routeOf` and `hrefFor` (`internal/web/ui/src/app/routes.tsx`, with a case in `routes.test.ts` for the classic URL it replaces); `internal/web/ui/src/panels/index.ts` imports the module for its registration; reads go through TanStack Query over `api`, with `unwrap`; a screen the first view does not need loads through a dynamic `import()` so the budget test keeps passing; a Vitest file beside the module, and `go run ./tools/webshot -app next -screens <id> -out <dir>` renders it.
+- **Adding a command** (new section): `defineCommand({ id, title, icon, offline, when, confirm, run })` in the panel's module; `when` reads only the session's status, its `claude` flag, the route and the link state; `offline` only for an action that must work without the daemon (the switch); `confirm` for anything that can lose work, naming exactly what happens; `run` calls `api.<client>(…)` and hands the outcome to `showOutcome(outcome, what)`, so notices (Kill's and Resume's stash notices always) become toasts; draw it with `<CommandButton id=… />`; a Vitest case for `when` across statuses and link states.
+- **The dev loop** (new section): `go run ./tools/webshot -serve 127.0.0.1:5670` serves the canned loom's API (no daemon, until killed); `cd internal/web/ui && pnpm install --frozen-lockfile` once, then `pnpm dev` runs Vite with hot reload and proxies `/api/v1` to that address. Run builds, typechecks and tests through `loom job submit -d "<what>" -- sh -c 'cd internal/web/ui && pnpm run check'`. `pnpm run build` rewrites `internal/web/dist/`, which is committed with the source (`pnpm run dist:check` fails on a stale bundle); `go run ./tools/webshot -app next -out <dir outside the worktree>` renders the built app under the real policy. Node 22 and pnpm come from the flake's dev shell.
+- **Reading the budget test's failure** (new section): `TestDist_FirstLoadIsWithinBudget` reads the committed `internal/web/dist/` (build first), and fails with `first load is <n> bytes gzipped, over the <budget> budget:` and each counted file with its gzipped size, one a line. The files are the entry script and the `modulepreload`s of `internal/web/dist/index.html`: find which import pulled the heavy one into them and load that screen through a dynamic `import()`; raising `firstLoadBudget` (`internal/web/static_budget_test.go`) is the owner's call.
+- **Licences** (a bullet under the dev loop): the build writes each bundled package's and font's licence into `internal/web/dist/THIRD_PARTY.txt`, and `NOTICE.md` points there; a new dependency needs only the rebuild.
+- **Adding a push kind**, step 4: replace `Show it in `internal/web/static/sw.js`:` with `Show it in both workers, `internal/web/static/sw.js` and `internal/web/ui/public/sw.js`:`.
+- **Changing the JSON the app reads** (lines 27-29): keep the first and last sentences; replace the middle (`Add fields; never rename, retype or drop one in place.`) with `Add fields; never rename, retype or drop one: `internal/web/api.fields` pins every shipped field, route, event and union value and `TestContract_FieldsOnlyGrow` fails on a change, so a removal is a hand-deleted line in the same commit.`
+- Line 31: the heading `## Changing the app` becomes `## Changing the classic app`, with one sentence under it: the classic app is frozen until cutover (only the Settings row, its worker registration and its worker's shell fetch and cache cleanup change); the new app's source is `internal/web/ui/`, its rules are in `internal/web/ui/CLAUDE.md`, and the sections above give its procedures.
+- Line 39 (the webshot bullet): add that `-app next` serves the built `internal/web/dist/` instead (`classic` is the default) and `-serve <addr>` serves only the canned API until killed.
+- Line 56 (Trying a change): replace `the JavaScript has no harness, so its logic stays in Go` with `the classic app's JavaScript has no harness, so its logic stays in Go, and the new app's has Vitest (`pnpm run check`)`.
+- `docs/claude/INDEX.md:28`: rewrite the `web-layer.md` row's description to name the new procedures. Keep its link target and its trap list; replace `adding an API route (behind `authed`, answered from the model's `Reply`, a confirmation sheet for what loses work)` with `adding an API route (a table entry with a typed handler, then `go generate ./internal/web`; the model's `Reply`, notices and statuses), a panel or a command in the new app, the dev loop (`pnpm dev` against `webshot -serve`) and the first-load budget's failure`, and replace `changing the JSON the installed app reads, the `.mjs` modules, the pinned Preact file or the service worker` with `changing the JSON the installed app reads (fields only grow: `api.fields`), the classic app's `.mjs` modules and pinned Preact file, or the service workers`.
+
+- [ ] **Step 1: Make the edits** to `docs/claude/web-layer.md` as described, quoting each line you replace from the file as it is.
+- [ ] **Step 2: Rewrite the INDEX row** as described.
+- [ ] **Step 3: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok`. `grep -n 'routeAPI' docs/claude/web-layer.md` prints nothing.
+- [ ] **Step 4: Commit:** `git commit -m "docs(web): procedures for the route table, panels, commands and the dev loop" -- docs/claude/web-layer.md docs/claude/INDEX.md`
+
+### Task 15.5: `internal/web/README.md`
+
+**Files:**
+- Modify: `internal/web/README.md:3`, `:11`, `:16`, `:18`, `:22-25`, `:56`, `:58-86`, `:100`, and a new section before `## Push`
+
+**Behaviour.** Facts only (the README is for orientation; its rules are in the CLAUDE.md files). Every path and test name it writes resolves in the tree after Stories 1 to 14.
+
+- Line 3: `It serves an embedded app, a JSON API and a live stream` becomes `It serves two embedded apps (the classic one and the new one, which each device picks), a JSON API and a live stream`.
+- **Files table** (line numbers at REV): row `auth.go` (line 11): `pairing (`routePair`)` becomes `pairing (`pair`, the open route's handler)`. Row `api.go`, `reqs.go` (line 16): `` `routeAPI` and the action handlers `` becomes `the lifecycle handlers on the route table`. Row `reads.go` (line 18): `` `read`, which waits for the Reply and stops tracking it (`reqs.drop`) `` becomes `` `readReply` (behind `call.read`), which waits for the Reply and stops tracking it (`reqs.drop`) ``. Row `push.go`, `triggers.go` (line 23): `` and `routePush` (`GET /api/v1/push-key`) `` becomes `` and `pushKey` (`GET /api/v1/push-key`) ``. Row `stream.go` (line 15): add `, `streamEvents()` (the event table)` after `recent notices`. Row `static.go` (line 22): replace the description with `routeStatic`: both embedded trees, the shell files from the tree `treeOf` picks, the build ID written into each tree's `sw.js` and `index.html`, and each tree's shell list into its `sw.js`, as they are served. Row `static/` (line 25): prefix `the classic app: `. New rows, after `api.go`: `routes.go` (the route table: `spec`, `route`, `typed`, `page`, `call` and its helpers, `readQuery`, `routes()` and `registerRoutes`), `unions.go` (the typed string types of the fixed-value fields and `unions()`), `contract.go` (`Contract()`, the tables as the generator reads them, and the `go:generate` line), `internal/gen/` (the generator: `gen.ts`, `docs/specs/web-api.md` and `api.fields`, and the freshness tests), `api.fields` (one line per shipped field, route, event and union value; append-only); after `static/`: `ui/` (the new app's source: React, TypeScript, Vite, Tailwind, shadcn on Base UI, Vitest) and `dist/` (its built bundle, committed and embedded; `THIRD_PARTY.txt` holds its licences).
+- **Tests** (line 56): after the static files sentence, add one sentence: the route table's open set and every closed route's refusal of an unpaired device (`TestRoutes_OnlyPairIsOpen`, `TestRoutes_EveryClosedRouteRefusesAnUnpairedDevice`), the generated files' freshness and `api.fields` only growing (`TestContract_GeneratedFilesAreFresh`, `TestContract_FieldsOnlyGrow`, in `internal/web/internal/gen`), the choice of tree (`TestStatic_TheCookieChoosesTheTree`, `TestStatic_TheUIParameterChoosesTheTree`), both trees' assets (`TestStatic_NextTreeBuilds`) and the first-load budget (`TestDist_FirstLoadIsWithinBudget`); the new app's own tests are Vitest (`pnpm run test` in `internal/web/ui`).
+- **Routes and the API** (lines 58-86): keep the heading and the first sentence (`Every route under `/api/v1` except `POST /api/v1/pair` needs the device cookie. The app shell and its static files are public and hold no data.`). Delete the table, from its header row `| Route | Does |` through its last row `| `DELETE /api/v1/device` | unpairs this phone; 204 |` (25 lines), and put in its place one paragraph: the routes are one table in `internal/web/routes.go` (`Layer.routes()`), and the generated reference `docs/specs/web-api.md` lists every route and stream event with its types, success status and what it does and refuses (each entry's `doc`); `internal/web/ui/src/api/gen.ts` is the same contract as TypeScript, and `internal/web/api.fields` pins what has shipped; `GET /api/v1/stream` is the one route outside the table (see The stream), and the mockup route is a page entry whose handler is hand-served. Everything after the table (`Responses are JSON. …`, `A session as JSON: …`, `Groups: …`) stays as it is.
+- **The app** (line 100): replace `There is no build step and no JavaScript test harness: the modules are checked with `node --check`, and the logic stays in Go.` with `The classic app has no build step and no JavaScript test harness: its modules are checked with `node --check`, and its logic stays in Go.`.
+- **New section `## The new app and the switch`**, directly before `## Push`: the new app lives in `internal/web/ui/` and builds into `internal/web/dist/` (committed, embedded as `nextFiles` beside the classic `staticFiles`). The device picks the app: `routeStatic` serves the four shell files (`/`, `/index.html`, `/sw.js`, `/manifest.webmanifest`) from the tree `treeOf` picks (a `ui` parameter on the URL, `next` or else classic, else the `__Host-loom-ui` cookie, `next` or else classic), with `Vary: Cookie`; any other path comes from the picked tree and else from the other. The cookie holds no data (`Secure; Path=/; SameSite=Strict`, a year, not HttpOnly) and the apps set it: the classic Settings' "Try the new app" and the new app's "Back to classic" (on every placeholder) set it and register the worker again at `/sw.js?ui=<app>`; each app registers its worker by the cookie at every launch, each worker fetches its own shell with its `?ui=` and caches under its own prefix (`loom-shell-` and `loom-next-`), deleting the other's on activate, and the new app keeps its snapshot in IndexedDB `loom-next`, apart from the classic one's. Offline, the cookie is set and the switch finishes on the next launch. In this part the new app draws the fleet; every other route draws a placeholder that offers the switch back. The stack and the build are listed in `internal/web/ui/CLAUDE.md`; the first load is held under `firstLoadBudget` (250,000 bytes gzipped) by `TestDist_FirstLoadIsWithinBudget`.
+
+- [ ] **Step 1: Make the edits** as described, quoting each replaced line from the file as it is.
+- [ ] **Step 2: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok` (it checks the README's links, paths and test names). `grep -n 'routeAPI\|routePair\|routePush' internal/web/README.md` prints nothing.
+- [ ] **Step 3: Commit:** `git commit -m "docs(web): the README points at the generated API reference and describes the two apps" -- internal/web/README.md`
+
+### Task 15.6: `CONTRIBUTING.md`, `USAGE.md`, `NOTICE.md`
+
+**Files:**
+- Modify: `CONTRIBUTING.md` (a new subsection after `### Dev loop`'s code block, before `### Cleanup`)
+- Modify: `USAGE.md` (a new bullet in `### Use Loom from Your Phone`, after the `**Notifications.**` bullet and before `#### Set it up`)
+- Modify: `NOTICE.md` (a new section after `## Vendored code: htm and Preact`'s last paragraph)
+
+**Behaviour.**
+- `CONTRIBUTING.md`: a subsection `### The web app` saying: the new web app's source is `internal/web/ui/` (Node 22 and pnpm, both in the flake's dev shell); `cd internal/web/ui && pnpm install --frozen-lockfile` once; `go run ./tools/webshot -serve 127.0.0.1:5670` serves the canned loom and `pnpm dev` runs Vite against it with hot reload; `pnpm run check` is typecheck, lint, format check and Vitest (run through `loom job` inside loom); `pnpm run build` rewrites the committed `internal/web/dist/`, and `pnpm run dist:check` fails when it is stale; after a change to the Go JSON types, `go generate ./internal/web` rewrites `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields`; `go run ./tools/webshot -app next -out <dir>` renders every route. One fenced `bash` block lists the commands, in the style of the existing blocks.
+- `USAGE.md`: a bullet `- **The new app.** …` in the file's style (wrapped at about 72 columns): a new version of the phone app is being built beside this one; Settings has **Try the new app**, which switches this phone (the choice is per phone, kept in a cookie, and nothing else about the pairing changes: the same device, notifications and Home Screen icon); for now the new app shows the fleet, and each other screen shows a placeholder with **Back to classic**, which switches back; offline, the switch happens the next time the app opens.
+- `NOTICE.md`: a section `## Bundled packages: the new web app` saying: the new web app (`internal/web/ui/`, built into `internal/web/dist/`) bundles npm packages and two fonts (Inter and JetBrains Mono, from `@fontsource-variable`); the build writes each bundled package's and font's licence into `internal/web/dist/THIRD_PARTY.txt`, which the daemon serves with the app and `pnpm run dist:check` keeps in step with the bundle, and that file is their notice.
+
+- [ ] **Step 1: Write the three additions** as described.
+- [ ] **Step 2: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok`.
+- [ ] **Step 3: Commit:** `git commit -m "docs(web): the dev loop, the switch and the bundle's licences" -- CONTRIBUTING.md USAGE.md NOTICE.md`
+
+### Task 15.7: `docs/ARCHITECTURE.md`
+
+**Files:**
+- Modify: `docs/ARCHITECTURE.md:20` (the `internal/web/` row of the package table), `docs/ARCHITECTURE.md:36` (the tools row's `webicons` and `webshot`), `docs/ARCHITECTURE.md:64` (the first sentences of the web layer's paragraph)
+
+**Behaviour.** Both descriptions of `internal/web/` name the two apps and the switch, and the tools row says `webshot` renders either. Quote each line from the file as it is before replacing.
+
+- Line 20: in the row beginning `| `internal/web/`, `internal/web/webpush/` |`, replace `the embedded phone app,` with `the two embedded phone apps (the classic one and the new one, which each device picks),`.
+- Line 36: in the row beginning `| `internal/devsandbox/`, `tools/`, `e2e/` |`, replace `` `webshot` (its screenshots) `` with `` `webshot` (screenshots of either phone app) ``.
+- Line 64: replace `It serves the embedded phone app, a JSON API under `/api/v1` and a server-sent event stream, all behind the device cookie that pairing sets.` with `It serves two embedded phone apps (the classic one in `internal/web/static/` and the new React one, built from `internal/web/ui/` into `internal/web/dist/`), a JSON API under `/api/v1` and a server-sent event stream; the API and the stream are behind the device cookie that pairing sets, the app shells are public. Each device picks its app: a shell file comes from the tree its `__Host-loom-ui` cookie names (the classic app's Settings and the new app's "Back to classic" switch it). The API's routes are one table in `internal/web/routes.go`, from which a generator writes the new app's `internal/web/ui/src/api/gen.ts` and `docs/specs/web-api.md`.`
+
+- [ ] **Step 1: Make the three edits** as described.
+- [ ] **Step 2: Run the lint:** `CGO_ENABLED=0 go test ./tools/claudemd/` prints `ok`. `grep -n 'embedded phone app,' docs/ARCHITECTURE.md` prints nothing.
+- [ ] **Step 3: Run the story's gates:** `bash -c 'out=$(gofmt -l $(git ls-files "*.go" | grep -v "^vendor/")) || exit 1; if [ -n "$out" ]; then echo "gofmt would reformat:"; echo "$out"; exit 1; fi'`, `CGO_ENABLED=0 go vet ./...`, `CGO_ENABLED=0 go test ./...` all pass.
+- [ ] **Step 4: Commit:** `git commit -m "docs(web): ARCHITECTURE names both apps and the switch" -- docs/ARCHITECTURE.md`
