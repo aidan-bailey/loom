@@ -118,14 +118,22 @@ func (l *Layer) decodeBody(w http.ResponseWriter, r *http.Request, a actionLog, 
 	return true
 }
 
-// sessionFromPath is the session the path names, answered 404 when the path
-// holds no decimal ID the model serves.
-func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a actionLog) (core.InstanceID, bool) {
+// pathSession is the session the path names: a decimal ID the model serves.
+func (l *Layer) pathSession(r *http.Request) (core.InstanceID, bool) {
 	n, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
 	if err == nil && n != 0 && n <= maxIDValue {
 		if _, ok := l.client.View(core.InstanceID(n)); ok {
 			return core.InstanceID(n), true
 		}
+	}
+	return 0, false
+}
+
+// sessionFromPath is the session the path names, answered 404 when the path
+// holds no decimal ID the model serves.
+func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a actionLog) (core.InstanceID, bool) {
+	if id, ok := l.pathSession(r); ok {
+		return id, true
 	}
 	l.refuse(w, a, http.StatusNotFound, "no such session")
 	return 0, false

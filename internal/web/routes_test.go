@@ -1,0 +1,352 @@
+package web
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// echoBody, echoQuery and echoOut are the types of the routes these tests
+// declare for themselves.
+type echoBody struct {
+	Text string `json:"text"`
+}
+
+type echoQuery struct {
+	Name  string `query:"name"`
+	Other string `query:"other"`
+}
+
+type echoOut struct {
+	Text string `json:"text"`
+}
+
+// newRouteLayer is a layer with no model behind it whose log lines the test
+// reads from the returned slice.
+func newRouteLayer() (*Layer, *[]loggedAction) {
+	var got []loggedAction
+	l := &Layer{now: time.Now}
+	l.onAction = func(a actionLog, result string) {
+		got = append(got, loggedAction{device: a.device, name: a.name, session: a.sessionID, result: result})
+	}
+	return l, &got
+}
+
+// serveRoute calls rt as the paired device "phone" with body.
+func serveRoute(rt route, method, target, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	rt.serve(rec, req, "phone")
+	return rec
+}
+
+func TestTyped_AnswersTheHandlersValueWithTheRoutesStatus(t *testing.T) {
+	for _, tc := range []struct {
+		ok   int
+		want string
+	}{
+		{http.StatusOK, "200 ok"},
+		{http.StatusCreated, "201 created"},
+	} {
+		l, got := newRouteLayer()
+		rt := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", log: "echo", client: "echo", ok: tc.ok},
+			func(c *call, _ struct{}) (echoOut, error) { return echoOut{Text: "hi"}, nil })
+
+		rec := serveRoute(rt, http.MethodGet, "/api/v1/echo", "")
+
+		assert.Equal(t, tc.ok, rec.Code)
+		assert.JSONEq(t, `{"text":"hi"}`, rec.Body.String())
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+		assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: tc.want}}, *got)
+	}
+}
+
+func TestTyped_A204AnswersNoBody(t *testing.T) {
+	l, got := newRouteLayer()
+	rt := typed(l, spec{method: http.MethodDelete, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusNoContent},
+		func(c *call, _ struct{}) (struct{}, error) { return struct{}{}, nil })
+
+	rec := serveRoute(rt, http.MethodDelete, "/api/v1/echo", "")
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Empty(t, rec.Body.String())
+	assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: "204 ok"}}, *got)
+}
+
+func TestTyped_RecordsTheTypesTheGeneratorReads(t *testing.T) {
+	l, _ := newRouteLayer()
+	noop := func(c *call, _ struct{}) (echoOut, error) { return echoOut{}, nil }
+
+	none := typed(l, spec{method: http.MethodPost, path: "/a", ok: http.StatusOK}, noop)
+	assert.Nil(t, none.query, "a route that takes neither has no query type")
+	assert.Nil(t, none.body, "and no body type")
+	assert.Equal(t, reflect.TypeFor[echoOut](), none.resp)
+	assert.False(t, none.page)
+
+	query := typed(l, spec{method: http.MethodGet, path: "/b", ok: http.StatusOK},
+		func(c *call, _ echoQuery) (echoOut, error) { return echoOut{}, nil })
+	assert.Equal(t, reflect.TypeFor[echoQuery](), query.query, "a GET's In is its query")
+	assert.Nil(t, query.body)
+
+	body := typed(l, spec{method: http.MethodPut, path: "/c", ok: http.StatusOK},
+		func(c *call, _ echoBody) (echoOut, error) { return echoOut{}, nil })
+	assert.Equal(t, reflect.TypeFor[echoBody](), body.body, "any other method's In is its body")
+	assert.Nil(t, body.query)
+
+	gone := typed(l, spec{method: http.MethodDelete, path: "/d", ok: http.StatusNoContent},
+		func(c *call, _ struct{}) (struct{}, error) { return struct{}{}, nil })
+	assert.Nil(t, gone.resp, "a 204 has no response type")
+}
+
+func TestTyped_AnswersAnErrorWithTheStatusItEarnsAndLogsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		text   string
+		logged string
+	}{
+		{"a status error", &statusError{http.StatusBadRequest, "text: want 1 to 5 bytes"}, http.StatusBadRequest, "text: want 1 to 5 bytes", "400 text: want 1 to 5 bytes"},
+		{"a device the model lost", fmt.Errorf("revoke: %w", core.ErrNoDevice), http.StatusUnauthorized, "revoke: " + core.ErrNoDevice.Error(), "401 revoke: " + core.ErrNoDevice.Error()},
+		{"a daemon that is stopping", core.ErrUnavailable, http.StatusServiceUnavailable, core.ErrUnavailable.Error(), "503 " + core.ErrUnavailable.Error()},
+		{"a refusal of the model", errors.New("cannot pause: not started"), http.StatusConflict, "cannot pause: not started", "409 cannot pause: not started"},
+		{"a request still running", errPending, http.StatusAccepted, "", "202 pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, got := newRouteLayer()
+			rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+				func(c *call, _ struct{}) (echoOut, error) { return echoOut{}, tc.err })
+
+			rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", "")
+
+			assert.Equal(t, tc.status, rec.Code)
+			if tc.status == http.StatusAccepted {
+				assert.JSONEq(t, `{"pending":true}`, rec.Body.String())
+			} else {
+				assert.JSONEq(t, fmt.Sprintf(`{"error":%q}`, tc.text), rec.Body.String())
+			}
+			assert.Equal(t, []loggedAction{{device: "phone", name: "echo", result: tc.logged}}, *got)
+		})
+	}
+}
+
+func TestTyped_ARouteThatLogsForItselfIsAnsweredButNotLogged(t *testing.T) {
+	l, got := newRouteLayer()
+	fail := false
+	rt := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", client: "echo", ok: http.StatusOK},
+		func(c *call, _ struct{}) (echoOut, error) {
+			if fail {
+				return echoOut{}, &statusError{http.StatusServiceUnavailable, "push is not available"}
+			}
+			return echoOut{Text: "hi"}, nil
+		})
+
+	assert.Equal(t, http.StatusOK, serveRoute(rt, http.MethodGet, "/api/v1/echo", "").Code)
+	fail = true
+	rec := serveRoute(rt, http.MethodGet, "/api/v1/echo", "")
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.JSONEq(t, `{"error":"push is not available"}`, rec.Body.String())
+	assert.Empty(t, *got, "an empty log name means the handler logs for itself")
+}
+
+func TestTyped_ABodyThatDoesNotDecodeIs400AndNeverReachesTheHandler(t *testing.T) {
+	for _, tc := range []struct{ name, body, text string }{
+		{"not JSON", "not json", "bad request: the body is not the JSON this route takes"},
+		{"empty", "", "bad request: the body is empty"},
+		{"a field the route does not take", `{"text":"x","extra":1}`, "bad request: the body is not the JSON this route takes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, got := newRouteLayer()
+			called := false
+			rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+				func(c *call, in echoBody) (echoOut, error) {
+					called = true
+					return echoOut{Text: in.Text}, nil
+				})
+
+			rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", tc.body)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.text)
+			assert.False(t, called)
+			require.Len(t, *got, 1)
+			assert.True(t, strings.HasPrefix((*got)[0].result, "400 bad request: "), (*got)[0].result)
+		})
+	}
+}
+
+func TestTyped_ABodyThatDecodesReachesTheHandlerAndAGETReadsItsQuery(t *testing.T) {
+	l, _ := newRouteLayer()
+	post := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoBody) (echoOut, error) { return echoOut{Text: in.Text}, nil })
+	rec := serveRoute(post, http.MethodPost, "/api/v1/echo", `{"text":"hello"}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"text":"hello"}`, rec.Body.String())
+
+	get := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoQuery) (echoOut, error) { return echoOut{Text: in.Name + "/" + in.Other}, nil })
+	rec = serveRoute(get, http.MethodGet, "/api/v1/echo?name=a&other=b&extra=z", "")
+	assert.JSONEq(t, `{"text":"a/b"}`, rec.Body.String())
+}
+
+func TestTyped_ARouteThatTakesNeitherDecodesNothing(t *testing.T) {
+	l, _ := newRouteLayer()
+	rt := typed(l, spec{method: http.MethodPost, path: "/api/v1/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, _ struct{}) (echoOut, error) { return echoOut{Text: "ran"}, nil })
+
+	rec := serveRoute(rt, http.MethodPost, "/api/v1/echo", "garbage that is no JSON")
+
+	assert.Equal(t, http.StatusOK, rec.Code, "a body is not read for a route that takes none")
+	assert.JSONEq(t, `{"text":"ran"}`, rec.Body.String())
+}
+
+func TestTyped_AnIDPathIsResolvedBeforeItsBodyIsDecoded(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+	idle := env.ids["idle"]
+	ran := 0
+	rt := typed(env.layer, spec{method: http.MethodPost, path: "/api/v1/sessions/{id}/echo", log: "echo", client: "echo", ok: http.StatusOK},
+		func(c *call, in echoBody) (echoOut, error) {
+			ran++
+			return echoOut{Text: in.Text}, nil
+		})
+	serve := func(id, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/"+id+"/echo", strings.NewReader(body))
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		rt.serve(rec, req, "phone")
+		return rec
+	}
+
+	rec := serve("999999", "not json")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the session's 404 comes before the body's 400")
+	assert.JSONEq(t, `{"error":"no such session"}`, rec.Body.String())
+
+	rec = serve(strconv.FormatUint(uint64(idle), 10), "not json")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	rec = serve(strconv.FormatUint(uint64(idle), 10), `{"text":"hi"}`)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, ran, "the handler ran for the one request that named a session and sent a body")
+
+	got := env.logged()
+	require.Len(t, got, 3)
+	assert.Equal(t, loggedAction{device: "phone", name: "echo", session: 0, result: "404 no such session"}, got[0])
+	assert.Equal(t, idle, got[1].session, "the 400 is logged with the session")
+	assert.True(t, strings.HasPrefix(got[1].result, "400 bad request: "), got[1].result)
+	assert.Equal(t, loggedAction{device: "phone", name: "echo", session: idle, result: "200 ok"}, got[2])
+}
+
+func TestPage_MountsItsHandlerAsItIsAndTakesNoTypes(t *testing.T) {
+	l, _ := newRouteLayer()
+	var gotDevice string
+	rt := page(l, spec{method: http.MethodGet, path: "/api/v1/page", log: "page", client: "page", ok: http.StatusOK},
+		func(w http.ResponseWriter, r *http.Request, device string) {
+			gotDevice = device
+			_, _ = w.Write([]byte("<p>"))
+		})
+
+	rec := serveRoute(rt, http.MethodGet, "/api/v1/page", "")
+
+	assert.True(t, rt.page)
+	assert.Nil(t, rt.resp)
+	assert.Nil(t, rt.query)
+	assert.Nil(t, rt.body)
+	assert.Equal(t, "phone", gotDevice)
+	assert.Equal(t, "<p>", rec.Body.String(), "nothing wraps the handler's own answer")
+}
+
+func TestReadQuery_SetsEachTaggedStringAndIgnoresTheRest(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/x?name=a%20b&other=&unknown=z", nil)
+	q := echoQuery{Other: "stale"}
+
+	readQuery(r, &q)
+
+	assert.Equal(t, echoQuery{Name: "a b", Other: ""}, q, "a parameter that is present sets its field, an absent or empty one clears it")
+
+	var untouched struct {
+		Name string `query:"name"`
+		Free string
+	}
+	untouched.Free = "kept"
+	readQuery(r, &untouched)
+	assert.Equal(t, "a b", untouched.Name)
+	assert.Equal(t, "kept", untouched.Free, "a field with no query tag is not set")
+}
+
+func TestStatusError_IsAnErrorWithItsText(t *testing.T) {
+	var err error = &statusError{http.StatusNotFound, "no such session"}
+
+	assert.EqualError(t, err, "no such session")
+	var se *statusError
+	require.ErrorAs(t, fmt.Errorf("wrapped: %w", err), &se)
+	assert.Equal(t, http.StatusNotFound, se.status)
+}
+
+func TestCall_SessionIsResolvedOnceAndAnswersTheSameTwice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	id := env.ids["one"]
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.SetPathValue("id", strconv.FormatUint(uint64(id), 10))
+	c := &call{l: env.layer, r: req}
+
+	got, err := c.session()
+	require.NoError(t, err)
+	assert.Equal(t, id, got)
+	assert.Equal(t, id, c.a.sessionID, "the log line names the session")
+
+	req.SetPathValue("id", "999999")
+	again, err := c.session()
+	require.NoError(t, err)
+	assert.Equal(t, id, again, "a second call returns the first one's answer")
+}
+
+func TestCall_SessionRefusesAPathThatNamesNoSessionWith404(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	for _, bad := range []string{"999999", "0", "x", "-1", "9007199254740992", ""} {
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.SetPathValue("id", bad)
+		c := &call{l: env.layer, r: req}
+
+		_, err := c.session()
+
+		var se *statusError
+		require.ErrorAs(t, err, &se, "id %q", bad)
+		assert.Equal(t, http.StatusNotFound, se.status, bad)
+		assert.Equal(t, "no such session", se.msg, bad)
+		assert.Zero(t, c.a.sessionID, bad)
+		_, again := c.session()
+		assert.Equal(t, err, again, "a refusal is answered the same the second time: %q", bad)
+	}
+}
+
+func TestCall_SetActionReplacesTheLogLinesAction(t *testing.T) {
+	c := &call{a: actionLog{device: "phone", name: "job_control"}}
+
+	c.setAction("job_park")
+
+	assert.Equal(t, "job_park", c.a.name)
+	assert.Equal(t, "phone", c.a.device)
+}
+
+func TestCall_NoticeCollectsTheNoticesRaisedBeforeTheRequestInOrder(t *testing.T) {
+	c := &call{}
+
+	c.notice(noticeJSON{Text: "first"})
+	c.notice(noticeJSON{Text: "second"})
+
+	require.Len(t, c.pre, 2)
+	assert.Equal(t, "first", c.pre[0].Text)
+	assert.Equal(t, "second", c.pre[1].Text)
+}
