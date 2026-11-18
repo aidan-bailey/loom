@@ -17,15 +17,19 @@ interface LicenseHooks {
 }
 
 // thirdPartyLicenses writes the licence of every package the bundle holds into the bundle as
-// THIRD_PARTY.txt (NOTICE.md points there). The packages come sorted by name, so the file is the
-// same on every machine.
+// THIRD_PARTY.txt (NOTICE.md points there). The packages come sorted by name by code point, never
+// by locale, so the file is the same on every machine.
 function thirdPartyLicenses(): Plugin {
   let text = "";
   const scanner = license({
     thirdParty: {
       output: (dependencies) => {
         text = [...dependencies]
-          .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+          .sort((a, b) => {
+            const x = a.name ?? "";
+            const y = b.name ?? "";
+            return x < y ? -1 : x > y ? 1 : 0;
+          })
           .map((dependency) => dependency.text().replaceAll("\r\n", "\n"))
           .join("\n\n---\n\n");
       },
