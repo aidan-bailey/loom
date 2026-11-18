@@ -317,30 +317,37 @@ type flowDocJSON struct {
 	Cut    bool      `json:"cut"`
 }
 
-// flowQuery is a flow route's plan, refused when empty or too long.
-func (l *Layer) flowQuery(w http.ResponseWriter, r *http.Request, a actionLog) (string, bool) {
-	plan := r.URL.Query().Get("plan")
+// flowParams is GET …/flow's query, and flowDocParams GET …/flow/doc's.
+type flowParams struct {
+	Plan string `query:"plan"`
+}
+
+type flowDocParams struct {
+	Plan string `query:"plan"`
+	Doc  string `query:"doc"`
+}
+
+// flowPlan is a flow route's plan, refused when empty or too long.
+func flowPlan(plan string) (string, error) {
 	if plan == "" || len(plan) > maxPlanQuery {
-		l.refuse(w, a, http.StatusBadRequest, "bad request: a flow route takes its plan (?plan=)")
-		return "", false
+		return "", &statusError{http.StatusBadRequest, "bad request: a flow route takes its plan (?plan=)"}
 	}
-	return plan, true
+	return plan, nil
 }
 
 // readFlow answers GET /api/v1/sessions/{id}/flow?plan=: the board.
-func (l *Layer) readFlow(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "flow"}
-	id, ok := l.readSession(w, r, &a)
-	if !ok {
-		return
+func (l *Layer) readFlow(c *call, p flowParams) (flowJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return flowJSON{}, err
 	}
-	plan, ok := l.flowQuery(w, r, a)
-	if !ok {
-		return
+	plan, err := flowPlan(p.Plan)
+	if err != nil {
+		return flowJSON{}, err
 	}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadFlow(id, plan, req) })
-	if !ok {
-		return
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlow(id, plan, req) })
+	if err != nil {
+		return flowJSON{}, err
 	}
 	lost := false
 	if v, ok := l.client.View(id); ok {
@@ -350,44 +357,37 @@ func (l *Layer) readFlow(w http.ResponseWriter, r *http.Request, device string) 
 			}
 		}
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, flowOf(reply.Flow, lost))
+	return flowOf(reply.Flow, lost), nil
 }
 
 // readFlows answers GET /api/v1/flows: every session's flows and the
 // host's past runs.
-func (l *Layer) readFlows(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "flows"}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadFlows(req) })
-	if !ok {
-		return
+func (l *Layer) readFlows(c *call, _ struct{}) (flowsJSON, error) {
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlows(req) })
+	if err != nil {
+		return flowsJSON{}, err
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, flowsOf(reply.Flows))
+	return flowsOf(reply.Flows), nil
 }
 
 // readFlowDoc answers GET /api/v1/sessions/{id}/flow/doc?plan=&doc=: the
 // document as its tree, each heading with its line.
-func (l *Layer) readFlowDoc(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "flow-doc"}
-	id, ok := l.readSession(w, r, &a)
-	if !ok {
-		return
+func (l *Layer) readFlowDoc(c *call, p flowDocParams) (flowDocJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return flowDocJSON{}, err
 	}
-	plan, ok := l.flowQuery(w, r, a)
-	if !ok {
-		return
+	plan, err := flowPlan(p.Plan)
+	if err != nil {
+		return flowDocJSON{}, err
 	}
-	doc := r.URL.Query().Get("doc")
-	if doc == "" || len(doc) > maxDocQuery {
-		l.refuse(w, a, http.StatusBadRequest, "bad request: the document route takes its doc (?doc=)")
-		return
+	if p.Doc == "" || len(p.Doc) > maxDocQuery {
+		return flowDocJSON{}, &statusError{http.StatusBadRequest, "bad request: the document route takes its doc (?doc=)"}
 	}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadFlowDoc(id, plan, doc, req) })
-	if !ok {
-		return
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadFlowDoc(id, plan, p.Doc, req) })
+	if err != nil {
+		return flowDocJSON{}, err
 	}
 	blocks, cut := buildTreeLimit(reply.FlowDoc.Text, flowview.DocLimit, docTreeNodes, true)
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, flowDocJSON{Path: reply.FlowDoc.Path, Blocks: blocks, Cut: cut || reply.FlowDoc.Cut})
+	return flowDocJSON{Path: reply.FlowDoc.Path, Blocks: blocks, Cut: cut || reply.FlowDoc.Cut}, nil
 }

@@ -667,3 +667,71 @@ func TestRoutes_EveryRouteHasADoc(t *testing.T) {
 		assert.LessOrEqual(t, len(rt.spec.doc), 700, "%s: a doc is one to three sentences", key)
 	}
 }
+
+// tableRow is what one route of the table must declare.
+type tableRow struct {
+	method string
+	path   string
+	client string
+	ok     int
+	query  reflect.Type
+	body   reflect.Type
+	resp   reflect.Type
+}
+
+// routeOf is the table's entry for method and path.
+func routeOf(t *testing.T, l *Layer, method, path string) route {
+	t.Helper()
+	for _, rt := range l.routes() {
+		if rt.spec.method == method && rt.spec.path == path {
+			return rt
+		}
+	}
+	require.FailNow(t, "the table has no such route", "%s %s", method, path)
+	return route{}
+}
+
+// requireRows checks each row against the table.
+func requireRows(t *testing.T, rows []tableRow) {
+	t.Helper()
+	l := &Layer{}
+	for _, row := range rows {
+		key := row.method + " " + row.path
+		rt := routeOf(t, l, row.method, row.path)
+		assert.Equal(t, row.client, rt.spec.client, key)
+		assert.Equal(t, row.ok, rt.spec.ok, key)
+		assert.Equal(t, row.query, rt.query, "%s: its query type", key)
+		assert.Equal(t, row.body, rt.body, "%s: its body type", key)
+		assert.Equal(t, row.resp, rt.resp, "%s: its response type", key)
+		assert.False(t, rt.page, key)
+	}
+}
+
+func TestRoutes_TheReadRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodGet, "/api/v1/sessions/{id}/message", "message", http.StatusOK, nil, nil, reflect.TypeFor[messageJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/turns", "turns", http.StatusOK, reflect.TypeFor[turnsParams](), nil, reflect.TypeFor[turnsJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/diff", "diff", http.StatusOK, nil, nil, reflect.TypeFor[patchJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/jobs/{job}/log", "jobLog", http.StatusOK, reflect.TypeFor[jobLogParams](), nil, reflect.TypeFor[jobLogJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/flow", "flow", http.StatusOK, reflect.TypeFor[flowParams](), nil, reflect.TypeFor[flowJSON]()},
+		{http.MethodGet, "/api/v1/sessions/{id}/flow/doc", "flowDoc", http.StatusOK, reflect.TypeFor[flowDocParams](), nil, reflect.TypeFor[flowDocJSON]()},
+		{http.MethodGet, "/api/v1/flows", "flows", http.StatusOK, nil, nil, reflect.TypeFor[flowsJSON]()},
+	})
+}
+
+func TestAPI_JobLogAndFlowReadsOfAWorkspaceTerminalAre404(t *testing.T) {
+	term, err := session.NewInstance(session.InstanceOptions{Title: "term", Path: t.TempDir(), Program: "claude", IsWorkspaceTerminal: true})
+	require.NoError(t, err)
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{term}})
+	id := env.ids["term"]
+
+	for _, path := range []string{
+		fmt.Sprintf("/api/v1/sessions/%d/jobs/7/log", id),
+		fmt.Sprintf("/api/v1/sessions/%d/flow?plan=p.md", id),
+		fmt.Sprintf("/api/v1/sessions/%d/flow/doc?plan=p.md&doc=spec", id),
+	} {
+		status, out := env.do(http.MethodGet, path, nil)
+		assert.Equal(t, http.StatusNotFound, status, path)
+		assert.Equal(t, "no such session", apiErrorOf(t, out), path)
+	}
+}

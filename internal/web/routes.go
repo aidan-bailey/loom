@@ -95,6 +95,19 @@ func (c *call) session() (core.InstanceID, error) {
 	return c.id, c.idErr
 }
 
+// readSession is session for a read route: a workspace terminal is no
+// session of the app's, so it is 404 as an unknown one is.
+func (c *call) readSession() (core.InstanceID, error) {
+	id, err := c.session()
+	if err != nil {
+		return 0, err
+	}
+	if c.l.isWorkspaceTerminal(id) {
+		return 0, &statusError{http.StatusNotFound, "no such session"}
+	}
+	return id, nil
+}
+
 // setAction replaces the log line's action, for a route whose action
 // depends on the path.
 func (c *call) setAction(name string) { c.a.name = name }
@@ -279,6 +292,34 @@ func (l *Layer) routes() []route {
 			method: http.MethodPost, path: "/api/v1/sessions/{id}/push", log: "push", client: "push", ok: http.StatusOK,
 			doc: lifecycleDoc("push"),
 		}, l.sessionOp(core.Core.Push)),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/message", log: "message", client: "message", ok: http.StatusOK,
+			doc: "The session's last message as a tree of plain nodes (`markdown.go`) with the text it was built from: `{text, blocks, truncated}`. No screen draws it now, and the route stays. A workspace terminal is no session of the app's: 404.",
+		}, l.message),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/turns", log: "turns", client: "turns", ok: http.StatusOK,
+			doc: "A page of the session's conversation: `{conversation, turns, earlier, reset, skipped}` and, on a subagent's page, `agent`. `before` (the page before, from a page's `earlier`) and `after` (the turns from a turn's `id` on) are byte offsets, at most one set, else 400; `agent` reads that subagent's own transcript in place of the conversation, and an id Claude could not have written is 400. A text item crosses as its tree, never as its text; a page holds at most 10 turns and, past its newest, 256 KiB of text.",
+		}, l.readTurns),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/diff", log: "diff", client: "diff", ok: http.StatusOK,
+			doc: "The session's worktree diff against its base commit: `{base, files}`, a file `{path, old_path, status, binary, added, removed, hunks, omitted}`. A diff keeps at most 1 MiB of lines, 5,000 lines a file and 2,000 bytes a line; `omitted` is `lines` or `budget` when a file's hunks were dropped.",
+		}, l.readDiff),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/jobs/{job}/log", log: "job_log", client: "jobLog", ok: http.StatusOK,
+			doc: "A job of the session's output, from the byte offset `after` or, when `after` is absent, its tail: `{text, start, end, cut, reset}`, at most 64 KiB, cleaned for display. An `after` past the file's end answers a fresh tail with `reset`. A malformed `job` or `after` is 400; a job that is not the session's, or that the queue no longer holds, is the model's 409.",
+		}, l.readJobLog),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/flow", log: "flow", client: "flow", ok: http.StatusOK,
+			doc: "The board of the flow whose plan (or spec, in design) is `plan` in the session's worktree: `{summary, stages, base, start, end, premise, stories, final, question, kept, others, costs}`. No `plan` is 400, and a session with no worktree the model's 409.",
+		}, l.readFlow),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/flow/doc", log: "flow-doc", client: "flowDoc", ok: http.StatusOK,
+			doc: "One of the flow's documents as its tree, `{path, blocks, cut}`, each heading with its source `line`; at most 1 MiB and 40,000 nodes. `doc` is `spec`, `skeleton`, `plan`, `record`, `drafts-state` or `report:<agent run>`, and the model refuses any other with 409; a missing `plan` or `doc` is 400.",
+		}, l.readFlowDoc),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/flows", log: "flows", client: "flows", ok: http.StatusOK,
+			doc: "Every session's flows and the host's past runs: `{live, past}`, a live one `{session, title, flow}`, a past one `{key, file, stem, plan, stories, ended, end, usd, unreadable}`, newest first.",
+		}, l.readFlows),
 	}
 }
 

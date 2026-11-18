@@ -69,15 +69,8 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 // a paired device (authed); /pair, /stream and /push-key are other stories'.
 func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
-	m.Handle("GET /api/v1/sessions/{id}/message", l.authed(l.message))
-	m.Handle("GET /api/v1/sessions/{id}/turns", l.authed(l.readTurns))
-	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
 	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
-	m.Handle("GET /api/v1/sessions/{id}/jobs/{job}/log", l.authed(l.readJobLog))
 	m.Handle("POST /api/v1/sessions/{id}/jobs/{job}/{action}", l.authed(l.jobControl))
-	m.Handle("GET /api/v1/sessions/{id}/flow", l.authed(l.readFlow))
-	m.Handle("GET /api/v1/sessions/{id}/flow/doc", l.authed(l.readFlowDoc))
-	m.Handle("GET /api/v1/flows", l.authed(l.readFlows))
 	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
 	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
@@ -479,25 +472,21 @@ func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string)
 // session's last message (buildTree), from the web client's replica, with the
 // text it was built from, so the app can tell it is the message it shows. A
 // workspace terminal is no session of the app's.
-func (l *Layer) message(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "message"}
-	id, ok := l.sessionFromPath(w, r, a)
-	if !ok {
-		return
+func (l *Layer) message(c *call, _ struct{}) (messageJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return messageJSON{}, err
 	}
-	a.sessionID = id
 	v, ok := l.client.View(id)
-	if !ok || v.IsWorkspaceTerminal {
-		l.refuse(w, a, http.StatusNotFound, "no such session")
-		return
+	if !ok {
+		return messageJSON{}, &statusError{http.StatusNotFound, "no such session"}
 	}
 	out := messageJSON{Blocks: []*mdNode{}}
 	if v.HasLastMessage {
 		out.Text = v.LastMessage
 		out.Blocks, out.Truncated = buildTree(v.LastMessage)
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // quickRepliesBody is PUT /api/v1/quick-replies: the replies to offer, or

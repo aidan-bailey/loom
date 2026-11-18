@@ -168,41 +168,43 @@ func jobLogOf(r sched.LogRead) jobLogJSON {
 	return jobLogJSON{Text: cleanLog(r.Data), Start: r.Start, End: r.End, Cut: r.Cut, Reset: r.Reset}
 }
 
+// jobLogParams is GET …/jobs/{job}/log's query.
+type jobLogParams struct {
+	After string `query:"after"`
+}
+
 // readJobLog answers GET /api/v1/sessions/{id}/jobs/{job}/log?after=: the
 // job's output from the byte offset after, or its tail when after is
 // absent, cleaned for display. The model refuses a job that is not the
 // session's.
-func (l *Layer) readJobLog(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "job_log"}
-	id, ok := l.readSession(w, r, &a)
-	if !ok {
-		return
-	}
-	job, after, err := jobLogQuery(r)
+func (l *Layer) readJobLog(c *call, p jobLogParams) (jobLogJSON, error) {
+	id, err := c.readSession()
 	if err != nil {
-		l.refuse(w, a, http.StatusBadRequest, err.Error())
-		return
+		return jobLogJSON{}, err
 	}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadJobLog(id, job, after, req) })
-	if !ok {
-		return
+	job, after, err := jobLogQuery(c.r, p)
+	if err != nil {
+		return jobLogJSON{}, &statusError{http.StatusBadRequest, err.Error()}
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, jobLogOf(reply.JobLog))
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadJobLog(id, job, after, req) })
+	if err != nil {
+		return jobLogJSON{}, err
+	}
+	return jobLogOf(reply.JobLog), nil
 }
 
 // jobLogQuery reads the log route's job (a decimal ID above 0) and after (a
 // byte offset; -1, the tail, when absent).
-func jobLogQuery(r *http.Request) (sched.JobID, int64, error) {
+func jobLogQuery(r *http.Request, p jobLogParams) (sched.JobID, int64, error) {
 	job, err := jobFromPath(r)
 	if err != nil {
 		return 0, 0, err
 	}
 	after := int64(-1)
-	if s := r.URL.Query().Get("after"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 64)
+	if p.After != "" {
+		n, err := strconv.ParseInt(p.After, 10, 64)
 		if err != nil || n < 0 {
-			return 0, 0, fmt.Errorf("after %q: want a byte offset", s)
+			return 0, 0, fmt.Errorf("after %q: want a byte offset", p.After)
 		}
 		after = n
 	}

@@ -186,6 +186,13 @@ func patchOf(p git.Patch) patchJSON {
 	return out
 }
 
+// isWorkspaceTerminal reports whether the session is a workspace terminal,
+// which is no session of the app's.
+func (l *Layer) isWorkspaceTerminal(id core.InstanceID) bool {
+	v, _ := l.client.View(id)
+	return v.IsWorkspaceTerminal
+}
+
 // readSession is the session a read route names, answered 404 when the
 // path names none or a workspace terminal, which is no session of the
 // app's.
@@ -195,21 +202,14 @@ func (l *Layer) readSession(w http.ResponseWriter, r *http.Request, a *actionLog
 		return 0, false
 	}
 	a.sessionID = id
-	if v, _ := l.client.View(id); v.IsWorkspaceTerminal {
+	if l.isWorkspaceTerminal(id) {
 		l.refuse(w, *a, http.StatusNotFound, "no such session")
 		return 0, false
 	}
 	return id, true
 }
 
-// read makes the read request send names and waits for its Reply, then
-// stops tracking the request (reqs.drop). It answers a failure itself, as
-// JSON (refuse), and otherwise returns the Reply with true.
-func (l *Layer) read(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID)) (core.Reply, bool) {
-	return l.readAnswering(w, r, a, send, l.refuse)
-}
-
-// readAnswering is read with its failures answered by fail: the model's
+// readAnswering makes a read request (readReply) and answers its failures with fail: the model's
 // refusal with its status, 504 when the model did not answer within
 // replyWait.
 func (l *Layer) readAnswering(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID), fail func(http.ResponseWriter, actionLog, int, string)) (core.Reply, bool) {
@@ -239,49 +239,53 @@ func (l *Layer) readReply(ctx context.Context, device string, send func(req core
 	return reply, nil
 }
 
+// turnsParams is GET /api/v1/sessions/{id}/turns's query.
+type turnsParams struct {
+	Conversation string `query:"conversation"`
+	Before       string `query:"before"`
+	After        string `query:"after"`
+	Agent        string `query:"agent"`
+}
+
 // readTurns answers GET /api/v1/sessions/{id}/turns: a page of the
 // session's conversation, as the query's conversation, before and after
 // ask.
-func (l *Layer) readTurns(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "turns"}
-	id, ok := l.readSession(w, r, &a)
-	if !ok {
-		return
-	}
-	q, err := turnsQuery(r)
+func (l *Layer) readTurns(c *call, p turnsParams) (turnsJSON, error) {
+	id, err := c.readSession()
 	if err != nil {
-		l.refuse(w, a, http.StatusBadRequest, err.Error())
-		return
+		return turnsJSON{}, err
 	}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadTurns(id, q, req) })
-	if !ok {
-		return
+	q, err := turnsQuery(p)
+	if err != nil {
+		return turnsJSON{}, &statusError{http.StatusBadRequest, err.Error()}
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, turnsOf(reply.Turns))
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadTurns(id, q, req) })
+	if err != nil {
+		return turnsJSON{}, err
+	}
+	return turnsOf(reply.Turns), nil
 }
 
 // turnsQuery reads the turns route's query: before and after are byte
 // offsets, and at most one of them is set; agent, when not empty, is a
 // subagent's id (subagent.ValidAgentID), whose own turns are read in
 // place of the conversation's.
-func turnsQuery(r *http.Request) (transcript.Query, error) {
-	v := r.URL.Query()
-	q := transcript.Query{Conversation: v.Get("conversation"), Agent: v.Get("agent")}
+func turnsQuery(p turnsParams) (transcript.Query, error) {
+	q := transcript.Query{Conversation: p.Conversation, Agent: p.Agent}
 	if q.Agent != "" && !subagent.ValidAgentID(q.Agent) {
 		return transcript.Query{}, fmt.Errorf("agent %q: not an agent id", q.Agent)
 	}
 	for _, c := range []struct {
-		name string
-		to   *int64
-	}{{"before", &q.Before}, {"after", &q.After}} {
-		s := v.Get(c.name)
-		if s == "" {
+		name  string
+		value string
+		to    *int64
+	}{{"before", p.Before, &q.Before}, {"after", p.After, &q.After}} {
+		if c.value == "" {
 			continue
 		}
-		n, err := strconv.ParseInt(s, 10, 64)
+		n, err := strconv.ParseInt(c.value, 10, 64)
 		if err != nil || n < 0 {
-			return transcript.Query{}, fmt.Errorf("%s %q: want a byte offset", c.name, s)
+			return transcript.Query{}, fmt.Errorf("%s %q: want a byte offset", c.name, c.value)
 		}
 		*c.to = n
 	}
@@ -293,16 +297,14 @@ func turnsQuery(r *http.Request) (transcript.Query, error) {
 
 // readDiff answers GET /api/v1/sessions/{id}/diff: the session's worktree
 // diff against its base commit, file by file.
-func (l *Layer) readDiff(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "diff"}
-	id, ok := l.readSession(w, r, &a)
-	if !ok {
-		return
+func (l *Layer) readDiff(c *call, _ struct{}) (patchJSON, error) {
+	id, err := c.readSession()
+	if err != nil {
+		return patchJSON{}, err
 	}
-	reply, ok := l.read(w, r, a, func(req core.ReqID) { l.client.ReadDiff(id, req) })
-	if !ok {
-		return
+	reply, err := c.read(func(req core.ReqID) { l.client.ReadDiff(id, req) })
+	if err != nil {
+		return patchJSON{}, err
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, patchOf(reply.Diff))
+	return patchOf(reply.Diff), nil
 }
