@@ -403,6 +403,18 @@ func notSubmitted(err error) error {
 	return &ExitError{Code: exitNotRun, Msg: "loom: nothing was submitted: " + err.Error()}
 }
 
+// submitFailure is run's error for a submit that failed: nothing was
+// submitted when the daemon refused it or was gone before it went out, but
+// a daemon lost after it went out may have queued the job (lostAfterSend),
+// and a caller told otherwise would run the build twice.
+func submitFailure(err error) error {
+	var lost *lostAfterSend
+	if errors.As(err, &lost) {
+		return &ExitError{Code: exitNotRun, Msg: "loom: the daemon was lost before it answered, so the job may be queued (loom job list shows it): " + lost.Error()}
+	}
+	return notSubmitted(err)
+}
+
 // interrupted ends a follower that sig interrupted. The job is never
 // cancelled by it. A job that has an owner and has not ended gets a message
 // asked for (the follower's job was submitted without one), and the line says
@@ -498,7 +510,7 @@ func newJobRunCmd() *cobra.Command {
 						Msg:  "interrupted before the daemon answered: the job may still be queued (loom job list shows it)",
 					}
 				case err != nil:
-					return notSubmitted(err)
+					return submitFailure(err)
 				}
 				v, err := d.awaitJob(id)
 				if err != nil {

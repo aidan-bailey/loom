@@ -53,6 +53,20 @@ func TestFamilyOf(t *testing.T) {
 		{"cargo build", []string{"cargo", "build"}},
 		{"go test -tags systemd_live ./sched", []string{"go", "test", "-tags", "systemd_live", "./sched"}},
 		{"go vet ./sched", []string{"go", "vet", "./sched"}},
+		// A global flag's value is no subcommand, and -C's folder is kept.
+		{"cargo build", []string{"cargo", "--color", "always", "build"}},
+		{"cargo test", []string{"cargo", "--color", "always", "test"}},
+		{"cargo build --release", []string{"cargo", "--config", "x=1", "-Z", "unstable-options", "build", "--release"}},
+		{"cargo -C backend build", []string{"cargo", "-C", "backend", "build"}},
+		{"go -C backend test ./...", []string{"go", "-C", "backend", "test", "./..."}},
+		{"go -C frontend test ./...", []string{"go", "-C", "frontend", "test", "./..."}},
+		// Import paths are packages; a flag's value is not.
+		{"go test example.com/m/big/...", []string{"go", "test", "example.com/m/big/..."}},
+		{"go test example.com/m/tiny", []string{"go", "test", "example.com/m/tiny", "-count", "1"}},
+		{"go test ./sched", []string{"go", "test", "-run", "TestA/sub", "./sched", "-coverprofile", "c/out"}},
+		// timeout sizes nothing: its command is the step.
+		{"cargo build --release", []string{"timeout", "900", "cargo", "build", "--release"}},
+		{"cargo test", []string{"timeout", "-k", "10", "--signal=INT", "900", "cargo", "test"}},
 		// Other programs: the program and its first two words that aren't flags.
 		{"pnpm exec playwright", []string{"pnpm", "exec", "playwright", "test", "x.spec.ts", "--workers", "8"}},
 		{"python3 scripts/gen.py", []string{"python3", "scripts/gen.py", "--check"}},
@@ -66,6 +80,7 @@ func TestFamilyOf(t *testing.T) {
 		{"", []string{"sh", "-c", "echo hi | tail -1"}},
 		{"", []string{"sh", "-c", "cd x"}},
 		{"", []string{"true"}},
+		{"", []string{"timeout", "900"}},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, famLabel(c.argv...), "%q", c.argv)

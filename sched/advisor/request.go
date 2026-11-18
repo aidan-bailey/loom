@@ -74,7 +74,7 @@ func RecentRuns(runs []sched.Run, checkout string, now time.Time) []KnownRun {
 	var out []KnownRun
 	for _, r := range runs[:min(len(runs), MaxRecentRuns)] {
 		k := KnownRun{
-			Outcome: r.Outcome, MinutesAgo: max(0, int(now.Sub(r.Ended)/time.Minute)), Cores: r.Claim.CPUs + r.Spare,
+			Outcome: r.Outcome, MinutesAgo: max(0, int(now.Sub(r.Ended)/time.Minute)), Cores: r.Claim.CPUs, // its spare cores in it (sched.RunOf)
 			WallSeconds: int(math.Round(r.WallSeconds)), PeakGB: math.Round(float64(r.PeakKB)/(1<<20)*10) / 10,
 		}
 		if r.WriteBytes != nil {

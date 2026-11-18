@@ -508,8 +508,10 @@ func (m *Model) queueJobView(q *queueState, r sched.Record, owners map[InstanceI
 	jv.Family = q.familyLabel(b)
 	jv.OverdueAfter = sched.OverdueAfter(b, r.Claim.CPUs)
 	if jv.OverdueAfter > 0 {
-		// Paused time is no running time (job controls spec §7.3).
-		jv.OverdueAfter += r.PausedFor(time.Now())
+		// Paused and lent time is no running time (job controls spec §7.3,
+		// memory borrowing spec §6.4).
+		now := time.Now()
+		jv.OverdueAfter += r.PausedFor(now) + r.LentFor(now)
 	}
 	o := owners[jv.Owner]
 	jv.OwnerTitle, jv.OwnerWorkspace, jv.OwnerWorkspaceID = o.title, o.workspace, o.workspaceID
