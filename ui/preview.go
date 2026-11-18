@@ -104,6 +104,8 @@ type PreviewPane struct {
 	// by String(), so selection extraction matches exactly what's on screen.
 	sel            selection
 	displayedPlain []string
+	// live keeps the last live-tail render (renderMemo).
+	live renderMemo[liveKey]
 }
 
 type previewState struct {
@@ -366,6 +368,11 @@ func (p *PreviewPane) String() string {
 	// the agent's bottom row (e.g. Claude's input box, replaced by "...") and was
 	// inconsistent with the terminal pane, which fills its full height.
 	availableHeight := p.height
+	key := liveKey{text: p.previewState.text, width: p.width, height: p.height, sel: p.sel, theme: themeGen}
+	if out, plain, ok := p.live.get(key); ok {
+		p.displayedPlain = plain
+		return out
+	}
 
 	lines := strings.Split(p.previewState.text, "\n")
 
@@ -384,6 +391,7 @@ func (p *PreviewPane) String() string {
 	content := strings.Join(display, "\n")
 
 	rendered := previewPaneStyle.Width(p.width).Render(content)
+	p.live.put(key, rendered, plain)
 	return rendered
 }
 

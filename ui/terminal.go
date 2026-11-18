@@ -62,6 +62,8 @@ type TerminalPane struct {
 	// most recently rendered by String(). Both guarded by t.mu.
 	sel            selection
 	displayedPlain []string
+	// live keeps the last live-tail render (renderMemo), under t.mu.
+	live renderMemo[liveKey]
 }
 
 // NewTerminalPane constructs a TerminalPane with an empty session cache at the
@@ -646,6 +648,11 @@ func (t *TerminalPane) String() string {
 	}
 
 	// Live tail: show captured content.
+	key := liveKey{text: content, width: width, height: height, sel: t.sel, theme: themeGen}
+	if out, plain, ok := t.live.get(key); ok {
+		t.displayedPlain = plain
+		return out
+	}
 	lines := strings.Split(content, "\n")
 
 	if height > 0 {
@@ -660,7 +667,9 @@ func (t *TerminalPane) String() string {
 	display, plain := renderWithSelection(lines, t.sel)
 	t.displayedPlain = plain
 	contentStr := strings.Join(display, "\n")
-	return terminalPaneStyle.Width(width).Render(contentStr)
+	out := terminalPaneStyle.Width(width).Render(contentStr)
+	t.live.put(key, out, plain)
+	return out
 }
 
 // BeginSelection starts a selection anchored at content (row, col).

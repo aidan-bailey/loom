@@ -19,8 +19,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/creack/pty"
 )
 
 // ProgramClaude, ProgramAider, and ProgramGemini are the canonical
@@ -122,8 +120,9 @@ type TmuxSession struct {
 	lastRows int
 	// seedHistory holds pre-attach scrollback rows captured once per
 	// Restore (history-only: capture-pane -S - -E -1, so it can never
-	// overlap what the emulator mirrors post-attach). Immutable after
-	// assignment; guarded by stateMu.
+	// overlap what the emulator mirrors post-attach). Never changed after
+	// assignment, only dropped once the emulator's scroll-back is full
+	// (SeedHistory); guarded by stateMu.
 	seedHistory []string
 
 	// Output pump — continuously drains PTY output to prevent buffer deadlock.
@@ -526,9 +525,10 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 // on the PTY so any in-flight blocked Read returns immediately with
 // os.ErrDeadlineExceeded — otherwise the goroutine could wait
 // indefinitely on a PTY that has no pending output and no writer
-// exiting. Best-effort: on platforms where a file type does not
-// support deadlines, SetReadDeadline returns an error we ignore, and
-// the pumpWaitTimeout watchdog in waitPumpExit still bounds the wait.
+// exiting. That works because Pty.Start hands back a pollable PTY
+// (pty_unix.go); a file that supports no deadlines (Windows, a test's
+// fake, a PTY pollable failed on) returns an error we ignore, and the
+// pumpWaitTimeout watchdog in waitPumpExit still bounds the wait.
 func (t *TmuxSession) signalPumpStop(ptmx *os.File) {
 	t.pumpMu.Lock()
 	cancel := t.pumpCancel
@@ -799,12 +799,7 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	return pty.Setsize(ptmx, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(cols),
-		X:    0,
-		Y:    0,
-	})
+	return setPtySize(ptmx, cols, rows)
 }
 
 // HasEmulator reports whether this session renders through the in-process
@@ -889,10 +884,24 @@ func (t *TmuxSession) ForwardFocus(in bool) error {
 
 // SeedHistory returns the pre-attach history rows captured at the last
 // Restore. Callers must treat the slice as immutable.
+//
+// Once the emulator's scroll-back is full (paneScrollbackLines) it drops its
+// oldest lines, so the seed no longer joins on and scrolling up would jump
+// from the oldest kept line into rows from before the attach: from then on
+// the seed is dropped, memory and all, for this attach.
 func (t *TmuxSession) SeedHistory() []string {
 	t.stateMu.Lock()
-	defer t.stateMu.Unlock()
-	return t.seedHistory
+	seed, emu := t.seedHistory, t.emu
+	t.stateMu.Unlock()
+	if len(seed) == 0 || emu == nil || emu.ScrollbackLen() < paneScrollbackLines {
+		return seed
+	}
+	t.stateMu.Lock()
+	if t.emu == emu { // the same attach: a Restore since seeds its own
+		t.seedHistory = nil
+	}
+	t.stateMu.Unlock()
+	return nil
 }
 
 // ScrollbackLen returns the emulator's scrollback line count; ok=false on

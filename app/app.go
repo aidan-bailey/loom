@@ -310,6 +310,8 @@ type home struct {
 	runningAsShown bool
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
+	// spinnerOn is whether a spinner tick is in flight.
+	spinnerOn bool
 	// activeOverlay is the currently displayed modal (nil when no overlay
 	// is open). The concrete type is inspected through the typed
 	// helpers below (textInput(), confirmation(), etc.) rather than by
@@ -704,11 +706,12 @@ func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
 	m.info.UIPrefs = p
 }
 
-// Init implements tea.Model. It starts the spinner and kicks off the
-// preview and metadata tick loops — those loops re-arm themselves by
-// returning the same tick message, so Init fires exactly once per Run.
+// Init implements tea.Model. It kicks off the preview and metadata tick
+// loops — those loops re-arm themselves by returning the same tick message,
+// so Init fires exactly once per Run. The spinner starts from the first
+// Update that draws it (startSpinner).
 func (m *home) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spinner.Tick, tickUpdateMetadataCmd, m.initCmd, m.drainCore()}
+	cmds := []tea.Cmd{tickUpdateMetadataCmd, m.initCmd, m.drainCore()}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
 	if !tmux.EmulatorEnabled() {
@@ -739,9 +742,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(frameTickMsg); ok {
 		m.gate.ticked()
 	}
-	model, cmd := m.update(msg)
+	var model tea.Model = m
+	var cmd tea.Cmd
+	if tick, ok := msg.(spinner.TickMsg); ok {
+		// Here, not in update: a state that swallowed the tick would leave
+		// spinnerOn set with no tick in flight, and the spinner stopped.
+		cmd = m.spinnerTick(tick)
+	} else {
+		model, cmd = m.update(msg)
+	}
 	drained, applied := m.drainCoreApplied()
-	cmd = tea.Batch(cmd, drained, m.checkLink(), m.workDrained())
+	cmd = tea.Batch(cmd, drained, m.checkLink(), m.workDrained(), m.startSpinner())
 	if applied || m.offline() {
 		m.gate.fresh()
 	}
@@ -868,7 +879,10 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The promotion is the ladder's, a display overlay (setLadder),
 			// read from the row as the user sees it (v, overlaid): the
 			// status promoted is the one shown.
-			promoted := v.Status == session.Ready && !v.StatusReported
+			// A pane with no attached client is no opinion: a burst's
+			// first Output comes from its own goroutine and can land after
+			// the pane's Dead.
+			promoted := v.Status == session.Ready && !v.StatusReported && m.panes.For(v).Attached()
 			if promoted {
 				m.setLadder(v.ID, session.Running)
 				m.updateTabBarStatuses()
@@ -1566,10 +1580,6 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// selection; release drops the classic slot's attach clients
 		// when this was the first tab.
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
 	}
 	return m, nil
 }

@@ -58,7 +58,9 @@ type ScrollModel struct {
 // NewLinesBelow drift if output *did* arrive between the two calls — never
 // corruption of the rendered window.
 //
-// Limitation: at the emulator's scrollback cap (x/vt default 10k lines)
+// At the emulator's scrollback cap (session/tmux's paneScrollbackLines)
+// the pane drops its pre-attach seed, which no longer joins on, so the
+// buffer is the emulator's last lines alone. Limitation: at that cap
 // sbLen plateaus, so the anchor bump stops compensating for further
 // scroll-off and the view drifts up by at most the overflow. Bounded,
 // graceful degradation — accepted.
@@ -161,8 +163,8 @@ func (m *ScrollModel) Reset() {
 }
 
 // NewLinesBelow is the footer count: scroll-off lines accrued since the
-// gesture began. Limitation: at the scrollback cap (x/vt default 10k
-// lines) sbLen plateaus, so the count stops growing even as new output
+// gesture began. Limitation: at the scrollback cap (session/tmux's
+// paneScrollbackLines) sbLen plateaus, so the count stops growing even as new output
 // arrives — bounded, graceful degradation, accepted.
 func (m *ScrollModel) NewLinesBelow() int {
 	if m.offset <= 0 {

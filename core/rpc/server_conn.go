@@ -2,7 +2,9 @@ package rpc
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -51,6 +53,12 @@ func newServerConn(nc io.ReadWriteCloser) *serverConn {
 	return c
 }
 
+// readsDiffText reports whether the peer reads a view's diff text: a TUI
+// does (its diff pane, Lua's content); the daemon's web layer, which shows
+// counts and asks for a patch by ReadDiff, and a CLI command don't, and are
+// sent views without it (withoutDiffText).
+func (c *serverConn) readsDiffText() bool { return !c.web && !c.cli }
+
 // enqueue queues f, replacing a queued frame with the same non-empty key.
 func (c *serverConn) enqueue(f Frame, key string) {
 	c.mu.Lock()
@@ -94,10 +102,11 @@ func (c *serverConn) sendReply(id uint64, result any, err error) {
 	c.sendFrame(f)
 }
 
-// writeLoop writes queued frames until the connection closes.
+// writeLoop writes queued frames until the connection closes, each as
+// appendFrame lays it out, in one Write.
 func (c *serverConn) writeLoop() {
 	defer close(c.done)
-	enc := json.NewEncoder(c.nc)
+	var buf []byte
 	for {
 		c.mu.Lock()
 		batch := c.queue
@@ -105,10 +114,17 @@ func (c *serverConn) writeLoop() {
 		closed := c.closed
 		c.mu.Unlock()
 		for _, q := range batch {
-			if err := enc.Encode(q.frame); err != nil {
+			var err error
+			if buf, err = appendFrame(buf[:0], q.frame); err == nil {
+				_, err = c.nc.Write(buf)
+			}
+			if err != nil {
 				c.nc.Close()
 				return
 			}
+		}
+		if cap(buf) > maxKeptFrameBuffer {
+			buf = nil
 		}
 		if closed && len(batch) == 0 {
 			return
@@ -142,4 +158,82 @@ func (c *serverConn) flush() {
 func (c *serverConn) close() {
 	c.flush()
 	c.nc.Close()
+}
+
+// maxKeptFrameBuffer is the largest write buffer a connection keeps between
+// batches; a larger one, grown for a large frame, is let go.
+const maxKeptFrameBuffer = 256 << 10
+
+// appendFrame appends f as one line of the wire: the bytes json.Encoder
+// writes for it (Frame's fields in order, each omitted when empty, then a
+// newline), with Params, Result and Data copied as they are. encoding/json
+// validates and compacts every json.RawMessage it encodes, byte by byte,
+// and the server's are json.Marshal output already (compact, HTML-escaped):
+// an event's data, a workspace's views with their diffs among them, went
+// through that once per connection, most of a busy daemon's CPU.
+func appendFrame(buf []byte, f Frame) ([]byte, error) {
+	buf = append(buf, '{')
+	first := true
+	key := func(name string) {
+		if !first {
+			buf = append(buf, ',')
+		}
+		first = false
+		buf = append(buf, '"')
+		buf = append(buf, name...)
+		buf = append(buf, '"', ':')
+	}
+	value := func(name string, v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("rpc: encode frame field %s: %w", name, err)
+		}
+		key(name)
+		buf = append(buf, b...)
+		return nil
+	}
+	raw := func(name string, r json.RawMessage) {
+		if len(r) > 0 {
+			key(name)
+			buf = append(buf, r...)
+		}
+	}
+	if f.Hello != nil {
+		if err := value("hello", f.Hello); err != nil {
+			return nil, err
+		}
+	}
+	if f.ID != 0 {
+		key("id")
+		buf = strconv.AppendUint(buf, f.ID, 10)
+	}
+	if f.Method != "" {
+		if err := value("method", f.Method); err != nil {
+			return nil, err
+		}
+	}
+	raw("params", f.Params)
+	raw("result", f.Result)
+	if f.Error != nil {
+		if err := value("error", f.Error); err != nil {
+			return nil, err
+		}
+	}
+	if f.Event != "" {
+		if err := value("event", f.Event); err != nil {
+			return nil, err
+		}
+	}
+	raw("data", f.Data)
+	if f.Fatal != nil {
+		if err := value("fatal", f.Fatal); err != nil {
+			return nil, err
+		}
+	}
+	if f.Bye != "" {
+		if err := value("bye", f.Bye); err != nil {
+			return nil, err
+		}
+	}
+	return append(buf, '}', '\n'), nil
 }

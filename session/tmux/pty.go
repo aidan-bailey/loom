@@ -3,7 +3,9 @@ package tmux
 import (
 	"os"
 	"os/exec"
+	"sync"
 
+	"github.com/aidan-bailey/loom/log"
 	"github.com/creack/pty"
 )
 
@@ -27,18 +29,30 @@ type PtyFactory interface {
 type Pty struct{}
 
 // Start allocates a PTY, launches cmd attached to it, and returns the
-// master file descriptor. The caller closes the returned file when the
-// session ends. The child is reaped in the background: no caller
-// retains cmd, so without the Wait every tmux client subprocess would
-// linger as a zombie for the life of the Loom process.
+// master file descriptor, in non-blocking mode where the platform allows
+// (pollable), so closing it ends a read in progress. The caller closes the
+// returned file when the session ends. The child is reaped in the
+// background: no caller retains cmd, so without the Wait every tmux client
+// subprocess would linger as a zombie for the life of the Loom process.
 func (pt Pty) Start(cmd *exec.Cmd) (*os.File, error) {
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err
 	}
 	go func() { _ = cmd.Wait() }()
-	return f, nil
+	pf, err := pollable(f)
+	if err != nil {
+		// Still a working PTY; only a stop of its client waits out
+		// pumpWaitTimeout while the pane is idle. A platform that refuses
+		// one refuses them all: say so once.
+		ptyBlockingOnce.Do(func() { log.For("tmux").Warn("pty.blocking", "err", err.Error()) })
+		return f, nil
+	}
+	return pf, nil
 }
+
+// ptyBlockingOnce keeps pty.blocking to one line per process.
+var ptyBlockingOnce sync.Once
 
 // Close is a no-op for the production factory — each PTY is owned by
 // its caller, not by the factory.
