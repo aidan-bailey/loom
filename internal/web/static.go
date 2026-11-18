@@ -176,23 +176,29 @@ func treeOf(r *http.Request) staticTree {
 }
 
 // routeStatic serves the classic app and the new one: public, with no data in
-// them. An embedded app that cannot be served is logged and fails closed for
-// its own requests only: the shell requests treeOf gives it answer 500, so a
-// broken build is loud rather than a blank page, while the other app is served
-// as normal.
+// them. An embedded app that cannot be served is logged (once, by
+// routeStaticFrom) and fails closed for its own requests only: the shell
+// requests treeOf gives it answer 500, so a broken build is loud rather than a
+// blank page, while the other app is served as normal.
 func (l *Layer) routeStatic(m *http.ServeMux) {
-	classic, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		log.For("web").Error("web.static_unavailable", "app", "classic", "err", err)
-		classic = nil
-	}
-	next, err := fs.Sub(nextFiles, "dist")
-	if err != nil {
-		log.For("web").Error("web.static_unavailable", "app", "new", "err", err)
-		next = nil
-	}
-	l.routeStaticFrom(m, classic, next)
+	l.routeStaticFrom(m, subOrBroken(staticFiles, "static"), subOrBroken(nextFiles, "dist"))
 }
+
+// subOrBroken is the subtree of fsys at dir, or when fs.Sub fails an FS whose
+// every open returns that error, so routeStaticFrom logs the cause once with
+// the app's other build errors.
+func subOrBroken(fsys fs.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		return brokenFS{err}
+	}
+	return sub
+}
+
+// brokenFS is an FS that cannot be opened.
+type brokenFS struct{ err error }
+
+func (b brokenFS) Open(string) (fs.File, error) { return nil, b.err }
 
 // staticTreeBuild is one embedded app as routeStaticFrom built it: its assets,
 // or why it cannot be served.
