@@ -492,6 +492,17 @@ func TestStatic_AssetsFallBackAcrossTrees(t *testing.T) {
 	require.Equal(t, classic["/app.css"].body, staticGet(mux, "/app.css", "next").Body.Bytes())
 }
 
+// swCode is a worker's source without its whole-line // comments.
+func swCode(src string) string {
+	var code []string
+	for _, line := range strings.Split(src, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			code = append(code, line)
+		}
+	}
+	return strings.Join(code, "\n")
+}
+
 func TestStatic_EachWorkerFetchesItsOwnShell(t *testing.T) {
 	mux := staticMux(t, "b-test")
 	for _, tc := range []struct{ query, tree string }{
@@ -500,7 +511,11 @@ func TestStatic_EachWorkerFetchesItsOwnShell(t *testing.T) {
 	} {
 		sw := staticGet(mux, "/sw.js"+tc.query, "").Body.String()
 		require.Contains(t, sw, `const TREE = "`+tc.tree+`";`, tc.query)
-		require.Contains(t, sw, "?ui=${TREE}", tc.query+": the shell is fetched by its tree")
+		// Only code counts: a comment that names the expression proves nothing.
+		code := swCode(sw)
+		require.Contains(t, code, "`${url}?ui=${TREE}`", tc.query+": the shell is fetched by its tree")
+		require.Contains(t, code, "cache.put(url, response)", tc.query+": each shell file is stored under its plain path")
+		require.NotContains(t, code, "cache.put(asked", tc.query+": nothing is stored under the ?ui= URL")
 		for _, prefix := range []string{`"loom-shell-"`, `"loom-next-"`} {
 			require.Contains(t, sw, prefix, tc.query+": both apps' caches are swept")
 		}
