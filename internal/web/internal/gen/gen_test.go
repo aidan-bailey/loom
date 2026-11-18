@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -390,4 +391,62 @@ func TestWebAPI_ListsEveryRouteEventTypeAndUnion(t *testing.T) {
 	assert.Contains(t, md, "- `extra?`: `string[]`\n")
 	assert.Contains(t, md, "- `trio`: `number[]`\n- `pair`: `(Badge | null)[]`\n", "an array is written as T[], never a tuple")
 	assert.Contains(t, md, "### `Level`\n\n`\"low\"`, `\"high\"`, `\"\"`\n")
+}
+
+func TestGenerate_WritesTheFieldLines(t *testing.T) {
+	out, err := Generate(sample(), nil)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.GenTS)
+	assert.NotEmpty(t, out.WebAPI)
+	assert.True(t, sort.StringsAreSorted(out.Fields), "a first run is sorted")
+	for _, want := range []string{
+		"Item.kept: number",
+		"Item.kind: Level",
+		"Item.note: Badge | null",
+		"Item.extra?: string[]",
+		"Item.trio: number[]",
+		"Item.pair: (Badge | null)[]",
+		"Item.kids?: (Item | null)[]",
+		"ItemParams.q: string",
+		"Notice.at: string",
+		"POST /api/v1/pair body=PairBody resp=Pair ok=200 open",
+		"GET /api/v1/items/{id} query=ItemParams resp=Item ok=200",
+		"POST /api/v1/items/{id}/jobs/{job}/{action} resp=Notices ok=200",
+		"DELETE /api/v1/device ok=204",
+		"GET /api/v1/items/{id}/view ok=200 page",
+		"event notice data=Notice",
+		"event ping data=Record<string, never>",
+		"union Level \"low\"",
+		"union Level \"\"",
+	} {
+		assert.Contains(t, out.Fields, want)
+	}
+}
+
+func TestGenerate_FieldsAppendAndNeverRemove(t *testing.T) {
+	first, err := Generate(sample(), nil)
+	require.NoError(t, err)
+
+	// A committed line the code no longer produces stays where it was; the
+	// changed line is added beside it; the new lines follow, sorted.
+	committed := []string{"Zed.gone: string", "Item.kind: string"}
+	next, err := Generate(sample(), committed)
+	require.NoError(t, err)
+	assert.Equal(t, committed, next.Fields[:2])
+	assert.Contains(t, next.Fields[2:], "Item.kind: Level")
+	assert.NotContains(t, next.Fields[2:], "Item.kind: string", "a committed line is not added twice")
+	assert.True(t, sort.StringsAreSorted(next.Fields[2:]))
+	assert.Equal(t, []string{"Zed.gone: string", "Item.kind: string"}, Dropped(committed, first.Fields))
+
+	// Generating from its own output adds nothing.
+	again, err := Generate(sample(), next.Fields)
+	require.NoError(t, err)
+	assert.Equal(t, next.Fields, again.Fields)
+}
+
+func TestGenerate_NamesTheErrorOfAnUntypeableContract(t *testing.T) {
+	_, err := Generate(mini(reflect.TypeFor[chanHolderJSON]()), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generate:")
+	assert.Contains(t, err.Error(), "chanHolderJSON.c")
 }

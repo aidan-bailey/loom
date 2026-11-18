@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -788,4 +789,97 @@ func (m *model) webAPI() ([]byte, error) {
 		fmt.Fprintf(&b, "### `%s`\n\n%s\n\n", u.Name, strings.Join(quoted, ", "))
 	}
 	return []byte(b.String()), nil
+}
+
+// fieldLines are the lines api.fields pins, sorted: one per field
+// (Session.status: SessionStatus, Session.worktree?: string, Session.pr: Pr |
+// null), per route (its method and path, then query=, body=, resp=, ok= and
+// open or page), per event and per union value.
+func (m *model) fieldLines() ([]string, error) {
+	var lines []string
+	for _, t := range m.sorted {
+		for _, f := range m.fields[t] {
+			ts, err := m.fieldType(f, t.Name()+"."+f.name)
+			if err != nil {
+				return nil, err
+			}
+			name := f.name
+			if f.optional {
+				name += "?"
+			}
+			lines = append(lines, fmt.Sprintf("%s.%s: %s", m.names[t], name, ts))
+		}
+	}
+	for _, r := range m.c.Routes {
+		where := r.Method + " " + r.Path
+		parts := []string{where}
+		for _, ref := range refs(r) {
+			if ref.t == nil {
+				continue
+			}
+			ts, err := m.tsType(ref.t, where+" "+ref.key)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, ref.key+"="+ts)
+		}
+		if r.OK != 0 {
+			parts = append(parts, "ok="+strconv.Itoa(r.OK))
+		}
+		if r.Open {
+			parts = append(parts, "open")
+		}
+		if r.Page {
+			parts = append(parts, "page")
+		}
+		lines = append(lines, strings.Join(parts, " "))
+	}
+	for _, e := range m.c.Events {
+		ts, err := m.tsType(e.Data, "event "+e.Name)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, "event "+e.Name+" data="+ts)
+	}
+	for _, u := range m.unions {
+		for _, v := range u.Values {
+			lines = append(lines, "union "+u.Name+" "+strconv.Quote(v))
+		}
+	}
+	sort.Strings(lines)
+	return slices.Compact(lines), nil
+}
+
+// Generate returns gen.ts, the API reference and the api.fields lines for c.
+// fields are the committed api.fields lines: Output.Fields keeps every one of
+// them, in place, and adds the lines c produces that they lack, sorted, so a
+// removed or retyped field stays pinned until its line is deleted by hand.
+func Generate(c web.ContractSpec, fields []string) (Output, error) {
+	m, err := build(c)
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	ts, err := m.genTS()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	md, err := m.webAPI()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	lines, err := m.fieldLines()
+	if err != nil {
+		return Output{}, fmt.Errorf("generate: %w", err)
+	}
+	have := make(map[string]bool, len(fields))
+	for _, l := range fields {
+		have[l] = true
+	}
+	out := slices.Clone(fields)
+	for _, l := range lines {
+		if !have[l] {
+			out = append(out, l)
+		}
+	}
+	return Output{GenTS: ts, WebAPI: md, Fields: out}, nil
 }
