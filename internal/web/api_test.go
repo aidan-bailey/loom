@@ -1071,8 +1071,8 @@ func TestAPI_ADeviceRouteFailureIsLoggedWithItsStatus(t *testing.T) {
 		call   func(w http.ResponseWriter, r *http.Request, device string)
 		status int
 	}{
-		{"notify", env.layer.putDevice, http.StatusUnauthorized},
-		{"subscribe", env.layer.postPush, http.StatusUnauthorized},
+		{"notify", routeNamed(t, env.layer, "putDevice").serve, http.StatusUnauthorized},
+		{"subscribe", routeNamed(t, env.layer, "postPush").serve, http.StatusUnauthorized},
 	} {
 		body := `{"waiting": true}`
 		if c.name == "subscribe" {
@@ -1102,7 +1102,7 @@ func TestAPI_DeleteDeviceOfADeviceAlreadyGoneIs204(t *testing.T) {
 	require.NotErrorIs(t, err, core.ErrNoDevice, "control: the sentinel does not cross the wire")
 
 	w := httptest.NewRecorder()
-	env.layer.deleteDevice(w, httptest.NewRequest(http.MethodDelete, "/api/v1/device", nil), "phone")
+	routeNamed(t, env.layer, "deleteDevice").serve(w, httptest.NewRequest(http.MethodDelete, "/api/v1/device", nil), "phone")
 
 	assert.Equal(t, http.StatusNoContent, w.Code, "a device already gone is a device unpaired")
 	assert.Equal(t, []loggedAction{{device: "phone", name: "unpair", result: "204 ok"}}, env.logged())

@@ -787,3 +787,25 @@ func TestAPI_JobControlLogsItsActionByName(t *testing.T) {
 	assert.Equal(t, "job_park", got[0].name, "the log line names the action the path chose")
 	assert.Equal(t, env.ids["fresh"], got[0].session)
 }
+
+// routeNamed is the table's entry whose client name is client.
+func routeNamed(t *testing.T, l *Layer, client string) route {
+	t.Helper()
+	for _, rt := range l.routes() {
+		if rt.spec.client == client {
+			return rt
+		}
+	}
+	require.FailNow(t, "no route of the table has this client name", client)
+	return route{}
+}
+
+func TestRoutes_TheDeviceRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPut, "/api/v1/device", "putDevice", http.StatusOK, nil, reflect.TypeFor[deviceBody](), reflect.TypeFor[deviceJSON]()},
+		{http.MethodPut, "/api/v1/quick-replies", "putQuickReplies", http.StatusOK, nil, reflect.TypeFor[quickRepliesBody](), reflect.TypeFor[quickRepliesJSON]()},
+		{http.MethodPost, "/api/v1/device/push", "postPush", http.StatusOK, nil, reflect.TypeFor[subscriptionBody](), reflect.TypeFor[deviceJSON]()},
+		{http.MethodDelete, "/api/v1/device/push", "deletePush", http.StatusNoContent, nil, nil, nil},
+		{http.MethodDelete, "/api/v1/device", "deleteDevice", http.StatusNoContent, nil, nil, nil},
+	})
+}

@@ -69,11 +69,6 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 // a paired device (authed); /pair, /stream and /push-key are other stories'.
 func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
-	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
-	m.Handle("PUT /api/v1/quick-replies", l.authed(l.putQuickReplies))
-	m.Handle("POST /api/v1/device/push", l.authed(l.postPush))
-	m.Handle("DELETE /api/v1/device/push", l.authed(l.deletePush))
-	m.Handle("DELETE /api/v1/device", l.authed(l.deleteDevice))
 }
 
 // modelStatus is the HTTP status a failed request earns: the session or the
@@ -89,16 +84,6 @@ func modelStatus(err error) int {
 		return http.StatusServiceUnavailable
 	}
 	return http.StatusConflict
-}
-
-// decodeBody reads the request's JSON body into v, answering 400 when it is
-// not that (an unknown field included).
-func (l *Layer) decodeBody(w http.ResponseWriter, r *http.Request, a actionLog, v any) bool {
-	if err := readJSON(r, v); err != nil {
-		l.refuse(w, a, http.StatusBadRequest, "bad request: "+err.Error())
-		return false
-	}
-	return true
 }
 
 // pathSession is the session the path names: a decimal ID the model serves.
@@ -416,12 +401,7 @@ type deviceBody struct {
 // putDevice changes the device's notification settings, only the ones the
 // body names (core.NotifyChange), and answers the device as the model stored
 // it.
-func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "notify"}
-	var body deviceBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
-	}
+func (l *Layer) putDevice(c *call, body deviceBody) (deviceJSON, error) {
 	change := core.NotifyChange{Waiting: body.Waiting, Finished: body.Finished}
 	if body.Pause != nil {
 		switch *body.Pause {
@@ -431,17 +411,14 @@ func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string)
 		case "none":
 			change.PausedUntil = &time.Time{}
 		default:
-			l.refuse(w, a, http.StatusBadRequest, `pause: want "1h" or "none"`)
-			return
+			return deviceJSON{}, &statusError{http.StatusBadRequest, `pause: want "1h" or "none"`}
 		}
 	}
-	stored, err := l.host.SetNotify(device, change)
+	stored, err := l.host.SetNotify(c.device, change)
 	if err != nil {
-		l.refuse(w, a, modelStatus(err), err.Error())
-		return
+		return deviceJSON{}, err
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, deviceOf(stored))
+	return deviceOf(stored), nil
 }
 
 // message answers GET /api/v1/sessions/{id}/message: the tree of the
@@ -475,23 +452,15 @@ type quickRepliesBody struct {
 // (WebHost.SetQuickReplies) and answers the list as the app reads it. A list
 // the model refuses is 400 with its words; any other error is the model's
 // (modelStatus), as for the device's settings.
-func (l *Layer) putQuickReplies(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "quick-replies"}
-	var body quickRepliesBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
-	}
+func (l *Layer) putQuickReplies(_ *call, body quickRepliesBody) (quickRepliesJSON, error) {
 	stored, err := l.host.SetQuickReplies(body.Replies)
 	if err != nil {
-		status := modelStatus(err)
 		if errors.Is(err, core.ErrQuickReplies) {
-			status = http.StatusBadRequest
+			return quickRepliesJSON{}, &statusError{http.StatusBadRequest, err.Error()}
 		}
-		l.refuse(w, a, status, err.Error())
-		return
+		return quickRepliesJSON{}, err
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, quickRepliesJSON{QuickReplies: resolvedQuickReplies(stored)})
+	return quickRepliesJSON{QuickReplies: resolvedQuickReplies(stored)}, nil
 }
 
 // subscriptionKeys are a subscription's keys, base64url as the browser gives them.
@@ -512,12 +481,7 @@ type subscriptionBody struct {
 // host the daemon would not post to or keys of the wrong size
 // (core.ValidatePushSubscription), and answers the device. Padding is
 // stripped from the keys first.
-func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "subscribe"}
-	var body subscriptionBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
-	}
+func (l *Layer) postPush(c *call, body subscriptionBody) (deviceJSON, error) {
 	// The model takes unpadded base64url only; a browser may give padding.
 	sub := core.PushSubscription{
 		Endpoint: body.Endpoint,
@@ -525,16 +489,13 @@ func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) 
 		Auth:     strings.TrimRight(body.Keys.Auth, "="),
 	}
 	if err := core.ValidatePushSubscription(sub); err != nil {
-		l.refuse(w, a, http.StatusBadRequest, err.Error())
-		return
+		return deviceJSON{}, &statusError{http.StatusBadRequest, err.Error()}
 	}
-	stored, err := l.host.SetPushSubscription(device, sub)
+	stored, err := l.host.SetPushSubscription(c.device, sub)
 	if err != nil {
-		l.refuse(w, a, modelStatus(err), err.Error())
-		return
+		return deviceJSON{}, err
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, deviceOf(stored))
+	return deviceOf(stored), nil
 }
 
 // deletePush drops the device's push subscription, for the app's launch
@@ -551,25 +512,20 @@ func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) 
 // dropped with it, which the app's next launch check finds and posts again;
 // one posted after the read keeps its new endpoint, which the result does not
 // name.
-func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string) {
-	a := actionLog{device: device, name: "unsubscribe"}
-	if endpoint := l.host.PushEndpoint(device); endpoint != "" {
-		l.host.PushResult(device, endpoint, core.PushExpired)
+func (l *Layer) deletePush(c *call, _ struct{}) (struct{}, error) {
+	if endpoint := l.host.PushEndpoint(c.device); endpoint != "" {
+		l.host.PushResult(c.device, endpoint, core.PushExpired)
 	}
-	l.record(a, http.StatusNoContent, "ok")
-	w.WriteHeader(http.StatusNoContent)
+	return struct{}{}, nil
 }
 
 // deleteDevice unpairs the phone that asks: the model forgets the device
 // (which ends its streams and drops its subscription) and the cookie is
 // cleared. A device already gone is a device unpaired.
-func (l *Layer) deleteDevice(w http.ResponseWriter, _ *http.Request, device string) {
-	a := actionLog{device: device, name: "unpair"}
-	if err := l.client.RevokeDevice(device); err != nil && !core.IsNoDevice(err, device) {
-		l.refuse(w, a, modelStatus(err), err.Error())
-		return
+func (l *Layer) deleteDevice(c *call, _ struct{}) (struct{}, error) {
+	if err := l.client.RevokeDevice(c.device); err != nil && !core.IsNoDevice(err, c.device) {
+		return struct{}{}, err
 	}
-	l.record(a, http.StatusNoContent, "ok")
-	clearDeviceCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	clearDeviceCookie(c.w)
+	return struct{}{}, nil
 }

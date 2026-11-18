@@ -336,6 +336,26 @@ func (l *Layer) routes() []route {
 			method: http.MethodGet, path: "/api/v1/launch-defaults", log: "launch-defaults", client: "launchDefaults", ok: http.StatusOK,
 			doc: "`?workspace=<id>`: what the new-session sheet pre-fills (`account`, `model`, `permission_mode`, `effort`) and the choices it offers (`accounts`, `models`, `permission_modes`, `efforts`), from the account registry, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none. An unknown workspace is 400.",
 		}, l.launchDefaults),
+		typed(l, spec{
+			method: http.MethodPut, path: "/api/v1/device", log: "notify", client: "putDevice", ok: http.StatusOK,
+			doc: "`{waiting, finished, pause}`: this device's notification settings, each field optional and a missing one left as it is; `pause` is `\"1h\"` (until an hour from now) or `\"none\"` (ends a pause), any other value is 400. Answers the device as the model stored it.",
+		}, l.putDevice),
+		typed(l, spec{
+			method: http.MethodPut, path: "/api/v1/quick-replies", log: "quick-replies", client: "putQuickReplies", ok: http.StatusOK,
+			doc: "`{replies}`: the quick replies every paired phone offers above its reply box, or `null` (or no field) for the defaults; a list `core.NormalizeQuickReplies` refuses is 400 with its words. Answers `{quick_replies}`, the list as the app reads it.",
+		}, l.putQuickReplies),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/device/push", log: "subscribe", client: "postPush", ok: http.StatusOK,
+			doc: "The browser's `PushSubscription.toJSON()`: stores this device's push subscription and answers the device. An endpoint that is not `https`, over 2 KiB, or not on `web.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com` or a host ending in `.notify.windows.com`, with a user or a port but 443, or keys of the wrong size, is 400.",
+		}, l.postPush),
+		typed(l, spec{
+			method: http.MethodDelete, path: "/api/v1/device/push", log: "unsubscribe", client: "deletePush", ok: http.StatusNoContent,
+			doc: "Drops this phone's push subscription, which the model records as expired; the app asks for it when it finds on a launch that the phone holds none or may not notify. 204.",
+		}, l.deletePush),
+		typed(l, spec{
+			method: http.MethodDelete, path: "/api/v1/device", log: "unpair", client: "deleteDevice", ok: http.StatusNoContent,
+			doc: "Unpairs this phone: the model forgets the device, which ends its streams and drops its subscription, and the cookie is cleared. 204, a device already gone included.",
+		}, l.deleteDevice),
 	}
 }
 
