@@ -1,10 +1,145 @@
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { cn } from "@/lib/utils";
+import { Badge } from "./badge";
+import { Button } from "./button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible";
+import { Skeleton } from "./skeleton";
+import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
 
 describe("cn", () => {
   it("cn joins its inputs, drops falsy ones and lets the last conflicting utility win", () => {
     expect(cn("a", false, ["b", undefined], "c")).toBe("a b c");
     expect(cn("p-2", "p-4")).toBe("p-4");
     expect(cn("text-faint", "text-muted-foreground")).toBe("text-muted-foreground");
+  });
+});
+
+describe("Button", () => {
+  it("Button: each variant and size has its own classes, and every size keeps the 44px hit area", () => {
+    const variants = ["default", "secondary", "ghost", "outline", "destructive"] as const;
+    const classes = variants.map((variant) => {
+      const { unmount } = render(<Button variant={variant}>{variant}</Button>);
+      const className = screen.getByRole("button").className;
+      unmount();
+      return className;
+    });
+    expect(new Set(classes).size).toBe(variants.length);
+    expect(classes[0]).toContain("bg-primary");
+    expect(classes[4]).toContain("text-destructive");
+
+    for (const size of ["default", "sm", "lg", "icon"] as const) {
+      const { unmount } = render(<Button size={size}>{size}</Button>);
+      const className = screen.getByRole("button").className;
+      expect(className).toContain("after:min-h-11");
+      expect(className).toContain("after:min-w-11");
+      unmount();
+    }
+
+    render(<Button>plain</Button>);
+    expect(screen.getByRole("button")).toHaveAttribute("data-slot", "button");
+  });
+
+  it("Button: a click reaches onClick, and a disabled button gets none", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    render(
+      <>
+        <Button onClick={fn}>on</Button>
+        <Button onClick={fn} disabled>
+          off
+        </Button>
+      </>,
+    );
+    await user.click(screen.getByText("on"));
+    expect(fn).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByText("off"));
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Badge", () => {
+  it("Badge: the seven variants differ, the default is neutral, and it renders its children", () => {
+    const variants = {
+      attention: "text-attention",
+      turn: "text-[#8cb8e8]",
+      working: "text-working",
+      error: "text-error",
+      workspace: "text-workspace",
+      docs: "text-docs",
+      neutral: "text-muted-foreground",
+    } as const;
+    const classes: Record<string, string> = {};
+    for (const [variant, token] of Object.entries(variants)) {
+      const { unmount } = render(
+        <Badge variant={variant as keyof typeof variants}>{variant}</Badge>,
+      );
+      const className = screen.getByText(variant).className;
+      expect(className).toContain(token);
+      classes[variant] = className;
+      unmount();
+    }
+    expect(new Set(Object.values(classes)).size).toBe(7);
+    expect(classes.turn).toContain("bg-turn");
+
+    render(<Badge>plain</Badge>);
+    expect(screen.getByText("plain").className).toBe(classes.neutral);
+  });
+});
+
+describe("ToggleGroup", () => {
+  it("ToggleGroup: a press calls onValueChange with the new array and a single group replaces the old value", async () => {
+    const user = userEvent.setup();
+    const single = vi.fn();
+    const { unmount } = render(
+      <ToggleGroup defaultValue={["all"]} onValueChange={single}>
+        <ToggleGroupItem value="all">all</ToggleGroupItem>
+        <ToggleGroupItem value="loom">loom</ToggleGroupItem>
+        <ToggleGroupItem value="flow">flow</ToggleGroupItem>
+      </ToggleGroup>,
+    );
+    await user.click(screen.getByText("loom"));
+    expect(single.mock.calls[0][0]).toEqual(["loom"]);
+    expect(screen.getByText("loom")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("all")).toHaveAttribute("aria-pressed", "false");
+    unmount();
+
+    const multi = vi.fn();
+    render(
+      <ToggleGroup multiple defaultValue={["all"]} onValueChange={multi}>
+        <ToggleGroupItem value="all">all</ToggleGroupItem>
+        <ToggleGroupItem value="loom">loom</ToggleGroupItem>
+      </ToggleGroup>,
+    );
+    await user.click(screen.getByText("loom"));
+    expect(multi.mock.calls[0][0]).toEqual(["all", "loom"]);
+  });
+});
+
+describe("Collapsible", () => {
+  it("Collapsible: the content shows only while open", async () => {
+    const user = userEvent.setup();
+    render(
+      <Collapsible>
+        <CollapsibleTrigger>toggle</CollapsibleTrigger>
+        <CollapsibleContent>folded</CollapsibleContent>
+      </Collapsible>,
+    );
+    expect(screen.queryByText("folded")).toBeNull();
+    await user.click(screen.getByText("toggle"));
+    expect(await screen.findByText("folded")).toBeInTheDocument();
+    await user.click(screen.getByText("toggle"));
+    await waitFor(() => expect(screen.queryByText("folded")).toBeNull());
+  });
+});
+
+describe("Skeleton", () => {
+  it("Skeleton: renders a div with the pulse and the muted surface", () => {
+    render(<Skeleton data-testid="sk" />);
+    const el = screen.getByTestId("sk");
+    expect(el).toHaveAttribute("data-slot", "skeleton");
+    expect(el.className).toContain("animate-pulse");
+    expect(el.className).toContain("bg-muted");
   });
 });
