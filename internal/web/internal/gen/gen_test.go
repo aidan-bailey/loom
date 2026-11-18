@@ -370,3 +370,24 @@ func TestGenTS_RefusesAMalformedRoute(t *testing.T) {
 	_, err = m.genTS()
 	assert.ErrorContains(t, err, "is used twice")
 }
+
+func TestWebAPI_ListsEveryRouteEventTypeAndUnion(t *testing.T) {
+	m, err := build(sample())
+	require.NoError(t, err)
+	out, err := m.webAPI()
+	require.NoError(t, err)
+	md := string(out)
+
+	assert.True(t, strings.HasPrefix(md, "# Web API\n"))
+	assert.Contains(t, md, "do not edit it by hand")
+	assert.Contains(t, md, "### `POST /api/v1/pair`\n\nTrades a code for the cookie.\n\n- Auth: none (open)\n- Success: 200\n- Client: `pair`\n- Body: `PairBody`\n- Response: `Pair`\n")
+	assert.Contains(t, md, "### `GET /api/v1/items/{id}`\n\nOne item.\n\n- Auth: the device cookie\n- Success: 200\n- Client: `item`\n- Query: `ItemParams`\n- Response: `Item`\n")
+	assert.Contains(t, md, "### `DELETE /api/v1/device`\n\nUnpairs.\n\n- Auth: the device cookie\n- Success: 204\n- Client: `unpair`\n")
+	assert.Contains(t, md, "### `GET /api/v1/items/{id}/view`\n\nA page.\n\n- Auth: the device cookie\n- Page: HTML for the app's iframe; the generated client builds its URL as `viewURL`.\n")
+	assert.Contains(t, md, "## Stream events\n")
+	assert.Contains(t, md, "- `notice`: `Notice`\n- `ping`: `Record<string, never>`\n")
+	assert.Contains(t, md, "### `Item`\n\n- `kept`: `number`\n- `id`: `number`\n- `kind`: `Level`\n- `note`: `Badge | null`\n")
+	assert.Contains(t, md, "- `extra?`: `string[]`\n")
+	assert.Contains(t, md, "- `trio`: `number[]`\n- `pair`: `(Badge | null)[]`\n", "an array is written as T[], never a tuple")
+	assert.Contains(t, md, "### `Level`\n\n`\"low\"`, `\"high\"`, `\"\"`\n")
+}
