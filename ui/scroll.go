@@ -58,7 +58,9 @@ type ScrollModel struct {
 // NewLinesBelow drift if output *did* arrive between the two calls — never
 // corruption of the rendered window.
 //
-// Limitation: at the emulator's scrollback cap (session/tmux's paneScrollbackLines)
+// At the emulator's scrollback cap (session/tmux's paneScrollbackLines)
+// the pane drops its pre-attach seed, which no longer joins on, so the
+// buffer is the emulator's last lines alone. Limitation: at that cap
 // sbLen plateaus, so the anchor bump stops compensating for further
 // scroll-off and the view drifts up by at most the overflow. Bounded,
 // graceful degradation — accepted.

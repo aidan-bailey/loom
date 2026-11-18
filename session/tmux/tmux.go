@@ -120,8 +120,9 @@ type TmuxSession struct {
 	lastRows int
 	// seedHistory holds pre-attach scrollback rows captured once per
 	// Restore (history-only: capture-pane -S - -E -1, so it can never
-	// overlap what the emulator mirrors post-attach). Immutable after
-	// assignment; guarded by stateMu.
+	// overlap what the emulator mirrors post-attach). Never changed after
+	// assignment, only dropped once the emulator's scroll-back is full
+	// (SeedHistory); guarded by stateMu.
 	seedHistory []string
 
 	// Output pump — continuously drains PTY output to prevent buffer deadlock.
@@ -883,10 +884,24 @@ func (t *TmuxSession) ForwardFocus(in bool) error {
 
 // SeedHistory returns the pre-attach history rows captured at the last
 // Restore. Callers must treat the slice as immutable.
+//
+// Once the emulator's scroll-back is full (paneScrollbackLines) it drops its
+// oldest lines, so the seed no longer joins on and scrolling up would jump
+// from the oldest kept line into rows from before the attach: from then on
+// the seed is dropped, memory and all, for this attach.
 func (t *TmuxSession) SeedHistory() []string {
 	t.stateMu.Lock()
-	defer t.stateMu.Unlock()
-	return t.seedHistory
+	seed, emu := t.seedHistory, t.emu
+	t.stateMu.Unlock()
+	if len(seed) == 0 || emu == nil || emu.ScrollbackLen() < paneScrollbackLines {
+		return seed
+	}
+	t.stateMu.Lock()
+	if t.emu == emu { // the same attach: a Restore since seeds its own
+		t.seedHistory = nil
+	}
+	t.stateMu.Unlock()
+	return nil
 }
 
 // ScrollbackLen returns the emulator's scrollback line count; ok=false on
