@@ -356,12 +356,194 @@ func TestMux_ServesTheAppBehindTheGuard(t *testing.T) {
 
 func TestStatic_AnAppThatCannotBeServedAnswers500OnTheShell(t *testing.T) {
 	m := http.NewServeMux()
-	(&Layer{build: "b-7"}).routeStaticFrom(m, fstest.MapFS{"index.html": {Data: []byte("<html>")}})
+	bad := fstest.MapFS{"index.html": {Data: []byte("<html>")}}
+	(&Layer{build: "b-7"}).routeStaticFrom(m, bad, bad)
 
-	rec := staticDo(m, http.MethodGet, "/")
-	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Contains(t, rec.Body.String(), "missing from this build")
-	require.Equal(t, http.StatusNotFound, staticDo(m, http.MethodGet, "/index.html").Code, "nothing else is served")
+	for _, url := range []string{"/", "/index.html"} {
+		rec := staticDo(m, http.MethodGet, url)
+		require.Equal(t, http.StatusInternalServerError, rec.Code, url)
+		require.Contains(t, rec.Body.String(), "missing from this build", url)
+	}
+	require.Equal(t, http.StatusNotFound, staticDo(m, http.MethodGet, "/app.css").Code, "nothing else is served")
+}
+
+// standInTree is a small app whose every file names it ("tree=<name>"): the
+// shell files, a file only it holds and a file both stand-ins hold.
+func standInTree(name string) fstest.MapFS {
+	f := fstest.MapFS{}
+	put := func(file, body string) { f[file] = &fstest.MapFile{Data: []byte(body)} }
+	put("index.html", `<meta name="loom-build" content="__LOOM_BUILD__">tree=`+name)
+	put("sw.js", "const BUILD = \"__LOOM_BUILD__\";\nconst SHELL = [\"__LOOM_SHELL__\"];\n// tree="+name+"\n")
+	put("manifest.webmanifest", `{"name":"tree=`+name+`"}`)
+	put("both.css", "/* tree="+name+" */")
+	put("only-"+name+".css", "/* tree="+name+" */")
+	return f
+}
+
+// twoTrees serves the stand-in classic and new apps through routeStaticFrom.
+func twoTrees(t *testing.T) *http.ServeMux {
+	t.Helper()
+	m := http.NewServeMux()
+	(&Layer{build: "b-7"}).routeStaticFrom(m, standInTree("classic"), standInTree("next"))
+	return m
+}
+
+// staticGet is a GET of target, carrying the app cookie when cookie is not "".
+func staticGet(h http.Handler, target, cookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	if cookie != "" {
+		req.AddCookie(&http.Cookie{Name: appCookie, Value: cookie})
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// answeredBy is the stand-in tree a 200 response names.
+func answeredBy(t *testing.T, rec *httptest.ResponseRecorder, what string) string {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, what)
+	m := regexp.MustCompile(`tree=(\w+)`).FindStringSubmatch(rec.Body.String())
+	require.NotNil(t, m, "%s names no tree", what)
+	return m[1]
+}
+
+var staticShellURLs = []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"}
+
+func TestStatic_TheCookieChoosesTheTree(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ cookie, want string }{
+		{"", "classic"},
+		{"classic", "classic"},
+		{"next", "next"},
+		{"nexty", "classic"},
+		{"NEXT", "classic"},
+		{"anything", "classic"},
+	} {
+		for _, url := range staticShellURLs {
+			what := url + " with cookie " + tc.cookie
+			rec := staticGet(m, url, tc.cookie)
+			require.Equal(t, tc.want, answeredBy(t, rec, what), what)
+			require.Contains(t, rec.Header().Values("Vary"), "Cookie", what)
+		}
+		what := "both.css with cookie " + tc.cookie
+		require.Equal(t, tc.want, answeredBy(t, staticGet(m, "/both.css", tc.cookie), what), what+": a file both trees hold comes from the chosen one")
+	}
+
+	// The real trees: the cookie picks one app's shell, and the two differ.
+	mux := staticMux(t, "b-test")
+	classic, next := staticAssets(t), nextStaticAssets(t)
+	for _, url := range staticShellURLs {
+		require.NotEqual(t, classic[url].body, next[url].body, url+": the two apps' shells differ")
+		require.Equal(t, classic[url].body, staticGet(mux, url, "").Body.Bytes(), url)
+		require.Equal(t, next[url].body, staticGet(mux, url, "next").Body.Bytes(), url)
+	}
+}
+
+func TestStatic_TheUIParameterChoosesTheTree(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ query, cookie, want string }{
+		{"?ui=next", "", "next"},
+		{"?ui=next", "classic", "next"},
+		{"?ui=classic", "next", "classic"},
+		{"?ui=other", "next", "classic"},
+		{"?ui=Next", "next", "classic"},
+		{"?ui=", "next", "classic"},
+		{"?other=1", "next", "next"},
+		{"?other=1", "", "classic"},
+	} {
+		for _, url := range staticShellURLs {
+			what := url + tc.query + " with cookie " + tc.cookie
+			require.Equal(t, tc.want, answeredBy(t, staticGet(m, url+tc.query, tc.cookie), what), what)
+		}
+	}
+
+	// Off the shell files the parameter means nothing: the cookie picks.
+	require.Equal(t, "classic", answeredBy(t, staticGet(m, "/both.css?ui=next", ""), "both.css?ui=next"))
+	require.Equal(t, "next", answeredBy(t, staticGet(m, "/both.css?ui=classic", "next"), "both.css?ui=classic"))
+}
+
+func TestStatic_AssetsFallBackAcrossTrees(t *testing.T) {
+	m := twoTrees(t)
+	for _, tc := range []struct{ url, cookie, want string }{
+		{"/only-next.css", "", "next"},
+		{"/only-next.css", "next", "next"},
+		{"/only-classic.css", "next", "classic"},
+		{"/only-classic.css", "", "classic"},
+	} {
+		what := tc.url + " with cookie " + tc.cookie
+		require.Equal(t, tc.want, answeredBy(t, staticGet(m, tc.url, tc.cookie), what), what)
+	}
+	require.Equal(t, http.StatusNotFound, staticGet(m, "/neither.css", "next").Code)
+	require.Equal(t, http.StatusNotFound, staticGet(m, "/neither.css", "").Code)
+
+	// The real trees: a classic-only file under the new cookie, and a bundle
+	// script under no cookie, both still served.
+	mux := staticMux(t, "b-test")
+	classic, next := staticAssets(t), nextStaticAssets(t)
+	var script string
+	for url := range next {
+		if strings.HasPrefix(url, "/assets/") && strings.HasSuffix(url, ".js") {
+			script = url
+		}
+	}
+	require.NotEmpty(t, script, "the bundle has a script under /assets/")
+	require.Equal(t, next[script].body, staticGet(mux, script, "").Body.Bytes())
+	require.Equal(t, classic["/app.css"].body, staticGet(mux, "/app.css", "next").Body.Bytes())
+}
+
+func TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe(t *testing.T) {
+	bad := fstest.MapFS{
+		"index.html":   {Data: []byte("<html>")},
+		"only-bad.css": {Data: []byte("/* tree=bad */")},
+	}
+	for _, tc := range []struct {
+		name          string
+		trees         [2]fstest.MapFS
+		brokenCookie  string
+		workingCookie string
+		brokenQuery   string
+		workingQuery  string
+		working       string
+	}{
+		{"the new app", [2]fstest.MapFS{standInTree("classic"), bad}, "next", "", "?ui=next", "?ui=classic", "classic"},
+		{"the classic app", [2]fstest.MapFS{bad, standInTree("next")}, "", "next", "?ui=classic", "?ui=next", "next"},
+	} {
+		m := http.NewServeMux()
+		(&Layer{build: "b-7"}).routeStaticFrom(m, tc.trees[0], tc.trees[1])
+
+		for _, url := range staticShellURLs {
+			// A shell request the broken tree would answer gets 500, by its cookie or
+			// by its ui parameter, and says it varies by cookie.
+			for _, req := range []struct{ what, target, cookie string }{
+				{"cookie", url, tc.brokenCookie},
+				{"parameter", url + tc.brokenQuery, tc.workingCookie},
+			} {
+				label := tc.name + " broken, " + url + " by " + req.what
+				rec := staticGet(m, req.target, req.cookie)
+				require.Equal(t, http.StatusInternalServerError, rec.Code, label)
+				require.Contains(t, rec.Body.String(), "missing from this build", label)
+				require.Contains(t, rec.Header().Values("Vary"), "Cookie", label)
+			}
+
+			// The same shell file asked for by the working tree is served as normal.
+			for _, req := range []struct{ what, target, cookie string }{
+				{"cookie", url, tc.workingCookie},
+				{"parameter", url + tc.workingQuery, tc.brokenCookie},
+			} {
+				label := tc.name + " broken, " + url + " by " + req.what
+				require.Equal(t, tc.working, answeredBy(t, staticGet(m, req.target, req.cookie), label), label)
+			}
+		}
+
+		// An asset comes from the working tree whichever cookie asks, and one only
+		// the broken tree holds is not served.
+		for _, cookie := range []string{"", "next"} {
+			label := tc.name + " broken, both.css with cookie " + cookie
+			require.Equal(t, tc.working, answeredBy(t, staticGet(m, "/both.css", cookie), label), label)
+			require.Equal(t, http.StatusNotFound, staticGet(m, "/only-bad.css", cookie).Code, tc.name+" broken: its own asset is not served")
+		}
+	}
 }
 
 var (
