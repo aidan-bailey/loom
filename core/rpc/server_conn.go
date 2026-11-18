@@ -53,6 +53,12 @@ func newServerConn(nc io.ReadWriteCloser) *serverConn {
 	return c
 }
 
+// readsDiffText reports whether the peer reads a view's diff text: a TUI
+// does (its diff pane, Lua's content); the daemon's web layer, which shows
+// counts and asks for a patch by ReadDiff, and a CLI command don't, and are
+// sent views without it (withoutDiffText).
+func (c *serverConn) readsDiffText() bool { return !c.web && !c.cli }
+
 // enqueue queues f, replacing a queued frame with the same non-empty key.
 func (c *serverConn) enqueue(f Frame, key string) {
 	c.mu.Lock()
