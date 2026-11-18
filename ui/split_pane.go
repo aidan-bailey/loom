@@ -61,6 +61,12 @@ type SplitPane struct {
 	terminal *TerminalPane
 	diff     *DiffPane
 
+	// agentBox, terminalBox and joined keep the last render of each box and
+	// of the two joined (renderMemo).
+	agentBox    renderMemo[paneBoxKey]
+	terminalBox renderMemo[paneBoxKey]
+	joined      renderMemo[splitJoinKey]
+
 	focusedPane  int
 	inlineAttach bool
 	diffVisible  bool
@@ -633,18 +639,39 @@ func (s *SplitPane) String() string {
 
 	showFocus := s.inlineAttach
 	agentTitle := s.agentPaneTitle()
-	agentBox := s.renderPane(agentTitle, s.agent.String(), s.agent.height, showFocus && s.focusedPane == FocusAgent)
+	agentBox := s.renderPaneMemo(&s.agentBox, agentTitle, s.agent.String(), s.agent.height, showFocus && s.focusedPane == FocusAgent)
 
 	// Hard-clamp to the allocated height: if a pane's content ever renders taller
 	// than its box (e.g. an over-wide line wraps into extra rows), the whole view
 	// would otherwise overflow the terminal and push the status/quick-input bar
 	// off-screen.
-	if s.terminalHidden {
-		return clampHeight(agentBox, s.height)
+	terminalBox := ""
+	if !s.terminalHidden {
+		terminalTitle := " Terminal" + scrollSuffix(s.terminal.ScrollPercent()) + " "
+		terminalBox = s.renderPaneMemo(&s.terminalBox, terminalTitle, s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
 	}
-	terminalTitle := " Terminal" + scrollSuffix(s.terminal.ScrollPercent()) + " "
-	terminalBox := s.renderPane(terminalTitle, s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
-	return clampHeight(lipgloss.JoinVertical(lipgloss.Left, agentBox, terminalBox), s.height)
+	key := splitJoinKey{agent: agentBox, terminal: terminalBox, terminalHidden: s.terminalHidden, height: s.height}
+	if out, _, ok := s.joined.get(key); ok {
+		return out
+	}
+	out := clampHeight(agentBox, s.height)
+	if !s.terminalHidden {
+		out = clampHeight(lipgloss.JoinVertical(lipgloss.Left, agentBox, terminalBox), s.height)
+	}
+	s.joined.put(key, out, nil)
+	return out
+}
+
+// renderPaneMemo is renderPane through m: the box kept from the last frame
+// while its inputs are unchanged.
+func (s *SplitPane) renderPaneMemo(m *renderMemo[paneBoxKey], title, content string, innerHeight int, focused bool) string {
+	key := paneBoxKey{title: title, content: content, innerHeight: innerHeight, focused: focused, width: s.width, theme: themeGen}
+	if out, _, ok := m.get(key); ok {
+		return out
+	}
+	out := s.renderPane(title, content, innerHeight, focused)
+	m.put(key, out, nil)
+	return out
 }
 
 // agentPaneTitle composes the agent pane's border title. Per the

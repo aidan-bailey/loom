@@ -36,6 +36,19 @@ type xvtEmulator struct {
 	bellFunc       func()
 	bellPending    bool
 	focusReporting bool
+
+	// gen counts the changes to the screen (every Write and Resize, under
+	// the write lock). Render keeps its last output, with the gen it was
+	// rendered at, under renderMu: every rail card and the preview render
+	// their pane's screen on every frame, most frames change no pane, and a
+	// full render of a large screen costs more than the rest of a card.
+	gen         uint64
+	renderMu    sync.Mutex
+	rendered    string
+	renderedGen uint64
+	renderedOK  bool
+	// renders counts the real renders, for tests.
+	renders int
 }
 
 // NewXVT constructs a real terminal emulator sized to cols x rows.
@@ -108,6 +121,7 @@ func NewXVT(cols, rows int) Emulator {
 
 func (e *xvtEmulator) Write(p []byte) (int, error) {
 	e.mu.Lock()
+	e.gen++
 	n, err := e.term.Write(p)
 	bell := e.takeBellLocked()
 	e.mu.Unlock()
@@ -122,6 +136,7 @@ func (e *xvtEmulator) Resize(cols, rows int) {
 		return
 	}
 	e.mu.Lock()
+	e.gen++
 	e.term.Resize(cols, rows)
 	bell := e.takeBellLocked()
 	e.mu.Unlock()
@@ -142,10 +157,19 @@ func (e *xvtEmulator) takeBellLocked() func() {
 	return e.bellFunc
 }
 
+// Render returns the visible screen, reusing the last render while nothing
+// has written to the screen or resized it since.
 func (e *xvtEmulator) Render() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.term.Render()
+	e.renderMu.Lock()
+	defer e.renderMu.Unlock()
+	if e.renderedOK && e.renderedGen == e.gen {
+		return e.rendered
+	}
+	e.rendered, e.renderedGen, e.renderedOK = e.term.Render(), e.gen, true
+	e.renders++
+	return e.rendered
 }
 
 func (e *xvtEmulator) Cursor() Cursor {

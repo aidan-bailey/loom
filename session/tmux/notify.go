@@ -88,15 +88,31 @@ func (c *coalescer) touch() {
 	if now.Sub(c.lastDirty) >= dirtyCoalesceInterval {
 		c.lastDirty = now
 		c.mu.Unlock()
-		if f := currentNotifier().Output; f != nil {
-			f(c.session)
-		}
+		// On another goroutine, as the trailing edge's timer is: the writer
+		// is the output pump, and the notifier is tea.Program.Send, which
+		// blocks until the TUI's Update returns, while Update may be waiting
+		// for this pump to stop (PausePreview, Restore).
+		go c.fireLeading()
 		return
 	}
 	if c.dirtyTimer == nil {
 		c.dirtyTimer = time.AfterFunc(dirtyCoalesceInterval-now.Sub(c.lastDirty), c.fireDirty)
 	}
 	c.mu.Unlock()
+}
+
+// fireLeading sends a burst's first Output event, unless the coalescer has
+// stopped since.
+func (c *coalescer) fireLeading() {
+	c.mu.Lock()
+	stopped := c.stopped
+	c.mu.Unlock()
+	if stopped {
+		return
+	}
+	if f := currentNotifier().Output; f != nil {
+		f(c.session)
+	}
 }
 
 func (c *coalescer) fireDirty() {

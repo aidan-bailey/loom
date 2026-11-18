@@ -14,6 +14,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/daemon"
+	"github.com/aidan-bailey/loom/internal/pprofserve"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
 
@@ -68,6 +69,9 @@ global config dir.`,
 			_ = debug.SetCrashOutput(f, debug.CrashOptions{})
 			_ = f.Close()
 		}
+		// Profiles on loopback when LOOM_PPROF asks, the address in this log
+		// (pprof.listening); nil, and nothing to close, when it doesn't.
+		defer pprofserve.FromEnv("daemon").Close()
 
 		// The first signal stops the daemon gracefully: it waits for
 		// in-flight lifecycle jobs (up to 30s) and saves. A user's Ctrl-C
