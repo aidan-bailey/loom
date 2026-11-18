@@ -27,7 +27,40 @@ func TestCoalescer_FirstTouchFiresImmediately(t *testing.T) {
 	c := newCoalescer("sess1")
 	defer c.stop()
 	c.touch()
-	require.Equal(t, int32(1), dirty.Load(), "first touch after idle must fire synchronously")
+	require.Eventually(t, func() bool { return dirty.Load() == 1 }, 100*time.Millisecond, time.Millisecond,
+		"the first touch after idle fires at once")
+}
+
+// The writer is the output pump, and the notifier is tea.Program.Send, which
+// blocks until the TUI's Update returns. Update can be waiting for that very
+// pump to stop (PausePreview, Restore), so the pump must never wait on the
+// notifier: a touch hands the event to another goroutine.
+func TestCoalescer_TouchNeverWaitsOnTheNotifier(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	notifierGuard(t, Notifier{Output: func(string) {
+		entered <- struct{}{}
+		<-release
+	}})
+	c := newCoalescer("sess1")
+	t.Cleanup(c.stop)
+	t.Cleanup(func() { close(release) })
+
+	done := make(chan struct{})
+	go func() {
+		c.touch()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("touch waited on a notifier that blocks")
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("the event never reached the notifier")
+	}
 }
 
 func TestCoalescer_BurstCoalescesToTrailingEvent(t *testing.T) {
@@ -89,6 +122,7 @@ func TestCoalescer_StopPreventsFiring(t *testing.T) {
 
 	c := newCoalescer("sess1")
 	c.touch() // leading dirty fires: 1
+	require.Eventually(t, func() bool { return fired.Load() == 1 }, time.Second, time.Millisecond)
 	c.touch() // arms trailing timer
 	c.stop()
 	before := fired.Load()

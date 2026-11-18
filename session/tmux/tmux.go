@@ -20,7 +20,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/creack/pty"
 )
 
 // ProgramClaude, ProgramAider, and ProgramGemini are the canonical
@@ -526,9 +525,10 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 // on the PTY so any in-flight blocked Read returns immediately with
 // os.ErrDeadlineExceeded — otherwise the goroutine could wait
 // indefinitely on a PTY that has no pending output and no writer
-// exiting. Best-effort: on platforms where a file type does not
-// support deadlines, SetReadDeadline returns an error we ignore, and
-// the pumpWaitTimeout watchdog in waitPumpExit still bounds the wait.
+// exiting. That works because Pty.Start hands back a pollable PTY
+// (pty_unix.go); a file that supports no deadlines (Windows, a test's
+// fake, a PTY pollable failed on) returns an error we ignore, and the
+// pumpWaitTimeout watchdog in waitPumpExit still bounds the wait.
 func (t *TmuxSession) signalPumpStop(ptmx *os.File) {
 	t.pumpMu.Lock()
 	cancel := t.pumpCancel
@@ -799,12 +799,7 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	return pty.Setsize(ptmx, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(cols),
-		X:    0,
-		Y:    0,
-	})
+	return setPtySize(ptmx, cols, rows)
 }
 
 // HasEmulator reports whether this session renders through the in-process
