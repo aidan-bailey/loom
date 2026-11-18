@@ -3,6 +3,7 @@ package tmux
 import (
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/creack/pty"
@@ -42,12 +43,16 @@ func (pt Pty) Start(cmd *exec.Cmd) (*os.File, error) {
 	pf, err := pollable(f)
 	if err != nil {
 		// Still a working PTY; only a stop of its client waits out
-		// pumpWaitTimeout while the pane is idle.
-		log.For("tmux").Warn("pty.blocking", "err", err.Error())
+		// pumpWaitTimeout while the pane is idle. A platform that refuses
+		// one refuses them all: say so once.
+		ptyBlockingOnce.Do(func() { log.For("tmux").Warn("pty.blocking", "err", err.Error()) })
 		return f, nil
 	}
 	return pf, nil
 }
+
+// ptyBlockingOnce keeps pty.blocking to one line per process.
+var ptyBlockingOnce sync.Once
 
 // Close is a no-op for the production factory — each PTY is owned by
 // its caller, not by the factory.
