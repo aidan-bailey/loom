@@ -306,18 +306,30 @@ func TestAnswerWatchDry(t *testing.T) {
 		assert.ErrorIs(t, r.Err, ErrRefused)
 		assert.Contains(t, r.Err.Error(), "no loom-watch.json on origin/main")
 	})
-	t.Run("a watcher switched off meanwhile refuses", func(t *testing.T) {
+	t.Run("an off watcher answers its plan with On false", func(t *testing.T) {
+		m, ws, _ := watchWS(t, false)
+		m.watchFor(ws)
+		dry := []watch.Action{{Kind: watch.ActStart, Issue: 9}}
+
+		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6, viewer: "bot"}, watch.Snapshot{}, dry, "")
+
+		r := requestReply(t, m, 6)
+		require.NoError(t, r.Err)
+		assert.False(t, r.Watch.On)
+		assert.Equal(t, "bot", r.Watch.Viewer, "the view is the poll's")
+		assert.Equal(t, dry, r.Watch.Actions)
+	})
+	t.Run("a workspace no longer served refuses", func(t *testing.T) {
 		m, ws, _ := watchWS(t, true)
 		m.watchFor(ws)
-		off := false
-		ws.cfg.Mutate(func(c *config.Config) { c.Watch = &off })
+		m.SetWorkspacesForTest()
 
 		m.answerWatchDry(watchResult{ws: ws, dry: true, req: 6}, watch.Snapshot{}, nil, "")
 
 		r := requestReply(t, m, 6)
 		require.Error(t, r.Err)
 		assert.ErrorIs(t, r.Err, ErrRefused)
-		assert.Contains(t, r.Err.Error(), "switched off")
+		assert.Contains(t, r.Err.Error(), "no longer served")
 	})
 }
 
@@ -360,7 +372,7 @@ func TestDeliverWatch_ADryResultAnswersItsRequester(t *testing.T) {
 
 		r := requestReply(t, m, 4)
 		assert.ErrorIs(t, r.Err, ErrRefused)
-		assert.Contains(t, r.Err.Error(), "switched off")
+		assert.Contains(t, r.Err.Error(), "no longer served")
 	})
 }
 
@@ -500,23 +512,24 @@ func TestReadWatch_StatusAnswersTheLastTickAndPollsNothing(t *testing.T) {
 	assert.False(t, st.polling, "a status read starts no poll")
 }
 
-// TestReadWatch_AnOffWorkspaceAnswersOffAndPollsNothing: with the switch
-// off both a status read and a dry run answer On false at once, and no
-// watcher state is made.
-func TestReadWatch_AnOffWorkspaceAnswersOffAndPollsNothing(t *testing.T) {
+// TestReadWatch_AnOffWorkspacesStatusIsOffButItsDryRunPolls: with the
+// switch off a status read answers On false at once and polls nothing,
+// while a dry run polls, so the first tick can be seen before switching on.
+func TestReadWatch_AnOffWorkspacesStatusIsOffButItsDryRunPolls(t *testing.T) {
 	m, ws, id := watchWS(t, false)
 
 	m.ReadWatch(id, false, 1)
+
+	r := requestReply(t, m, 1)
+	require.NoError(t, r.Err)
+	assert.Equal(t, WatchView{}, r.Watch)
+	assert.Nil(t, ws.watch, "a status read starts no poll, so no state was made")
+
 	m.ReadWatch(id, true, 2)
 
-	events := m.Drain().Events // requestReply drains, so both replies are read from one drain
-	for _, req := range []ReqID{1, 2} {
-		r := replyTo(events, req)
-		require.NotNil(t, r, "a Reply to request %d", req)
-		require.NoError(t, r.Err, "request %d", req)
-		assert.Equal(t, WatchView{}, r.Watch, "request %d", req)
-	}
-	assert.Nil(t, ws.watch, "no poll was started, so no state was made")
+	assert.Nil(t, replyTo(m.Drain().Events, 2), "the poll answers it, not the request")
+	require.NotNil(t, ws.watch)
+	assert.True(t, ws.watch.polling, "a dry run of an off watcher polls")
 }
 
 // TestReadWatch_ADryRunWaitsForItsPollAndIsRefusedWhileOneIsOut: a dry run
