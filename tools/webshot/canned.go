@@ -35,6 +35,9 @@ var staticTypes = map[string]string{
 	".mjs":         "text/javascript; charset=utf-8",
 	".webmanifest": "application/manifest+json",
 	".png":         "image/png",
+	".svg":         "image/svg+xml",
+	".woff2":       "font/woff2",
+	".txt":         "text/plain; charset=utf-8",
 }
 
 // cannedLoom answers the phone app as the daemon's web layer would, from the
@@ -72,6 +75,13 @@ func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // (internal/web/mockup.go's mockupCSP, which TestWebshotFixture_IsTheJSONTheLayerServes
 // holds this copy to), so a screenshot shows the frame a phone would.
 const mockupCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src data: https:; font-src data: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+
+// contentSecurityPolicy is the policy the web layer serves every file of the
+// app under (internal/web/server.go is the source, and
+// TestWebshotFixture_IsTheJSONTheLayerServes holds this copy to it), so a
+// <style> element or a style attribute written as markup is a console error
+// here, as it is a blank screen on a phone.
+const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 // apiRoutes maps each GET route the screens read on load to its fixture: a
 // JSON one with its relative times filled, or the mockup's page as it is.
@@ -266,5 +276,8 @@ func (c *cannedLoom) file(w http.ResponseWriter, p string) {
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	_, _ = w.Write(body)
 }

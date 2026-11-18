@@ -7,6 +7,11 @@
 //
 //	go run ./tools/webshot -out /tmp/shots
 //	go run ./tools/webshot -out /tmp/shots -screens fleet,conversation -guides
+//	go run ./tools/webshot -app next -out /tmp/shots
+//
+// -app picks the files to serve: classic (internal/web/static, the default)
+// or next (internal/web/dist); -static overrides the directory. Every file
+// goes out under the web layer's Content-Security-Policy.
 //
 // It never touches a daemon, a session or the user's tmux server. Console
 // errors, uncaught exceptions and API routes the fixture can't answer are
@@ -75,7 +80,8 @@ func run(args []string) error {
 	out := fs.String("out", "", "directory to write the PNGs to (required; keep it out of the worktree)")
 	only := fs.String("screens", "", "comma-separated screens to render (default all: "+screenNames()+")")
 	dev := fs.String("device", defaultDevice, "the device to render as: iphone15 or iphone16")
-	static := fs.String("static", filepath.Join("internal", "web", "static"), "the app's files")
+	app := fs.String("app", "classic", "the app to render: classic (internal/web/static) or next (internal/web/dist)")
+	static := fs.String("static", "", "the app's files (overrides the directory -app picks)")
 	browserBin := fs.String("browser", "", "Chromium or Chrome to run (default: the first of chromium, chromium-browser, google-chrome, google-chrome-stable on PATH)")
 	bare := fs.Bool("bare", false, "write the viewport only: no bezel, status bar, island or home indicator")
 	guides := fs.Bool("guides", false, "tint the unsafe areas (the safe-area insets)")
@@ -98,9 +104,13 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	loom, err := newCannedLoom(*static)
+	dir, err := appDir(*app, *static)
 	if err != nil {
 		return err
+	}
+	loom, err := newCannedLoom(dir)
+	if err != nil {
+		return fmt.Errorf("app %q: %w", *app, err)
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		return err
@@ -151,6 +161,23 @@ func run(args []string) error {
 		return errors.New("a screen reported problems")
 	}
 	return nil
+}
+
+// appDir is the directory of the files to serve: static when given, else the
+// tree the app names, relative to the repo root.
+func appDir(app, static string) (string, error) {
+	switch app {
+	case "", "classic", "next":
+	default:
+		return "", fmt.Errorf("no app %q (have classic, next)", app)
+	}
+	if static != "" {
+		return static, nil
+	}
+	if app == "next" {
+		return filepath.Join("internal", "web", "dist"), nil
+	}
+	return filepath.Join("internal", "web", "static"), nil
 }
 
 func screenNames() string {

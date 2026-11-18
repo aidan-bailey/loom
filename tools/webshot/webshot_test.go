@@ -168,7 +168,7 @@ func TestFillTimes_CountsFromNow(t *testing.T) {
 func cannedForTest(t *testing.T) (*cannedLoom, *httptest.Server) {
 	static := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(static, "index.html"), []byte(`<meta name="loom-build" content="__LOOM_BUILD__">`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(static, "secret.txt"), []byte("no"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(static, "secret.json"), []byte("no"), 0o644))
 	c, err := newCannedLoom(static)
 	require.NoError(t, err)
 	c.now = func() time.Time { return time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC) }
@@ -198,8 +198,72 @@ func TestCanned_ServesTheShellWithTheBuildTheSnapshotNames(t *testing.T) {
 	require.NoError(t, json.Unmarshal(snap, &s))
 	assert.Equal(t, cannedBuild, s.Build, "a build that differs makes the app reload for an upgrade")
 
-	code, _ = get(t, srv.URL+"/secret.txt")
+	code, _ = get(t, srv.URL+"/secret.json")
 	assert.Equal(t, http.StatusNotFound, code, "only the app's kinds of file")
+}
+
+func TestAppDir_PicksTheTreeTheAppNames(t *testing.T) {
+	static := filepath.Join("internal", "web", "static")
+	for _, c := range []struct{ app, static, want string }{
+		{"", "", static},
+		{"classic", "", static},
+		{"next", "", filepath.Join("internal", "web", "dist")},
+		{"next", "/x", "/x"},
+		{"classic", "/x", "/x"},
+	} {
+		got, err := appDir(c.app, c.static)
+		require.NoError(t, err, "%q %q", c.app, c.static)
+		assert.Equal(t, c.want, got, "%q %q", c.app, c.static)
+	}
+	_, err := appDir("nope", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `no app "nope"`)
+}
+
+func TestCanned_ServesTheNewAppsKindsOfFile(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"index.html":      `<meta name="loom-build" content="__LOOM_BUILD__">`,
+		"logo.svg":        "<svg/>",
+		"font.woff2":      "wOF2",
+		"THIRD_PARTY.txt": "licences",
+		"notes.json":      "{}",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
+	}
+	c, err := newCannedLoom(dir)
+	require.NoError(t, err)
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	for path, ctype := range map[string]string{
+		"/logo.svg":        "image/svg+xml",
+		"/font.woff2":      "font/woff2",
+		"/THIRD_PARTY.txt": "text/plain; charset=utf-8",
+	} {
+		res, err := http.Get(srv.URL + path)
+		require.NoError(t, err)
+		res.Body.Close()
+		assert.Equal(t, http.StatusOK, res.StatusCode, path)
+		assert.Equal(t, ctype, res.Header.Get("Content-Type"), path)
+	}
+	code, _ := get(t, srv.URL+"/notes.json")
+	assert.Equal(t, http.StatusNotFound, code, "an extension outside the map is a 404")
+}
+
+func TestCanned_FilesCarryTheLayersCSP(t *testing.T) {
+	_, srv := cannedForTest(t)
+	res, err := http.Get(srv.URL + "/")
+	require.NoError(t, err)
+	res.Body.Close()
+	assert.Equal(t, contentSecurityPolicy, res.Header.Get("Content-Security-Policy"))
+	assert.Contains(t, res.Header.Get("Content-Security-Policy"), "default-src 'self'")
+	assert.Equal(t, "nosniff", res.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "no-referrer", res.Header.Get("Referrer-Policy"))
+
+	res, err = http.Get(srv.URL + "/api/v1/sessions/7/mockup")
+	require.NoError(t, err)
+	res.Body.Close()
+	assert.Equal(t, mockupCSP, res.Header.Get("Content-Security-Policy"), "the file headers do not touch the mockup")
 }
 
 func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
