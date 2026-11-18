@@ -7,12 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/transcript"
 	"github.com/stretchr/testify/assert"
@@ -265,7 +268,7 @@ func TestAPI_TurnsOfASubagentAreItsOwnWithItsAgentPage(t *testing.T) {
 		State: transcript.AgentFinished, Started: "2026-11-06T09:00:01Z",
 	}, *page.Agent)
 	require.Len(t, page.Turns, 1)
-	assert.Equal(t, transcript.FromBrief, page.Turns[0].From)
+	assert.Equal(t, turnFrom(transcript.FromBrief), page.Turns[0].From)
 	assert.Equal(t, "Map the tree and report.", page.Turns[0].Text)
 	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "turns", session: env.ids["talk"], result: "200 ok"})
 
@@ -276,7 +279,7 @@ func TestAPI_TurnsOfASubagentAreItsOwnWithItsAgentPage(t *testing.T) {
 	require.NotNil(t, empty.Agent)
 	assert.True(t, empty.Agent.Missing)
 	assert.Equal(t, "a2e2e2e2e2e2", empty.Agent.ID)
-	assert.Equal(t, transcript.AgentUnknown, empty.Agent.State, "no meta file, no state")
+	assert.Equal(t, agentPageState(transcript.AgentUnknown), empty.Agent.State, "no meta file, no state")
 	assert.Empty(t, empty.Agent.Started)
 	assert.Empty(t, empty.Turns)
 
@@ -380,4 +383,63 @@ func TestSessionOf_ClaudeSaysTheSessionRunsClaude(t *testing.T) {
 	assert.True(t, sessionOf(1, core.InstanceView{Program: "claude"}).Claude)
 	assert.True(t, sessionOf(1, core.InstanceView{Program: "claude --model opus"}).Claude)
 	assert.False(t, sessionOf(1, core.InstanceView{Program: "aider"}).Claude)
+}
+
+func TestTurnsOf_EveryFromKindAndStateIsInItsUnion(t *testing.T) {
+	u := unions()
+	in := func(typ reflect.Type, word string) bool {
+		return slices.Contains(u[typ].values, word)
+	}
+	var steps []transcript.Step
+	for _, st := range []string{transcript.StatePending, transcript.StateDone, transcript.StateFailed, transcript.StateInterrupted} {
+		steps = append(steps, transcript.Step{Tool: "Bash", State: st})
+	}
+	var items []transcript.Item
+	for _, k := range []string{transcript.KindText, transcript.KindThinking, transcript.KindSteps, transcript.KindCompacted, transcript.KindNote} {
+		items = append(items, transcript.Item{Kind: k, Text: "x", Steps: steps})
+	}
+	var turns []transcript.Turn
+	for _, from := range []string{transcript.FromYou, transcript.FromPlugin, transcript.FromPeer, transcript.FromTask, transcript.FromBrief} {
+		turns = append(turns, transcript.Turn{From: from, Items: items})
+	}
+	froms := map[turnFrom]bool{}
+	kinds := map[itemKind]bool{}
+	states := map[stepState]bool{}
+	for _, agent := range []string{transcript.AgentRunning, transcript.AgentFinished, transcript.AgentUnknown} {
+		out := turnsOf(transcript.Page{Turns: turns, Agent: &transcript.AgentInfo{ID: "a", State: agent}})
+		require.NotNil(t, out.Agent)
+		assert.True(t, in(reflect.TypeFor[agentPageState](), string(out.Agent.State)), "agent %q", out.Agent.State)
+		for _, tj := range out.Turns {
+			froms[tj.From] = true
+			assert.True(t, in(reflect.TypeFor[turnFrom](), string(tj.From)), "from %q", tj.From)
+			for _, ij := range tj.Items {
+				kinds[ij.Kind] = true
+				assert.True(t, in(reflect.TypeFor[itemKind](), string(ij.Kind)), "kind %q", ij.Kind)
+				for _, sj := range ij.Steps {
+					states[sj.State] = true
+					assert.True(t, in(reflect.TypeFor[stepState](), string(sj.State)), "state %q", sj.State)
+				}
+			}
+		}
+	}
+	assert.Len(t, froms, 5, "each of the five From words")
+	assert.Len(t, kinds, 5, "each Kind word")
+	assert.Len(t, states, 4, "each step State word")
+}
+
+func TestPatchOf_EveryStatusAndOmittedIsInItsUnion(t *testing.T) {
+	u := unions()
+	var files []git.FilePatch
+	for _, st := range []string{git.StatusAdded, git.StatusModified, git.StatusDeleted, git.StatusRenamed, git.StatusCopied} {
+		files = append(files, git.FilePatch{Path: "f", Status: st})
+	}
+	for _, om := range []string{"", git.OmittedLines, git.OmittedBudget} {
+		files = append(files, git.FilePatch{Path: "g", Status: git.StatusModified, Omitted: om})
+	}
+	out := patchOf(git.Patch{Base: "abc", Files: files})
+	require.Len(t, out.Files, len(files))
+	for _, f := range out.Files {
+		assert.Contains(t, u[reflect.TypeFor[fileStatus]()].values, string(f.Status))
+		assert.Contains(t, u[reflect.TypeFor[fileOmitted]()].values, string(f.Omitted))
+	}
 }

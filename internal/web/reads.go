@@ -37,19 +37,19 @@ type turnsJSON struct {
 // is one of running, finished or unknown; Missing says the agent's
 // transcript file is not there, and Started is "" without a first record.
 type agentPageJSON struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	Teammate    bool   `json:"teammate"`
-	State       string `json:"state"`
-	Started     string `json:"started"`
-	Missing     bool   `json:"missing"`
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Description string         `json:"description"`
+	Teammate    bool           `json:"teammate"`
+	State       agentPageState `json:"state"`
+	Started     string         `json:"started"`
+	Missing     bool           `json:"missing"`
 }
 
 type turnJSON struct {
 	ID      int64      `json:"id"`
 	At      string     `json:"at"`
-	From    string     `json:"from"`
+	From    turnFrom   `json:"from"`
 	Name    string     `json:"name"`
 	Text    string     `json:"text"`
 	Cut     bool       `json:"cut"`
@@ -63,7 +63,7 @@ type turnJSON struct {
 // never a tree), a steps item total, failed and steps, a note text and
 // error; each has at.
 type itemJSON struct {
-	Kind      string     `json:"kind"`
+	Kind      itemKind   `json:"kind"`
 	At        string     `json:"at"`
 	Blocks    []*mdNode  `json:"blocks,omitempty"`
 	Truncated bool       `json:"truncated,omitempty"`
@@ -77,12 +77,12 @@ type itemJSON struct {
 // stepJSON is one tool step. Agent is the subagent an Agent/Task step
 // launched, omitted when none was found; Finished says it has ended.
 type stepJSON struct {
-	Tool     string `json:"tool"`
-	Summary  string `json:"summary"`
-	At       string `json:"at"`
-	State    string `json:"state"`
-	Agent    string `json:"agent,omitempty"`
-	Finished bool   `json:"finished"`
+	Tool     string    `json:"tool"`
+	Summary  string    `json:"summary"`
+	At       string    `json:"at"`
+	State    stepState `json:"state"`
+	Agent    string    `json:"agent,omitempty"`
+	Finished bool      `json:"finished"`
 }
 
 // patchJSON is a session's diff (git.Patch) as the app reads it.
@@ -92,14 +92,14 @@ type patchJSON struct {
 }
 
 type fileJSON struct {
-	Path    string     `json:"path"`
-	OldPath string     `json:"old_path"`
-	Status  string     `json:"status"`
-	Binary  bool       `json:"binary"`
-	Added   int        `json:"added"`
-	Removed int        `json:"removed"`
-	Hunks   []hunkJSON `json:"hunks"`
-	Omitted string     `json:"omitted"`
+	Path    string      `json:"path"`
+	OldPath string      `json:"old_path"`
+	Status  fileStatus  `json:"status"`
+	Binary  bool        `json:"binary"`
+	Added   int         `json:"added"`
+	Removed int         `json:"removed"`
+	Hunks   []hunkJSON  `json:"hunks"`
+	Omitted fileOmitted `json:"omitted"`
 }
 
 type hunkJSON struct {
@@ -127,16 +127,16 @@ func turnsOf(p transcript.Page) turnsJSON {
 	if a := p.Agent; a != nil {
 		out.Agent = &agentPageJSON{
 			ID: a.ID, Type: a.Type, Description: a.Description, Teammate: a.Teammate,
-			State: a.State, Started: stamp(a.Started), Missing: a.Missing,
+			State: agentPageState(a.State), Started: stamp(a.Started), Missing: a.Missing,
 		}
 	}
 	for _, t := range p.Turns {
 		tj := turnJSON{
-			ID: t.ID, At: stamp(t.At), From: t.From, Name: t.Name, Text: t.Text,
+			ID: t.ID, At: stamp(t.At), From: turnFrom(t.From), Name: t.Name, Text: t.Text,
 			Cut: t.Cut, Command: t.Command, Partial: t.Partial, Items: make([]itemJSON, 0, len(t.Items)),
 		}
 		for _, it := range t.Items {
-			ij := itemJSON{Kind: it.Kind, At: stamp(it.At)}
+			ij := itemJSON{Kind: itemKind(it.Kind), At: stamp(it.At)}
 			switch it.Kind {
 			case transcript.KindText:
 				var cut bool
@@ -147,7 +147,7 @@ func turnsOf(p transcript.Page) turnsJSON {
 				ij.Steps = make([]stepJSON, 0, len(it.Steps))
 				for _, s := range it.Steps {
 					ij.Steps = append(ij.Steps, stepJSON{
-						Tool: s.Tool, Summary: s.Summary, At: stamp(s.At), State: s.State,
+						Tool: s.Tool, Summary: s.Summary, At: stamp(s.At), State: stepState(s.State),
 						Agent: s.Agent, Finished: s.Finished,
 					})
 				}
@@ -168,8 +168,8 @@ func patchOf(p git.Patch) patchJSON {
 	out := patchJSON{Base: p.Base, Files: make([]fileJSON, 0, len(p.Files))}
 	for _, f := range p.Files {
 		fj := fileJSON{
-			Path: f.Path, OldPath: f.OldPath, Status: f.Status, Binary: f.Binary,
-			Added: f.Added, Removed: f.Removed, Omitted: f.Omitted, Hunks: make([]hunkJSON, 0, len(f.Hunks)),
+			Path: f.Path, OldPath: f.OldPath, Status: fileStatus(f.Status), Binary: f.Binary,
+			Added: f.Added, Removed: f.Removed, Omitted: fileOmitted(f.Omitted), Hunks: make([]hunkJSON, 0, len(f.Hunks)),
 		}
 		for _, h := range f.Hunks {
 			hj := hunkJSON{Header: h.Header, Lines: h.Lines, Cut: h.Cut}
