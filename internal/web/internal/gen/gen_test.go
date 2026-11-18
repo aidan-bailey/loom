@@ -450,3 +450,50 @@ func TestGenerate_NamesTheErrorOfAnUntypeableContract(t *testing.T) {
 	assert.Contains(t, err.Error(), "generate:")
 	assert.Contains(t, err.Error(), "chanHolderJSON.c")
 }
+
+// webDirOf is internal/web, found from this package's directory and checked by
+// the repo's go.mod two levels above it, so a moved test fails rather than
+// reading nothing.
+func webDirOf(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(dir, "..", "..", "go.mod"), "the test is rooted at internal/web")
+	return dir
+}
+
+// TestContract_GeneratedFilesAreFresh fails when gen.ts, web-api.md or
+// api.fields no longer matches the route table, the events and the unions:
+// run `go generate ./internal/web` after changing any of them.
+func TestContract_GeneratedFilesAreFresh(t *testing.T) {
+	tsPath, mdPath, fieldsPath := Files(webDirOf(t))
+	committed, err := ReadFields(fieldsPath)
+	require.NoError(t, err)
+	out, err := Generate(web.Contract(), committed)
+	require.NoError(t, err)
+
+	gotTS, err := os.ReadFile(tsPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(out.GenTS), string(gotTS), "gen.ts is stale: run go generate ./internal/web")
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(out.WebAPI), string(gotMD), "web-api.md is stale: run go generate ./internal/web")
+	gotFields, err := os.ReadFile(fieldsPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(FormatFields(out.Fields)), string(gotFields), "api.fields lacks lines: run go generate ./internal/web")
+}
+
+// TestContract_FieldsOnlyGrow fails when a committed api.fields line is no
+// longer produced: a field, route, event or union value was removed or
+// retyped. Removing one on purpose means deleting its line by hand, in the
+// same commit.
+func TestContract_FieldsOnlyGrow(t *testing.T) {
+	_, _, fieldsPath := Files(webDirOf(t))
+	committed, err := ReadFields(fieldsPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, committed)
+	fresh, err := Generate(web.Contract(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, Dropped(committed, fresh.Fields),
+		"api.fields pins these lines, which the code no longer produces: restore the field, route or value, or delete the line here by hand")
+}

@@ -1,0 +1,479 @@
+Agent.description: string
+Agent.id: string
+Agent.idle: boolean
+Agent.name: string
+AgentPage.description: string
+AgentPage.id: string
+AgentPage.missing: boolean
+AgentPage.started: string
+AgentPage.state: AgentPageState
+AgentPage.teammate: boolean
+AgentPage.type: string
+AnswerBody.allow: boolean
+AnswerBody.answers: Record<string, QuestionAnswerBody> | null
+AnswerBody.chat: boolean
+AnswerBody.chat_text: string
+AnswerBody.message: string
+AnswerBody.suggestion: number
+Ask.agent: string
+Ask.answering: boolean
+Ask.id: string
+Ask.input?: Block[]
+Ask.kind: AskKind
+Ask.opened: string
+Ask.questions?: AskQuestion[]
+Ask.suggestions?: Suggestion[]
+Ask.summary?: string
+Ask.tool?: string
+AskOption.description: string
+AskOption.label: string
+AskOption.preview?: string
+AskQuestion.header: string
+AskQuestion.multi: boolean
+AskQuestion.options: AskOption[] | null
+AskQuestion.question: string
+Block.cut?: boolean
+Block.label: string
+Block.mono?: boolean
+Block.text: string
+CreateBody.account: string
+CreateBody.effort: string
+CreateBody.model: string
+CreateBody.permission_mode: string
+CreateBody.prompt: string
+CreateBody.title: string
+CreateBody.workspace: number
+Created.id: number
+Created.notices: Notice[] | null
+DELETE /api/v1/device ok=204
+DELETE /api/v1/device/push ok=204
+Device.name: string
+Device.notify: Notify
+Device.push: string
+DeviceBody.finished: boolean | null
+DeviceBody.pause: string | null
+DeviceBody.waiting: boolean | null
+Diff.added: number
+Diff.removed: number
+Exit.code: number
+Exit.signal?: string
+File.added: number
+File.binary: boolean
+File.hunks: Hunk[] | null
+File.old_path: string
+File.omitted: FileOmitted
+File.path: string
+File.removed: number
+File.status: FileStatus
+Flow.base: string
+Flow.costs: FlowCosts
+Flow.end: string
+Flow.final: FlowStory | null
+Flow.kept: string[] | null
+Flow.others: FlowOther[] | null
+Flow.premise: FlowStory | null
+Flow.question: FlowQuestion | null
+Flow.stages: FlowStage[] | null
+Flow.start: string
+Flow.stories: FlowStory[] | null
+Flow.summary: FlowSummary
+FlowCosts.by_agent: Record<string, number> | null
+FlowCosts.by_role: Record<string, number> | null
+FlowCosts.by_story: Record<string, number> | null
+FlowCosts.design: number | null
+FlowCosts.draft: number | null
+FlowCosts.error: string
+FlowCosts.flow: number
+FlowCosts.flow_parts: number
+FlowCosts.median: number | null
+FlowCosts.past: number[] | null
+FlowCosts.projection: number | null
+FlowCosts.spent: number
+FlowCosts.this: number | null
+FlowCosts.unpriced: string[] | null
+FlowCosts.why: string
+FlowDoc.blocks: (MdNode | null)[] | null
+FlowDoc.cut: boolean
+FlowDoc.path: string
+FlowDocParams.doc: string
+FlowDocParams.plan: string
+FlowGate.job: number
+FlowGate.text: string
+FlowGate.verdict: string
+FlowOther.id: string
+FlowOther.start: string
+FlowOther.status: string
+FlowOther.unreadable: string
+FlowParams.plan: string
+FlowQuestion.key: string
+FlowQuestion.kind: FlowQuestionKind
+FlowQuestion.story: string
+FlowQuestion.text: string
+FlowStage.detail: string
+FlowStage.doc: string
+FlowStage.name: FlowStageName
+FlowStage.state: FlowStageState
+FlowStep.ended: string
+FlowStep.gates: FlowGate[] | null
+FlowStep.jobs: number[] | null
+FlowStep.k: number
+FlowStep.kind: FlowStepKind
+FlowStep.name: string
+FlowStep.report: boolean
+FlowStep.role: string
+FlowStep.started: string
+FlowStep.status: string
+FlowStep.unreadable: string
+FlowStep.waiting: string
+FlowStory.cells: Record<string, FlowCell> | null
+FlowStory.commits: number
+FlowStory.developer: string
+FlowStory.deviations: number
+FlowStory.end: number
+FlowStory.findings: number[]
+FlowStory.id: string
+FlowStory.line: number
+FlowStory.reading: string
+FlowStory.review: string
+FlowStory.status: string
+FlowStory.steps: FlowStep[] | null
+FlowStory.tier: string
+FlowSummary.asks: FlowQuestionKind
+FlowSummary.done: number
+FlowSummary.drafted: number
+FlowSummary.part: string
+FlowSummary.phase: string
+FlowSummary.plan: string
+FlowSummary.run: string
+FlowSummary.spec: string
+FlowSummary.spent: number | null
+FlowSummary.stage: FlowStageName
+FlowSummary.status: FlowStatus
+FlowSummary.title: string
+FlowSummary.total: number
+FlowSummary.unreadable: string
+FlowSummary.updated: string
+Flows.live: LiveFlow[] | null
+Flows.past: PastRun[] | null
+GET /api/v1/flows resp=Flows ok=200
+GET /api/v1/launch-defaults query=LaunchDefaultsParams resp=LaunchDefaults ok=200
+GET /api/v1/push-key resp=PushKey ok=200
+GET /api/v1/sessions/{id}/diff resp=Patch ok=200
+GET /api/v1/sessions/{id}/flow query=FlowParams resp=Flow ok=200
+GET /api/v1/sessions/{id}/flow/doc query=FlowDocParams resp=FlowDoc ok=200
+GET /api/v1/sessions/{id}/jobs/{job}/log query=JobLogParams resp=JobLog ok=200
+GET /api/v1/sessions/{id}/message resp=Message ok=200
+GET /api/v1/sessions/{id}/mockup ok=200 page
+GET /api/v1/sessions/{id}/turns query=TurnsParams resp=Turns ok=200
+Hunk.cut: number[] | null
+Hunk.header: string
+Hunk.lines: string[] | null
+Item.at: string
+Item.blocks?: (MdNode | null)[]
+Item.error?: boolean
+Item.failed?: number
+Item.kind: ItemKind
+Item.steps?: Step[]
+Item.text?: string
+Item.total?: number
+Item.truncated?: boolean
+Job.agent: string
+Job.cancel_reason: string
+Job.command: string
+Job.control: JobControl
+Job.control_error: string
+Job.description: string
+Job.ended: string
+Job.exit: Exit | null
+Job.failure: string
+Job.forced: boolean
+Job.id: number
+Job.parked: boolean
+Job.pause_reclaimed: boolean
+Job.paused: boolean
+Job.started: string
+Job.state: JobState
+Job.submitted: string
+Job.waiting: string
+JobLog.cut: boolean
+JobLog.end: number
+JobLog.reset: boolean
+JobLog.start: number
+JobLog.text: string
+JobLogParams.after: string
+LaunchDefaults.account: string
+LaunchDefaults.accounts: string[] | null
+LaunchDefaults.effort: string
+LaunchDefaults.efforts: string[] | null
+LaunchDefaults.model: string
+LaunchDefaults.models: string[] | null
+LaunchDefaults.permission_mode: string
+LaunchDefaults.permission_modes: string[] | null
+LaunchDefaultsParams.workspace: string
+LiveFlow.flow: FlowSummary
+LiveFlow.session: number
+LiveFlow.title: string
+MdNode.align?: string[]
+MdNode.c?: (MdNode | null)[]
+MdNode.href?: string
+MdNode.lang?: string
+MdNode.level?: number
+MdNode.line?: number
+MdNode.start?: number
+MdNode.t: string
+MdNode.v?: string
+MergeBody.source: number
+Message.blocks: (MdNode | null)[] | null
+Message.text: string
+Message.truncated: boolean
+Mockup.changed: string
+Mockup.fresh: boolean
+Mockup.screen: string
+Notice.at: string
+Notice.error: boolean
+Notice.text: string
+Notices.notices: Notice[] | null
+Notify.finished: boolean
+Notify.paused_until: string
+Notify.waiting: boolean
+POST /api/v1/device/push body=SubscriptionBody resp=Device ok=200
+POST /api/v1/pair body=PairBody resp=Pair ok=200 open
+POST /api/v1/sessions body=CreateBody resp=Created ok=201
+POST /api/v1/sessions/{id}/asks/{ask}/answer body=AnswerBody resp=Notices ok=200
+POST /api/v1/sessions/{id}/jobs/{job}/{action} resp=Notices ok=200
+POST /api/v1/sessions/{id}/kill resp=Notices ok=200
+POST /api/v1/sessions/{id}/merge body=MergeBody resp=Notices ok=200
+POST /api/v1/sessions/{id}/pause resp=Notices ok=200
+POST /api/v1/sessions/{id}/push resp=Notices ok=200
+POST /api/v1/sessions/{id}/resume resp=Notices ok=200
+POST /api/v1/sessions/{id}/send body=SendBody resp=Notices ok=200
+PUT /api/v1/device body=DeviceBody resp=Device ok=200
+PUT /api/v1/quick-replies body=QuickRepliesBody resp=QuickReplies ok=200
+Pair.device: string
+PairBody.code: string
+PastRun.end: string
+PastRun.ended: string
+PastRun.file: string
+PastRun.key: string
+PastRun.plan: string
+PastRun.stem: string
+PastRun.stories: number
+PastRun.unreadable: string
+PastRun.usd: number | null
+Patch.base: string
+Patch.files: File[] | null
+Pr.checks: PrChecks
+Pr.number: number
+Pr.state: PrState
+Pr.url?: string
+PushKey.key: string
+QuestionAnswerBody.labels: string[] | null
+QuestionAnswerBody.note: string
+QuestionAnswerBody.other: string
+QuickReplies.quick_replies: string[] | null
+QuickRepliesBody.replies: string[] | null
+SendBody.text: string
+Session.account: string
+Session.agents: Agent[] | null
+Session.ahead: number
+Session.asks: Ask[] | null
+Session.behind: number
+Session.branch: string
+Session.claude: boolean
+Session.diff: Diff
+Session.flows: FlowSummary[] | null
+Session.gist?: string
+Session.group: SessionGroup
+Session.id: number
+Session.jobs: Job[] | null
+Session.jobs_focus: number
+Session.jobs_label: string
+Session.label: string
+Session.last_message: string
+Session.mockup: Mockup | null
+Session.parity_known: boolean
+Session.pr: Pr | null
+Session.remote_url: string
+Session.since: string
+Session.status: SessionStatus
+Session.title: string
+Session.tmux?: string
+Session.verdict?: StopVerdict
+Session.wait: Wait
+Session.workspace: number
+Session.worktree?: string
+Sessions.badge: number
+Sessions.sessions: Session[] | null
+Sessions.workspace: number
+Snapshot.badge: number
+Snapshot.build: string
+Snapshot.device: Device
+Snapshot.host: string
+Snapshot.notices: Notice[] | null
+Snapshot.quick_replies: string[] | null
+Snapshot.sessions: Record<string, Session[] | null> | null
+Snapshot.usage: Usage[] | null
+Snapshot.usage_stale_after_s: number
+Snapshot.workspaces: Workspace[] | null
+Step.agent?: string
+Step.at: string
+Step.finished: boolean
+Step.state: StepState
+Step.summary: string
+Step.tool: string
+SubscriptionBody.endpoint: string
+SubscriptionBody.expirationTime: unknown
+SubscriptionBody.keys: SubscriptionKeys
+SubscriptionKeys.auth: string
+SubscriptionKeys.p256dh: string
+Suggestion.label: string
+Suggestion.persists?: boolean
+Turn.at: string
+Turn.command: boolean
+Turn.cut: boolean
+Turn.from: TurnFrom
+Turn.id: number
+Turn.items: Item[] | null
+Turn.name: string
+Turn.partial: boolean
+Turn.text: string
+Turns.agent?: AgentPage
+Turns.conversation: string
+Turns.earlier: number | null
+Turns.reset: boolean
+Turns.skipped: number
+Turns.turns: Turn[] | null
+TurnsParams.after: string
+TurnsParams.agent: string
+TurnsParams.before: string
+TurnsParams.conversation: string
+Usage.account: string
+Usage.at: string
+Usage.five_hour: Window | null
+Usage.plan: string
+Usage.seven_day: Window | null
+UsageEvent.usage: Usage[] | null
+Wait.detail: string
+Wait.reason: string
+Window.pct: number
+Window.resets_at: string
+Workspace.id: number
+Workspace.label: string
+Workspace.name: string
+Workspace.shown: boolean
+Workspaces.badge: number
+Workspaces.workspaces: Workspace[] | null
+event bye data=Record<string, never>
+event device data=Device
+event notice data=Notice
+event ping data=Record<string, never>
+event quick_replies data=QuickReplies
+event sessions data=Sessions
+event snapshot data=Snapshot
+event usage data=UsageEvent
+event workspaces data=Workspaces
+union AgentPageState "finished"
+union AgentPageState "running"
+union AgentPageState "unknown"
+union AskKind "permission"
+union AskKind "question"
+union FileOmitted ""
+union FileOmitted "budget"
+union FileOmitted "lines"
+union FileStatus "A"
+union FileStatus "C"
+union FileStatus "D"
+union FileStatus "M"
+union FileStatus "R"
+union FlowCell "asks"
+union FlowCell "failed"
+union FlowCell "passed"
+union FlowCell "running"
+union FlowCell "skipped"
+union FlowCell "todo"
+union FlowQuestionKind ""
+union FlowQuestionKind "agent-failed"
+union FlowQuestionKind "blocked-decision"
+union FlowQuestionKind "design-finding"
+union FlowQuestionKind "docs-strayed"
+union FlowQuestionKind "gate-failure"
+union FlowQuestionKind "lane"
+union FlowQuestionKind "needs-context"
+union FlowQuestionKind "premise-design"
+union FlowQuestionKind "tree-moved"
+union FlowQuestionKind "unresolved-findings"
+union FlowQuestionKind "usage-limit"
+union FlowStageName "design"
+union FlowStageName "draft"
+union FlowStageName "record"
+union FlowStageName "run"
+union FlowStageName "spec"
+union FlowStageState "done"
+union FlowStageState "now"
+union FlowStageState "todo"
+union FlowStageState "unreadable"
+union FlowStatus ""
+union FlowStatus "cancelled"
+union FlowStatus "designed"
+union FlowStatus "designing"
+union FlowStatus "done"
+union FlowStatus "drafted"
+union FlowStatus "drafting"
+union FlowStatus "lost"
+union FlowStatus "parked"
+union FlowStatus "running"
+union FlowStatus "stopped"
+union FlowStatus "supervised"
+union FlowStepKind "dev"
+union FlowStepKind "docs"
+union FlowStepKind "fix"
+union FlowStepKind "gates"
+union FlowStepKind "premise"
+union FlowStepKind "review"
+union ItemKind "compacted"
+union ItemKind "note"
+union ItemKind "steps"
+union ItemKind "text"
+union ItemKind "thinking"
+union JobControl ""
+union JobControl "pause"
+union JobControl "resume"
+union JobState "cancelled"
+union JobState "done"
+union JobState "failed"
+union JobState "held"
+union JobState "lost"
+union JobState "queued"
+union JobState "running"
+union PrChecks "failing"
+union PrChecks "none"
+union PrChecks "passing"
+union PrChecks "pending"
+union PrState "closed"
+union PrState "draft"
+union PrState "merged"
+union PrState "open"
+union SessionGroup "needs_you"
+union SessionGroup "paused"
+union SessionGroup "working"
+union SessionGroup "your_turn"
+union SessionStatus "Deleting"
+union SessionStatus "Loading"
+union SessionStatus "Paused"
+union SessionStatus "Prompting"
+union SessionStatus "Ready"
+union SessionStatus "Recoverable"
+union SessionStatus "Running"
+union StepState "done"
+union StepState "failed"
+union StepState "interrupted"
+union StepState "pending"
+union StopVerdict "done"
+union StopVerdict "needs_you"
+union StopVerdict "stopped"
+union StopVerdict "waiting"
+union TurnFrom "brief"
+union TurnFrom "peer"
+union TurnFrom "plugin"
+union TurnFrom "task"
+union TurnFrom "you"
