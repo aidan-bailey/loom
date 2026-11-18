@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/aidan-bailey/loom/core"
@@ -101,6 +102,47 @@ func (c *call) setAction(name string) { c.a.name = name }
 // notice adds a notice raised before the request (create's launch-account
 // notice), which act and actCreated put ahead of the Reply's.
 func (c *call) notice(n noticeJSON) { c.pre = append(c.pre, n) }
+
+// request makes the request send names with the layer's next request ID,
+// waits for it, and settles it with the notices raised before it (c.notice)
+// ahead of the Reply's.
+func (c *call) request(send func(req core.ReqID)) ([]noticeJSON, core.Reply, error) {
+	req := c.l.reqs.next()
+	send(req)
+	reply, notes, done := c.l.reqs.wait(c.r.Context(), req, c.device)
+	notes, err := c.l.settle(c.device, reply, slices.Concat(c.pre, notes), done)
+	return notes, reply, err
+}
+
+// act is doAction's request and wait: the notices on success (kept among the
+// hub's recent ones), errPending when the wait runs out (the notices raised
+// before the request go to the device's stream), and the Reply's error
+// otherwise, its other notices sent to the device's stream.
+func (c *call) act(send func(req core.ReqID)) (noticesJSON, error) {
+	notes, _, err := c.request(send)
+	if err != nil {
+		return noticesJSON{}, err
+	}
+	return noticesJSON{Notices: notes}, nil
+}
+
+// actCreated is act for a create: the answer names the new session, which
+// the log line carries too.
+func (c *call) actCreated(send func(req core.ReqID)) (createdJSON, error) {
+	notes, reply, err := c.request(send)
+	if err != nil {
+		return createdJSON{}, err
+	}
+	c.a.sessionID = reply.ID
+	return createdJSON{ID: reply.ID, Notices: notes}, nil
+}
+
+// read is readReply's wait for a typed read route: the Reply, untracked once
+// answered, or the model's error, or a *statusError 504 when replyWait ran
+// out.
+func (c *call) read(send func(req core.ReqID)) (core.Reply, error) {
+	return c.l.readReply(c.r.Context(), c.device, send)
+}
 
 // typed is a JSON route. A path holding {id} has its session resolved first,
 // answering its 404 before any decode and putting the session on the log

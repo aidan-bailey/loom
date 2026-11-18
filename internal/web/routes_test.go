@@ -350,3 +350,170 @@ func TestCall_NoticeCollectsTheNoticesRaisedBeforeTheRequestInOrder(t *testing.T
 	assert.Equal(t, "first", c.pre[0].Text)
 	assert.Equal(t, "second", c.pre[1].Text)
 }
+
+// replyWith is a send that answers its request at once with the events evs
+// makes, as the drain would, so the wait that follows returns.
+func replyWith(l *Layer, evs func(req core.ReqID) []core.Event) func(core.ReqID) {
+	return func(req core.ReqID) { l.reqs.apply(evs(req)) }
+}
+
+// newActCall is a call as the adapter makes one for the device "phone".
+func newActCall(env *apiEnv) *call {
+	return &call{l: env.layer, r: httptest.NewRequest(http.MethodPost, "/x", nil), device: "phone", a: actionLog{device: "phone", name: "pause"}}
+}
+
+// lateTexts records what goes to the device's stream, and returns the
+// recorded texts.
+func lateTexts(env *apiEnv) func() []string {
+	var texts []string
+	env.layer.reqs.setLate(func(device string, n noticeJSON) { texts = append(texts, device+": "+n.Text) })
+	return func() []string { return texts }
+}
+
+func TestSettle_AWaitThatRanOutIsPendingAndStreamsTheNoticesItWasGiven(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+
+	notes, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: "x", At: time.Now()}}, false)
+
+	require.ErrorIs(t, err, errPending)
+	assert.Nil(t, notes)
+	_, snap := env.openStream()
+	assert.Empty(t, snap.Notices, "the notices of a request still running are not among the hub's recent ones: they follow on the stream")
+	assert.Equal(t, []string{"phone: x"}, late(), "the notices raised before a request that goes pending are not lost: they go to the device's stream")
+}
+
+func TestSettle_AnOutcomeThatWorkedKeepsItsNoticesAndNeverReturnsNil(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	none, err := env.layer.settle("phone", core.Reply{}, nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, []noticeJSON{}, none, "an empty list, not null, so the body is {\"notices\":[]}")
+
+	notes, err := env.layer.settle("phone", core.Reply{}, []noticeJSON{{Text: "kept the stash abc123", At: time.Now()}}, true)
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 1, "kept among the recent notices the snapshot carries")
+	assert.Equal(t, "kept the stash abc123", snap.Notices[0].Text)
+}
+
+func TestSettle_ARefusalIsTheRepliesErrorAfterTheOtherNoticesGoToTheStream(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+	refusal := errors.New("cannot pause: not started")
+
+	notes, err := env.layer.settle("phone", core.Reply{Err: refusal},
+		[]noticeJSON{{Text: "stash kept"}, {Text: refusal.Error()}}, true)
+
+	require.ErrorIs(t, err, refusal)
+	assert.Nil(t, notes)
+	assert.Equal(t, []string{"phone: stash kept"}, late(), "the notice that repeats the error is dropped, the others go to the device")
+	_, snap := env.openStream()
+	assert.Empty(t, snap.Notices, "a refusal's notices are not kept")
+}
+
+func TestCall_ActListsTheNoticesRaisedBeforeTheRequestFirstAndKeepsThemAll(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "moved off a removed account", At: time.Now()})
+
+	out, err := c.act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Notice{Req: req, Info: "stash kept"}, core.Reply{Req: req}}
+	}))
+
+	require.NoError(t, err)
+	require.Len(t, out.Notices, 2)
+	assert.Equal(t, "moved off a removed account", out.Notices[0].Text)
+	assert.Equal(t, "stash kept", out.Notices[1].Text)
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 2, "the notice raised before is kept with the Reply's")
+}
+
+func TestCall_ActWithNoNoticesAnswersAnEmptyList(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	out, err := newActCall(env).act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, noticesJSON{Notices: []noticeJSON{}}, out)
+}
+
+func TestCall_ActStreamsTheNoticesOfARefusalWithTheOnesRaisedBeforeAndReturnsItsError(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	late := lateTexts(env)
+	c := newActCall(env)
+	c.notice(noticeJSON{Text: "moved off a removed account"})
+	refusal := errors.New("cannot pause: not started")
+
+	_, err := c.act(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Notice{Req: req, Info: "stash kept"}, core.Reply{Req: req, Err: refusal}}
+	}))
+
+	require.ErrorIs(t, err, refusal)
+	assert.Equal(t, []string{"phone: moved off a removed account", "phone: stash kept"}, late())
+}
+
+func TestCall_ActIsPendingWhenTheWaitRunsOut(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	env.layer.reqs.timeout = 50 * time.Millisecond
+
+	_, err := newActCall(env).act(func(core.ReqID) {})
+
+	assert.ErrorIs(t, err, errPending)
+}
+
+func TestCall_ActCreatedAnswersTheNewSessionsIDAndLogsIt(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	c := newActCall(env)
+
+	out, err := c.actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 7}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, createdJSON{ID: 7, Notices: []noticeJSON{}}, out)
+	assert.Equal(t, core.InstanceID(7), c.a.sessionID, "the log line names the session the create made")
+
+	_, err = newActCall(env).actCreated(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, Err: errors.New("no room")}}
+	}))
+	assert.EqualError(t, err, "no room")
+}
+
+func TestCall_ReadAnswersTheReplyAndStopsTrackingTheRequest(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	tracked := func() int {
+		env.layer.reqs.mu.Lock()
+		defer env.layer.reqs.mu.Unlock()
+		return len(env.layer.reqs.entries)
+	}
+	before := tracked()
+
+	reply, err := newActCall(env).read(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, ID: 5}}
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, core.InstanceID(5), reply.ID)
+	assert.Equal(t, before, tracked(), "a read's Reply carries its data, so the request is dropped once answered")
+}
+
+func TestCall_ReadReturnsTheModelsErrorAndA504WhenTheWaitRunsOut(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	refusal := errors.New("no such job")
+
+	_, err := newActCall(env).read(replyWith(env.layer, func(req core.ReqID) []core.Event {
+		return []core.Event{core.Reply{Req: req, Err: refusal}}
+	}))
+	assert.Equal(t, refusal, err, "the model's own error, for the adapter to map to 409")
+
+	env.layer.reqs.timeout = 50 * time.Millisecond
+	_, err = newActCall(env).read(func(core.ReqID) {})
+	var se *statusError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, http.StatusGatewayTimeout, se.status)
+	assert.Equal(t, "loom did not answer in time", se.msg)
+}

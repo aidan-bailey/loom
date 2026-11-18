@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -212,19 +213,30 @@ func (l *Layer) read(w http.ResponseWriter, r *http.Request, a actionLog, send f
 // refusal with its status, 504 when the model did not answer within
 // replyWait.
 func (l *Layer) readAnswering(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID), fail func(http.ResponseWriter, actionLog, int, string)) (core.Reply, bool) {
+	reply, err := l.readReply(r.Context(), a.device, send)
+	if err != nil {
+		status, msg := errStatus(err)
+		fail(w, a, status, msg)
+		return core.Reply{}, false
+	}
+	return reply, true
+}
+
+// readReply makes the read request send names, waits for its Reply and stops
+// tracking the request (reqs.drop). Its error is the model's own, or a
+// *statusError 504 when replyWait ran out.
+func (l *Layer) readReply(ctx context.Context, device string, send func(req core.ReqID)) (core.Reply, error) {
 	req := l.reqs.next()
 	defer l.reqs.drop(req)
 	send(req)
-	reply, _, done := l.reqs.wait(r.Context(), req, a.device)
+	reply, _, done := l.reqs.wait(ctx, req, device)
 	switch {
 	case !done:
-		fail(w, a, http.StatusGatewayTimeout, "loom did not answer in time")
+		return core.Reply{}, &statusError{http.StatusGatewayTimeout, "loom did not answer in time"}
 	case reply.Err != nil:
-		fail(w, a, modelStatus(reply.Err), reply.Err.Error())
-	default:
-		return reply, true
+		return core.Reply{}, reply.Err
 	}
-	return core.Reply{}, false
+	return reply, nil
 }
 
 // readTurns answers GET /api/v1/sessions/{id}/turns: a page of the
