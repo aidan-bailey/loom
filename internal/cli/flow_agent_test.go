@@ -339,6 +339,10 @@ func TestFlowAgent_ANameWhoseRunHasntEndedIsRefusedAndCancelEndsIt(t *testing.T)
 // the switch that makes a `5m` pin hold.
 func TestFlowAgent_AFiveMinutePinReachesTheJob(t *testing.T) {
 	_, _, logDir := agentFixture(t, "intermediate-dev", "junior-dev")
+	// A job inherits the switch from the test's own environment, which a
+	// headless agent running the suite has set: start from an unset one.
+	t.Setenv(envCache5m, "")
+	require.NoError(t, os.Unsetenv(envCache5m))
 	root := os.Getenv(flow.EnvRoot)
 	pin := func(role, ttl string) {
 		p := filepath.Join(root, "plugin", "agents", role+".md")
