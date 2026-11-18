@@ -68,11 +68,7 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 // routeAPI registers the sessions' actions under /api/v1. Every route needs
 // a paired device (authed); /pair, /stream and /push-key are other stories'.
 func (l *Layer) routeAPI(m *http.ServeMux) {
-	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
 	m.Handle("GET /api/v1/sessions/{id}/mockup", l.authed(l.readMockup))
-	m.Handle("POST /api/v1/sessions/{id}/jobs/{job}/{action}", l.authed(l.jobControl))
-	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
-	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
 	m.Handle("PUT /api/v1/quick-replies", l.authed(l.putQuickReplies))
 	m.Handle("POST /api/v1/device/push", l.authed(l.postPush))
@@ -124,15 +120,6 @@ func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a action
 	}
 	l.refuse(w, a, http.StatusNotFound, "no such session")
 	return 0, false
-}
-
-// doAction makes the request send names, with the web client's next request
-// ID, and answers from how it ended.
-func (l *Layer) doAction(w http.ResponseWriter, r *http.Request, a actionLog, send func(req core.ReqID)) {
-	req := l.reqs.next()
-	send(req)
-	reply, notes, done := l.reqs.wait(r.Context(), req, a.device)
-	l.writeOutcome(w, a, reply, notes, done, false)
 }
 
 // settle is the outcome rule of an action's request, which act, actCreated
@@ -282,57 +269,44 @@ type createBody struct {
 // checks the TUI makes (core's), a title no row of the workspace holds, then
 // the launch options (launchOptions), then the Create, whose Reply names the
 // new session at once. The start plays out on the stream.
-func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "create"}
-	var body createBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
-	}
+func (l *Layer) createSession(c *call, body createBody) (createdJSON, error) {
 	title := strings.TrimSpace(body.Title)
 	prompt := strings.TrimRight(body.Prompt, " \t\r\n")
 	if len(prompt) > maxPromptBytes {
-		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes))
-		return
+		return createdJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes)}
 	}
 	ws, ok := l.client.Workspace(body.Workspace)
 	if !ok {
-		l.refuse(w, a, http.StatusBadRequest, "workspace: no such workspace")
-		return
+		return createdJSON{}, &statusError{http.StatusBadRequest, "workspace: no such workspace"}
 	}
 	if err := core.CheckNewTitle(title, ws); err != nil {
-		l.refuse(w, a, http.StatusBadRequest, err.Error())
-		return
+		return createdJSON{}, &statusError{http.StatusBadRequest, err.Error()}
 	}
 	views := l.client.Views(ws.ID)
 	for _, check := range []error{core.CheckRoom(len(views)), core.CheckWritable(ws)} {
 		if check != nil {
-			l.refuse(w, a, http.StatusConflict, check.Error())
-			return
+			return createdJSON{}, &statusError{http.StatusConflict, check.Error()}
 		}
 	}
 	for _, v := range views {
 		if v.Title == title {
-			l.refuse(w, a, http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title))
-			return
+			return createdJSON{}, &statusError{http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title)}
 		}
 	}
 	program := ws.Settings.GetProgram()
 	l.client.ReloadAccounts()
 	opts, notice, refused := l.launchOptions(ws, program, body)
 	if refused != nil {
-		l.refuse(w, a, refused.status, refused.msg)
-		return
+		return createdJSON{}, refused
 	}
-	var pre []noticeJSON
 	if notice != "" {
-		pre = append(pre, noticeOf(core.Notice{Info: notice}, l.now()))
+		c.notice(noticeOf(core.Notice{Info: notice}, l.now()))
 	}
-	req := l.reqs.next()
-	l.client.Create(ws.ID, core.NewInstance{
-		Title: title, Path: ws.RepoPath, Program: program, Prompt: prompt, Launch: opts, Start: true,
-	}, req)
-	reply, notes, done := l.reqs.wait(r.Context(), req, device)
-	l.writeOutcome(w, a, reply, append(pre, notes...), done, true)
+	return c.actCreated(func(req core.ReqID) {
+		l.client.Create(ws.ID, core.NewInstance{
+			Title: title, Path: ws.RepoPath, Program: program, Prompt: prompt, Launch: opts, Start: true,
+		}, req)
+	})
 }
 
 // launchOptions are the options a new session in ws launches program with:
@@ -398,16 +372,19 @@ type launchDefaultsJSON struct {
 	Efforts         []string `json:"efforts"`
 }
 
+// launchDefaultsParams is GET /api/v1/launch-defaults's query.
+type launchDefaultsParams struct {
+	Workspace string `query:"workspace"`
+}
+
 // launchDefaults answers GET /api/v1/launch-defaults?workspace=<id> as the
 // modal would pre-fill a new session in that workspace. The accounts are the
 // registry's, for a Claude program only: any other takes no account.
-func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "launch-defaults"}
-	n, err := strconv.ParseUint(r.URL.Query().Get("workspace"), 10, 64)
+func (l *Layer) launchDefaults(_ *call, p launchDefaultsParams) (launchDefaultsJSON, error) {
+	n, err := strconv.ParseUint(p.Workspace, 10, 64)
 	ws, ok := l.client.Workspace(core.WorkspaceID(n))
 	if err != nil || !ok {
-		l.refuse(w, a, http.StatusBadRequest, "workspace: no such workspace")
-		return
+		return launchDefaultsJSON{}, &statusError{http.StatusBadRequest, "workspace: no such workspace"}
 	}
 	program := ws.Settings.GetProgram()
 	l.client.ReloadAccounts()
@@ -425,8 +402,7 @@ func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, device st
 	if names := l.client.AccountNames(); names.Present && session.IsClaudeProgram(program) {
 		out.Accounts = append(out.Accounts, names.Names...)
 	}
-	l.record(a, http.StatusOK, "ok")
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // deviceBody is PUT /api/v1/device: the notification settings to change; one

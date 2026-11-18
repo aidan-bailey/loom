@@ -320,6 +320,22 @@ func (l *Layer) routes() []route {
 			method: http.MethodGet, path: "/api/v1/flows", log: "flows", client: "flows", ok: http.StatusOK,
 			doc: "Every session's flows and the host's past runs: `{live, past}`, a live one `{session, title, flow}`, a past one `{key, file, stem, plan, stories, ended, end, usd, unreadable}`, newest first.",
 		}, l.readFlows),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/jobs/{job}/{action}", log: "job_control", client: "jobControl", ok: http.StatusOK,
+			doc: "A control of one of the session's jobs (the job controls spec): `action` is `start` (start a queued job now, past the queue's fit), `park` or `unpark` (a waiting job), `pause` or `resume` (a running one). Any other action is 404 (`no such action`), a malformed `job` 400, and a refusal, a job that is not the session's included, the model's 409.",
+		}, l.jobControl),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/asks/{ask}/answer", log: "answer", client: "answer", ok: http.StatusOK,
+			doc: "`{answers}` (each question's `labels`, `other` and `note`, by its text), `{chat, chat_text}`, or `{allow, suggestion}` / `{allow: false, message}`: answers one of the session's asks. 200 once the session's loom mod took the answer, 409 with the model's words for every refusal; an `ask` ID over 128 bytes, more than 8 answers or 8 labels a question, or a text over 64 KiB is 400.",
+		}, l.answerAsk),
+		typed(l, spec{
+			method: http.MethodPost, path: "/api/v1/sessions", log: "create", client: "create", ok: http.StatusCreated,
+			doc: "`{workspace, title, prompt}` and the optional `account`, `model`, `permission_mode`, `effort`: creates and starts a session as `loom session new` does; 201 `{id, notices}`. The prompt is at most 64 KiB and the title as `core.CheckNewTitle` says; an override that is no registered account, no model in `config.ClaudeModelAliases()`, no mode in `config.ClaudePermissionModes` or no effort in `config.ClaudeEfforts` is 400, and a workspace that is full or read-only, a title the workspace holds, or remote control the account's login can't use is 409.",
+		}, l.createSession),
+		typed(l, spec{
+			method: http.MethodGet, path: "/api/v1/launch-defaults", log: "launch-defaults", client: "launchDefaults", ok: http.StatusOK,
+			doc: "`?workspace=<id>`: what the new-session sheet pre-fills (`account`, `model`, `permission_mode`, `effort`) and the choices it offers (`accounts`, `models`, `permission_modes`, `efforts`), from the account registry, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none. An unknown workspace is 400.",
+		}, l.launchDefaults),
 	}
 }
 

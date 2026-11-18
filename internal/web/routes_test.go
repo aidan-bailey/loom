@@ -735,3 +735,55 @@ func TestAPI_JobLogAndFlowReadsOfAWorkspaceTerminalAre404(t *testing.T) {
 		assert.Equal(t, "no such session", apiErrorOf(t, out), path)
 	}
 }
+
+func TestRoutes_TheActionRoutesAreOnTheTable(t *testing.T) {
+	requireRows(t, []tableRow{
+		{http.MethodPost, "/api/v1/sessions/{id}/asks/{ask}/answer", "answer", http.StatusOK, nil, reflect.TypeFor[answerBody](), reflect.TypeFor[noticesJSON]()},
+		{http.MethodPost, "/api/v1/sessions/{id}/jobs/{job}/{action}", "jobControl", http.StatusOK, nil, nil, reflect.TypeFor[noticesJSON]()},
+		{http.MethodPost, "/api/v1/sessions", "create", http.StatusCreated, nil, reflect.TypeFor[createBody](), reflect.TypeFor[createdJSON]()},
+		{http.MethodGet, "/api/v1/launch-defaults", "launchDefaults", http.StatusOK, reflect.TypeFor[launchDefaultsParams](), nil, reflect.TypeFor[launchDefaultsJSON]()},
+	})
+}
+
+func TestAPI_AnswerWithAnOversizedAskAndABadBodyGetsTheDecodes400(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+	long := fmt.Sprintf("/api/v1/sessions/%d/asks/%s/answer", env.ids["idle"], strings.Repeat("a", 129))
+
+	status, out := env.do(http.MethodPost, long, "not json")
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Contains(t, apiErrorOf(t, out), "bad request: ", "the adapter decodes the body before the handler looks at the ask")
+
+	status, out = env.do(http.MethodPost, long, map[string]any{"allow": true})
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "ask: want an ID of 1 to 128 bytes", apiErrorOf(t, out), "with a good body the ask's own check answers")
+}
+
+func TestAPI_JobControlOfAnUnknownSessionAndAnUnknownActionIsTheSessions404(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "fresh", session.Ready)}})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions/999999/jobs/7/nap", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such session", apiErrorOf(t, out), "the adapter resolves {id} before the handler checks the action")
+
+	status, out = env.do(http.MethodPost, "/api/v1/sessions/999999/jobs/7/park", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such session", apiErrorOf(t, out), "a valid action on an unknown session")
+	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "job_control", result: "404 no such session"}, "the handler never ran, so the line keeps the route's name, not job_park")
+
+	status, out = env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/jobs/7/nap", env.ids["fresh"]), nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such action", apiErrorOf(t, out), "a known session and an unknown action")
+	assert.Contains(t, env.logged(), loggedAction{device: "phone", name: "job_control", session: env.ids["fresh"], result: "404 no such action"})
+}
+
+func TestAPI_JobControlLogsItsActionByName(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "fresh", session.Ready)}})
+
+	status, _ := env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/jobs/7/park", env.ids["fresh"]), nil)
+
+	assert.Equal(t, http.StatusConflict, status, "the model has no job 7")
+	got := env.logged()
+	require.Len(t, got, 1)
+	assert.Equal(t, "job_park", got[0].name, "the log line names the action the path chose")
+	assert.Equal(t, env.ids["fresh"], got[0].session)
+}

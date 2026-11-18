@@ -231,24 +231,21 @@ var jobActions = map[string]core.JobAction{
 // jobControl is POST /api/v1/sessions/{id}/jobs/{job}/{action}: a control
 // of one of the session's jobs. The model checks that the job is the
 // session's and refuses what the action can't do.
-func (l *Layer) jobControl(w http.ResponseWriter, r *http.Request, device string) {
-	action, ok := jobActions[r.PathValue("action")]
+func (l *Layer) jobControl(c *call, _ struct{}) (noticesJSON, error) {
+	action, ok := jobActions[c.r.PathValue("action")]
 	if !ok {
-		l.refuse(w, actionLog{device: device, name: "job_control"}, http.StatusNotFound, "no such action")
-		return
+		return noticesJSON{}, &statusError{http.StatusNotFound, "no such action"}
 	}
-	a := actionLog{device: device, name: "job_" + string(action)}
-	id, ok := l.sessionFromPath(w, r, a)
-	if !ok {
-		return
-	}
-	a.sessionID = id
-	job, err := jobFromPath(r)
+	c.setAction("job_" + string(action))
+	id, err := c.session()
 	if err != nil {
-		l.refuse(w, a, http.StatusBadRequest, err.Error())
-		return
+		return noticesJSON{}, err
 	}
-	l.doAction(w, r, a, func(req core.ReqID) {
+	job, err := jobFromPath(c.r)
+	if err != nil {
+		return noticesJSON{}, &statusError{http.StatusBadRequest, err.Error()}
+	}
+	return c.act(func(req core.ReqID) {
 		l.client.ControlJob(core.JobControl{Job: job, Owner: id, Action: action}, req)
 	})
 }

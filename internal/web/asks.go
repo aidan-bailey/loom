@@ -269,25 +269,17 @@ type questionAnswerBody struct {
 // answerAsk answers one of a session's asks from the device. The model
 // checks the answer against the ask (core.Answer) and replies once the
 // session's mod took it; every refusal is 409 with its words.
-func (l *Layer) answerAsk(w http.ResponseWriter, r *http.Request, device string) {
-	a := actionLog{device: device, name: "answer"}
-	id, ok := l.sessionFromPath(w, r, a)
-	if !ok {
-		return
+func (l *Layer) answerAsk(c *call, body answerBody) (noticesJSON, error) {
+	id, err := c.session()
+	if err != nil {
+		return noticesJSON{}, err
 	}
-	a.sessionID = id
-	ask := r.PathValue("ask")
+	ask := c.r.PathValue("ask")
 	if ask == "" || len(ask) > maxAskPath {
-		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("ask: want an ID of 1 to %d bytes", maxAskPath))
-		return
-	}
-	var body answerBody
-	if !l.decodeBody(w, r, a, &body) {
-		return
+		return noticesJSON{}, &statusError{http.StatusBadRequest, fmt.Sprintf("ask: want an ID of 1 to %d bytes", maxAskPath)}
 	}
 	if why := body.tooBig(); why != "" {
-		l.refuse(w, a, http.StatusBadRequest, why)
-		return
+		return noticesJSON{}, &statusError{http.StatusBadRequest, why}
 	}
 	answer := core.AskAnswer{Chat: body.Chat, ChatText: body.ChatText, Allow: body.Allow, Suggestion: body.Suggestion, Message: body.Message}
 	if len(body.Answers) > 0 {
@@ -296,7 +288,7 @@ func (l *Layer) answerAsk(w http.ResponseWriter, r *http.Request, device string)
 			answer.Questions[q] = core.QuestionAnswer{Labels: qa.Labels, Other: qa.Other, Note: qa.Note}
 		}
 	}
-	l.doAction(w, r, a, func(req core.ReqID) {
+	return c.act(func(req core.ReqID) {
 		l.client.Answer(id, ask, answer, req)
 	})
 }
