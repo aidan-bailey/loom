@@ -681,3 +681,58 @@ func TestStatic_TheStylesheetHasNoFenceAndItsBracesBalance(t *testing.T) {
 	}
 	require.Zero(t, depth, "app.css leaves a brace open")
 }
+
+// distStylesheet is the new tree's stylesheet text, with every space after a colon and every
+// newline removed so the minifier's spacing never decides a check.
+func distStylesheet(t *testing.T) string {
+	t.Helper()
+	var css strings.Builder
+	for _, a := range nextStaticAssets(t) {
+		if strings.HasPrefix(a.ctype, "text/css") {
+			css.Write(a.body)
+		}
+	}
+	if css.Len() == 0 {
+		t.Fatal("the new tree has no stylesheet: is main.tsx importing styles/app.css and dist rebuilt?")
+	}
+	return strings.NewReplacer(": ", ":", "\n", "").Replace(css.String())
+}
+
+func TestDist_TheSkinDefinesEveryToken(t *testing.T) {
+	css := distStylesheet(t)
+	for _, name := range []string{
+		"background", "foreground", "card", "card-foreground", "popover", "popover-foreground",
+		"primary", "primary-foreground", "secondary", "secondary-foreground", "muted",
+		"muted-foreground", "accent", "accent-foreground", "destructive", "border", "input", "ring",
+		"faint", "attention", "turn", "working", "error", "workspace", "docs", "diff-add", "diff-del",
+	} {
+		require.Contains(t, css, "--"+name+":", "token --%s is not defined", name)
+	}
+	lower := strings.ToLower(css)
+	for name, hex := range map[string]string{
+		"background": "#0f1012", "foreground": "#e6e7ea", "card": "#16181c", "border": "#23262b",
+		"muted": "#1c1f24", "muted-foreground": "#a3a8b1", "faint": "#6f747d",
+		"attention": "#f0b45a", "turn": "#6ca4e0", "working": "#8fc46a", "error": "#e8836b",
+		"workspace": "#d9a3b8", "docs": "#a991d4",
+	} {
+		require.Contains(t, lower, "--"+name+":"+hex, "token --%s has not the value %s", name, hex)
+	}
+	for _, use := range []string{"var(--attention)", "var(--primary)", "var(--muted-foreground)", "var(--card)", "var(--faint)"} {
+		require.Contains(t, css, use, "no utility reads %s: is the @theme inline mapping gone?", use)
+	}
+}
+
+func TestDist_TheSkinBundlesOnlyTheLatinFonts(t *testing.T) {
+	assets := nextStaticAssets(t)
+	fonts := 0
+	for _, a := range assets {
+		if a.ctype == "font/woff2" {
+			fonts++
+		}
+	}
+	require.Equal(t, 2, fonts, "the bundle holds Inter's and JetBrains Mono's latin files and no other font")
+	css := distStylesheet(t)
+	require.Contains(t, css, "Inter")
+	require.Contains(t, css, "JetBrains Mono")
+	require.NotContains(t, css, "url(data:", "a font is inlined as a data: URL, which the CSP's font-src refuses")
+}
