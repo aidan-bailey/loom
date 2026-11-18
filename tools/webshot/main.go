@@ -167,7 +167,13 @@ func run(args []string) error {
 	failed := false
 	for _, sc := range todo {
 		file := filepath.Join(*out, sc.name+".png")
-		problems, err := shoot(ctx, pg, loom, d, bar, sc, origin, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
+		// Each screen gets a tab of its own (see page.close).
+		tab, err := b.openPage(ctx, d)
+		if err != nil {
+			return fmt.Errorf("%s: %w", sc.name, err)
+		}
+		problems, err := shoot(ctx, tab, loom, d, bar, sc, origin, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
+		tab.close(ctx)
 		if err != nil {
 			return fmt.Errorf("%s: %w", sc.name, err)
 		}
@@ -396,8 +402,9 @@ func firstLine(s string) string {
 
 // page is a tab emulating the device.
 type page struct {
-	b       *browser
-	session string
+	b        *browser
+	session  string
+	targetID string
 }
 
 // openPage opens a tab and makes it the device's Home Screen app: its
@@ -418,13 +425,21 @@ func (b *browser) openPage(ctx context.Context, d device) (*page, error) {
 	if err := b.cdp.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, &a); err != nil {
 		return nil, err
 	}
-	p := &page{b: b, session: a.SessionID}
+	p := &page{b: b, session: a.SessionID, targetID: t.TargetID}
 	for _, s := range emulation(d) {
 		if err := b.cdp.call(ctx, p.session, s.method, s.params, nil); err != nil {
 			return nil, err
 		}
 	}
 	return p, nil
+}
+
+// close closes the tab, which ends its streams: a tab navigated away from
+// is kept (for the back button) with its server-sent stream open, and six of
+// them hold every connection Chromium allows the host, so the next screen's
+// load waits about a minute for one.
+func (p *page) close(ctx context.Context) {
+	_ = p.b.cdp.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": p.targetID}, nil)
 }
 
 // cdpStep is one call that sets a tab up.
