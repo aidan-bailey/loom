@@ -141,8 +141,7 @@ func TestFirstLoadFiles_NoEntryScriptIsAnError(t *testing.T) {
 	require.ErrorContains(t, err, "no entry script")
 }
 
-// budgetRandom draws n incompressible bytes from r, so gzip cannot shrink them;
-// the draws come from one source, so no two files share bytes gzip could reuse.
+// budgetRandom draws n incompressible bytes from r, so gzip cannot shrink them.
 func budgetRandom(r *rand.Rand, n int) []byte {
 	b := make([]byte, n)
 	r.Read(b)
