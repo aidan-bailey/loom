@@ -423,11 +423,14 @@ func (b *browser) openPage(ctx context.Context, d device) (*page, error) {
 		SessionID string `json:"sessionId"`
 	}
 	if err := b.cdp.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, &a); err != nil {
+		// The tab exists: close it, or it keeps its connection slot.
+		(&page{b: b, targetID: t.TargetID}).close(ctx)
 		return nil, err
 	}
 	p := &page{b: b, session: a.SessionID, targetID: t.TargetID}
 	for _, s := range emulation(d) {
 		if err := b.cdp.call(ctx, p.session, s.method, s.params, nil); err != nil {
+			p.close(ctx)
 			return nil, err
 		}
 	}
