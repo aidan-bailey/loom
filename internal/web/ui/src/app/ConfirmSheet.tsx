@@ -97,6 +97,14 @@ function answer(id: number, value: string | null): void {
   ask.resolve(value);
 }
 
+// testSeam reaches what a test needs and the module otherwise keeps to
+// itself: the open ask's id, and `answer`, whose id check a replaced ask's
+// buttons would otherwise never reach (they unmount with the ask).
+export const testSeam = {
+  openId: (): number | null => current?.id ?? null,
+  answer,
+};
+
 // firstValue is the value a field starts with: a text field's empty text, a
 // choice's first option.
 function firstValue(field: ConfirmField | undefined): string {

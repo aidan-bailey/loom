@@ -8,7 +8,7 @@ import { useFleet } from "@/store/fleet";
 
 import { CommandButton } from "./CommandButton";
 import { defineCommand, type CommandContext } from "./commands";
-import { askConfirm, ConfirmSheet, type ConfirmSpec } from "./ConfirmSheet";
+import { askConfirm, ConfirmSheet, testSeam, type ConfirmSpec } from "./ConfirmSheet";
 
 const kill: ConfirmSpec = {
   title: "Kill session",
@@ -78,6 +78,36 @@ describe("ConfirmSheet", () => {
     expect(await first).toBeNull();
     expect(await screen.findByText("Pushes the branch.")).toBeInTheDocument();
     expect(screen.queryByText("Kill session")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Push" }));
+    expect(await second).toBe("");
+  });
+
+  // Fails without `ask.id !== id` in answer: the old ask's answer would close
+  // the newer sheet and resolve its promise with the old ask's value.
+  it("an answer from a replaced ask changes nothing: the newer ask stays open and resolves its own value", async () => {
+    render(<ConfirmSheet />);
+    const first = ask(kill);
+    await screen.findByText("Kill session");
+    const firstId = testSeam.openId();
+    expect(firstId).not.toBeNull();
+
+    const second = ask({
+      title: "Push",
+      body: "Pushes the branch.",
+      action: "Push",
+      destructive: false,
+    });
+    expect(await first).toBeNull();
+    expect(await screen.findByText("Pushes the branch.")).toBeInTheDocument();
+    expect(testSeam.openId()).not.toBe(firstId);
+
+    act(() => {
+      testSeam.answer(firstId ?? -1, "late");
+      testSeam.answer(firstId ?? -1, null);
+    });
+    expect(screen.getByText("Pushes the branch.")).toBeInTheDocument();
+    expect(testSeam.openId()).not.toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Push" }));
     expect(await second).toBe("");
