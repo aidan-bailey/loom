@@ -22,6 +22,8 @@
         "workspace": 1,
         "title": "fix-pane-cursor",
         "branch": "aidanb/fix-pane-cursor",
+        "worktree": "/work/loom/fix-pane-cursor",
+        "tmux": "loom_fix-pane-cursor",
         "group": "working",
         "label": "Working",
         "status": "Running",
@@ -96,6 +98,26 @@
             "failure": "",
             "cancel_reason": "",
             "waiting": "after job 214",
+            "parked": false,
+            "paused": false,
+            "pause_reclaimed": false,
+            "forced": false,
+            "control": "",
+            "control_error": ""
+          },
+          {
+            "id": 216,
+            "state": "queued",
+            "description": "e2e tests",
+            "command": "go test -tags e2e ./e2e/...",
+            "agent": "",
+            "submitted": "now-1m",
+            "started": "",
+            "ended": "",
+            "exit": null,
+            "failure": "",
+            "cancel_reason": "",
+            "waiting": "waiting for 6 free cores",
             "parked": false,
             "paused": false,
             "pause_reclaimed": false,
@@ -183,7 +205,81 @@
         "jobs": [],
         "jobs_label": "",
         "jobs_focus": 0,
-        "asks": [],
+        "asks": [
+          {
+            "id": "fixture-permission",
+            "kind": "permission",
+            "agent": "",
+            "opened": "now-4m",
+            "answering": false,
+            "tool": "Bash",
+            "summary": "go test ./ui/... -run TestPane",
+            "input": [
+              {
+                "label": "command",
+                "text": "go test ./ui/... -run TestPane",
+                "mono": true
+              },
+              {
+                "label": "description",
+                "text": "Run the pane tests"
+              }
+            ],
+            "suggestions": [
+              {
+                "label": "Yes, and don't ask again for Bash(go test:*) in this project, for you",
+                "persists": true
+              },
+              {
+                "label": "Yes, and don't ask again for Bash(go test:*) for this session"
+              }
+            ]
+          },
+          {
+            "id": "fixture-question",
+            "kind": "question",
+            "agent": "recon",
+            "opened": "now-3m",
+            "answering": false,
+            "questions": [
+              {
+                "question": "Which tests should run?",
+                "header": "Tests",
+                "multi": false,
+                "options": [
+                  {
+                    "label": "Pane only",
+                    "description": "Just TestPane",
+                    "preview": "go test ./ui/... -run TestPane\n--- PASS: TestPane (0.01s)"
+                  },
+                  {
+                    "label": "Whole package",
+                    "description": "Every test in ui"
+                  }
+                ]
+              },
+              {
+                "question": "Which checks to add?",
+                "header": "Checks",
+                "multi": true,
+                "options": [
+                  {
+                    "label": "race",
+                    "description": "Run with the race detector"
+                  },
+                  {
+                    "label": "vet",
+                    "description": "go vet ./..."
+                  },
+                  {
+                    "label": "lint",
+                    "description": "golangci-lint on the diff"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
         "flows": []
       },
       {

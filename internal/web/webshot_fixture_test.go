@@ -7,8 +7,45 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/stretchr/testify/require"
 )
+
+func readFixture(t *testing.T, name string, into any) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "tools", "webshot", "fixture", name))
+	require.NoError(t, err)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(into))
+}
+
+// TestWebshotFixture_TheAsksAreOfKindsTheLayerSends holds each canned ask to a
+// kind the layer sends and to the fields that kind carries.
+func TestWebshotFixture_TheAsksAreOfKindsTheLayerSends(t *testing.T) {
+	var snap snapshotJSON
+	readFixture(t, "snapshot.json", &snap)
+	n := 0
+	for _, list := range snap.Sessions {
+		for _, s := range list {
+			for _, a := range s.Asks {
+				n++
+				switch a.Kind {
+				case askKind(core.AskKindQuestion):
+					require.NotEmpty(t, a.Questions, a.ID)
+					require.Empty(t, a.Tool, a.ID)
+				case askKind(core.AskKindPermission):
+					require.NotEmpty(t, a.Tool, a.ID)
+					require.NotEmpty(t, a.Input, a.ID)
+					require.Empty(t, a.Questions, a.ID)
+				default:
+					t.Fatalf("ask %s has kind %q, which the layer never sends", a.ID, a.Kind)
+				}
+			}
+		}
+	}
+	require.NotZero(t, n, "the canned loom holds at least one ask")
+}
 
 // TestWebshotFixture_IsTheJSONTheLayerServes holds tools/webshot's canned
 // loom to the types this layer encodes: a field renamed or dropped here

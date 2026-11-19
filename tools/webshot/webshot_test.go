@@ -367,6 +367,120 @@ func TestFixture_SessionOnesAgentsCarryTheIdsTheTurnsLinkTo(t *testing.T) {
 	t.Fatal("no session 1")
 }
 
+func TestFixture_SessionTwoHoldsAPermissionAndAQuestionAsk(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Sessions map[string][]struct {
+			ID     int           `json:"id"`
+			Agents []interface{} `json:"agents"`
+			Asks   []struct {
+				ID    string `json:"id"`
+				Kind  string `json:"kind"`
+				Agent string `json:"agent"`
+				Tool  string `json:"tool"`
+				Input []struct {
+					Label string `json:"label"`
+					Mono  bool   `json:"mono"`
+				} `json:"input"`
+				Suggestions []struct {
+					Persists bool `json:"persists"`
+				} `json:"suggestions"`
+				Questions []struct {
+					Question string `json:"question"`
+					Multi    bool   `json:"multi"`
+					Options  []struct {
+						Label   string `json:"label"`
+						Preview string `json:"preview"`
+					} `json:"options"`
+				} `json:"questions"`
+			} `json:"asks"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	found := false
+	for _, list := range snap.Sessions {
+		for _, s := range list {
+			if s.ID != 2 {
+				assert.Empty(t, s.Asks, "only session 2 holds asks")
+				continue
+			}
+			found = true
+			assert.Empty(t, s.Agents)
+			require.Len(t, s.Asks, 2)
+			perm, q := s.Asks[0], s.Asks[1]
+			assert.Equal(t, "fixture-permission", perm.ID)
+			assert.Equal(t, "permission", perm.Kind)
+			assert.Equal(t, "Bash", perm.Tool)
+			require.Len(t, perm.Input, 2)
+			assert.Equal(t, "command", perm.Input[0].Label)
+			assert.True(t, perm.Input[0].Mono)
+			assert.Equal(t, "description", perm.Input[1].Label)
+			assert.False(t, perm.Input[1].Mono)
+			require.Len(t, perm.Suggestions, 2)
+			assert.True(t, perm.Suggestions[0].Persists)
+			assert.False(t, perm.Suggestions[1].Persists)
+			assert.Equal(t, "fixture-question", q.ID)
+			assert.Equal(t, "question", q.Kind)
+			assert.Equal(t, "recon", q.Agent)
+			require.Len(t, q.Questions, 2)
+			assert.Equal(t, "Which tests should run?", q.Questions[0].Question)
+			assert.False(t, q.Questions[0].Multi)
+			assert.Equal(t, "Which checks to add?", q.Questions[1].Question)
+			assert.True(t, q.Questions[1].Multi)
+			for qi, qq := range q.Questions {
+				for _, o := range qq.Options {
+					assert.Equal(t, qi == 0 && o.Label == "Pane only", o.Preview != "", "a preview on Pane only and no other option: %s", o.Label)
+				}
+			}
+		}
+	}
+	require.True(t, found, "no session 2")
+}
+
+func TestFixture_SessionOneHoldsAWorktreeATmuxSessionAndAQueuedJob(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Sessions map[string][]struct {
+			ID       int    `json:"id"`
+			Worktree string `json:"worktree"`
+			Tmux     string `json:"tmux"`
+			Jobs     []struct {
+				ID      int    `json:"id"`
+				State   string `json:"state"`
+				Waiting string `json:"waiting"`
+			} `json:"jobs"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	found := false
+	for _, list := range snap.Sessions {
+		for _, s := range list {
+			if s.ID != 1 {
+				assert.Empty(t, s.Worktree, "no other session has a worktree")
+				assert.Empty(t, s.Tmux, "no other session has a tmux session")
+				assert.Empty(t, s.Jobs, "no other session has a job")
+				continue
+			}
+			found = true
+			assert.Equal(t, "/work/loom/fix-pane-cursor", s.Worktree)
+			assert.Equal(t, "loom_fix-pane-cursor", s.Tmux)
+			states := map[int]string{}
+			for _, j := range s.Jobs {
+				states[j.ID] = j.State
+				if j.ID == 216 {
+					assert.Equal(t, "waiting for 6 free cores", j.Waiting)
+				}
+			}
+			assert.Equal(t, map[int]string{214: "running", 215: "held", 216: "queued", 212: "done", 209: "failed"}, states)
+		}
+	}
+	require.True(t, found, "no session 1")
+}
+
 func TestPickScreens(t *testing.T) {
 	all, err := pickScreens("")
 	require.NoError(t, err)
