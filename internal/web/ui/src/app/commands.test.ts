@@ -137,7 +137,7 @@ describe("runCommand", () => {
   });
 
   it("asks the sheet first, with the spec built from the context and arguments, and runs on yes", async () => {
-    vi.mocked(askConfirm).mockResolvedValue(true);
+    vi.mocked(askConfirm).mockResolvedValue("");
     const run = vi.fn<(ctx: CommandContext, note: string) => Promise<void>>(() =>
       Promise.resolve(),
     );
@@ -165,7 +165,7 @@ describe("runCommand", () => {
   });
 
   it("runs nothing when the sheet is declined", async () => {
-    vi.mocked(askConfirm).mockResolvedValue(false);
+    vi.mocked(askConfirm).mockResolvedValue(null);
     const run = vi.fn(() => Promise.resolve());
     const command = defineCommand({
       id: "test.declined",
@@ -184,7 +184,7 @@ describe("runCommand", () => {
     useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
     vi.mocked(askConfirm).mockImplementation(() => {
       useFleet.getState().setLink("offline");
-      return Promise.resolve(true);
+      return Promise.resolve("");
     });
     const run = vi.fn(() => Promise.resolve());
     const command = defineCommand({
@@ -223,7 +223,7 @@ describe("runCommand", () => {
       run,
     });
 
-    vi.mocked(askConfirm).mockResolvedValueOnce(true);
+    vi.mocked(askConfirm).mockResolvedValueOnce("");
     await runCommand(command, ctx({ session }), undefined);
     expect(run).toHaveBeenCalledOnce();
     expect(run.mock.calls[0]?.[0].session?.id).toBe(session.id);
@@ -243,7 +243,7 @@ describe("runCommand", () => {
         ]),
       );
       useFleet.setState({ snapshot: { ...snapshot, sessions } });
-      return Promise.resolve(true);
+      return Promise.resolve("");
     });
     const started = ctx({ session });
     await runCommand(command, started, undefined);
@@ -254,7 +254,7 @@ describe("runCommand", () => {
 
     vi.mocked(askConfirm).mockImplementationOnce(() => {
       useFleet.setState({ snapshot: { ...snapshot, sessions: {} } });
-      return Promise.resolve(true);
+      return Promise.resolve("");
     });
     await runCommand(command, ctx({ session }), undefined);
     expect(run).toHaveBeenCalledOnce();

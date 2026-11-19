@@ -515,7 +515,7 @@ describe("AppShell's chrome", () => {
     shellAt("#/");
     await screen.findByText("outlet");
 
-    let answer = Promise.resolve(true);
+    let answer = Promise.resolve<string | null>("");
     act(() => {
       answer = askConfirm({
         title: "Kill session",
@@ -526,7 +526,7 @@ describe("AppShell's chrome", () => {
     });
     expect(await screen.findByText("Kill session")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(await answer).toBe(false);
+    expect(await answer).toBeNull();
 
     act(() => {
       showMessage("Stashed as 1a2b3c4.");

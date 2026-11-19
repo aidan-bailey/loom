@@ -134,7 +134,7 @@ export async function runCommand<A>(
   try {
     let at = ctx;
     if (command.confirm !== undefined) {
-      if (!(await askConfirm(command.confirm(ctx, args)))) return;
+      if ((await askConfirm(command.confirm(ctx, args))) === null) return;
       at = freshContext(ctx);
       if (!commandEnabled(command, at)) {
         showMessage("loom changed while you were deciding, so nothing was done.", true);

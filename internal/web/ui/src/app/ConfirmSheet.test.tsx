@@ -18,8 +18,8 @@ const kill: ConfirmSpec = {
 };
 
 // ask opens the sheet with spec and returns the promise askConfirm gave.
-function ask(spec: ConfirmSpec): Promise<boolean> {
-  let answer = Promise.resolve(false);
+function ask(spec: ConfirmSpec): Promise<string | null> {
+  let answer = Promise.resolve<string | null>(null);
   act(() => {
     answer = askConfirm(spec);
   });
@@ -32,7 +32,7 @@ describe("ConfirmSheet", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("names what the command does, and resolves true on its action", async () => {
+  it("names what the command does, and resolves the empty value on its action when it has no field", async () => {
     render(<ConfirmSheet />);
     const answer = ask(kill);
 
@@ -40,30 +40,30 @@ describe("ConfirmSheet", () => {
     expect(screen.getByText(/Removes the worktree \/w\/x/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Kill" }));
-    expect(await answer).toBe(true);
+    expect(await answer).toBe("");
     await waitFor(() => {
       expect(screen.queryByText("Kill session")).toBeNull();
     });
   });
 
-  it("resolves false on Cancel", async () => {
+  it("resolves null on Cancel", async () => {
     render(<ConfirmSheet />);
     const answer = ask(kill);
 
     await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-    expect(await answer).toBe(false);
+    expect(await answer).toBeNull();
   });
 
-  it("resolves false on Escape", async () => {
+  it("resolves null on Escape", async () => {
     render(<ConfirmSheet />);
     const answer = ask(kill);
     await screen.findByText("Kill session");
 
     await userEvent.keyboard("{Escape}");
-    expect(await answer).toBe(false);
+    expect(await answer).toBeNull();
   });
 
-  it("lets a newer ask replace an open one, which resolves false", async () => {
+  it("lets a newer ask replace an open one, which resolves null", async () => {
     render(<ConfirmSheet />);
     const first = ask(kill);
     await screen.findByText("Kill session");
@@ -75,12 +75,158 @@ describe("ConfirmSheet", () => {
       destructive: false,
     });
 
-    expect(await first).toBe(false);
+    expect(await first).toBeNull();
     expect(await screen.findByText("Pushes the branch.")).toBeInTheDocument();
     expect(screen.queryByText("Kill session")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Push" }));
-    expect(await second).toBe(true);
+    expect(await second).toBe("");
+  });
+});
+
+// textSpec is a sheet with a text field whose limit is max bytes.
+function textSpec(max: number): ConfirmSpec {
+  return {
+    title: "Deny this?",
+    body: "Claude is told no.",
+    action: "Deny",
+    destructive: true,
+    field: {
+      kind: "text",
+      label: "Tell Claude why",
+      placeholder: "optional",
+      max,
+      tooLong: "That is over the limit.",
+    },
+  };
+}
+
+const merge: ConfirmSpec = {
+  title: "Merge",
+  body: "Merges one session into this one.",
+  action: "Merge",
+  destructive: false,
+  field: {
+    kind: "choice",
+    label: "Merge from",
+    options: [
+      { value: "4", label: "fix-a (aidanb/fix-a)" },
+      { value: "9", label: "fix-b (aidanb/fix-b)" },
+    ],
+  },
+};
+
+describe("ConfirmSheet's field", () => {
+  it("a text field shows its label and placeholder and resolves what was typed, as typed", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(textSpec(100));
+
+    const field = await screen.findByLabelText("Tell Claude why");
+    expect(field).toHaveAttribute("placeholder", "optional");
+    await userEvent.type(field, "a b ");
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    expect(await answer).toBe("a b ");
+  });
+
+  it("a text field left empty resolves the empty string, which is an answer and not a cancel", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(textSpec(100));
+
+    await userEvent.click(await screen.findByRole("button", { name: "Deny" }));
+
+    expect(await answer).toBe("");
+  });
+
+  it("a text field counts UTF-8 bytes: at the limit the action is on, one byte past it the action is off and the too-long line shows", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(textSpec(4));
+    const field = await screen.findByLabelText("Tell Claude why");
+
+    await userEvent.type(field, "éé");
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+    expect(screen.queryByText("That is over the limit.")).toBeNull();
+
+    await userEvent.type(field, "a");
+    expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
+    expect(screen.getByText("That is over the limit.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await userEvent.type(field, "{Backspace}");
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+    expect(screen.queryByText("That is over the limit.")).toBeNull();
+
+    // The disabled click resolved nothing: the sheet is still open to cancel.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await answer).toBeNull();
+  });
+
+  it("cancelling with text typed resolves null, not the text", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(textSpec(100));
+
+    await userEvent.type(await screen.findByLabelText("Tell Claude why"), "abc");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(await answer).toBeNull();
+  });
+
+  it("a choice field is a native select with its first option chosen, and resolves that option's value", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(merge);
+
+    const select = await screen.findByLabelText("Merge from");
+    expect(select.tagName).toBe("SELECT");
+    expect(select).toHaveValue("4");
+    expect(screen.getByRole("option", { name: "fix-b (aidanb/fix-b)" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+
+    expect(await answer).toBe("4");
+  });
+
+  it("a choice field resolves the option that was picked", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(merge);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Merge from"), "9");
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+
+    expect(await answer).toBe("9");
+  });
+
+  it("a newer ask starts with a field of its own, not the text typed into the one it replaced", async () => {
+    render(<ConfirmSheet />);
+    const first = ask(textSpec(100));
+    await userEvent.type(await screen.findByLabelText("Tell Claude why"), "old");
+
+    const second = ask({ ...textSpec(100), title: "Chat about this" });
+
+    expect(await screen.findByText("Chat about this")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tell Claude why")).toHaveValue("");
+    expect(await first).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(await second).toBe("");
+  });
+
+  it("a choice field with no options leaves the action off, with Cancel still open", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask({ ...merge, field: { kind: "choice", label: "Merge from", options: [] } });
+
+    expect(await screen.findByLabelText("Merge from")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await answer).toBeNull();
+  });
+
+  it("a sheet with no field draws no input", async () => {
+    render(<ConfirmSheet />);
+    const answer = ask(kill);
+    await screen.findByText("Kill session");
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await answer).toBeNull();
   });
 });
 
