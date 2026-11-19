@@ -1,13 +1,19 @@
-// The app's service worker, seen from the page: registering it and asking it for a new shell. The
-// worker itself is public/sw.js (spec §28). The launch-time push check, which also needs the
-// registration, follows in this file.
+// The app's service worker, seen from the page: registering it, asking it for a new shell, and
+// the launch-time check of the phone's push subscription, which needs its registration. The worker
+// itself is public/sw.js (spec §28).
+import type { Device, SubscriptionBody } from "@/api/gen";
+import { api } from "@/api/request";
 import { cookieApp, page } from "./switchApp";
+import { showMessage } from "./toasts";
 
 const UPGRADE_KEY = "loom-next.upgrade";
 
 // UPGRADE_RELOAD_MS is how long a page waits for the new worker to take over (which reloads it)
 // before it reloads itself.
 const UPGRADE_RELOAD_MS = 5000;
+
+// READY_MS is how long the push check waits for an active worker before it gives up.
+const READY_MS = 5000;
 
 // registerWorker registers the worker at every launch, as /sw.js?ui=<the cookie's app>: the new
 // app's worker while the device is on the new app, the classic one after a switch back that was
@@ -67,4 +73,76 @@ export function upgradeShell(build: string): void {
     .catch(() => {
       page.reload();
     });
+}
+
+function pushSupported(): boolean {
+  return (
+    "serviceWorker" in navigator &&
+    typeof Notification !== "undefined" &&
+    typeof PushManager !== "undefined"
+  );
+}
+
+// activeRegistration is the page's worker registration once its worker is active, or null when
+// none becomes active within READY_MS.
+async function activeRegistration(): Promise<ServiceWorkerRegistration | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(null);
+    }, READY_MS);
+  });
+  try {
+    return await Promise.race([navigator.serviceWorker.ready, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// subscriptionBody is the phone's subscription in the shape POST /api/v1/device/push reads, or
+// null when it lacks what the daemon would refuse it for.
+function subscriptionBody(subscription: PushSubscription): SubscriptionBody | null {
+  const json = subscription.toJSON();
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!json.endpoint || !p256dh || !auth) return null;
+  return {
+    endpoint: json.endpoint,
+    expirationTime: json.expirationTime ?? null,
+    keys: { p256dh, auth },
+  };
+}
+
+/**
+ * The launch-time check of the phone's push subscription (once per launch, after the first
+ * snapshot). Apple answers 201 to a subscription the phone has dropped, and drops the push, so
+ * loom cannot learn of a lost one from the push service: the phone tells it. While loom's state
+ * for the device (`push`) is "ok" or none, the phone's subscription is posted again, which changes
+ * nothing when it is the same and gives loom back one it lost. When the phone holds none, or may
+ * not notify, while loom holds one ("ok" or "failing: <status>"), loom drops its copy (recorded as
+ * expired) and the person is told. A subscription loom knows is bad ("expired" or "failing") is
+ * left for the Settings button to replace. Whatever the phone cannot answer changes nothing, a
+ * failed call shows nothing, and the check never rejects.
+ */
+export async function checkPushSubscription(device: Device): Promise<void> {
+  if (!pushSupported()) return;
+  let subscription: PushSubscription | null;
+  try {
+    const registration = await activeRegistration();
+    if (registration === null) return;
+    subscription = await registration.pushManager.getSubscription();
+  } catch {
+    return;
+  }
+  const state = device.push;
+  if (subscription !== null && Notification.permission === "granted") {
+    if (state !== "ok" && state !== "") return;
+    const body = subscriptionBody(subscription);
+    if (body !== null) await api.postPush(body);
+    return;
+  }
+  if (state !== "ok" && !state.startsWith("failing")) return;
+  const outcome = await api.deletePush();
+  if (outcome.kind !== "ok") return;
+  showMessage("Notifications stopped on this phone. Turn them on again in Settings.", true);
 }

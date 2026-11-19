@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerWorker, shellBuild, upgradeShell } from "./worker";
+import type { Device } from "@/api/gen";
+import { checkPushSubscription, registerWorker, shellBuild, upgradeShell } from "./worker";
 
 const m = vi.hoisted(() => ({
   cookieApp: vi.fn(),
@@ -186,5 +187,137 @@ describe("upgradeShell", () => {
     expect(update).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(10000);
     expect(m.reload).not.toHaveBeenCalled();
+  });
+});
+
+const deviceOf = (push: string): Device => ({
+  name: "iphone",
+  notify: { waiting: true, finished: true, paused_until: "" },
+  push,
+});
+
+const SUBSCRIPTION_JSON = {
+  endpoint: "https://web.push.apple.com/abc",
+  expirationTime: null,
+  keys: { p256dh: "pk", auth: "au" },
+};
+
+// phone gives the page a worker that is ready, a notification permission and push support. held is
+// the subscription the phone holds (its toJSON), or null for none.
+function phone(held: object | null, permission: NotificationPermission = "granted") {
+  const getSubscription = vi.fn().mockResolvedValue(held === null ? null : { toJSON: () => held });
+  installWorkers({ ready: Promise.resolve({ pushManager: { getSubscription } }) });
+  vi.stubGlobal("Notification", { permission });
+  vi.stubGlobal("PushManager", class {});
+  return getSubscription;
+}
+
+const dropped = { kind: "ok", status: 204, value: undefined, notices: [] };
+
+describe("checkPushSubscription", () => {
+  beforeEach(() => {
+    m.postPush.mockResolvedValue({ kind: "ok", status: 200, value: deviceOf("ok"), notices: [] });
+    m.deletePush.mockResolvedValue(dropped);
+  });
+
+  it.each<[string, string, NotificationPermission, boolean, "post" | "drop" | "none"]>([
+    ["posts the subscription again while loom's state is ok", "ok", "granted", true, "post"],
+    ["posts it again while loom holds none", "", "granted", true, "post"],
+    ["leaves an expired state for the button to replace", "expired", "granted", true, "none"],
+    ["leaves a failing state for the button to replace", "failing: 410", "granted", true, "none"],
+    ["has loom drop an ok subscription the phone has lost", "ok", "granted", false, "drop"],
+    [
+      "has loom drop a failing subscription the phone has lost",
+      "failing: 500",
+      "granted",
+      false,
+      "drop",
+    ],
+    [
+      "has loom drop its subscription when the phone may no longer notify",
+      "ok",
+      "denied",
+      true,
+      "drop",
+    ],
+    ["does nothing when neither side holds one", "", "granted", false, "none"],
+    ["does nothing for an expired state the phone has lost", "expired", "granted", false, "none"],
+  ])("%s", async (_name, state, permission, held, want) => {
+    phone(held ? SUBSCRIPTION_JSON : null, permission);
+    await checkPushSubscription(deviceOf(state));
+    expect(m.postPush).toHaveBeenCalledTimes(want === "post" ? 1 : 0);
+    expect(m.deletePush).toHaveBeenCalledTimes(want === "drop" ? 1 : 0);
+    expect(m.showMessage).toHaveBeenCalledTimes(want === "drop" ? 1 : 0);
+  });
+
+  it("posts the phone's subscription in the shape the daemon reads", async () => {
+    phone(SUBSCRIPTION_JSON);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.postPush).toHaveBeenCalledWith({
+      endpoint: "https://web.push.apple.com/abc",
+      expirationTime: null,
+      keys: { p256dh: "pk", auth: "au" },
+    });
+  });
+
+  it("tells the person when loom drops a subscription", async () => {
+    phone(null);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.showMessage).toHaveBeenCalledWith(
+      "Notifications stopped on this phone. Turn them on again in Settings.",
+      true,
+    );
+  });
+
+  it("says nothing when loom could not drop its subscription", async () => {
+    m.deletePush.mockResolvedValue({ kind: "failed", status: 0, message: "" });
+    phone(null);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).toHaveBeenCalledTimes(1);
+    expect(m.showMessage).not.toHaveBeenCalled();
+  });
+
+  it("posts nothing for a subscription that lacks its keys", async () => {
+    phone({ endpoint: "https://web.push.apple.com/abc", expirationTime: null });
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.postPush).not.toHaveBeenCalled();
+    expect(m.deletePush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing where the browser has no push", async () => {
+    const getSubscription = phone(null);
+    vi.stubGlobal("PushManager", undefined);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(getSubscription).not.toHaveBeenCalled();
+    expect(m.deletePush).not.toHaveBeenCalled();
+
+    vi.stubGlobal("PushManager", class {});
+    vi.stubGlobal("Notification", undefined);
+    await checkPushSubscription(deviceOf("ok"));
+    expect(getSubscription).not.toHaveBeenCalled();
+
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    vi.stubGlobal("Notification", { permission: "granted" });
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no worker is active within 5 s", async () => {
+    vi.stubGlobal("Notification", { permission: "granted" });
+    vi.stubGlobal("PushManager", class {});
+    installWorkers();
+    const done = checkPushSubscription(deviceOf("ok"));
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(m.deletePush).not.toHaveBeenCalled();
+    expect(m.postPush).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the phone cannot say what it holds", async () => {
+    const getSubscription = phone(null);
+    getSubscription.mockRejectedValue(new Error("no push service"));
+    await checkPushSubscription(deviceOf("ok"));
+    expect(m.deletePush).not.toHaveBeenCalled();
+    expect(m.postPush).not.toHaveBeenCalled();
   });
 });
