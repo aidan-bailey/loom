@@ -57,6 +57,36 @@
       "removed": 0,
       "omitted": "",
       "hunks": []
+    },
+    {
+      "path": "ui/legacy.go",
+      "old_path": "",
+      "status": "D",
+      "binary": false,
+      "added": 0,
+      "removed": 31,
+      "omitted": "",
+      "hunks": [
+        {
+          "header": "@@ -1,31 +0,0 @@",
+          "cut": [],
+          "lines": [
+            "-package ui",
+            "-",
+            "-// legacy is gone."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "ui/tables_gen.go",
+      "old_path": "",
+      "status": "M",
+      "binary": false,
+      "added": 5200,
+      "removed": 0,
+      "omitted": "lines",
+      "hunks": []
     }
   ]
 }

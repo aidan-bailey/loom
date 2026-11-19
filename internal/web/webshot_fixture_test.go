@@ -84,3 +84,75 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 11, "a new fixture is checked here too")
 }
+
+const fixtureMarkdown = `# Findings
+
+The cursor *jumps* when the header **redraws**; see [the notes](https://example.com/pane).
+
+- first cause
+- second cause
+
+3. fix the draw order
+4. draw the cursor last
+
+> Keep the cursor off the header row.
+
+` + "```go" + `
+p.drawCursor(frame)
+` + "```" + `
+
+---
+
+| file | lines |
+| :--- | ---: |
+| ui/pane.go | 12 |
+`
+
+// TestWebshotFixture_TheMarkdownTreeIsWhatBuildTreeMakes holds the canned
+// conversation's markdown text item to the tree buildTree makes of its source.
+func TestWebshotFixture_TheMarkdownTreeIsWhatBuildTreeMakes(t *testing.T) {
+	var page turnsJSON
+	readFixture(t, "turns.json", &page)
+	var got []*mdNode
+	var badHref func(ns []*mdNode) bool
+	badHref = func(ns []*mdNode) bool {
+		for _, n := range ns {
+			if (n.T == "a" && n.Href == "") || badHref(n.C) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, turn := range page.Turns {
+		for _, it := range turn.Items {
+			require.False(t, badHref(it.Blocks), "every link of the fixture keeps its href")
+			if len(it.Blocks) > 0 && it.Blocks[0].T == "h" {
+				got = it.Blocks
+			}
+		}
+	}
+	require.NotNil(t, got, "a text item whose first block is a heading")
+	want, cut := buildTree(fixtureMarkdown)
+	require.False(t, cut)
+	wantJSON, err := json.Marshal(want)
+	require.NoError(t, err)
+	gotJSON, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.JSONEq(t, string(wantJSON), string(gotJSON))
+}
+
+// TestWebshotFixture_TheDiffsFilesAreOfStatusesAndOmissionsTheLayerSends holds
+// the canned diff's files to the statuses and omissions the layer sends.
+func TestWebshotFixture_TheDiffsFilesAreOfStatusesAndOmissionsTheLayerSends(t *testing.T) {
+	var patch patchJSON
+	readFixture(t, "diff.json", &patch)
+	deleted, lines := false, false
+	for _, f := range patch.Files {
+		require.Contains(t, []string{"A", "M", "D", "R", "C"}, string(f.Status), f.Path)
+		require.Contains(t, []string{"", "lines", "budget"}, string(f.Omitted), f.Path)
+		deleted = deleted || f.Status == "D"
+		lines = lines || f.Omitted == "lines"
+	}
+	require.True(t, deleted, "a deleted file")
+	require.True(t, lines, "a file omitted for its lines")
+}

@@ -481,6 +481,89 @@ func TestFixture_SessionOneHoldsAWorktreeATmuxSessionAndAQueuedJob(t *testing.T)
 	require.True(t, found, "no session 1")
 }
 
+func TestFixture_TheTurnsHoldEveryItemKindAnInterruptedStepAndTheTreesNodes(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("turns.json")
+	require.NoError(t, err)
+	type node struct {
+		T string  `json:"t"`
+		C []*node `json:"c"`
+	}
+	var page struct {
+		Turns []struct {
+			Items []struct {
+				Kind   string  `json:"kind"`
+				Error  bool    `json:"error"`
+				Blocks []*node `json:"blocks"`
+				Steps  []struct {
+					State string `json:"state"`
+				} `json:"steps"`
+			} `json:"items"`
+		} `json:"turns"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &page))
+	kinds := map[string]bool{}
+	nodes := map[string]bool{}
+	var walk func(ns []*node)
+	walk = func(ns []*node) {
+		for _, n := range ns {
+			nodes[n.T] = true
+			walk(n.C)
+		}
+	}
+	notes, errNotes, interrupted := 0, 0, false
+	for _, turn := range page.Turns {
+		for _, it := range turn.Items {
+			kinds[it.Kind] = true
+			if it.Kind == "note" {
+				notes++
+				if it.Error {
+					errNotes++
+				}
+			}
+			for _, st := range it.Steps {
+				interrupted = interrupted || st.State == "interrupted"
+			}
+			walk(it.Blocks)
+		}
+	}
+	for _, k := range []string{"text", "thinking", "steps", "compacted", "note"} {
+		assert.True(t, kinds[k], "item kind %s", k)
+	}
+	assert.Equal(t, 2, notes, "two notes")
+	assert.Equal(t, 1, errNotes, "one of them an error")
+	assert.True(t, interrupted, "an interrupted step")
+	for _, k := range []string{"h", "p", "ul", "ol", "li", "quote", "code", "em", "strong", "a", "hr", "table", "tr", "th", "td", "text", "code_inline"} {
+		assert.True(t, nodes[k], "node kind %s", k)
+	}
+}
+
+func TestFixture_TheDiffHoldsADeletedAndAnOmittedFile(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("diff.json")
+	require.NoError(t, err)
+	var patch struct {
+		Files []struct {
+			Path    string `json:"path"`
+			Status  string `json:"status"`
+			Omitted string `json:"omitted"`
+			Hunks   []any  `json:"hunks"`
+		} `json:"files"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &patch))
+	require.GreaterOrEqual(t, len(patch.Files), 5)
+	for i, p := range []string{"ui/pane.go", "ui/header.go", "assets/cursor.png"} {
+		assert.Equal(t, p, patch.Files[i].Path)
+	}
+	deleted, omitted := false, false
+	for _, f := range patch.Files {
+		deleted = deleted || f.Status == "D"
+		omitted = omitted || (f.Omitted == "lines" && len(f.Hunks) == 0)
+	}
+	assert.True(t, deleted, "a deleted file")
+	assert.True(t, omitted, "a file omitted for its length, with no hunks")
+}
+
 func TestPickScreens(t *testing.T) {
 	all, err := pickScreens("")
 	require.NoError(t, err)

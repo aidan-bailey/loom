@@ -42,6 +42,13 @@
               "finished": false
             },
             {
+              "tool": "Bash",
+              "summary": "go vet ./...",
+              "at": "now-25m",
+              "state": "interrupted",
+              "finished": false
+            },
+            {
               "tool": "Edit",
               "summary": "ui/pane.go",
               "at": "now-24m",
@@ -72,6 +79,226 @@
               ]
             }
           ]
+        },
+        {
+          "kind": "text",
+          "at": "now-21m",
+          "blocks": [
+            {
+              "t": "h",
+              "level": 1,
+              "c": [
+                {
+                  "t": "text",
+                  "v": "Findings"
+                }
+              ]
+            },
+            {
+              "t": "p",
+              "c": [
+                {
+                  "t": "text",
+                  "v": "The cursor "
+                },
+                {
+                  "t": "em",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "jumps"
+                    }
+                  ]
+                },
+                {
+                  "t": "text",
+                  "v": " when the header "
+                },
+                {
+                  "t": "strong",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "redraws"
+                    }
+                  ]
+                },
+                {
+                  "t": "text",
+                  "v": "; see "
+                },
+                {
+                  "t": "a",
+                  "href": "https://example.com/pane",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "the notes"
+                    }
+                  ]
+                },
+                {
+                  "t": "text",
+                  "v": "."
+                }
+              ]
+            },
+            {
+              "t": "ul",
+              "c": [
+                {
+                  "t": "li",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "first"
+                    },
+                    {
+                      "t": "text",
+                      "v": " cause"
+                    }
+                  ]
+                },
+                {
+                  "t": "li",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "second"
+                    },
+                    {
+                      "t": "text",
+                      "v": " cause"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "ol",
+              "start": 3,
+              "c": [
+                {
+                  "t": "li",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "fix the draw"
+                    },
+                    {
+                      "t": "text",
+                      "v": " order"
+                    }
+                  ]
+                },
+                {
+                  "t": "li",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "draw the cursor"
+                    },
+                    {
+                      "t": "text",
+                      "v": " last"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "quote",
+              "c": [
+                {
+                  "t": "p",
+                  "c": [
+                    {
+                      "t": "text",
+                      "v": "Keep the cursor off the header"
+                    },
+                    {
+                      "t": "text",
+                      "v": " row."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "code",
+              "v": "p.drawCursor(frame)",
+              "lang": "go"
+            },
+            {
+              "t": "hr"
+            },
+            {
+              "t": "table",
+              "align": [
+                "left",
+                "right"
+              ],
+              "c": [
+                {
+                  "t": "tr",
+                  "c": [
+                    {
+                      "t": "th",
+                      "c": [
+                        {
+                          "t": "text",
+                          "v": "file"
+                        }
+                      ]
+                    },
+                    {
+                      "t": "th",
+                      "c": [
+                        {
+                          "t": "text",
+                          "v": "lines"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "t": "tr",
+                  "c": [
+                    {
+                      "t": "td",
+                      "c": [
+                        {
+                          "t": "text",
+                          "v": "ui/pane.go"
+                        }
+                      ]
+                    },
+                    {
+                      "t": "td",
+                      "c": [
+                        {
+                          "t": "text",
+                          "v": "12"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "note",
+          "at": "now-20m",
+          "text": "Interrupted by you"
+        },
+        {
+          "kind": "note",
+          "at": "now-20m",
+          "text": "API error: overloaded, retrying",
+          "error": true
         }
       ]
     },
