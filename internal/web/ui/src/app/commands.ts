@@ -34,9 +34,18 @@ export interface Command<A = void> {
   title: string | ((ctx: CommandContext) => string);
   icon?: LucideIcon;
   offline?: boolean;
+  // key names what the args pick (a job's id, an ask's id): it joins the
+  // command's id and the session's id in the in-flight key, so Pause on one
+  // job does not hold Pause on another. Without it the key is the command's
+  // id and the session's, and so it is when `key` throws (a keyed command
+  // drawn or run without its args): the throw never escapes, and `run` meets
+  // the missing args itself.
+  key?: (args: A) => string;
   when: (ctx: CommandContext) => boolean;
-  confirm?: (ctx: CommandContext, args: A) => ConfirmSpec;
-  run: (ctx: CommandContext, args: A) => Promise<void>;
+  // confirm is the sheet's spec; null runs `run` with no sheet and an empty input.
+  confirm?: (ctx: CommandContext, args: A) => ConfirmSpec | null;
+  // run gets the sheet's field value as `input` ("" with no field or no sheet).
+  run: (ctx: CommandContext, args: A, input: string) => Promise<void>;
 }
 
 const registry = new Map<string, Command<unknown>>();
@@ -71,8 +80,9 @@ export function commandEnabled<A>(command: Command<A>, ctx: CommandContext): boo
   return (command.offline === true || !ctx.stale) && command.when(ctx);
 }
 
-// inflight is the set of commands being run, each keyed by its id and the
-// session it acts on: a second call while one is in flight does nothing, so a
+// inflight is the set of commands being run, each keyed by its id, the
+// session it acts on and what its `key` returns for the args: a second call
+// while one is in flight does nothing, so a
 // command drawn twice, sibling buttons of one command or a re-tap after the
 // request was accepted send one request. CommandButton reads it through
 // useCommandBusy.
@@ -90,13 +100,27 @@ function subscribeBusy(listener: () => void): () => void {
   };
 }
 
-function busyKey(command: { id: string }, ctx: CommandContext): string {
-  return `${command.id}\u0000${ctx.session === undefined ? "" : ctx.session.id}`;
+// ownKey is what the command's `key` gives for args: "" without a `key`, and
+// "" when it throws, so neither runCommand (before its try) nor a button's
+// render can be taken down by a `key` that was handed no args.
+function ownKey<A>(command: Command<A>, args: A): string {
+  if (command.key === undefined) return "";
+  try {
+    return command.key(args);
+  } catch {
+    return "";
+  }
 }
 
-// useCommandBusy reports whether the command is being run for ctx's session.
-export function useCommandBusy<A>(command: Command<A>, ctx: CommandContext): boolean {
-  const key = busyKey(command, ctx);
+function busyKey<A>(command: Command<A>, ctx: CommandContext, args: A): string {
+  const session = ctx.session === undefined ? "" : ctx.session.id;
+  return `${command.id}\u0000${session}\u0000${ownKey(command, args)}`;
+}
+
+// useCommandBusy reports whether the command is being run for ctx's session
+// and the args' key.
+export function useCommandBusy<A>(command: Command<A>, ctx: CommandContext, args: A): boolean {
+  const key = busyKey(command, ctx, args);
   return useSyncExternalStore(subscribeBusy, () => inflight.has(key));
 }
 
@@ -115,33 +139,39 @@ function freshContext(ctx: CommandContext): CommandContext {
 }
 
 // runCommand runs a command in ctx with args: nothing when it is not enabled
-// or when the same command is already running for the same session; else,
-// when it has a `confirm`, the confirmation sheet first (a declined sheet runs
-// nothing), then the enablement again against the store's current state (a
-// yes given after the view went stale, or the session changed, toasts that
-// nothing was done), then its `run` with that fresh context. A `run` that
-// throws is an error toast, never an unhandled rejection.
+// or when the same command is already running for the same session and key;
+// else, when its `confirm` gives a spec, the confirmation sheet first (a
+// declined sheet runs nothing; a `confirm` that gives null runs with no sheet
+// and an empty input), then the enablement again against the store's current
+// state (a yes given after the view went stale, or the session changed, toasts
+// that nothing was done), then its `run` with that fresh context and the
+// sheet's value. A `run` that throws is an error toast, never an unhandled
+// rejection.
 export async function runCommand<A>(
   command: Command<A>,
   ctx: CommandContext,
   args: A,
 ): Promise<void> {
   if (!commandEnabled(command, ctx)) return;
-  const key = busyKey(command, ctx);
+  const key = busyKey(command, ctx, args);
   if (inflight.has(key)) return;
   inflight.add(key);
   emitBusy();
   try {
     let at = ctx;
-    if (command.confirm !== undefined) {
-      if ((await askConfirm(command.confirm(ctx, args))) === null) return;
+    let input = "";
+    const spec = command.confirm === undefined ? null : command.confirm(ctx, args);
+    if (spec !== null) {
+      const value = await askConfirm(spec);
+      if (value === null) return;
+      input = value;
       at = freshContext(ctx);
       if (!commandEnabled(command, at)) {
         showMessage("loom changed while you were deciding, so nothing was done.", true);
         return;
       }
     }
-    await command.run(at, args);
+    await command.run(at, args, input);
   } catch (err) {
     showMessage(err instanceof Error ? err.message : String(err), true);
   } finally {

@@ -13,18 +13,22 @@ import {
 // CommandButton draws a registered command as a button: its title (or
 // `label`), its icon, off when the command is not enabled and while the
 // command is in flight for the route's session (runCommand's in-flight set, so
-// every button of the command goes off together and a double tap runs it
-// once). Confirmation and toasts are runCommand's, so every command behaves
-// alike.
+// every button of the command and key goes off together and a double tap runs
+// it once). `disabled` is the caller's own form state (an empty reply, an
+// unanswered question), joined to the command's enablement and never a
+// replacement for it. Confirmation and toasts are runCommand's, so every
+// command behaves alike.
 export function CommandButton({
   id,
   args,
+  disabled,
   variant,
   size,
   label,
 }: {
   id: string;
   args?: unknown;
+  disabled?: boolean;
   variant?: "default" | "secondary" | "ghost" | "outline" | "destructive";
   size?: "default" | "sm" | "lg" | "icon";
   label?: string;
@@ -32,7 +36,7 @@ export function CommandButton({
   const ctx = useCommandContext();
   const command = commandById(id);
   if (command === undefined) throw new Error(`loom: unknown command ${id}`);
-  const busy = useCommandBusy(command, ctx);
+  const busy = useCommandBusy(command, ctx, args);
 
   const title = typeof command.title === "function" ? command.title(ctx) : command.title;
   const Icon = command.icon;
@@ -45,7 +49,7 @@ export function CommandButton({
     <Button
       variant={variant}
       size={size}
-      disabled={busy || !commandEnabled(command, ctx)}
+      disabled={busy || disabled === true || !commandEnabled(command, ctx)}
       aria-label={size === "icon" ? title : undefined}
       onClick={run}
     >

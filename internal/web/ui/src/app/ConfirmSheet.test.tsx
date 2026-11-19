@@ -385,6 +385,148 @@ describe("CommandButton", () => {
     expect(run.mock.calls[0]?.[1]).toBe("x");
   });
 
+  it("is off while the caller's disabled is set, and a caller's false does not turn on what the command refuses", async () => {
+    live();
+    const run = vi.fn(() => Promise.resolve());
+    defineCommand({ id: "test.button.callerOff", title: "Send", when: () => true, run });
+    defineCommand({ id: "test.button.callerNo", title: "Never", when: () => false, run });
+
+    const { rerender } = render(<CommandButton id="test.button.callerOff" disabled />);
+    const button = screen.getByRole("button", { name: "Send" });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(run).not.toHaveBeenCalled();
+
+    rerender(<CommandButton id="test.button.callerOff" disabled={false} />);
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    rerender(<CommandButton id="test.button.callerOff" />);
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+
+    rerender(<CommandButton id="test.button.callerNo" disabled={false} />);
+    expect(screen.getByRole("button", { name: "Never" })).toBeDisabled();
+  });
+
+  it("goes off only for its own key while a keyed command runs", async () => {
+    live();
+    const finishers: (() => void)[] = [];
+    const run = vi.fn<(ctx: CommandContext, job: number) => Promise<void>>(
+      () =>
+        new Promise<void>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    defineCommand<number>({
+      id: "test.button.keyed",
+      title: "Park",
+      when: () => true,
+      key: (job) => `job${job}`,
+      run,
+    });
+
+    render(
+      <>
+        <CommandButton id="test.button.keyed" args={1} label="Park 1" />
+        <CommandButton id="test.button.keyed" args={2} label="Park 2" />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Park 1" }));
+
+    expect(screen.getByRole("button", { name: "Park 1" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Park 2" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Park 2" }));
+    expect(run).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      for (const finish of finishers) finish();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Park 1" })).toBeEnabled();
+    });
+  });
+
+  it("draws and runs a keyed command given no args: the throwing key is no key, not a crash or an unhandled rejection", async () => {
+    live();
+    const run = vi.fn<(ctx: CommandContext, job: number) => Promise<void>>(() =>
+      Promise.reject(new Error("no job")),
+    );
+    defineCommand<number>({
+      id: "test.button.keyNoArgs",
+      title: "Park",
+      when: () => true,
+      key: (job) => `job${job.toFixed()}`,
+      run,
+    });
+
+    render(<CommandButton id="test.button.keyNoArgs" />);
+    const button = screen.getByRole("button", { name: "Park" });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+
+    await waitFor(() => {
+      expect(run).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("gives run the value typed into the sheet's field, and runs with an empty input when the confirm returns null", async () => {
+    live();
+    const run = vi.fn<(ctx: CommandContext, id: string, input: string) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    defineCommand<string>({
+      id: "test.button.field",
+      title: "Deny",
+      when: () => true,
+      confirm: (_ctx, id) =>
+        id === "skip"
+          ? null
+          : {
+              title: "Deny this?",
+              body: "Claude is told no.",
+              action: "Deny it",
+              destructive: true,
+              field: {
+                kind: "text",
+                label: "Tell Claude why",
+                placeholder: "",
+                max: 100,
+                tooLong: "too long",
+              },
+            },
+      run,
+    });
+
+    const { rerender } = render(
+      <>
+        <ConfirmSheet />
+        <CommandButton id="test.button.field" args="ask-1" />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await userEvent.type(await screen.findByLabelText("Tell Claude why"), "not now");
+    await userEvent.click(screen.getByRole("button", { name: "Deny it" }));
+    await waitFor(() => {
+      expect(run).toHaveBeenCalledOnce();
+    });
+    expect(run.mock.calls[0]?.[1]).toBe("ask-1");
+    expect(run.mock.calls[0]?.[2]).toBe("not now");
+    await waitFor(() => {
+      expect(screen.queryByText("Deny this?")).toBeNull();
+    });
+
+    rerender(
+      <>
+        <ConfirmSheet />
+        <CommandButton id="test.button.field" args="skip" />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await waitFor(() => {
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+    expect(run.mock.calls[1]?.[2]).toBe("");
+    expect(screen.queryByText("Deny this?")).toBeNull();
+  });
+
   it("fails loudly for a command nothing defined", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

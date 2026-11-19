@@ -97,7 +97,7 @@ describe("commandEnabled", () => {
 
 describe("runCommand", () => {
   function counting(over: { offline?: boolean; when?: () => boolean } = {}) {
-    const run = vi.fn<(ctx: CommandContext, args: string) => Promise<void>>(() =>
+    const run = vi.fn<(ctx: CommandContext, args: string, input: string) => Promise<void>>(() =>
       Promise.resolve(),
     );
     const command = defineCommand<string>({
@@ -115,7 +115,7 @@ describe("runCommand", () => {
     const context = ctx();
     await runCommand(command, context, "args");
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(context, "args");
+    expect(run).toHaveBeenCalledWith(context, "args", "");
   });
 
   it("runs nothing while the snapshot is stale", async () => {
@@ -138,7 +138,7 @@ describe("runCommand", () => {
 
   it("asks the sheet first, with the spec built from the context and arguments, and runs on yes", async () => {
     vi.mocked(askConfirm).mockResolvedValue("");
-    const run = vi.fn<(ctx: CommandContext, note: string) => Promise<void>>(() =>
+    const run = vi.fn<(ctx: CommandContext, note: string, input: string) => Promise<void>>(() =>
       Promise.resolve(),
     );
     const command = defineCommand<string>({
@@ -161,7 +161,7 @@ describe("runCommand", () => {
       destructive: false,
     });
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(context, "hello");
+    expect(run).toHaveBeenCalledWith(context, "hello", "");
   });
 
   it("runs nothing when the sheet is declined", async () => {
@@ -269,7 +269,7 @@ describe("runCommand", () => {
         }),
     );
     const command = defineCommand({ id: "test.inflight", title: "Once", when: () => true, run });
-    const busy = renderHook(() => useCommandBusy(command, ctx()));
+    const busy = renderHook(() => useCommandBusy(command, ctx(), undefined));
     expect(busy.result.current).toBe(false);
 
     let first: Promise<void> = Promise.resolve();
@@ -296,6 +296,163 @@ describe("runCommand", () => {
       finish();
       await second;
     });
+  });
+
+  it("gives run the sheet's value as its input", async () => {
+    vi.mocked(askConfirm).mockResolvedValue("because");
+    useFleet.setState({ stale: false, link: "live" });
+    const run = vi.fn<(ctx: CommandContext, id: string, input: string) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    const command = defineCommand<string>({
+      id: "test.input",
+      title: "Deny",
+      when: () => true,
+      confirm: () => ({
+        title: "Deny this?",
+        body: "",
+        action: "Deny",
+        destructive: true,
+        field: { kind: "text", label: "Why", placeholder: "", max: 100, tooLong: "too long" },
+      }),
+      run,
+    });
+    const context = ctx();
+
+    await runCommand(command, context, "ask-1");
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(context, "ask-1", "because");
+  });
+
+  it("runs with no sheet and an empty input when confirm returns null, and asks when it returns a spec", async () => {
+    useFleet.setState({ stale: false, link: "live" });
+    vi.mocked(askConfirm).mockResolvedValue("yes");
+    const run = vi.fn<(ctx: CommandContext, persists: boolean, input: string) => Promise<void>>(
+      () => Promise.resolve(),
+    );
+    const command = defineCommand<boolean>({
+      id: "test.nullConfirm",
+      title: "Allow",
+      when: () => true,
+      confirm: (_ctx, persists) =>
+        persists
+          ? { title: "Save this rule?", body: "", action: "Save", destructive: false }
+          : null,
+      run,
+    });
+    const context = ctx();
+
+    await runCommand(command, context, false);
+    expect(askConfirm).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenLastCalledWith(context, false, "");
+
+    await runCommand(command, context, true);
+    expect(askConfirm).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenLastCalledWith(context, true, "yes");
+  });
+
+  it("keeps the in-flight mark per key: the same key is held, another key runs, and each key's busy state is its own", async () => {
+    const finishers: (() => void)[] = [];
+    const run = vi.fn<(ctx: CommandContext, args: { job: number }, input: string) => Promise<void>>(
+      () =>
+        new Promise<void>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    const command = defineCommand<{ job: number }>({
+      id: "test.keyed",
+      title: "Park",
+      when: () => true,
+      key: (args) => `job${args.job}`,
+      run,
+    });
+    const one = renderHook(() => useCommandBusy(command, ctx(), { job: 1 }));
+    const two = renderHook(() => useCommandBusy(command, ctx(), { job: 2 }));
+    const three = renderHook(() => useCommandBusy(command, ctx(), { job: 3 }));
+
+    let first: Promise<void> = Promise.resolve();
+    let second: Promise<void> = Promise.resolve();
+    act(() => {
+      first = runCommand(command, ctx(), { job: 1 });
+    });
+    await runCommand(command, ctx(), { job: 1 });
+    expect(run).toHaveBeenCalledOnce();
+
+    act(() => {
+      second = runCommand(command, ctx(), { job: 2 });
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(one.result.current).toBe(true);
+    expect(two.result.current).toBe(true);
+    expect(three.result.current).toBe(false);
+
+    await act(async () => {
+      for (const finish of finishers) finish();
+      await Promise.all([first, second]);
+    });
+    expect(one.result.current).toBe(false);
+    expect(two.result.current).toBe(false);
+  });
+
+  it("holds the same key for another session apart: the key joins the session's, it does not replace it", async () => {
+    const snapshot = fixtureSnapshot();
+    const sessions = allSessions(snapshot);
+    const a = sessions[0];
+    const b = sessions[1];
+    if (a === undefined || b === undefined)
+      throw new Error("the fixture holds fewer than two sessions");
+    const finishers: (() => void)[] = [];
+    const run = vi.fn<(ctx: CommandContext, args: { job: number }, input: string) => Promise<void>>(
+      () =>
+        new Promise<void>((resolve) => {
+          finishers.push(resolve);
+        }),
+    );
+    const command = defineCommand<{ job: number }>({
+      id: "test.keyedSessions",
+      title: "Park",
+      when: () => true,
+      key: (args) => `job${args.job}`,
+      run,
+    });
+
+    let first: Promise<void> = Promise.resolve();
+    let second: Promise<void> = Promise.resolve();
+    act(() => {
+      first = runCommand(command, ctx({ session: a }), { job: 1 });
+      second = runCommand(command, ctx({ session: b }), { job: 1 });
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      for (const finish of finishers) finish();
+      await Promise.all([first, second]);
+    });
+  });
+
+  it("treats a key that throws as no key: running the command and reading its busy state neither reject nor throw", async () => {
+    const run = vi.fn<(ctx: CommandContext, args: string, input: string) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    const command = defineCommand<string>({
+      id: "test.keyThrows",
+      title: "Park",
+      when: () => true,
+      key: () => {
+        throw new Error("no job to key on");
+      },
+      run,
+    });
+
+    const busy = renderHook(() => useCommandBusy(command, ctx(), "args"));
+    expect(busy.result.current).toBe(false);
+    await expect(runCommand(command, ctx(), "args")).resolves.toBeUndefined();
+    await expect(runCommand(command, ctx(), "args")).resolves.toBeUndefined();
+
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it("clears the in-flight mark when the run throws", async () => {
