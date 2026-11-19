@@ -150,6 +150,15 @@ describe("AppShell", () => {
     expect(footer()).toBeNull();
   });
 
+  it("offers the way back to the classic app on a route no panel is registered for, with no snapshot", async () => {
+    useFleet.setState({ link: "offline" });
+    shellAt("#/settings");
+
+    expect(await screen.findByText("Can't reach loom. Retrying…")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back to classic" }));
+    expect(switchApp).toHaveBeenCalledWith("classic");
+  });
+
   it("draws pairing without a snapshot, and without chrome", async () => {
     shellAt("#/pair");
 

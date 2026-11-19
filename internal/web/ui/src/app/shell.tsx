@@ -141,7 +141,10 @@ const SPLASH: Record<LinkState, string> = {
 // AppShell is the app's frame: the pinned header (the panel's Head), main
 // (the router's outlet, or the splash while the store holds no snapshot,
 // except on pairing) and the pinned footer. Pairing and the full mockup
-// have no header or footer, and neither has a screen with no snapshot.
+// have no header or footer, and neither has a screen with no snapshot. A route
+// no panel is registered for still draws its placeholder under the splash, so
+// the way back to the classic app works with the daemon down and nothing
+// saved.
 export function AppShell(): ReactElement {
   const route = useRoute();
   const props = panelProps(route);
@@ -181,9 +184,12 @@ export function AppShell(): ReactElement {
       ) : null}
       <main className="flex flex-1 flex-col">
         {waiting ? (
-          <div role="status" className="px-4 py-12 text-center text-muted-foreground">
-            {SPLASH[state]}
-          </div>
+          <>
+            <div role="status" className="px-4 py-12 text-center text-muted-foreground">
+              {SPLASH[state]}
+            </div>
+            {panelFor(route.panel) === undefined ? <Placeholder panel={route.panel} /> : null}
+          </>
         ) : (
           <Outlet />
         )}
@@ -232,7 +238,10 @@ function isTextField(target: EventTarget | null): boolean {
 function useTextFieldFocus(route: RouteState): boolean {
   const [typing, setTyping] = useState(() => isTextField(document.activeElement));
   useEffect(() => {
-    // After this commit has removed or kept the field, not during it.
+    // Read the focus in a microtask, not in the effect body: a synchronous
+    // setState in an effect is what react-hooks/set-state-in-effect refuses.
+    // The passive effect already runs after the commit has removed or kept the
+    // field.
     queueMicrotask(() => {
       setTyping(isTextField(document.activeElement));
     });
