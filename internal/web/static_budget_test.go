@@ -21,17 +21,12 @@ const firstLoadBudget = 250_000
 var (
 	firstLoadScriptTag = regexp.MustCompile(`(?is)<script\b[^>]*>`)
 	firstLoadLinkTag   = regexp.MustCompile(`(?is)<link\b[^>]*>`)
-	firstLoadAttrValue = map[string]*regexp.Regexp{}
 )
 
 // tagAttr reads one attribute of a whole tag, in any position, quoted or bare.
 // It reports "" when the tag does not carry it.
 func tagAttr(tag, name string) string {
-	re, ok := firstLoadAttrValue[name]
-	if !ok {
-		re = regexp.MustCompile(`(?is)\s` + regexp.QuoteMeta(name) + `\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
-		firstLoadAttrValue[name] = re
-	}
+	re := regexp.MustCompile(`(?is)\s` + regexp.QuoteMeta(name) + `\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
 	m := re.FindStringSubmatch(tag)
 	if m == nil {
 		return ""
