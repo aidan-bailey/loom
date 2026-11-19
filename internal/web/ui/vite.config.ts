@@ -102,6 +102,9 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
+    // A fixed zone that is not UTC, so a test of a local-time rendering differs from a UTC one on
+    // CI (which runs in UTC) as it does on a phone.
+    env: { TZ: "Africa/Johannesburg" },
     globals: true,
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test-setup.ts"],
