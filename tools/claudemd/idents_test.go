@@ -172,16 +172,18 @@ func TestIndex_Words(t *testing.T) {
 }
 
 // TestIndex_Dirs: the index reads .github, whose workflows name env vars and
-// flags rules cite, but no other dot dir, and not vendor/.
+// flags rules cite, but no other dot dir, and not vendor/ or node_modules/.
 func TestIndex_Dirs(t *testing.T) {
 	files := with(minimal(),
 		".github/workflows/ci.yml", "env:\n  LOOM_CI_FLAG: 1\n",
 		".other/x.yml", "env:\n  LOOM_OTHER_FLAG: 1\n",
 		"vendor/v/v.go", "package v\n\nfunc VendoredName() {}\n",
-		"pkg/CLAUDE.md", "# pkg\n\n`LOOM_CI_FLAG` `LOOM_OTHER_FLAG` `VendoredName`\n")
+		"node_modules/n/n.js", "export const NodeModulesName = 1;\n",
+		"pkg/CLAUDE.md", "# pkg\n\n`LOOM_CI_FLAG` `LOOM_OTHER_FLAG` `VendoredName` `NodeModulesName`\n")
 	assert.ElementsMatch(t, []string{
 		"pkg/CLAUDE.md:3: LOOM_OTHER_FLAG: not found in any source file (Markdown excluded)",
 		"pkg/CLAUDE.md:3: VendoredName: not found in any source file (Markdown excluded)",
+		"pkg/CLAUDE.md:3: NodeModulesName: not found in any source file (Markdown excluded)",
 	}, findings(t, files))
 }
 

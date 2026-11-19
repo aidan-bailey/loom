@@ -204,7 +204,7 @@ func TestCoverage(t *testing.T) {
 		"gone: exempt from coverage, but no Go package lives here any more: drop the exemption")
 	// Each at the top level, where no CLAUDE.md covers it, so skipping one
 	// can't hide behind the others.
-	for _, dir := range []string{"vendor/v", "testdata/t", "_old", ".loom/w"} {
+	for _, dir := range []string{"vendor/v", "testdata/t", "_old", ".loom/w", "node_modules/n"} {
 		assert.Empty(t, problems(t, with(minimal(), dir+"/x.go", "package x\n"), config{}), "%s holds no package of ours", dir)
 	}
 	assert.Contains(t, problems(t, without(minimal(), "pkg/pkg.go"), config{}),
@@ -248,8 +248,8 @@ func TestDocSet_Readmes(t *testing.T) {
 	assert.Contains(t, ps, `docs/README.md:1: broken link "gone.md"`, "a README is a doc wherever it lives")
 	assert.NotContains(t, ps, `README.md:1: broken link "gone.md"`, "the root README is for users")
 	assert.Contains(t, problems(t, with(minimal(), "docs/ARCHITECTURE.md", gone), config{}), `docs/ARCHITECTURE.md:1: broken link "gone.md"`)
-	skipped := with(minimal(), "vendor/v/README.md", gone, "pkg/testdata/README.md", gone, "pkg/_old/README.md", gone, ".github/README.md", gone)
-	assert.Empty(t, problems(t, skipped, config{}), "vendor/, testdata/, _dirs and dot-dirs hold no docs of ours")
+	skipped := with(minimal(), "vendor/v/README.md", gone, "pkg/testdata/README.md", gone, "pkg/_old/README.md", gone, ".github/README.md", gone, "pkg/node_modules/README.md", gone)
+	assert.Empty(t, problems(t, skipped, config{}), "vendor/, node_modules/, testdata/, _dirs and dot-dirs hold no docs of ours")
 	// A README in docs/claude is a guide as well; it is read once.
 	both := with(minimal(),
 		"CLAUDE.md", "# x\n\n- **Skills:** none\n\n[i](docs/claude/INDEX.md)\n",

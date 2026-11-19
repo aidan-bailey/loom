@@ -184,9 +184,9 @@ func walk(root string, skip func(name string) bool, fn func(rel string) error) e
 
 // ours skips what the go tool skips (testdata/, _ and dot dirs: .git,
 // .claude, and .loom, whose worktrees are other checkouts of this repo) and
-// vendor/ (third-party).
+// vendor/ and node_modules/ (third-party).
 func ours(name string) bool {
-	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+	return name == "vendor" || name == "node_modules" || name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
 // docFiles are the Markdown files the checks look for in the tree, found in

@@ -54,7 +54,7 @@ type index struct {
 }
 
 // buildIndex reads the repo's source files: testdata (payloads rules quote)
-// and .github (workflows) included, vendor/ and every other dot-dir not.
+// and .github (workflows) included, vendor/, node_modules/ and every other dot-dir not.
 //
 // A Go file is read as Go, not as text, so a name that only sits in a fixture
 // can't confirm a symbol. Its identifiers and comments count; its string and
@@ -65,7 +65,7 @@ type index struct {
 func buildIndex(root string) (*index, error) {
 	idx := &index{words: map[string]map[string]bool{}, goDirs: map[string]bool{}, tests: map[string]bool{}}
 	skip := func(name string) bool {
-		return name == "vendor" || (strings.HasPrefix(name, ".") && name != ".github")
+		return name == "vendor" || name == "node_modules" || (strings.HasPrefix(name, ".") && name != ".github")
 	}
 	err := walk(root, skip, func(rel string) error {
 		if !sourceExts[path.Ext(rel)] {
