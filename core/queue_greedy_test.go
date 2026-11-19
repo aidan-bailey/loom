@@ -152,3 +152,60 @@ func TestQueueGreedy_ARunningJobAboveItsPredictionCountsAtItsUse(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sched.Queued, wqRecord(t, m, id).State, "9 GB × 1.15 measured plus its 11.5 GB peak passes the budget")
 }
+
+// wqPeaks gives sig's belief one done run per peak, in GB, with no curves.
+func wqPeaks(m *Model, sig sched.Signature, peaksGB ...int64) {
+	b := m.queue.beliefs.Ensure(sig, time.Now())
+	for _, p := range peaksGB {
+		b.AddRun(sched.Run{Outcome: sched.OutcomeDone, Claim: sched.Claim{CPUs: 2, MemoryGB: 8}, PeakKB: p << 20, CPUSeconds: 60, WallSeconds: 60})
+	}
+}
+
+// wqUsualModel is wqGreedyModel (a 14 GB budget) with job A on an 8 GB
+// claim and no curves, whose command usually peaks at 1 GB, and a submit
+// whose command peaks at 7 GB but usually at 2 (a 9 GB claim).
+func wqUsualModel(t *testing.T) (*Model, sched.JobID, sched.Submit) {
+	t.Helper()
+	m, a := wqGreedyModel(t)
+	rec := &m.queue.store.Jobs[m.queue.index(a)]
+	sig := wqSigOf(t, []string{"sleep", "31"}, rec.Cwd)
+	wqPeaks(m, sig, 1, 7, 1)
+	rec.Signature, rec.Claim = sig.ID(), sched.Claim{CPUs: 2, MemoryGB: 8}
+	delete(m.queue.traces, a)
+	sub := wqJob(t, "sh", "-c", "sleep 30")
+	wqPeaks(m, wqSigOf(t, sub.Argv, sub.Cwd), 2, 7, 2)
+	return m, a, sub
+}
+
+func TestQueueGreedy_CountsTheUsualRunsPlusOneWorst(t *testing.T) {
+	m, _, sub := wqUsualModel(t)
+	id, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	rec := wqRecord(t, m, id)
+	assert.Equal(t, 9, rec.Claim.MemoryGB)
+	assert.Equal(t, sched.Running, rec.State, "8 + 9 GB at their worst, but 1.15 + 2.3 usual plus one 6.85 GB excess fits 14: %q", m.queue.waiting[id])
+}
+
+func TestQueueGreedy_ARunningJobsUseRaisesItsUsualLevel(t *testing.T) {
+	m, a, sub := wqUsualModel(t)
+	m.queue.usage[a] = jobUsage{RSSKB: 6 << 20} // below its 8 GB claim, far above its usual 1 GB
+	id, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	assert.Equal(t, sched.Queued, wqRecord(t, m, id).State, "6 × 1.15 measured, 2.3 usual and a 6.7 GB excess pass 14")
+}
+
+func TestQueueGreedy_NoUsualPeakForALadderedOrTwiceRequeuedJob(t *testing.T) {
+	m, a, _ := wqUsualModel(t)
+	rec := m.queue.store.Jobs[m.queue.index(a)]
+	now := time.Now()
+	expect := func(sched.Record) time.Duration { return 10 * time.Minute }
+	require.Positive(t, m.predictRunning(rec, now, expect)[0].ExcessKB, "an ordinary job counts usually at its usual peak")
+	laddered := rec
+	laddered.Rung = sched.RungSqueezed
+	assert.Zero(t, m.predictRunning(laddered, now, expect)[0].ExcessKB, "the ladder holds it")
+	requeued := rec
+	requeued.Requeues = sched.MaxRequeues
+	assert.Zero(t, m.predictRunning(requeued, now, expect)[0].ExcessKB, "it runs at its full claim")
+	assert.Zero(t, m.predictNew(requeued, now, expect)[0].ExcessKB, "and starts at it")
+	assert.Positive(t, m.predictNew(rec, now, expect)[0].ExcessKB)
+}

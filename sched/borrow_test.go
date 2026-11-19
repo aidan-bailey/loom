@@ -162,3 +162,19 @@ func TestBorrow_KeepsNamedLocks(t *testing.T) {
 	assert.Equal(t, []JobID{4}, Borrow(held, Decision{OnMemory: []JobID{2, 4}}, borrowPolicy(), t0, g).Start,
 		"a running job holds its lock")
 }
+
+func TestBorrowFits_TwoLentJobsCountAtTheUsualRunsPlusOneWorst(t *testing.T) {
+	// The day two borrowers stayed frozen: each peaks at 8 GB and usually at
+	// 2, so a resume needs 2 + 8 GB beside the firm job, not 8 + 8.
+	a, b := borrowed(2, Claim{CPUs: 2, MemoryGB: 8}), borrowed(3, Claim{CPUs: 2, MemoryGB: 8})
+	a.LentAt, b.LentAt = t0.Add(-time.Minute), t0.Add(-time.Minute)
+	jobs := []Record{running(1, Claim{CPUs: 4, MemoryGB: 4}), a, b}
+	g := borrowGreedy(jobs, map[JobID]int64{1: gb(2), 2: 0, 3: 0})
+	for _, id := range []JobID{2, 3} {
+		g.Running[id] = g.Running[id].UsualAtMost(gb(2))
+	}
+	g.BudgetKB = WithMarginKB(gb(2)) + gb(10)
+	assert.True(t, BorrowFits(jobs, g, 2, t0), "2 × 1.15 + 2 + 2 + 6 GB")
+	g.BudgetKB--
+	assert.False(t, BorrowFits(jobs, g, 2, t0), "a KB short")
+}

@@ -124,12 +124,17 @@ func (f *greedyFit) fits(r Record) string {
 	}
 	cand := f.g.Predict(r, f.now)
 	end := cand.End()
-	if PeakSum(append(slices.Clone(f.preds), cand), f.now, end) <= f.g.BudgetKB {
+	with := PeakSum(append(slices.Clone(f.preds), cand), f.now, end)
+	if with <= f.g.BudgetKB {
 		return ""
 	}
 	f.onMemory = append(f.onMemory, r.ID)
-	need := (PeakSum([]Prediction{cand}, f.now, end) + kbPerGB - 1) / kbPerGB
-	left := max(0, f.g.BudgetKB-PeakSum(f.preds, f.now, end)) / kbPerGB
+	// What its start adds to the forecast's peak, which is its worst unless
+	// the running jobs' largest excess already holds room for it (usual
+	// plus one worst spec), so need > left exactly when it doesn't fit.
+	without := PeakSum(f.preds, f.now, end)
+	need := (with - without + kbPerGB - 1) / kbPerGB
+	left := max(0, f.g.BudgetKB-without) / kbPerGB
 	return fmt.Sprintf("needs ~%d GB at its peak (forecast leaves %d)", need, left)
 }
 
