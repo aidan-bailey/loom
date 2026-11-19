@@ -1,0 +1,70 @@
+// The app's service worker, seen from the page: registering it and asking it for a new shell. The
+// worker itself is public/sw.js (spec §28). The launch-time push check, which also needs the
+// registration, follows in this file.
+import { cookieApp, page } from "./switchApp";
+
+const UPGRADE_KEY = "loom-next.upgrade";
+
+// UPGRADE_RELOAD_MS is how long a page waits for the new worker to take over (which reloads it)
+// before it reloads itself.
+const UPGRADE_RELOAD_MS = 5000;
+
+// registerWorker registers the worker at every launch, as /sw.js?ui=<the cookie's app>: the new
+// app's worker while the device is on the new app, the classic one after a switch back that was
+// deferred offline, so the switch completes on the next launch (spec §5). A worker that takes over
+// a page that was already controlled is a new build or the other app's worker: the page reloads
+// to draw from it. The first worker to take over a page that had none changes nothing the page
+// has drawn.
+export function registerWorker(): void {
+  if (!("serviceWorker" in navigator)) return;
+  const workers = navigator.serviceWorker;
+  const hadController = workers.controller !== null;
+  workers.addEventListener("controllerchange", () => {
+    if (hadController) page.reload();
+  });
+  workers.register(`/sw.js?ui=${cookieApp()}`).catch(() => undefined);
+}
+
+// shellBuild is the build this page's shell was served for: the loom-build meta tag the daemon
+// fills into index.html.
+export function shellBuild(): string {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="loom-build"]');
+  return meta ? meta.content : "";
+}
+
+// upgradeShell runs when the daemon's build differs from the shell's: it asks the worker for the
+// new shell, which installs, takes over and reloads the page (registerWorker). Once per build per
+// tab, so a shell that cannot update does not reload forever. When the worker cannot be asked, or
+// does not take over within UPGRADE_RELOAD_MS, the page reloads itself, unless the ask could not be
+// recorded (no sessionStorage): each reload's first snapshot would then start another timer, so
+// such a page leaves the reload to the worker's takeover.
+export function upgradeShell(build: string): void {
+  let remembered = true;
+  try {
+    if (sessionStorage.getItem(UPGRADE_KEY) === build) return;
+    sessionStorage.setItem(UPGRADE_KEY, build);
+  } catch {
+    // No sessionStorage: the shell is still asked, on every call.
+    remembered = false;
+  }
+  if (!("serviceWorker" in navigator)) {
+    page.reload();
+    return;
+  }
+  navigator.serviceWorker
+    .getRegistration()
+    .then((registration) => {
+      if (registration === undefined) {
+        page.reload();
+        return;
+      }
+      registration.update().catch(() => undefined);
+      if (!remembered) return;
+      setTimeout(() => {
+        page.reload();
+      }, UPGRADE_RELOAD_MS);
+    })
+    .catch(() => {
+      page.reload();
+    });
+}
