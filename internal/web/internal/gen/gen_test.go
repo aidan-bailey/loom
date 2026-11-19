@@ -100,6 +100,11 @@ type itemJSON struct {
 	hidden string
 }
 
+type viaPointerJSON struct {
+	*baseJSON
+	Own int `json:"own"`
+}
+
 type itemParams struct {
 	Q    string `query:"q"`
 	Page string `query:"page"`
@@ -229,6 +234,15 @@ type twinHolderJSON struct {
 
 type queryHolder struct {
 	N int `query:"n"`
+}
+
+func TestTypes_AFieldMergedThroughAnEmbeddedPointerIsOptional(t *testing.T) {
+	m, err := build(mini(reflect.TypeFor[viaPointerJSON]()))
+	require.NoError(t, err)
+	ts, err := m.types()
+	require.NoError(t, err)
+	assert.Contains(t, ts, "export interface ViaPointer {\n  kept?: number;\n  own: number;\n}\n",
+		"a nil embedded pointer leaves its fields out of the JSON")
 }
 
 func TestBuild_RefusesWhatItCannotType(t *testing.T) {

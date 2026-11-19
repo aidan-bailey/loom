@@ -255,12 +255,14 @@ func (m *model) walk(t reflect.Type, where string) error {
 
 // jsonFields are t's fields as encoding/json writes them: names from the
 // tags, unexported and json:"-" fields left out, an embedded struct's fields
-// flattened, a field with omitempty or omitzero optional.
+// flattened, a field with omitempty or omitzero optional, and so is every
+// field merged through an embedded pointer (encoding/json leaves them out
+// while it is nil).
 func jsonFields(t reflect.Type) ([]field, error) {
 	var out []field
 	seen := map[string]bool{}
-	var collect func(t reflect.Type) error
-	collect = func(t reflect.Type) error {
+	var collect func(t reflect.Type, viaPointer bool) error
+	collect = func(t reflect.Type, viaPointer bool) error {
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
 			tag := f.Tag.Get("json")
@@ -270,11 +272,13 @@ func jsonFields(t reflect.Type) ([]field, error) {
 			name, opts, _ := strings.Cut(tag, ",")
 			if f.Anonymous && name == "" {
 				inner := f.Type
+				through := viaPointer
 				if inner.Kind() == reflect.Pointer {
 					inner = inner.Elem()
+					through = true
 				}
 				if inner.Kind() == reflect.Struct {
-					if err := collect(inner); err != nil {
+					if err := collect(inner, through); err != nil {
 						return err
 					}
 					continue
@@ -286,7 +290,7 @@ func jsonFields(t reflect.Type) ([]field, error) {
 			if name == "" {
 				name = f.Name
 			}
-			optional := false
+			optional := viaPointer
 			for _, o := range strings.Split(opts, ",") {
 				switch o {
 				case "omitempty", "omitzero":
@@ -303,7 +307,7 @@ func jsonFields(t reflect.Type) ([]field, error) {
 		}
 		return nil
 	}
-	if err := collect(t); err != nil {
+	if err := collect(t, false); err != nil {
 		return nil, err
 	}
 	return out, nil
