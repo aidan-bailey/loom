@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { Session } from "@/api/gen";
 import { toastManager } from "@/components/ui/toast";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
@@ -230,7 +231,10 @@ describe("runCommand", () => {
     // The sheet's yes arrives after the session changed: run gets the store's
     // copy, not the context the command was started with.
     run.mockClear();
-    const changed = { ...session, status: session.status === "ready" ? "working" : "ready" };
+    const changed: Session = {
+      ...session,
+      status: session.status === "Running" ? "Ready" : "Running",
+    };
     vi.mocked(askConfirm).mockImplementationOnce(() => {
       const sessions = Object.fromEntries(
         Object.entries(snapshot.sessions ?? {}).map(([key, list]) => [
