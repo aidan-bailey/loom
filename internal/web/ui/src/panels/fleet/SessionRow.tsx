@@ -69,7 +69,7 @@ function runningAgents(session: Session): number {
 }
 
 // A PR's state: ✓, ✗ or … for an open PR's checks, else the state's own text.
-function PrMark({ pr }: { pr: Pr }): ReactElement | null {
+export function PrMark({ pr }: { pr: Pr }): ReactElement | null {
   if (pr.state !== "open") return <span>{pr.state}</span>;
   switch (pr.checks) {
     case "passing":

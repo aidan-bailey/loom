@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Pr, Session, Snapshot, Usage } from "@/api/gen";
@@ -7,7 +7,9 @@ import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
 
 import { checksText, groupGlyph, parityText } from "./facts";
+import { FactStrip } from "./FactStrip";
 import { NoSession } from "./NoSession";
+import { SessionHead } from "./SessionHead";
 import { SubLine } from "./SubLine";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
@@ -34,6 +36,7 @@ function load(over: Partial<Session> = {}, usage?: Usage[]): Session {
     ...base,
     id: 7,
     claude: true,
+    account: "",
     since: new Date(NOW - 5 * 60_000).toISOString(),
     ...over,
     workspace: workspace.id,
@@ -121,5 +124,185 @@ describe("SubLine and NoSession", () => {
   it("NoSession says the session is gone", () => {
     render(<NoSession />);
     expect(screen.getByRole("status")).toHaveTextContent("This session is gone.");
+  });
+});
+
+const hashAt = (hash: string): void => {
+  window.history.replaceState(null, "", hash);
+};
+
+const headProps = { sessionId: 7, params: { id: "7" }, search: {} };
+
+const usageAt = (pct: number): Usage[] => [
+  {
+    account: "default",
+    plan: "",
+    five_hour: { pct, resets_at: new Date(NOW + 3_600_000).toISOString() },
+    seven_day: null,
+    at: new Date(NOW).toISOString(),
+  },
+];
+
+describe("SessionHead", () => {
+  const claudeLink = () => screen.queryByRole("link", { name: /^claude/ });
+
+  it("draws the title as the h1 and a way back to the fleet", () => {
+    const session = load({ title: "Fix the thing" });
+    hashAt("#/s/7");
+    render(<SessionHead {...headProps} />);
+
+    expect(screen.getByRole("heading", { level: 1, name: session.title })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /fleet/ })).toHaveAttribute("href", "#/");
+  });
+
+  it("links to claude on the session's remote_url, in a new window, with no referrer or opener", () => {
+    load({ group: "working", remote_url: "https://claude.ai/code/abc" });
+    hashAt("#/s/7");
+    render(<SessionHead {...headProps} />);
+
+    const link = claudeLink();
+    expect(link).toHaveAttribute("href", "https://claude.ai/code/abc");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link?.getAttribute("rel")).toContain("noopener");
+    expect(link?.getAttribute("rel")).toContain("noreferrer");
+  });
+
+  it("leaves the claude link to the needs-you box on the conversation of a waiting Claude session", () => {
+    load({ group: "needs_you", claude: true, remote_url: "https://claude.ai/code/abc" });
+    hashAt("#/s/7");
+    render(<SessionHead {...headProps} />);
+
+    expect(claudeLink()).toBeNull();
+  });
+
+  it.each([
+    ["off the conversation", { group: "needs_you", claude: true }, "#/s/7/info"],
+    ["for a session not waiting", { group: "working", claude: true }, "#/s/7"],
+    ["for a session that is not Claude's", { group: "needs_you", claude: false }, "#/s/7"],
+  ] as const)(
+    "keeps the claude link wherever the needs-you box is not on screen: %s",
+    (_n, over, hash) => {
+      load({ ...over, remote_url: "https://claude.ai/code/abc" });
+      hashAt(hash);
+      render(<SessionHead {...headProps} />);
+
+      expect(claudeLink()).not.toBeNull();
+    },
+  );
+
+  it("draws no claude link while Remote Control is off", () => {
+    load({ group: "working", remote_url: "" });
+    hashAt("#/s/7");
+    render(<SessionHead {...headProps} />);
+
+    expect(claudeLink()).toBeNull();
+  });
+
+  it("draws only the way back for a session the snapshot does not list", () => {
+    load();
+    hashAt("#/s/8");
+    render(<SessionHead sessionId={8} params={{ id: "8" }} search={{}} />);
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("");
+    expect(screen.getByRole("link", { name: /fleet/ })).toBeInTheDocument();
+    expect(claudeLink()).toBeNull();
+  });
+});
+
+describe("FactStrip", () => {
+  const working = (over: Partial<Session> = {}, usage: Usage[] = usageAt(42)): Session =>
+    load(
+      {
+        group: "working",
+        label: "Running",
+        diff: { added: 0, removed: 0 },
+        pr: null,
+        jobs_label: "",
+        jobs_focus: 0,
+        ...over,
+      },
+      usage,
+    );
+  const strip = (container: HTMLElement) => container.firstElementChild as HTMLElement;
+
+  it("words the status, the changes, the PR and the share on one line", () => {
+    working({
+      diff: { added: 12, removed: 3 },
+      pr: { number: 9, state: "open", checks: "passing" },
+    });
+    hashAt("#/s/7");
+    const { container } = render(<FactStrip {...headProps} />);
+
+    expect(strip(container)).toHaveTextContent("◐ running 5m · +12 −3 · PR #9 ✓ · 42%");
+  });
+
+  it("leaves out the facts the session lacks", () => {
+    working({}, []);
+    hashAt("#/s/7");
+    const { container } = render(<FactStrip {...headProps} />);
+
+    expect(strip(container).textContent?.trim()).toBe("◐ running 5m");
+  });
+
+  it("tints the share amber from 80 percent", () => {
+    working({}, usageAt(85));
+    hashAt("#/s/7");
+    const hot = render(<FactStrip {...headProps} />);
+    expect(screen.getByText("85%")).toHaveClass("text-attention");
+    hot.unmount();
+
+    working({}, usageAt(42));
+    render(<FactStrip {...headProps} />);
+    expect(screen.getByText("42%")).not.toHaveClass("text-attention");
+  });
+
+  it("is one link to the info tab with no jobs", () => {
+    working();
+    hashAt("#/s/7");
+    const { container } = render(<FactStrip {...headProps} />);
+
+    const links = within(strip(container)).getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "#/s/7/info");
+    expect(links[0]).toHaveTextContent("◐ running 5m");
+  });
+
+  it("splits off the jobs badge, linking to the job it names or to info", () => {
+    working({ jobs_label: "⚙ 1 running", jobs_focus: 216 });
+    hashAt("#/s/7");
+    const first = render(<FactStrip {...headProps} />);
+
+    let links = within(strip(first.container)).getAllByRole("link");
+    expect(links).toHaveLength(2);
+    expect(links[0]).toHaveAttribute("href", "#/s/7/info");
+    expect(links[1]).toHaveAttribute("href", "#/s/7/job/216");
+    expect(links[1]).toHaveTextContent("⚙ 1 running");
+    first.unmount();
+
+    working({ jobs_label: "⚙ queued", jobs_focus: 0 });
+    const second = render(<FactStrip {...headProps} />);
+    links = within(strip(second.container)).getAllByRole("link");
+    expect(links[1]).toHaveAttribute("href", "#/s/7/info");
+    expect(links[1]).toHaveTextContent("⚙ queued");
+  });
+
+  it("draws nothing off the conversation, for a non-Claude session, or for a session the snapshot does not list", () => {
+    working();
+    for (const hash of ["#/s/7/info", "#/s/7/diff"]) {
+      hashAt(hash);
+      const { container, unmount } = render(<FactStrip {...headProps} />);
+      expect(container).toBeEmptyDOMElement();
+      unmount();
+    }
+
+    working({ claude: false });
+    hashAt("#/s/7");
+    const plain = render(<FactStrip {...headProps} />);
+    expect(plain.container).toBeEmptyDOMElement();
+    plain.unmount();
+
+    working();
+    const gone = render(<FactStrip sessionId={8} params={{ id: "8" }} search={{}} />);
+    expect(gone.container).toBeEmptyDOMElement();
   });
 });
