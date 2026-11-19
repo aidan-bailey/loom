@@ -32,10 +32,11 @@ export function registerWorker(): void {
 }
 
 // shellBuild is the build this page's shell was served for: the loom-build meta tag the daemon
-// fills into index.html.
+// fills into index.html, or "" while it is unfilled.
 export function shellBuild(): string {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="loom-build"]');
-  return meta ? meta.content : "";
+  // An unfilled placeholder (pnpm dev serves index.html as it is) is no build.
+  return meta && meta.content !== "__LOOM_BUILD__" ? meta.content : "";
 }
 
 // upgradeShell runs when the daemon's build differs from the shell's: it asks the worker for the
@@ -43,8 +44,9 @@ export function shellBuild(): string {
 // tab, so a shell that cannot update does not reload forever. When the worker cannot be asked, or
 // does not take over within UPGRADE_RELOAD_MS, the page reloads itself, unless the ask could not be
 // recorded (no sessionStorage): each reload's first snapshot would then start another timer, so
-// such a page leaves the reload to the worker's takeover. It returns whether it started a reload or
-// a takeover: false when this tab already asked for the build, so the caller may go on as usual.
+// such a page leaves the reload to the worker's takeover, and returns false so the caller goes on as
+// usual. It returns whether it started a reload or a takeover: false when this tab already asked for
+// the build.
 export function upgradeShell(build: string): boolean {
   let remembered = true;
   try {
@@ -74,7 +76,7 @@ export function upgradeShell(build: string): boolean {
     .catch(() => {
       page.reload();
     });
-  return true;
+  return remembered;
 }
 
 function pushSupported(): boolean {

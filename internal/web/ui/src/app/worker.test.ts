@@ -104,6 +104,14 @@ describe("shellBuild", () => {
     expect(shellBuild()).toBe("b-9");
   });
 
+  it("is empty while the tag still holds the unfilled placeholder", () => {
+    const meta = document.createElement("meta");
+    meta.name = "loom-build";
+    meta.content = "__LOOM_BUILD__";
+    document.head.append(meta);
+    expect(shellBuild()).toBe("");
+  });
+
   it("is empty when the page has no such tag", () => {
     expect(shellBuild()).toBe("");
   });
@@ -181,7 +189,7 @@ describe("upgradeShell", () => {
     });
     const update = vi.fn().mockResolvedValue(undefined);
     m.getRegistration.mockResolvedValue({ update });
-    upgradeShell("b-2");
+    expect(upgradeShell("b-2")).toBe(false);
     await settle();
     expect(m.getRegistration).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);

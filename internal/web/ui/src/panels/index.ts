@@ -1,4 +1,4 @@
-// Each panel module is imported here for its definePanel registration.
-// Stories and parts that add a panel add a line; until Story 13 registers the
-// fleet, every route draws the placeholder.
+// Each panel module is imported here for its definePanel registration: a panel
+// registers when its module is imported, so a part that adds a panel adds a line.
+// A route with no panel registered draws the placeholder.
 import "./fleet";

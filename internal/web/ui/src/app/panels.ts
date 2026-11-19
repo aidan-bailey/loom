@@ -31,7 +31,7 @@ export interface PanelProps {
   search: Record<string, string>;
 }
 
-// Panel is one view. Head is its context row in the pinned header, Body its
+// Panel is one view. title names it in its error boundaries. Head is its context row in the pinned header, Body its
 // screen; tab makes it one of a session's tabs (SessionTabs), shown for the
 // sessions appliesTo accepts (every session without it).
 export interface Panel {

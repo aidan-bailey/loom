@@ -21,8 +21,9 @@ import { ConfirmSheet } from "./ConfirmSheet";
 import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
 import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./routes";
 
-// SCREEN_NAMES is what each screen is called where the app names it: the
-// placeholder's heading and an error boundary's message.
+// SCREEN_NAMES is what each screen is called by the placeholder, which draws
+// where no panel is registered; a registered panel's own title names it in its
+// error boundaries.
 const SCREEN_NAMES: Record<PanelId, string> = {
   fleet: "Fleet",
   turns: "Conversation",
@@ -123,7 +124,7 @@ export function PanelHost({ panel, props }: { panel: PanelId; props: PanelProps 
   const entry = panelFor(panel);
   if (entry === undefined) return <Placeholder panel={panel} />;
   return (
-    <Boundary key={resetKey(panel, props)} what={SCREEN_NAMES[panel]}>
+    <Boundary key={resetKey(panel, props)} what={entry.title(props)}>
       <entry.Body {...props} />
     </Boundary>
   );
@@ -154,7 +155,8 @@ export function AppShell(): ReactElement {
   const typing = useTextFieldFocus(route);
   const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
   const waiting = !hasSnapshot && route.panel !== "pair";
-  const Head = panelFor(route.panel)?.Head;
+  const entry = panelFor(route.panel);
+  const Head = entry?.Head;
 
   return (
     <div
@@ -171,7 +173,7 @@ export function AppShell(): ReactElement {
           {Head === undefined ? null : (
             <Boundary
               key={resetKey(route.panel, props)}
-              what={`The ${SCREEN_NAMES[route.panel]} header`}
+              what={`The ${entry?.title(props) ?? SCREEN_NAMES[route.panel]} header`}
               fallback={null}
             >
               <Head {...props} />
