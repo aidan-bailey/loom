@@ -10,12 +10,14 @@ import "@/panels";
 import { queryClient } from "@/api/queries";
 import { onUnpaired } from "@/api/request";
 import { goToPairing, router, watchHash } from "@/app/routes";
+import { watchNotices } from "@/app/toasts";
 import { startFleet } from "@/store/fleet";
 
 const mount = document.getElementById("app");
 if (mount === null) throw new Error("loom: the page has no #app element");
 
 const stopHash = watchHash();
+const stopNotices = watchNotices();
 const stopFleet = startFleet();
 const stopUnpaired = onUnpaired(goToPairing);
 
@@ -34,6 +36,7 @@ createRoot(mount).render(
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     stopHash();
+    stopNotices();
     stopFleet();
     stopUnpaired();
   });
