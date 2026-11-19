@@ -19,7 +19,7 @@ export interface RouteState {
 
 // AGENT_ID is what an agent id may hold for the app to link to its screen
 // (the classic app's session.mjs says the same).
-const AGENT_ID = /^[A-Za-z0-9_-]+$/;
+export const AGENT_ID = /^[A-Za-z0-9_-]+$/;
 
 // normalizeHash is a hash in the app's own form: `#s/<id>…` (as a push and
 // the classic app write it) becomes `#/s/<id>…`, as does every slashless
