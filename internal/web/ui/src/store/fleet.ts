@@ -10,6 +10,7 @@ import { connectStream, RESTART_GRACE, type LinkState } from "@/api/stream";
 import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
 import { setBadge } from "./badge";
+import { useDrafts } from "./drafts";
 import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
 
 export interface FleetState {
@@ -278,6 +279,8 @@ export function startFleet(): () => void {
     // Nothing of the revoked pairing outlives it: the turns, diffs and logs the query client
     // cached would come back if the app were paired again before a reload, and so would the badge.
     queryClient.clear();
+    // The unsent replies and answers are the revoked device's too.
+    useDrafts.getState().clear();
     setBadge(0);
   });
 

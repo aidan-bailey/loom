@@ -6,6 +6,7 @@ import { connectStream, RESTART_GRACE, type StreamHandlers } from "@/api/stream"
 import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { fixtureSnapshot } from "@/fixtures";
 import { setBadge } from "./badge";
+import { useDrafts } from "./drafts";
 import { startFleet, useFleet } from "./fleet";
 import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
 
@@ -66,6 +67,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   queryClient.clear();
+  useDrafts.getState().clear();
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -178,6 +180,22 @@ describe("startFleet", () => {
     expect(closeStream).toHaveBeenCalledOnce();
     expect(queryClient.getQueryData(["turns", 7])).toBeUndefined();
     expect(setBadge).toHaveBeenLastCalledWith(0);
+  });
+
+  it("drops every unsent reply and answer when unpaired, and keeps them until then", () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    useDrafts.getState().setReply(7, "half a reply");
+    useDrafts
+      .getState()
+      .setAsk("ask-1", { answers: { "Which?": { labels: ["a"], other: "", note: "" } } });
+    expect(useDrafts.getState().replies).toEqual({ 7: "half a reply" });
+    expect(Object.keys(useDrafts.getState().asks)).toEqual(["ask-1"]);
+
+    emitUnpaired();
+
+    expect(useDrafts.getState().replies).toEqual({});
+    expect(useDrafts.getState().asks).toEqual({});
   });
 
   it("marks the link restarting when a request is answered with the stopping text, until the stream is live", () => {
