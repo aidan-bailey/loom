@@ -1,6 +1,5 @@
 // One session of the fleet (direction B): its group's dot, title, account share and age; why it
-// waits, or what it said last; and what it holds. A port of the classic fleet's Row, less the NEW
-// mark, which comes with the conversation that marks a session seen.
+// waits, or what it said last; and what it holds. A port of the classic fleet's Row.
 import type { ReactElement, ReactNode } from "react";
 
 import type { FlowSummary, Pr, Session, Usage } from "@/api/gen";
@@ -87,10 +86,12 @@ export function SessionRow({
   session,
   usage,
   chip,
+  fresh = false,
 }: {
   session: Session;
   usage: Usage[];
   chip?: string;
+  fresh?: boolean;
 }): ReactElement {
   const staleAfterS = useFleet((s) => s.snapshot?.usage_stale_after_s);
   const waiting = session.group === "needs_you";
@@ -162,6 +163,11 @@ export function SessionRow({
           )}
         />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{session.title}</span>
+        {fresh ? (
+          <span className="flex-none rounded-sm bg-turn px-1 text-[10px] font-bold text-background">
+            NEW
+          </span>
+        ) : null}
         {share === null ? null : (
           <span
             data-amber={share.amber ? "true" : undefined}

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FlowSummary, Pr, Session, Snapshot, Usage } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import { markSeen, readSeen, SEEN_KEY } from "@/fleet/seen";
 import { panelFor } from "@/app/panels";
 import "@/panels";
 import { useFleet } from "@/store/fleet";
@@ -249,6 +250,21 @@ describe("SessionRow", () => {
   });
 });
 
+describe("the fleet row's NEW mark", () => {
+  const snapshot = fixtureSnapshot(NOW);
+  const byId = (id: number): Session => allSessions(snapshot).find((s) => s.id === id) as Session;
+
+  it("draws NEW after the title only when fresh", () => {
+    load(snapshot);
+    const session = byId(7);
+    const { rerender } = render(<SessionRow session={session} usage={[]} fresh />);
+    expect(screen.getByText("NEW")).toBeInTheDocument();
+
+    rerender(<SessionRow session={session} usage={[]} />);
+    expect(screen.queryByText("NEW")).toBeNull();
+  });
+});
+
 describe("the fleet panel", () => {
   const props = { sessionId: undefined, params: {}, search: {} };
   const Body = (): ReactElement => {
@@ -462,6 +478,83 @@ describe("the fleet panel", () => {
     const stale = screen.getByRole("link", { name: "+ New" });
     expect(stale).toHaveAttribute("aria-disabled", "true");
     expect(fireEvent.click(stale)).toBe(false);
+  });
+
+  describe("the seen times", () => {
+    const yourTurn = (snapshot: Snapshot): Session => {
+      const s = allSessions(snapshot).find((x) => x.group === "your_turn");
+      expect(s).toBeDefined();
+      return s as Session;
+    };
+    const stored = (seen: Record<string, number>): void => {
+      window.localStorage.setItem(SEEN_KEY, JSON.stringify(JSON.stringify(seen)));
+    };
+
+    it("marks a Your turn session NEW until it is opened", () => {
+      const session = yourTurn(withSnapshot());
+      render(<Body />);
+      expect(screen.getByText("NEW")).toBeInTheDocument();
+
+      act(() => {
+        markSeen(session.id);
+      });
+      expect(screen.queryByText("NEW")).toBeNull();
+    });
+
+    it("marks a session NEW only for a turn that ended after the last time it was opened", () => {
+      const session = yourTurn(withSnapshot());
+      const sinceMs = Date.parse(session.since);
+      stored({ [session.id]: sinceMs - 1000 });
+      const { unmount } = render(<Body />);
+      expect(screen.getByText("NEW")).toBeInTheDocument();
+      unmount();
+
+      stored({ [session.id]: sinceMs + 1000 });
+      render(<Body />);
+      expect(screen.queryByText("NEW")).toBeNull();
+    });
+
+    it("marks no needs-you, working or paused row NEW", async () => {
+      const snapshot = withSnapshot();
+      render(<Body />);
+      await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
+      const yours = allSessions(snapshot).filter((s) => s.group === "your_turn").length;
+      expect(screen.getAllByText("NEW")).toHaveLength(yours);
+    });
+
+    it("prunes the seen times of sessions the daemon no longer lists", () => {
+      const session = yourTurn(withSnapshot());
+      stored({ [session.id]: 5, 999: 6 });
+      render(<Body />);
+
+      expect(readSeen()).toEqual({ [session.id]: 5 });
+      expect(window.localStorage.getItem(SEEN_KEY)).toBe(
+        JSON.stringify(JSON.stringify({ [session.id]: 5 })),
+      );
+    });
+
+    it("prunes by every session of every workspace, shown or not", () => {
+      const snapshot = withSnapshot((s) => {
+        const hidden = s.workspaces?.find((w) => w.id === 2);
+        if (hidden !== undefined) hidden.shown = false;
+      });
+      const inHidden = allSessions(snapshot).find((x) => x.workspace === 2);
+      if (inHidden === undefined) throw new Error("the fixture holds no session in workspace 2");
+      stored({ [inHidden.id]: 5, 999: 6 });
+      render(<Body />);
+
+      expect(readSeen()).toEqual({ [inHidden.id]: 5 });
+    });
+
+    it("never prunes on an empty fleet", () => {
+      withSnapshot((s) => {
+        s.sessions = {};
+      });
+      stored({ 5: 1, 6: 2 });
+      render(<Body />);
+
+      expect(readSeen()).toEqual({ "5": 1, "6": 2 });
+    });
   });
 
   it("registers the fleet panel", () => {

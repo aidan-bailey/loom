@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { Session, SessionGroup, Usage } from "@/api/gen";
 import { allSessions, groupSessions, GROUPS, shownWorkspaces } from "@/fleet/groups";
+import { hasNewTurn, pruneSeen, useSeen } from "@/fleet/seen";
 import { useFleet } from "@/store/fleet";
 
 import { FleetHead } from "./FleetHead";
@@ -39,15 +40,23 @@ function Card({
   sessions,
   usage,
   chipOf,
+  seen,
 }: {
   sessions: Session[];
   usage: Usage[];
   chipOf: (s: Session) => string | undefined;
+  seen: Record<string, number>;
 }): ReactElement {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       {sessions.map((s) => (
-        <SessionRow key={s.id} session={s} usage={usage} chip={chipOf(s)} />
+        <SessionRow
+          key={s.id}
+          session={s}
+          usage={usage}
+          chip={chipOf(s)}
+          fresh={hasNewTurn(s, seen)}
+        />
       ))}
     </div>
   );
@@ -74,6 +83,13 @@ function Fleet(): ReactElement {
   const snapshot = useFleet((s) => s.snapshot);
   const [stored, setStored] = useState(readFilter);
   const [, setTick] = useState(0);
+  const seen = useSeen();
+
+  // A session the daemon no longer lists keeps no time: every session of every workspace, shown or
+  // not, is listed (an empty fleet prunes nothing).
+  useEffect(() => {
+    if (snapshot !== null) pruneSeen(allSessions(snapshot).map((s) => s.id));
+  }, [snapshot]);
 
   // Ages and the shares' staleness move with the clock, not only with the stream.
   useEffect(() => {
@@ -124,7 +140,7 @@ function Fleet(): ReactElement {
             <Heading title={title} count={list.length} attention={false} />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <Card sessions={list} usage={usage} chipOf={chipOf} />
+            <Card sessions={list} usage={usage} chipOf={chipOf} seen={seen} />
           </CollapsibleContent>
         </Collapsible>
       );
@@ -134,7 +150,7 @@ function Fleet(): ReactElement {
         <h2 className="mb-2 flex min-h-8 items-center">
           <Heading title={title} count={list.length} attention={key === "needs_you"} />
         </h2>
-        <Card sessions={list} usage={usage} chipOf={chipOf} />
+        <Card sessions={list} usage={usage} chipOf={chipOf} seen={seen} />
       </section>
     );
   };
