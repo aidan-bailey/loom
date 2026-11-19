@@ -11,6 +11,7 @@ import { queryClient } from "@/api/queries";
 import { onUnpaired } from "@/api/request";
 import { goToPairing, router, watchHash } from "@/app/routes";
 import { watchNotices } from "@/app/toasts";
+import { registerWorker } from "@/app/worker";
 import { startFleet } from "@/store/fleet";
 
 const mount = document.getElementById("app");
@@ -20,6 +21,7 @@ const stopHash = watchHash();
 const stopNotices = watchNotices();
 const stopFleet = startFleet();
 const stopUnpaired = onUnpaired(goToPairing);
+registerWorker();
 
 // Base UI's CSPProvider keeps its components from writing <style> elements,
 // which the app's Content-Security-Policy refuses (spec §33).

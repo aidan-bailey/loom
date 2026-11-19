@@ -7,6 +7,7 @@ import type { Session, Snapshot, StreamEvents } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { emitNotices, onStopping, onUnpaired } from "@/api/request";
 import { connectStream, RESTART_GRACE, type LinkState } from "@/api/stream";
+import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
 import { setBadge } from "./badge";
 import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
@@ -172,8 +173,7 @@ function scheduleSave(): void {
 function afterEvent(event: AnyEvent): void {
   switch (event.name) {
     case "snapshot":
-      // The launch-time checks (the shell's upgrade, the push subscription) are added here by a
-      // later story; the first snapshot of a launch is where they will run.
+      // The launch-time checks that follow a snapshot run in startFleet's onEvent.
       setBadge(event.data.badge);
       scheduleSave();
       break;
@@ -227,10 +227,26 @@ export function startFleet(): () => void {
     useFleet.getState().load(saved.snapshot, saved.updated);
   });
 
+  // The push subscription is checked once per launch, after the first snapshot of this start.
+  let launched = false;
+
   const closeStream = connectStream({
     onEvent(name, data) {
       useFleet.getState().apply(name, data);
-      afterEvent({ name, data } as unknown as AnyEvent);
+      const event = { name, data } as unknown as AnyEvent;
+      afterEvent(event);
+      if (event.name === "snapshot") {
+        // A snapshot from another build than the shell's asks the worker for the new shell (once
+        // per build); a build unknown on either side asks for nothing.
+        const shell = shellBuild();
+        const upgrading = Boolean(event.data.build && shell && event.data.build !== shell);
+        if (upgrading) upgradeShell(event.data.build);
+        // A page that is about to reload for a new shell leaves the check to its next launch.
+        if (!launched && !upgrading) {
+          launched = true;
+          void checkPushSubscription(event.data.device);
+        }
+      }
     },
     onLink(state) {
       streamState = state;

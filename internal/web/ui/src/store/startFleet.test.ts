@@ -3,12 +3,18 @@ import type { Notice, Snapshot } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { emitStopping, emitUnpaired, onNotices } from "@/api/request";
 import { connectStream, RESTART_GRACE, type StreamHandlers } from "@/api/stream";
+import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { fixtureSnapshot } from "@/fixtures";
 import { setBadge } from "./badge";
 import { startFleet, useFleet } from "./fleet";
 import { clearSnapshot, loadSnapshot, saveSnapshot } from "./persist";
 
 vi.mock("@/api/stream");
+vi.mock("@/app/worker", () => ({
+  checkPushSubscription: vi.fn(),
+  shellBuild: vi.fn(),
+  upgradeShell: vi.fn(),
+}));
 vi.mock("./badge");
 vi.mock("./persist");
 
@@ -48,6 +54,8 @@ beforeEach(() => {
   useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
   vi.mocked(loadSnapshot).mockResolvedValue(null);
   vi.mocked(clearSnapshot).mockResolvedValue(undefined);
+  vi.mocked(shellBuild).mockReturnValue("");
+  vi.mocked(checkPushSubscription).mockResolvedValue(undefined);
   vi.mocked(connectStream).mockImplementation((h) => {
     handlers = h;
     return closeStream;
@@ -263,5 +271,60 @@ describe("startFleet", () => {
     start();
     expect(connectStream).toHaveBeenCalledTimes(2);
     expect(closeStream).toHaveBeenCalledOnce();
+  });
+
+  it("asks the worker for the new shell when a snapshot's build is not the shell's", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-new" });
+    expect(upgradeShell).toHaveBeenCalledTimes(1);
+    expect(upgradeShell).toHaveBeenCalledWith("b-new");
+  });
+
+  it("asks for nothing when the snapshot's build is the shell's, or either build is unknown", () => {
+    start();
+    vi.mocked(shellBuild).mockReturnValue("b-1");
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-1" });
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "" });
+    vi.mocked(shellBuild).mockReturnValue("");
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-2" });
+    expect(upgradeShell).not.toHaveBeenCalled();
+  });
+
+  it("asks for a new shell on a snapshot only", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("sessions", { workspace: 1, sessions: [], badge: 0 });
+    handlers.onEvent("ping", {});
+    expect(upgradeShell).not.toHaveBeenCalled();
+    expect(checkPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("leaves the push check to the reloaded page when the snapshot asks for a new shell", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    start();
+    handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-new" });
+    expect(upgradeShell).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("checks the push subscription once per launch, with the first snapshot's device", () => {
+    start();
+    const first = fixtureSnapshot(NOW);
+    handlers.onEvent("snapshot", first);
+    handlers.onEvent("snapshot", {
+      ...fixtureSnapshot(NOW),
+      device: { ...first.device, push: "expired" },
+    });
+    expect(checkPushSubscription).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).toHaveBeenCalledWith(first.device);
+  });
+
+  it("checks again when started again: a new start is a new launch", () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    expect(checkPushSubscription).toHaveBeenCalledTimes(2);
   });
 });
