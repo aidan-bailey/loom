@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentPageState,
+  AskKind,
   Client,
   FileOmitted,
   FileStatus,
@@ -13,6 +14,7 @@ import type {
   ItemKind,
   JobControl,
   JobState,
+  MdNode,
   PrChecks,
   PrState,
   SessionGroup,
@@ -21,7 +23,7 @@ import type {
   StepState,
   TurnFrom,
 } from "@/api/gen";
-import { fillTimes, fixtureSnapshot } from "./fixtures";
+import { fillTimes, fixtureJobLog, fixturePatch, fixtureSnapshot, fixtureTurns } from "./fixtures";
 import agentTurns from "../../../../tools/webshot/fixture/agent-turns.json";
 import diff from "../../../../tools/webshot/fixture/diff.json";
 import flowDoc from "../../../../tools/webshot/fixture/flow-doc.json";
@@ -106,6 +108,7 @@ const turnFrom: Record<TurnFrom, true> = {
   task: true,
   brief: true,
 };
+const askKind: Record<AskKind, true> = { question: true, permission: true };
 const itemKind: Record<ItemKind, true> = {
   text: true,
   thinking: true,
@@ -211,6 +214,7 @@ const unionFields: { fixture: keyof typeof typed; path: string; union: Record<st
   { fixture: "snapshot.json", path: "sessions/*/*/pr/checks", union: prChecks },
   { fixture: "snapshot.json", path: "sessions/*/*/jobs/*/state", union: jobState },
   { fixture: "snapshot.json", path: "sessions/*/*/jobs/*/control", union: jobControl },
+  { fixture: "snapshot.json", path: "sessions/*/*/asks/*/kind", union: askKind },
   { fixture: "snapshot.json", path: "sessions/*/*/flows/*/stage", union: flowStageName },
   { fixture: "snapshot.json", path: "sessions/*/*/flows/*/status", union: flowStatus },
   { fixture: "snapshot.json", path: "sessions/*/*/flows/*/asks", union: flowQuestionKind },
@@ -299,5 +303,135 @@ describe("fixtureSnapshot", () => {
     const first = fixtureSnapshot(now);
     first.host = "changed";
     expect(fixtureSnapshot(now).host).toBe("fresco");
+  });
+});
+
+describe("the session views' inputs", () => {
+  const NOW = Date.parse("2026-11-18T12:00:00Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const nodeKinds = (nodes: (MdNode | null)[] | undefined): string[] =>
+    (nodes ?? []).flatMap((n) => (n === null ? [] : [n.t, ...nodeKinds(n.c)]));
+
+  it("the snapshot holds session two's permission and question asks", () => {
+    const sessions = Object.values(fixtureSnapshot(NOW).sessions ?? {}).flatMap((l) => l ?? []);
+    const two = sessions.find((s) => s.id === 2);
+    const asks = two?.asks ?? [];
+    expect(asks.map((a) => a.id)).toEqual(["fixture-permission", "fixture-question"]);
+    const [permission, question] = asks;
+    expect((permission?.suggestions ?? []).map((s) => s.persists === true)).toEqual([true, false]);
+    expect(question?.agent).toBe("recon");
+    const [first, second] = question?.questions ?? [];
+    expect(first?.multi).toBe(false);
+    expect((first?.options ?? []).filter((o) => o.preview !== undefined)).toHaveLength(1);
+    expect(second?.multi).toBe(true);
+    const one = sessions.find((s) => s.id === 1);
+    expect(one?.worktree).toBe("/work/loom/fix-pane-cursor");
+    expect(one?.tmux).toBe("loom_fix-pane-cursor");
+    const job = (one?.jobs ?? []).find((j) => j.id === 216);
+    expect(job?.state).toBe("queued");
+    expect(job?.waiting).toBe("waiting for 6 free cores");
+  });
+
+  it("fixtureTurns holds every item kind, both notes and an interrupted step", () => {
+    const items = (fixtureTurns().turns ?? []).flatMap((t) => t.items ?? []);
+    expect(new Set(items.map((i) => i.kind))).toEqual(new Set(Object.keys(itemKind)));
+    const notes = items.filter((i) => i.kind === "note");
+    expect(notes.filter((n) => n.error === true)).toHaveLength(1);
+    expect(notes.filter((n) => n.error !== true)).toHaveLength(1);
+    expect(items.flatMap((i) => i.steps ?? []).some((s) => s.state === "interrupted")).toBe(true);
+  });
+
+  it("fixtureTurns holds every node kind a text item's tree can draw", () => {
+    const items = (fixtureTurns().turns ?? []).flatMap((t) => t.items ?? []);
+    const kinds = new Set(
+      items.filter((i) => i.kind === "text").flatMap((i) => nodeKinds(i.blocks)),
+    );
+    for (const kind of [
+      "h",
+      "p",
+      "ul",
+      "ol",
+      "li",
+      "quote",
+      "code",
+      "code_inline",
+      "em",
+      "strong",
+      "a",
+      "hr",
+      "table",
+      "tr",
+      "th",
+      "td",
+      "text",
+    ]) {
+      expect(kinds.has(kind), kind).toBe(true);
+    }
+    const links: string[] = [];
+    const walk = (nodes: (MdNode | null)[] | undefined) => {
+      for (const n of nodes ?? []) {
+        if (n === null) continue;
+        if (n.t === "a") links.push(n.href ?? "");
+        walk(n.c);
+      }
+    };
+    for (const i of items) walk(i.blocks);
+    expect(links.length).toBeGreaterThan(0);
+    for (const href of links) expect(href.startsWith("https://")).toBe(true);
+  });
+
+  it("fixtureTurns(true) is the subagent's page", () => {
+    const page = fixtureTurns(true);
+    expect(page.agent?.id).toBe("a1f00dcafe0001");
+    expect(page.agent?.state).toBe("running");
+    expect(page.turns?.[0]?.from).toBe("brief");
+    expect(fixtureTurns().agent).toBeUndefined();
+  });
+
+  it("the loaders fill every relative time and return a fresh copy", () => {
+    for (const value of [
+      fixtureTurns(),
+      fixtureTurns(true),
+      fixturePatch(),
+      fixtureJobLog(),
+      fixtureJobLog(true),
+    ]) {
+      expect(JSON.stringify(value)).not.toContain('"now');
+    }
+    const first = fixtureTurns();
+    expect(first.turns?.[0]?.at).toBe("2026-11-18T11:30:00Z");
+    const turn = first.turns?.[0];
+    if (turn !== undefined) turn.text = "changed";
+    expect(fixtureTurns().turns?.[0]?.text).not.toBe("changed");
+  });
+
+  it("fixturePatch holds a deleted file and a file omitted for its length", () => {
+    const files = fixturePatch().files ?? [];
+    expect(files.some((f) => f.status === "D" && f.removed > 0)).toBe(true);
+    expect(files.some((f) => f.omitted === "lines" && (f.hunks ?? []).length === 0)).toBe(true);
+    expect(files.slice(0, 3).map((f) => f.path)).toEqual([
+      "ui/pane.go",
+      "ui/header.go",
+      "assets/cursor.png",
+    ]);
+  });
+
+  it("fixtureJobLog is the tail and its after is empty", () => {
+    const tail = fixtureJobLog();
+    expect(tail.text).not.toBe("");
+    expect(tail.cut).toBe(true);
+    expect(tail.reset).toBe(false);
+    const after = fixtureJobLog(true);
+    expect(after.text).toBe("");
+    expect(after.start).toBe(after.end);
+    expect(after.end).toBe(tail.end);
   });
 });

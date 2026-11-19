@@ -1,8 +1,13 @@
-// The canned loom's snapshot (tools/webshot/fixture/snapshot.json) for the tests: its relative
-// times ("now-2m", "now+1h40m") filled as tools/webshot's fillTimes fills them, so the same
-// fixture feeds Vitest and the screenshots.
-import type { Snapshot } from "@/api/gen";
+// The canned loom's fixtures (tools/webshot/fixture: the snapshot, the turns, the diff and the job
+// log) for the tests: their relative times ("now-2m", "now+1h40m") filled as tools/webshot's
+// fillTimes fills them, so the same fixtures feed Vitest and the screenshots.
+import type { JobLog, Patch, Snapshot, Turns } from "@/api/gen";
+import agentTurnsJson from "../../../../tools/webshot/fixture/agent-turns.json";
+import diffJson from "../../../../tools/webshot/fixture/diff.json";
+import jobLogAfterJson from "../../../../tools/webshot/fixture/job-log-after.json";
+import jobLogJson from "../../../../tools/webshot/fixture/job-log.json";
 import snapshotJson from "../../../../tools/webshot/fixture/snapshot.json";
+import turnsJson from "../../../../tools/webshot/fixture/turns.json";
 
 const RELATIVE = /^now(?:([+-])(\S+))?$/;
 const DURATION = /^(?:\d+(?:\.\d+)?(?:ms|h|m|s))+$/;
@@ -41,4 +46,19 @@ export function fillTimes(value: unknown, now: number): unknown {
 /** The canned snapshot with its times counted from now (ms), a fresh copy each call. */
 export function fixtureSnapshot(now = Date.now()): Snapshot {
   return fillTimes(snapshotJson, now) as Snapshot;
+}
+
+/** The canned conversation (turns.json), or the subagent's page (agent-turns.json) when agent is true; a fresh copy. */
+export function fixtureTurns(agent = false): Turns {
+  return fillTimes(agent ? agentTurnsJson : turnsJson, Date.now()) as Turns;
+}
+
+/** The canned diff (diff.json), a fresh copy. */
+export function fixturePatch(): Patch {
+  return fillTimes(diffJson, Date.now()) as Patch;
+}
+
+/** The canned job log's tail (job-log.json), or what comes after it (job-log-after.json) when after is true; a fresh copy. */
+export function fixtureJobLog(after = false): JobLog {
+  return fillTimes(after ? jobLogAfterJson : jobLogJson, Date.now()) as JobLog;
 }
