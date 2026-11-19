@@ -161,6 +161,18 @@ func TestTyped_ARouteThatLogsForItselfIsAnsweredButNotLogged(t *testing.T) {
 	assert.Empty(t, *got, "an empty log name means the handler logs for itself")
 }
 
+func TestTyped_ARouteThatLogsForItselfAnswersPendingAndLogsNothing(t *testing.T) {
+	l, got := newRouteLayer()
+	rt := typed(l, spec{method: http.MethodGet, path: "/api/v1/echo", client: "echo", ok: http.StatusOK},
+		func(c *call, _ struct{}) (echoOut, error) { return echoOut{}, errPending })
+
+	rec := serveRoute(rt, http.MethodGet, "/api/v1/echo", "")
+
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+	assert.JSONEq(t, `{"pending":true}`, rec.Body.String())
+	assert.Empty(t, *got, "an empty log name means the handler logs for itself, a pending answer included")
+}
+
 func TestTyped_ABodyThatDoesNotDecodeIs400AndNeverReachesTheHandler(t *testing.T) {
 	for _, tc := range []struct{ name, body, text string }{
 		{"not JSON", "not json", "bad request: the body is not the JSON this route takes"},

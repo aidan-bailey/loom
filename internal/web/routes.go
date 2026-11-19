@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 )
@@ -127,7 +129,7 @@ func (c *call) request(send func(req core.ReqID)) ([]noticeJSON, core.Reply, err
 	return notes, reply, err
 }
 
-// act is doAction's request and wait: the notices on success (kept among the
+// act is the layer's request and wait for an action: the notices on success (kept among the
 // hub's recent ones), errPending when the wait runs out (the notices raised
 // before the request go to the device's stream), and the Reply's error
 // otherwise, its other notices sent to the device's stream.
@@ -261,7 +263,7 @@ func readQuery(r *http.Request, v any) {
 
 // lifecycleDoc is the doc of a lifecycle route that names only the session.
 func lifecycleDoc(request string) string {
-	return "The " + request + " request of the session: 200 with its notices, 409 with the model's own words when it refuses, and 202 `{\"pending\": true}` when it is still running after 30 s, its outcome then arriving on the stream."
+	return "The " + request + " request of the session: 200 with its notices, 409 with the model's own words when it refuses, and 202 `{\"pending\": true}` when it is still running after " + strconv.Itoa(int(replyWait/time.Second)) + " s, its outcome then arriving on the stream."
 }
 
 // routes is the table, in registration order.
