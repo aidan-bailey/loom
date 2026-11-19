@@ -53,12 +53,12 @@ go run ./tools/loomdev down --force       # same, SIGKILLing a lock holder that 
 The new web app's source is `internal/web/ui/` (Node 22 and pnpm, both in the flake's dev shell). Install once, then serve the canned loom and run Vite against it with hot reload; `pnpm run check` is typecheck, lint, format check and Vitest (run it through `loom job` inside loom), `pnpm run build` rewrites the committed `internal/web/dist/` and `pnpm run dist:check` fails when it is stale. After a change to the Go JSON types, `go generate ./internal/web` rewrites `internal/web/ui/src/api/gen.ts`, `docs/specs/web-api.md` and `internal/web/api.fields`.
 
 ```bash
-cd internal/web/ui && pnpm install --frozen-lockfile   # once
+pnpm -C internal/web/ui install --frozen-lockfile      # once
 go run ./tools/webshot -serve 127.0.0.1:5670           # the canned loom's API, until killed
-cd internal/web/ui && pnpm dev                         # Vite with hot reload, proxying /api/v1 to it
-cd internal/web/ui && pnpm run check                   # typecheck, lint, format check, Vitest
-cd internal/web/ui && pnpm run build                   # rewrites internal/web/dist/
-cd internal/web/ui && pnpm run dist:check              # fails when the bundle is stale
+pnpm -C internal/web/ui dev                            # Vite with hot reload, proxying /api/v1 to it
+pnpm -C internal/web/ui run check                      # typecheck, lint, format check, Vitest
+pnpm -C internal/web/ui run build                      # rewrites internal/web/dist/
+pnpm -C internal/web/ui run dist:check                 # fails when the bundle is stale
 go generate ./internal/web                             # gen.ts, docs/specs/web-api.md, api.fields
 go run ./tools/webshot -app next -out <dir>            # render every route of the built app
 ```
