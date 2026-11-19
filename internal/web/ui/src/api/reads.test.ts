@@ -1,14 +1,67 @@
-import { describe, expect, it } from "vitest";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactElement, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtureTurns } from "@/fixtures";
-import type { AgentPage, JobLog, Turn, Turns } from "./gen";
+import type { AgentPage, JobLog, Outcome, Turn, Turns } from "./gen";
+import { queryClient } from "./queries";
 import {
   appendLog,
+  keepScroll,
+  keptScroll,
+  KEEP_SESSIONS,
   mergeTurns,
   MAX_LOG_CHARS,
+  useHeldTurns,
+  useTurnPages,
   type HeldLog,
   type HeldTurns,
+  type TurnPagesOptions,
   type TurnsLoad,
 } from "./reads";
+import { api } from "./request";
+
+// Timers are faked so a poll's cadence is exact: every wait is a settle, which also lets the
+// query client's own zero-delay notifications run.
+const spyOnTurns = () =>
+  vi.spyOn(api, "turns").mockRejectedValue(new Error("unexpected turns read"));
+let turnsRead: ReturnType<typeof spyOnTurns>;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  queryClient.clear();
+  turnsRead = spyOnTurns();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+async function settle(ms = 1): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+function wrapper({ children }: { children: ReactNode }): ReactElement {
+  return createElement(QueryClientProvider, { client: queryClient }, children);
+}
+
+const ok = <T>(value: T): Outcome<T> => ({ kind: "ok", status: 200, value, notices: [] });
+const refused = (status: number, message: string): Outcome<never> => ({
+  kind: "refused",
+  status,
+  message,
+});
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 function turn(id: number): Turn {
   return {
@@ -191,5 +244,296 @@ describe("appendLog", () => {
     const next = appendLog(held, logPage("yyy", 2));
     expect(next.cut).toBe(false);
     expect(next.text.length).toBe(MAX_LOG_CHARS);
+  });
+});
+const options = (extra: Partial<TurnPagesOptions> = {}): TurnPagesOptions => ({
+  session: 7,
+  agent: undefined,
+  live: false,
+  ...extra,
+});
+
+function mountTurns(initial: TurnPagesOptions) {
+  return renderHook((props: TurnPagesOptions) => useTurnPages(props), {
+    initialProps: initial,
+    wrapper,
+  });
+}
+
+// open mounts a conversation, lets its page land and closes it again: it stays in the cache.
+async function open(session: number): Promise<void> {
+  turnsRead.mockResolvedValueOnce(ok(page([1])));
+  const view = mountTurns(options({ session }));
+  await settle();
+  view.unmount();
+}
+
+describe("useTurnPages", () => {
+  it("opens at the newest page and says so", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3], { earlier: 40 })));
+    const { result } = mountTurns(options());
+    expect(result.current.held).toBeUndefined();
+    expect(result.current.landed).toBeUndefined();
+    expect(result.current.loading).toBe(true);
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    expect(turnsRead).toHaveBeenCalledWith(7, {});
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3]);
+    expect(result.current.held?.earlier).toBe(40);
+    expect(result.current.landed).toBe("newest");
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe("");
+  });
+
+  it("holds the fixture's page as mergeTurns would", async () => {
+    const fixture = fixtureTurns();
+    turnsRead.mockResolvedValueOnce(ok(fixture));
+    const { result } = mountTurns(options());
+    await settle();
+    expect(result.current.held).toEqual(mergeTurns(undefined, fixture, "newest"));
+  });
+
+  it("refreshes from the newest turn every 5 s while live, and not otherwise", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const view = mountTurns(options({ live: true }));
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    await settle(5000);
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+    expect(turnsRead).toHaveBeenLastCalledWith(7, { conversation: "c1", after: "3" });
+    expect(view.result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3, 4]);
+    expect(view.result.current.landed).toBe("refresh");
+    view.rerender(options({ live: false }));
+    await settle(20_000);
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("pages back by `before` and asks nothing once the start is reached", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([5, 6], { earlier: 5 })));
+    const { result } = mountTurns(options());
+    await settle();
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4], { earlier: null })));
+    act(() => {
+      result.current.load("earlier");
+    });
+    await settle();
+    expect(turnsRead).toHaveBeenLastCalledWith(7, { conversation: "c1", before: "5" });
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([3, 4, 5, 6]);
+    expect(result.current.held?.earlier).toBeNull();
+    expect(result.current.landed).toBe("earlier");
+    act(() => {
+      result.current.load("earlier");
+    });
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls a reset page newest, and replaces the turns", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const { result } = mountTurns(options());
+    await settle();
+    turnsRead.mockResolvedValueOnce(ok(page([8, 9], { conversation: "c2", reset: true })));
+    act(() => {
+      result.current.load("refresh");
+    });
+    await settle();
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([8, 9]);
+    expect(result.current.held?.conversation).toBe("c2");
+    expect(result.current.landed).toBe("newest");
+  });
+
+  it("keeps one request in flight and runs a refresh asked meanwhile once, when it lands", async () => {
+    const first = deferred<Outcome<Turns>>();
+    turnsRead.mockReturnValueOnce(first.promise);
+    const { result } = mountTurns(options());
+    await settle();
+    act(() => {
+      result.current.load("refresh");
+      result.current.load("refresh");
+      result.current.load("earlier");
+    });
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    first.resolve(ok(page([1, 2, 3], { earlier: 9 })));
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+    expect(turnsRead).toHaveBeenLastCalledWith(7, { conversation: "c1", after: "3" });
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3, 4]);
+    await settle(10_000);
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why a read failed, keeps the turns held, and clears the error on the next page", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    const { result } = mountTurns(options());
+    await settle();
+    turnsRead.mockResolvedValueOnce(refused(409, "session is busy"));
+    act(() => {
+      result.current.load("refresh");
+    });
+    await settle();
+    expect(result.current.error).toBe("session is busy");
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2]);
+    expect(result.current.loading).toBe(false);
+    turnsRead.mockResolvedValueOnce(ok(page([2, 3])));
+    act(() => {
+      result.current.load("refresh");
+    });
+    await settle();
+    expect(result.current.error).toBe("");
+    expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3]);
+  });
+
+  it("gives two components with the same session and agent one request and one held state", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    const { result } = renderHook(
+      () => ({ a: useTurnPages(options()), b: useTurnPages(options()) }),
+      {
+        wrapper,
+      },
+    );
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    expect(result.current.a.held).toBeDefined();
+    expect(result.current.a.held).toBe(result.current.b.held);
+  });
+
+  it("draws a conversation's pages first when it is opened again, and refreshes them", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const view = mountTurns(options());
+    await settle();
+    view.unmount();
+    await settle(10 * 60_000);
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    const again = mountTurns(options());
+    expect(again.result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3]);
+    await settle();
+    expect(turnsRead).toHaveBeenLastCalledWith(7, { conversation: "c1", after: "3" });
+    expect(again.result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("does not keep a subagent's pages: a reopened view loads the newest", async () => {
+    const agent = "a1f00dcafe0001";
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    const view = renderHook(
+      () => ({
+        pages: useTurnPages(options({ agent })),
+        head: useHeldTurns(7, agent),
+      }),
+      { wrapper },
+    );
+    await settle();
+    expect(turnsRead).toHaveBeenCalledWith(7, { agent });
+    expect(view.result.current.head).toBeDefined();
+    expect(view.result.current.head).toBe(view.result.current.pages.held);
+    view.unmount();
+    await settle();
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const again = mountTurns(options({ agent }));
+    expect(again.result.current.held).toBeUndefined();
+    await settle();
+    expect(turnsRead).toHaveBeenLastCalledWith(7, { agent });
+    expect(again.result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("the kept scroll and the eight conversations kept", () => {
+  it("keeps a page scroll with a conversation's pages", async () => {
+    await open(3);
+    expect(keptScroll(3)).toBeUndefined();
+    keepScroll(3, 340);
+    expect(keptScroll(3)).toBe(340);
+    keepScroll(3, 120);
+    expect(keptScroll(3)).toBe(120);
+  });
+
+  it("keeps no scroll for a conversation whose pages are not held", () => {
+    keepScroll(99, 5);
+    expect(keptScroll(99)).toBeUndefined();
+  });
+
+  it("keeps no scroll while a mounted conversation's first read is still out", async () => {
+    const first = deferred<Outcome<Turns>>();
+    turnsRead.mockReturnValueOnce(first.promise);
+    const view = mountTurns(options({ session: 4 }));
+    await settle();
+    keepScroll(4, 77);
+    expect(keptScroll(4)).toBeUndefined();
+    first.resolve(ok(page([1])));
+    await settle();
+    expect(keptScroll(4)).toBeUndefined();
+    keepScroll(4, 77);
+    expect(keptScroll(4)).toBe(77);
+    view.unmount();
+  });
+
+  it("evicts the least recently opened conversation's pages and scroll for a ninth", async () => {
+    for (let session = 1; session <= KEEP_SESSIONS; session++) {
+      await open(session);
+      keepScroll(session, session * 100);
+    }
+    expect(keptScroll(1)).toBe(100);
+    await open(KEEP_SESSIONS + 1);
+    expect(keptScroll(1)).toBeUndefined();
+    expect(
+      renderHook(() => useHeldTurns(1, undefined), { wrapper }).result.current,
+    ).toBeUndefined();
+    expect(keptScroll(2)).toBe(200);
+    expect(renderHook(() => useHeldTurns(2, undefined), { wrapper }).result.current).toBeDefined();
+  });
+
+  it("never evicts a conversation a view still shows", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1])));
+    const shown = mountTurns(options({ session: 1 }));
+    await settle();
+    keepScroll(1, 100);
+    for (let session = 2; session <= KEEP_SESSIONS + 1; session++) {
+      await open(session);
+      keepScroll(session, session * 100);
+    }
+    expect(keptScroll(1)).toBe(100);
+    expect(shown.result.current.held).toBeDefined();
+    expect(keptScroll(2)).toBeUndefined();
+    expect(keptScroll(3)).toBe(300);
+    shown.unmount();
+  });
+
+  it("neither reads nor brings back a conversation evicted while a refresh was queued", async () => {
+    const first = deferred<Outcome<Turns>>();
+    turnsRead.mockReturnValueOnce(first.promise);
+    const view = mountTurns(options({ session: 1 }));
+    await settle();
+    act(() => {
+      view.result.current.load("refresh");
+    });
+    view.unmount();
+    for (let session = 2; session <= KEEP_SESSIONS + 1; session++) await open(session);
+    first.resolve(ok(page([1])));
+    await settle(100);
+    expect(turnsRead).toHaveBeenCalledTimes(KEEP_SESSIONS + 1);
+    expect(
+      renderHook(() => useHeldTurns(1, undefined), { wrapper }).result.current,
+    ).toBeUndefined();
+  });
+
+  it("counts opening a conversation again as using it", async () => {
+    for (let session = 1; session <= KEEP_SESSIONS; session++) {
+      await open(session);
+      keepScroll(session, session * 100);
+    }
+    await open(1);
+    await open(KEEP_SESSIONS + 1);
+    expect(keptScroll(2)).toBeUndefined();
+    expect(keptScroll(1)).toBe(100);
+  });
+
+  it("drops the scroll with the cache when the pairing is revoked", async () => {
+    await open(3);
+    keepScroll(3, 50);
+    queryClient.clear();
+    expect(keptScroll(3)).toBeUndefined();
+    await open(3);
+    expect(keptScroll(3)).toBeUndefined();
   });
 });

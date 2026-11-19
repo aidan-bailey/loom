@@ -3,7 +3,11 @@
 // again by the classic app's rules (internal/web/static/js/turns.mjs, changes.mjs and job.mjs). A
 // view reads through these hooks and never fetches on its own: one request is in flight per key,
 // and a read asked for meanwhile runs once when it lands.
-import type { AgentPage, JobLog, Turn, Turns } from "./gen";
+import { useQuery, type QueryKey } from "@tanstack/react-query";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import type { AgentPage, JobLog, Turn, Turns, TurnsParams } from "./gen";
+import { queryClient, unwrap } from "./queries";
+import { api } from "./request";
 
 /** How many conversations keep their pages and scroll: a ninth evicts the least recently opened. */
 export const KEEP_SESSIONS = 8;
@@ -82,4 +86,208 @@ export function appendLog(held: HeldLog | undefined, page: JobLog): HeldLog {
     next = { ...next, text: next.text.slice(newline >= 0 ? newline + 1 : from), cut: true };
   }
   return next;
+}
+// How often a live conversation is refreshed, as the classic app does.
+const TURNS_POLL = 5000;
+
+// again holds the reads asked for while one of the same key was in flight: each runs once when
+// that one lands. A key is its query key's JSON.
+const again = new Set<string>();
+
+function hashOf(key: QueryKey): string {
+  return JSON.stringify(key);
+}
+
+function inFlight(key: QueryKey): boolean {
+  return queryClient.getQueryState(key)?.fetchStatus === "fetching";
+}
+
+// startRead runs read as the query of key. A read is never retried here: the next poll, or the
+// view's own retry, is the next attempt, as classic. The promise's failure is the query's error.
+function startRead<T>(key: QueryKey, read: () => Promise<T>, gcTime: number): void {
+  void queryClient
+    .fetchQuery<T>({ queryKey: key, queryFn: read, gcTime, retry: false })
+    .catch(() => undefined);
+}
+
+// askedAgain runs rerun once, after the read that was in flight has landed, when a read of key
+// was asked for meanwhile. The zero delay lets that read's result reach the cache first. The
+// rerun does nothing when the query is gone (an unpair cleared it, keepRecent evicted it) or no
+// component reads it any more: it would read for nobody, or create a query outside the kept
+// lists.
+function askedAgain(key: QueryKey, rerun: () => void): void {
+  if (!again.delete(hashOf(key))) return;
+  setTimeout(() => {
+    const query = queryClient.getQueryCache().find({ queryKey: key, exact: true });
+    if (query !== undefined && query.getObserversCount() > 0) rerun();
+  }, 0);
+}
+
+function errorText(error: Error | null, fallback: string): string {
+  if (error === null) return "";
+  return error.message !== "" ? error.message : fallback;
+}
+
+// keepRecent notes key as the most recently opened of order, dropping the keys whose query has
+// left the cache (an unpair clears it), and removes the queries of the oldest past limit. A query
+// a view still observes is not removed: it stays in the order and goes once it is closed and
+// another is opened. It returns the new order.
+function keepRecent(order: QueryKey[], key: QueryKey, limit: number): QueryKey[] {
+  const hash = hashOf(key);
+  const cache = queryClient.getQueryCache();
+  const next = order.filter((k) => hashOf(k) !== hash && cache.find({ queryKey: k }) !== undefined);
+  next.push(key);
+  const idle = (k: QueryKey): boolean =>
+    (cache.find({ queryKey: k, exact: true })?.getObserversCount() ?? 0) === 0;
+  while (next.length > limit) {
+    const at = next.findIndex((k) => hashOf(k) !== hash && idle(k));
+    if (at < 0) break;
+    for (const oldest of next.splice(at, 1)) {
+      queryClient.removeQueries({ queryKey: oldest, exact: true });
+    }
+  }
+  return next;
+}
+
+// What the cache holds for a conversation or a subagent: the pages, and the kind of load whose
+// page produced them, written together.
+interface TurnsEntry {
+  held: HeldTurns;
+  landed: TurnsLoad;
+}
+
+const turnsKey = (session: number, agent: string | undefined): QueryKey => [
+  "turns",
+  session,
+  agent ?? "",
+];
+
+// A conversation's pages stay in the cache until KEEP_SESSIONS evicts them or an unpair clears
+// it; a subagent's leave with their last reader, so a reopened subagent view loads the newest.
+const turnsRetention = (agent: string | undefined): number => (agent === undefined ? Infinity : 0);
+
+// asked holds the kind of the load a `load` call asked for, for the read that runs next; a read
+// nobody asked for (a mount, a poll) is a refresh of what is held, or the newest.
+const asked = new Map<string, TurnsLoad>();
+
+async function fetchTurns(session: number, agent: string | undefined): Promise<TurnsEntry> {
+  const key = turnsKey(session, agent);
+  const entry = queryClient.getQueryData<TurnsEntry>(key);
+  const held = entry?.held;
+  let kind = asked.get(hashOf(key)) ?? "refresh";
+  asked.delete(hashOf(key));
+  if (held === undefined || (kind === "refresh" && held.turns.length === 0)) kind = "newest";
+  const query: Partial<TurnsParams> = {};
+  if (agent !== undefined) query.agent = agent;
+  if (held !== undefined) {
+    query.conversation = held.conversation;
+    if (kind === "earlier" && held.earlier !== null) query.before = String(held.earlier);
+    if (kind === "refresh") query.after = String(held.turns[held.turns.length - 1].id);
+  }
+  try {
+    const page = unwrap(await api.turns(session, query));
+    return { held: mergeTurns(held, page, kind), landed: page.reset ? "newest" : kind };
+  } finally {
+    askedAgain(key, () => requestTurns(session, agent, "refresh"));
+  }
+}
+
+// requestTurns asks for a load of the pages. One read is in flight at a time: a refresh asked
+// meanwhile runs once when it lands, and any other kind asked meanwhile is dropped, as classic.
+// An earlier page is not asked for when none is left.
+function requestTurns(session: number, agent: string | undefined, kind: TurnsLoad): void {
+  const key = turnsKey(session, agent);
+  if (inFlight(key)) {
+    if (kind === "refresh") again.add(hashOf(key));
+    return;
+  }
+  const held = queryClient.getQueryData<TurnsEntry>(key)?.held;
+  if (kind === "earlier" && (held === undefined || held.earlier === null)) return;
+  asked.set(hashOf(key), kind);
+  startRead(key, () => fetchTurns(session, agent), turnsRetention(agent));
+}
+
+// The conversations kept, least recently opened first, and the page scroll kept with each one's
+// query: a scroll lives and dies with its query object, so evicting or clearing the pages drops
+// it, and a conversation read again after a clear starts with none.
+let keptSessions: QueryKey[] = [];
+const scrolls = new WeakMap<object, number>();
+
+function openConversation(session: number): void {
+  keptSessions = keepRecent(keptSessions, turnsKey(session, undefined), KEEP_SESSIONS);
+}
+
+/** The page scroll kept with a conversation's pages, undefined when none is kept. */
+export function keptScroll(session: number): number | undefined {
+  const query = queryClient.getQueryCache().find({ queryKey: turnsKey(session, undefined) });
+  return query === undefined ? undefined : scrolls.get(query);
+}
+
+/** Keeps the page scroll with a conversation's pages; nothing is kept while no pages are held. */
+export function keepScroll(session: number, y: number): void {
+  const query = queryClient.getQueryCache().find({ queryKey: turnsKey(session, undefined) });
+  if (query !== undefined && query.state.data !== undefined) scrolls.set(query, y);
+}
+
+export interface TurnPagesOptions {
+  session: number;
+  /** A subagent's id: its turns are read in place of the conversation's. */
+  agent: string | undefined;
+  /** The session works: its newest turn is refreshed every 5 s. */
+  live: boolean;
+}
+
+export interface TurnPages {
+  held: HeldTurns | undefined;
+  /** The kind of the load whose page produced `held`; a reset page counts as "newest". */
+  landed: TurnsLoad | undefined;
+  /** Why the last read failed, "" for none; the pages held stay. */
+  error: string;
+  /** A read is in flight. */
+  loading: boolean;
+  load: (kind: TurnsLoad) => void;
+}
+
+/**
+ * Reads a conversation's pages, or a subagent's when `agent` is set: on mount a refresh when
+ * pages are held, else the newest page; a refresh every 5 s while `live`; `load` asks for an
+ * earlier page or a refresh. Components with the same session and agent share one held state.
+ */
+export function useTurnPages({ session, agent, live }: TurnPagesOptions): TurnPages {
+  const query = useQuery<TurnsEntry>({
+    queryKey: turnsKey(session, agent),
+    queryFn: () => fetchTurns(session, agent),
+    gcTime: turnsRetention(agent),
+    retry: false,
+    refetchInterval: live ? TURNS_POLL : false,
+  });
+  useEffect(() => {
+    if (agent === undefined) openConversation(session);
+  }, [session, agent]);
+  const load = useCallback(
+    (kind: TurnsLoad) => {
+      requestTurns(session, agent, kind);
+    },
+    [session, agent],
+  );
+  return {
+    held: query.data?.held,
+    landed: query.data?.landed,
+    error: errorText(query.error, "Could not read the conversation."),
+    loading: query.isFetching,
+    load,
+  };
+}
+
+/**
+ * The pages held for a conversation or a subagent, read without fetching them. It reads the
+ * cache directly rather than through a query observer: an observer writes its own options
+ * (`queryFn`, `retry`) onto the shared query on every render, and a later refetch with no options
+ * of its own would then fail with "Missing queryFn". No turns key is refetched without options.
+ */
+export function useHeldTurns(session: number, agent: string | undefined): HeldTurns | undefined {
+  return useSyncExternalStore(
+    (onChange) => queryClient.getQueryCache().subscribe(onChange),
+    () => queryClient.getQueryData<TurnsEntry>(turnsKey(session, agent))?.held,
+  );
 }
