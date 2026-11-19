@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   createMemoryHistory,
@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import type { ReactElement } from "react";
+import type { MouseEvent, ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Session, SessionGroup, Snapshot } from "@/api/gen";
@@ -290,6 +290,18 @@ describe("ContextRow", () => {
     render(<ContextRow title="Settings" />);
     expect(screen.queryByRole("link")).toBeNull();
   });
+
+  it("calls onBack with the click and lets it cancel the navigation", () => {
+    const onBack = vi.fn<(e: MouseEvent<HTMLAnchorElement>) => void>((e) => {
+      e.preventDefault();
+    });
+    render(<ContextRow title="Subagent" back="#/s/5" onBack={onBack} />);
+
+    const link = screen.getByRole("link", { name: /conversation|back/ });
+    expect(fireEvent.click(link)).toBe(false);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(link).toHaveAttribute("href", "#/s/5");
+  });
 });
 
 describe("SessionTabs", () => {
@@ -360,6 +372,81 @@ describe("SessionTabs", () => {
     );
     expect(links.map((a) => a.textContent)).toEqual(["changes", "info"]);
     expect(screen.getByRole("link", { name: "changes" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("draws a tab's Mark after its label, handed the session", () => {
+    tabPanels();
+    definePanel({
+      id: "changes",
+      title: () => "Changes",
+      tab: { order: 2, label: "changes", Mark: ({ session }) => <b>+{session.id}</b> },
+      appliesTo: (s) => s.claude,
+      Body: () => null,
+    });
+    window.history.replaceState(null, "", "#/s/7/info");
+
+    render(<SessionTabs session={aSession(true)} />);
+
+    const links = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole(
+      "link",
+    );
+    expect(links.map((a) => a.textContent)).toEqual(["conversation", "changes+7", "info"]);
+  });
+
+  it("keeps its tabs when a Mark throws", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      tabPanels();
+      definePanel({
+        id: "changes",
+        title: () => "Changes",
+        tab: {
+          order: 2,
+          label: "changes",
+          Mark: () => {
+            throw new Error("mark boom");
+          },
+        },
+        appliesTo: (s) => s.claude,
+        Body: () => null,
+      });
+      window.history.replaceState(null, "", "#/s/7/info");
+
+      render(<SessionTabs session={aSession(true)} />);
+
+      const links = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole(
+        "link",
+      );
+      expect(links.map((a) => a.textContent)).toEqual(["conversation", "changes", "info"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["a subagent route of a Claude session", "#/s/7/agent/a1f00d", true, "conversation", true],
+    ["a job route of a Claude session", "#/s/7/job/216", true, "info", true],
+    ["a non-Claude session's own route", "#/s/7", false, "info", false],
+    ["a subagent route of a non-Claude session", "#/s/7/agent/a1f00d", false, "info", false],
+  ] as const)("lights the tab its route names: %s", (_name, hash, claude, lit, hasConversation) => {
+    tabPanels();
+    definePanel({
+      id: "changes",
+      title: () => "Changes",
+      tab: { order: 2, label: "changes" },
+      appliesTo: () => true,
+      Body: () => null,
+    });
+    window.history.replaceState(null, "", hash);
+
+    render(<SessionTabs session={aSession(claude)} />);
+
+    const nav = within(screen.getByRole("navigation", { name: "Session views" }));
+    const current = nav
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current.map((a) => a.textContent)).toEqual([lit]);
+    expect(nav.queryByRole("link", { name: "conversation" }) !== null).toBe(hasConversation);
   });
 });
 
@@ -449,6 +536,100 @@ describe("AppShell's chrome", () => {
     ).toBeInTheDocument();
     expect(footer()).toHaveTextContent("LIVE");
     expect(footer()).toHaveTextContent("loom@devbox");
+  });
+
+  it("draws the panel's Strip under the session's tabs, in the header", async () => {
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      Head: () => <p>turns head</p>,
+      Strip: () => <p>the strip</p>,
+      Body: () => null,
+    });
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      tab: { order: 3, label: "info" },
+      Body: () => null,
+    });
+    live(withGroups(["working"]));
+    shellAt("#/s/100");
+
+    await screen.findByText("outlet");
+    const head = header() as HTMLElement;
+    const nav = within(head).getByRole("navigation", { name: "Session views" });
+    const strip = within(head).getByText("the strip");
+    expect(nav.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the header and the tabs when the Strip throws", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "turns",
+        title: () => "Conversation",
+        tab: { order: 1, label: "conversation" },
+        Head: () => <p>turns head</p>,
+        Strip: () => {
+          throw new Error("strip boom");
+        },
+        Body: () => null,
+      });
+      definePanel({
+        id: "info",
+        title: () => "Info",
+        tab: { order: 3, label: "info" },
+        Body: () => null,
+      });
+      live(withGroups(["working"]));
+      shellAt("#/s/100");
+
+      expect(await screen.findByText("outlet")).toBeInTheDocument();
+      expect(header()).toHaveTextContent("turns head");
+      expect(
+        within(header() as HTMLElement).getByRole("navigation", { name: "Session views" }),
+      ).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("draws a session's tabs on a subagent and a job route", async () => {
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      Body: () => null,
+    });
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      tab: { order: 3, label: "info" },
+      Body: () => null,
+    });
+    definePanel({
+      id: "agent",
+      title: () => "Subagent",
+      Head: () => <p>head</p>,
+      Body: () => null,
+    });
+    definePanel({ id: "job", title: () => "Job", Head: () => <p>head</p>, Body: () => null });
+    live(withGroups(["working"]));
+
+    const first = shellAt("#/s/100/agent/a1f00d");
+    await screen.findByText("outlet");
+    let nav = within(header() as HTMLElement).getByRole("navigation", { name: "Session views" });
+    expect(within(nav).getByRole("link", { name: "conversation" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    first.unmount();
+
+    shellAt("#/s/100/job/216");
+    await screen.findByText("outlet");
+    nav = within(header() as HTMLElement).getByRole("navigation", { name: "Session views" });
+    expect(within(nav).getByRole("link", { name: "info" })).toHaveAttribute("aria-current", "page");
   });
 
   it("draws the footer's top border in the error colour only while offline", async () => {

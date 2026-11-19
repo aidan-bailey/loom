@@ -31,15 +31,26 @@ export interface PanelProps {
   search: Record<string, string>;
 }
 
+// PanelTab makes a panel one of a session's tabs: its place, its label and an
+// optional Mark drawn after the label.
+export interface PanelTab {
+  order: number;
+  label: string;
+  Mark?: ComponentType<{ session: Session }>;
+}
+
 // Panel is one view. title names it in its error boundaries. Head is its context row in the pinned header, Body its
 // screen; tab makes it one of a session's tabs (SessionTabs), shown for the
-// sessions appliesTo accepts (every session without it).
+// sessions appliesTo accepts (every session without it). Strip is the line
+// under the session's tabs; a tab's Mark is drawn after its label and is
+// handed the session.
 export interface Panel {
   id: PanelId;
   title: (props: PanelProps) => string;
   appliesTo?: (session: Session) => boolean;
-  tab?: { order: number; label: string };
+  tab?: PanelTab;
   Head?: ComponentType<PanelProps>;
+  Strip?: ComponentType<PanelProps>;
   Body: ComponentType<PanelProps>;
 }
 

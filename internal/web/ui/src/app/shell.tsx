@@ -4,6 +4,7 @@ import {
   useEffect,
   useState,
   type ErrorInfo,
+  type MouseEvent,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -157,6 +158,7 @@ export function AppShell(): ReactElement {
   const waiting = !hasSnapshot && route.panel !== "pair";
   const entry = panelFor(route.panel);
   const Head = entry?.Head;
+  const Strip = entry?.Strip;
 
   return (
     <div
@@ -180,7 +182,18 @@ export function AppShell(): ReactElement {
             </Boundary>
           )}
           {session !== undefined && TABBED.has(route.panel) ? (
-            <SessionTabs session={session} />
+            <>
+              <SessionTabs session={session} />
+              {Strip === undefined ? null : (
+                <Boundary
+                  key={resetKey(route.panel, props)}
+                  what={`The ${entry?.title(props) ?? SCREEN_NAMES[route.panel]} strip`}
+                  fallback={null}
+                >
+                  <Strip {...props} />
+                </Boundary>
+              )}
+            </>
           ) : null}
         </header>
       ) : null}
@@ -274,6 +287,8 @@ const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
   "flow",
   "flowStory",
   "flowDoc",
+  "agent",
+  "job",
 ]);
 
 // ContextRow is the header's first row: an optional way back (an href, named
@@ -282,10 +297,12 @@ const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
 export function ContextRow({
   title,
   back,
+  onBack,
   actions,
 }: {
   title: string;
   back?: string;
+  onBack?: (e: MouseEvent<HTMLAnchorElement>) => void;
   actions?: ReactNode;
 }): ReactElement {
   return (
@@ -293,6 +310,7 @@ export function ContextRow({
       {back === undefined ? null : (
         <a
           href={back}
+          onClick={onBack}
           className="flex min-h-11 flex-none items-center text-sm text-muted-foreground"
         >
           ‹ {backLabel(back)}
@@ -310,11 +328,13 @@ function backLabel(href: string): string {
 }
 
 // tabOf is the tab a route lights: a flow's row and document light the flow
-// tab, the full mockup the mockup tab.
-function tabOf(panel: PanelId): PanelId {
+// tab, the full mockup the mockup tab, a subagent the conversation and a job
+// the info tab; the conversation of a session that is not Claude's is its info.
+function tabOf(panel: PanelId, session: Session): PanelId {
   if (panel === "flowStory" || panel === "flowDoc") return "flow";
   if (panel === "mockupFull") return "mockup";
-  return panel;
+  const lit = panel === "agent" ? "turns" : panel === "job" ? "info" : panel;
+  return lit === "turns" && !session.claude ? "info" : lit;
 }
 
 function byTabOrder(a: Panel, b: Panel): number {
@@ -327,7 +347,7 @@ function byTabOrder(a: Panel, b: Panel): number {
 // than two draw no row.
 export function SessionTabs({ session }: { session: Session }): ReactElement {
   const route = useRoute();
-  const current = tabOf(route.panel);
+  const current = tabOf(route.panel, session);
   const tabs = sessionTabs(session);
   const here = panelFor(current);
   if (here?.tab !== undefined && !tabs.some((t) => t.id === current)) {
@@ -337,19 +357,27 @@ export function SessionTabs({ session }: { session: Session }): ReactElement {
   if (tabs.length < 2) return <></>;
   return (
     <nav aria-label="Session views" className="flex gap-1 overflow-x-auto px-2">
-      {tabs.map((tab) => (
-        <a
-          key={tab.id}
-          href={hrefFor(tab.id, { id: String(session.id) })}
-          aria-current={tab.id === current ? "page" : undefined}
-          className={cn(
-            "flex min-h-11 items-center border-b-2 border-transparent px-3 text-sm text-muted-foreground",
-            tab.id === current && "border-foreground text-foreground",
-          )}
-        >
-          {tab.tab?.label ?? tab.id}
-        </a>
-      ))}
+      {tabs.map((tab) => {
+        const Mark = tab.tab?.Mark;
+        return (
+          <a
+            key={tab.id}
+            href={hrefFor(tab.id, { id: String(session.id) })}
+            aria-current={tab.id === current ? "page" : undefined}
+            className={cn(
+              "flex min-h-11 items-center border-b-2 border-transparent px-3 text-sm text-muted-foreground",
+              tab.id === current && "border-foreground text-foreground",
+            )}
+          >
+            {tab.tab?.label ?? tab.id}
+            {Mark === undefined ? null : (
+              <Boundary what={`The ${tab.id} tab's mark`} fallback={null}>
+                <Mark session={session} />
+              </Boundary>
+            )}
+          </a>
+        );
+      })}
     </nav>
   );
 }
