@@ -34,7 +34,7 @@ The panel's module is `internal/web/ui/src/panels/<id>/index.tsx` calling `defin
 
 ## Adding a command
 
-`defineCommand({ id, title, icon, offline, when, confirm, run })` in the panel's module; `when` reads only the session's status, its `claude` flag, the route and the link state; `offline` only for an action that must work without the daemon (the switch); `confirm` for anything that can lose work, naming exactly what happens; `run` calls `api.<client>(…)` and hands the outcome to `showOutcome(outcome, what)`, so notices (Kill's and Resume's stash notices always) become toasts; draw it with `<CommandButton id=… />`; a Vitest case for `when` across statuses and link states.
+`defineCommand({ id, title, icon, offline, when, confirm, run })` in the panel's module; `when` reads only the session's status, its `claude` flag, the route and the link state; `offline` only for an action that must work without the daemon (the switch); `confirm` for anything that can lose work, naming exactly what happens; `run` calls `api.<client>(…)` and hands the outcome to `showOutcome(outcome, what)`; the request path toasts a response's notices itself (`onNotices`, Kill's and Resume's stash notices always) and `showOutcome` toasts only a non-ok outcome; draw it with `<CommandButton id=… />`; a Vitest case for `when` across statuses and link states.
 
 ## The dev loop
 

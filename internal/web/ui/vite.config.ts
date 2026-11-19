@@ -45,16 +45,16 @@ function thirdPartyLicenses(): Plugin {
         name: dependency.name ?? "",
         text: dependency.text().replaceAll("\r\n", "\n"),
       }));
-      const fonts = new Map<string, string>();
+      const fonts = new Set<string>();
       for (const file of Object.values(bundle)) {
         if (file.type !== "asset" || !file.fileName.endsWith(".woff2")) continue;
         for (const original of file.originalFileNames) {
           const match = /^(.*[\\/]@fontsource-variable[\\/][^\\/]+)[\\/]/.exec(original);
-          if (match) fonts.set(match[1], match[1]);
+          if (match) fonts.add(match[1]);
         }
       }
       if (fonts.size === 0) throw new Error("no @fontsource-variable font reached the bundle");
-      for (const dir of fonts.keys()) {
+      for (const dir of fonts) {
         const root = resolve(dir);
         const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
           name: string;
