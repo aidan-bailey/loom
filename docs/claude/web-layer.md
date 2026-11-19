@@ -40,6 +40,8 @@ The panel's module is `internal/web/ui/src/panels/<id>/index.tsx` calling `defin
 
 `go run ./tools/webshot -serve 127.0.0.1:5670` serves the canned loom's API (no daemon, until killed); `cd internal/web/ui && pnpm install --frozen-lockfile` once, then `pnpm dev` runs Vite with hot reload and proxies `/api/v1` to that address. Run builds, typechecks and tests through `loom job submit -d "<what>" -- sh -c 'cd internal/web/ui && pnpm run check'`. `pnpm run build` rewrites `internal/web/dist/`, which is committed with the source (`pnpm run dist:check` fails on a stale bundle); `go run ./tools/webshot -app next -out <dir outside the worktree>` renders the built app under the real policy. Node 22 and pnpm come from the flake's dev shell.
 
+- **Time zone.** Vitest runs with `TZ=Africa/Johannesburg` (`test.env` in `internal/web/ui/vite.config.ts`), so a test of a local-time rendering (`clock` in `TurnList.tsx`) computes its expectation from the `Date`'s local fields and fails under CI's UTC if the component formats in UTC; a test asserting a UTC-looking time passes only where the zone happens to be UTC.
+
 - **Licences.** The build writes each bundled package's and font's licence into `internal/web/dist/THIRD_PARTY.txt`, and `NOTICE.md` points there; a new dependency needs only the rebuild.
 
 ## Reading the budget test's failure
