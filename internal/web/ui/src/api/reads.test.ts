@@ -2,8 +2,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtureTurns } from "@/fixtures";
-import type { AgentPage, JobLog, Outcome, Turn, Turns } from "./gen";
+import { fixturePatch, fixtureTurns } from "@/fixtures";
+import type { AgentPage, JobLog, Outcome, Patch, Turn, Turns } from "./gen";
 import { queryClient } from "./queries";
 import {
   appendLog,
@@ -13,9 +13,11 @@ import {
   mergeTurns,
   MAX_LOG_CHARS,
   useHeldTurns,
+  usePatch,
   useTurnPages,
   type HeldLog,
   type HeldTurns,
+  type PatchOptions,
   type TurnPagesOptions,
   type TurnsLoad,
 } from "./reads";
@@ -25,12 +27,15 @@ import { api } from "./request";
 // query client's own zero-delay notifications run.
 const spyOnTurns = () =>
   vi.spyOn(api, "turns").mockRejectedValue(new Error("unexpected turns read"));
+const spyOnDiff = () => vi.spyOn(api, "diff").mockRejectedValue(new Error("unexpected diff read"));
 let turnsRead: ReturnType<typeof spyOnTurns>;
+let diffRead: ReturnType<typeof spyOnDiff>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   queryClient.clear();
   turnsRead = spyOnTurns();
+  diffRead = spyOnDiff();
 });
 
 afterEach(() => {
@@ -535,5 +540,135 @@ describe("the kept scroll and the eight conversations kept", () => {
     expect(keptScroll(3)).toBeUndefined();
     await open(3);
     expect(keptScroll(3)).toBeUndefined();
+  });
+});
+const patchOptions = (extra: Partial<PatchOptions> = {}): PatchOptions => ({
+  session: 7,
+  signature: "Running:1:0",
+  live: false,
+  ...extra,
+});
+
+function mountPatch(initial: PatchOptions) {
+  return renderHook((props: PatchOptions) => usePatch(props), { initialProps: initial, wrapper });
+}
+
+describe("usePatch", () => {
+  it("reads the diff on mount", async () => {
+    const patch = fixturePatch();
+    diffRead.mockResolvedValueOnce(ok(patch));
+    const { result } = mountPatch(patchOptions());
+    expect(result.current.patch).toBeUndefined();
+    expect(result.current.loading).toBe(true);
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(1);
+    expect(diffRead).toHaveBeenCalledWith(7);
+    expect(result.current.patch).toEqual(patch);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe("");
+  });
+
+  it("reads again when the signature changes once a patch is held, and only then", async () => {
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    const view = mountPatch(patchOptions());
+    await settle();
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    view.rerender(patchOptions({ signature: "Running:3:1" }));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(2);
+    view.rerender(patchOptions({ signature: "Running:3:1" }));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads once on a reopened diff with the same signature", async () => {
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    const first = mountPatch(patchOptions());
+    await settle();
+    first.unmount();
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    const again = mountPatch(patchOptions());
+    expect(again.result.current.patch).toBeDefined();
+    await settle(100);
+    expect(diffRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a change of session as a new key, with no read beyond the observer's own", async () => {
+    diffRead.mockResolvedValue(ok(fixturePatch()));
+    const other = mountPatch(patchOptions({ session: 8, signature: "Idle:0:0" }));
+    await settle();
+    other.unmount();
+    const view = mountPatch(patchOptions());
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(2);
+    view.rerender(patchOptions({ session: 8, signature: "Running:3:1" }));
+    await settle(100);
+    expect(diffRead).toHaveBeenCalledTimes(3);
+    expect(diffRead).toHaveBeenLastCalledWith(8);
+  });
+
+  it("does not read again on a signature change while the first read is still out", async () => {
+    const first = deferred<Outcome<Patch>>();
+    diffRead.mockReturnValueOnce(first.promise);
+    const view = mountPatch(patchOptions());
+    await settle();
+    view.rerender(patchOptions({ signature: "Running:3:1" }));
+    first.resolve(ok(fixturePatch()));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one read in flight and runs a read asked meanwhile once, when it lands", async () => {
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    const view = mountPatch(patchOptions());
+    await settle();
+    const second = deferred<Outcome<Patch>>();
+    diffRead.mockReturnValueOnce(second.promise);
+    view.rerender(patchOptions({ signature: "Running:3:1" }));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(2);
+    view.rerender(patchOptions({ signature: "Running:4:1" }));
+    act(() => {
+      view.result.current.reload();
+    });
+    expect(diffRead).toHaveBeenCalledTimes(2);
+    diffRead.mockResolvedValueOnce(ok(fixturePatch()));
+    second.resolve(ok(fixturePatch()));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(3);
+    await settle(5000);
+    expect(diffRead).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads every 10 s while live, and not otherwise", async () => {
+    diffRead.mockResolvedValue(ok(fixturePatch()));
+    const view = mountPatch(patchOptions({ live: true }));
+    await settle();
+    expect(diffRead).toHaveBeenCalledTimes(1);
+    await settle(10_000);
+    expect(diffRead).toHaveBeenCalledTimes(2);
+    view.rerender(patchOptions({ live: false }));
+    await settle(30_000);
+    expect(diffRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why a read failed, keeps the patch held, and reads again on reload", async () => {
+    const patch = fixturePatch();
+    diffRead.mockResolvedValueOnce(ok(patch));
+    const { result } = mountPatch(patchOptions());
+    await settle();
+    diffRead.mockResolvedValueOnce(refused(409, "session is busy"));
+    act(() => {
+      result.current.reload();
+    });
+    await settle();
+    expect(result.current.error).toBe("session is busy");
+    expect(result.current.patch).toEqual(patch);
+    diffRead.mockResolvedValueOnce(ok(patch));
+    act(() => {
+      result.current.reload();
+    });
+    await settle();
+    expect(result.current.error).toBe("");
   });
 });

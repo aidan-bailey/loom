@@ -4,8 +4,8 @@
 // view reads through these hooks and never fetches on its own: one request is in flight per key,
 // and a read asked for meanwhile runs once when it lands.
 import { useQuery, type QueryKey } from "@tanstack/react-query";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
-import type { AgentPage, JobLog, Turn, Turns, TurnsParams } from "./gen";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import type { AgentPage, JobLog, Patch, Turn, Turns, TurnsParams } from "./gen";
 import { queryClient, unwrap } from "./queries";
 import { api } from "./request";
 
@@ -87,6 +87,10 @@ export function appendLog(held: HeldLog | undefined, page: JobLog): HeldLog {
   }
   return next;
 }
+// The query cache's own default for a query nobody reads for a while (5 minutes), which a diff
+// keeps: only turn pages and job logs are kept longer.
+const DEFAULT_GC = 5 * 60 * 1000;
+
 // How often a live conversation is refreshed, as the classic app does.
 const TURNS_POLL = 5000;
 
@@ -290,4 +294,76 @@ export function useHeldTurns(session: number, agent: string | undefined): HeldTu
     (onChange) => queryClient.getQueryCache().subscribe(onChange),
     () => queryClient.getQueryData<TurnsEntry>(turnsKey(session, agent))?.held,
   );
+}
+// How often a live session's diff is read again, as the classic app does.
+const DIFF_POLL = 10000;
+
+const diffKey = (session: number): QueryKey => ["diff", session];
+
+async function readDiff(session: number): Promise<Patch> {
+  try {
+    return unwrap(await api.diff(session));
+  } finally {
+    askedAgain(diffKey(session), () => reloadDiff(session));
+  }
+}
+
+// reloadDiff reads the diff: one read is in flight at a time, and a read asked for meanwhile
+// runs once when it lands.
+function reloadDiff(session: number): void {
+  const key = diffKey(session);
+  if (inFlight(key)) {
+    again.add(hashOf(key));
+    return;
+  }
+  startRead(key, () => readDiff(session), DEFAULT_GC);
+}
+
+export interface PatchOptions {
+  session: number;
+  /** What the caller reads the diff's change from (the session's status and line counts). */
+  signature: string;
+  /** The session works: the diff is read every 10 s. */
+  live: boolean;
+}
+
+export interface PatchView {
+  patch: Patch | undefined;
+  /** Why the last read failed, "" for none; the patch held stays. */
+  error: string;
+  /** A read is in flight. */
+  loading: boolean;
+  /** Reads the diff now. */
+  reload: () => void;
+}
+
+/**
+ * Reads a session's diff on mount, again when `signature` changes once a patch is held, and every
+ * 10 s while `live`.
+ */
+export function usePatch({ session, signature, live }: PatchOptions): PatchView {
+  const query = useQuery<Patch>({
+    queryKey: diffKey(session),
+    queryFn: () => readDiff(session),
+    retry: false,
+    refetchInterval: live ? DIFF_POLL : false,
+  });
+  // seen follows the key: a change of session starts from the new session's own signature, and a
+  // mount is no change, so the observer's own read is the only one either asks for.
+  const seen = useRef({ session, signature });
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { session, signature };
+    if (was.session !== session || was.signature === signature) return;
+    if (queryClient.getQueryData(diffKey(session)) !== undefined) reloadDiff(session);
+  }, [session, signature]);
+  const reload = useCallback(() => {
+    reloadDiff(session);
+  }, [session]);
+  return {
+    patch: query.data,
+    error: errorText(query.error, "Could not read the diff."),
+    loading: query.isFetching,
+    reload,
+  };
 }
