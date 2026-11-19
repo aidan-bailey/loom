@@ -1,11 +1,16 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FlowSummary, Pr, Session, Snapshot, Usage } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import { panelFor } from "@/app/panels";
+import "@/panels";
 import { useFleet } from "@/store/fleet";
 
+import { FleetHead } from "./FleetHead";
 import { ago, flowChip, SessionRow } from "./SessionRow";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
@@ -28,6 +33,7 @@ afterEach(() => {
   vi.useRealTimers();
   resetStore();
   window.localStorage.clear();
+  window.history.replaceState(null, "", window.location.pathname);
 });
 
 describe("SessionRow", () => {
@@ -240,5 +246,213 @@ describe("SessionRow", () => {
     expect(screen.getByText("3d")).toBeInTheDocument();
     const text = container.textContent ?? "";
     expect(text).toBe("flow-old3d");
+  });
+});
+
+describe("the fleet panel", () => {
+  const props = { sessionId: undefined, params: {}, search: {} };
+  const Body = (): ReactElement => {
+    const Panel = panelFor("fleet")!.Body;
+    return <Panel {...props} />;
+  };
+  const withSnapshot = (edit: (s: Snapshot) => void = () => {}): Snapshot => {
+    const snapshot = fixtureSnapshot(NOW);
+    edit(snapshot);
+    load(snapshot);
+    return snapshot;
+  };
+  const group = (title: string): HTMLElement =>
+    screen.getByRole("heading", { name: new RegExp(`^${title}\\b`) }).closest("section")!;
+  const titles = (section: HTMLElement): (string | null)[] =>
+    within(section)
+      .getAllByRole("link")
+      .map((a) => a.querySelector("span.truncate")?.textContent ?? null);
+  const chips = (): string[] =>
+    [...document.querySelectorAll('a [data-slot="badge"]')].map((b) => b.textContent ?? "");
+  const choose = (name: string) => userEvent.click(screen.getByRole("button", { name }));
+
+  it("lists Needs you, Your turn and Working with their counts, each in its group's order", () => {
+    withSnapshot();
+    render(<Body />);
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings).toEqual(["Needs you2", "Your turn1", "Working3"]);
+    expect(titles(group("Needs you"))).toEqual(["flow-docs", "sandbox-ask"]);
+    expect(titles(group("Your turn"))).toEqual([
+      "a-very-long-session-title-that-will-not-fit-on-one-line",
+    ]);
+    expect(titles(group("Working"))).toEqual(["fix-pane-cursor", "flow-run", "plain-shell"]);
+  });
+
+  it("folds Paused until it is opened", async () => {
+    withSnapshot();
+    render(<Body />);
+    expect(screen.queryByText("flow-old")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
+    expect(await screen.findByText("flow-old")).toBeInTheDocument();
+  });
+
+  it("shows the workspace filter only with more than one shown workspace", () => {
+    withSnapshot();
+    const { unmount } = render(<Body />);
+    const filter = screen.getByRole("group", { name: "Workspaces" });
+    expect(
+      within(filter)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["All", "loom", "flow"]);
+    unmount();
+    resetStore();
+    withSnapshot((s) => {
+      s.workspaces![1].shown = false;
+    });
+    render(<Body />);
+    expect(screen.queryByRole("group", { name: "Workspaces" })).not.toBeInTheDocument();
+  });
+
+  it("narrows to a workspace, stores the choice and restores it on the next launch", async () => {
+    withSnapshot();
+    const { unmount } = render(<Body />);
+    await choose("flow");
+    const narrowed = () => {
+      expect(screen.getByText("flow-docs")).toBeInTheDocument();
+      expect(screen.getByText("flow-run")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Paused/ })).toBeInTheDocument();
+      expect(screen.queryByText("fix-pane-cursor")).not.toBeInTheDocument();
+      expect(screen.queryByText("sandbox-ask")).not.toBeInTheDocument();
+    };
+    narrowed();
+    expect(window.localStorage.getItem("loom.filter")).toBe('"2"');
+    unmount();
+    render(<Body />);
+    narrowed();
+    expect(screen.getByRole("button", { name: "flow" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("honours a filter the classic app stored", () => {
+    window.localStorage.setItem("loom.filter", JSON.stringify("1"));
+    withSnapshot();
+    render(<Body />);
+    expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
+    expect(screen.queryByText("flow-docs")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "loom" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reads a stored filter for a workspace that is not listed as all, and leaves it stored", () => {
+    window.localStorage.setItem("loom.filter", JSON.stringify("9"));
+    withSnapshot();
+    render(<Body />);
+    expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
+    expect(screen.getByText("flow-docs")).toBeInTheDocument();
+    expect(window.localStorage.getItem("loom.filter")).toBe('"9"');
+  });
+
+  it("selects all again when the chosen workspace is chosen twice", async () => {
+    withSnapshot();
+    render(<Body />);
+    await choose("flow");
+    await choose("flow");
+    expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
+    expect(screen.getByText("flow-docs")).toBeInTheDocument();
+    expect(window.localStorage.getItem("loom.filter")).toBe('""');
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("says there are no sessions", () => {
+    const empty = (s: Snapshot) => {
+      s.sessions = { "1": [], "2": [] };
+    };
+    withSnapshot(empty);
+    const { unmount } = render(<Body />);
+    expect(screen.getByText("No sessions.")).toBeInTheDocument();
+    unmount();
+    window.localStorage.setItem("loom.filter", JSON.stringify("2"));
+    render(<Body />);
+    expect(screen.getByText("No sessions in this workspace.")).toBeInTheDocument();
+  });
+
+  it("names the workspace on each row only while the fleet shows all of them", async () => {
+    withSnapshot();
+    render(<Body />);
+    expect(chips()).toEqual(expect.arrayContaining(["loom", "flow"]));
+    await choose("flow");
+    expect(chips()).not.toContain("loom");
+    expect(chips()).not.toContain("flow");
+  });
+
+  it("redraws every 30 seconds", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    withSnapshot();
+    render(<Body />);
+    expect(screen.getByText("2m")).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(90_000);
+    });
+    expect(screen.getByText("3m")).toBeInTheDocument();
+  });
+
+  it("lists a group this build does not know under Paused", async () => {
+    withSnapshot((s) => {
+      const one = s.sessions!["1"]![0];
+      s.sessions!["1"]![0] = { ...one, group: "mystery" as Session["group"] };
+    });
+    render(<Body />);
+    expect(screen.queryByText("fix-pane-cursor")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
+    expect(await screen.findByText("fix-pane-cursor")).toBeInTheDocument();
+  });
+
+  it("says Loading before the first snapshot", () => {
+    render(<Body />);
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+  });
+
+  it("FleetHead shows the flows link only when a listed session has flows", () => {
+    withSnapshot();
+    const { unmount } = render(<FleetHead />);
+    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "#/flows");
+    unmount();
+    for (const none of [[], null]) {
+      resetStore();
+      withSnapshot((s) => {
+        for (const list of Object.values(s.sessions!)) {
+          for (const x of list!) x.flows = none;
+        }
+      });
+      const r = render(<FleetHead />);
+      expect(screen.queryByRole("link", { name: "Flows" })).not.toBeInTheDocument();
+      r.unmount();
+    }
+  });
+
+  it("FleetHead links settings and new to their panels", () => {
+    withSnapshot();
+    render(<FleetHead />);
+    expect(screen.getByRole("heading", { name: "Fleet" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "#/settings");
+    expect(screen.getByRole("link", { name: "+ New" })).toHaveAttribute("href", "#/new");
+  });
+
+  it("+ New is dimmed and does nothing while the view is stale", () => {
+    withSnapshot();
+    render(<FleetHead />);
+    const live = screen.getByRole("link", { name: "+ New" });
+    expect(live).not.toHaveAttribute("aria-disabled");
+    expect(fireEvent.click(live)).toBe(true);
+
+    act(() => {
+      useFleet.getState().setLink("offline");
+    });
+    const stale = screen.getByRole("link", { name: "+ New" });
+    expect(stale).toHaveAttribute("aria-disabled", "true");
+    expect(fireEvent.click(stale)).toBe(false);
+  });
+
+  it("registers the fleet panel", () => {
+    const panel = panelFor("fleet");
+    expect(panel).toBeDefined();
+    expect(panel?.Head).toBeDefined();
+    expect(panel?.Body).toBeDefined();
+    expect(panel?.title(props)).toBe("Fleet");
   });
 });
