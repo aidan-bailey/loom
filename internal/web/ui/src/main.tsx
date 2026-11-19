@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 
 import "./styles/app.css";
 import "@/panels";
+import "@/commands";
 
 import { queryClient } from "@/api/queries";
 import { onUnpaired } from "@/api/request";
