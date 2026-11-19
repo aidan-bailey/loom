@@ -227,6 +227,27 @@ describe("runCommand", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(run.mock.calls[0]?.[0].session?.id).toBe(session.id);
 
+    // The sheet's yes arrives after the session changed: run gets the store's
+    // copy, not the context the command was started with.
+    run.mockClear();
+    const changed = { ...session, status: session.status === "ready" ? "working" : "ready" };
+    vi.mocked(askConfirm).mockImplementationOnce(() => {
+      const sessions = Object.fromEntries(
+        Object.entries(snapshot.sessions ?? {}).map(([key, list]) => [
+          key,
+          (list ?? []).map((s) => (s.id === session.id ? changed : s)),
+        ]),
+      );
+      useFleet.setState({ snapshot: { ...snapshot, sessions } });
+      return Promise.resolve(true);
+    });
+    const started = ctx({ session });
+    await runCommand(command, started, undefined);
+    expect(run).toHaveBeenCalledOnce();
+    const got = run.mock.calls[0]?.[0].session;
+    expect(got).toEqual(changed);
+    expect(got).not.toBe(started.session);
+
     vi.mocked(askConfirm).mockImplementationOnce(() => {
       useFleet.setState({ snapshot: { ...snapshot, sessions: {} } });
       return Promise.resolve(true);
