@@ -442,6 +442,18 @@ describe("AppShell's chrome", () => {
     expect(footer()).toHaveTextContent("loom@devbox");
   });
 
+  it("draws the footer's top border in the error colour only while offline", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/");
+    await screen.findByText("outlet");
+    expect(footer()).not.toHaveClass("border-t-error");
+
+    act(() => {
+      useFleet.setState({ stale: true, link: "offline" });
+    });
+    expect(footer()).toHaveClass("border-t-error");
+  });
+
   it("draws no tabs for a session the fleet does not list", async () => {
     live(withGroups(["needs_you"]));
     shellAt("#/s/999999/info");
