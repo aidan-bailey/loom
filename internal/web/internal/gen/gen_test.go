@@ -245,6 +245,33 @@ func TestTypes_AFieldMergedThroughAnEmbeddedPointerIsOptional(t *testing.T) {
 		"a nil embedded pointer leaves its fields out of the JSON")
 }
 
+type holderBody struct {
+	Name string     `json:"name"`
+	Note *badgeJSON `json:"note"`
+	Tags []string   `json:"tags"`
+}
+
+func TestTypes_ARequestBodysFieldsAreAllOptional(t *testing.T) {
+	c := mini(reflect.TypeFor[pairJSON]())
+	c.Routes = append(c.Routes, web.ContractRoute{Method: "PUT", Path: "/api/v1/y", Client: "y", OK: 204, Body: reflect.TypeFor[holderBody]()})
+	m, err := build(c)
+	require.NoError(t, err)
+	ts, err := m.types()
+	require.NoError(t, err)
+	assert.Contains(t, ts, "export interface HolderBody {\n  name?: string;\n  note?: Badge;\n  tags?: string[];\n}\n",
+		"readJSON takes a missing field as its zero value, so a pointer or slice needs no | null either")
+	assert.Contains(t, ts, "export interface Badge {\n  label?: string;\n}\n", "a type only a body reaches is optional throughout")
+	assert.Contains(t, ts, "export interface Pair {\n  device: string;\n}\n", "a response's fields stay as they are")
+}
+
+func TestBuild_RefusesATypeABodyAndAResponseShare(t *testing.T) {
+	c := mini(reflect.TypeFor[badgeJSON]())
+	c.Routes = append(c.Routes, web.ContractRoute{Method: "PUT", Path: "/api/v1/y", Client: "y", OK: 204, Body: reflect.TypeFor[holderBody]()})
+	_, err := build(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "its own type")
+}
+
 func TestBuild_RefusesWhatItCannotType(t *testing.T) {
 	for _, tc := range []struct {
 		name string

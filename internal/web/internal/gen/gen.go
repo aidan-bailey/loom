@@ -114,6 +114,12 @@ type model struct {
 	unions []web.ContractUnion
 }
 
+// request marks the types a route's body reaches, whose fields are all
+// optional in TS: readJSON takes a missing field as its zero value, so a
+// caller may leave any out. A type a response or an event also reaches is
+// refused, since optional fields would loosen what the daemon answers.
+type reach map[reflect.Type]bool
+
 // build walks every route's query, body and response type and every event's
 // payload, and names what it reaches. A TS name that two types, or a type and
 // a union, would share is an error.
@@ -147,12 +153,15 @@ func build(c web.ContractSpec) (*model, error) {
 			}
 		}
 	}
+	inBody, inAnswer := reach{}, reach{}
 	for _, r := range c.Routes {
-		for _, t := range []reflect.Type{r.Body, r.Resp} {
-			if t == nil {
-				continue
+		if r.Body != nil {
+			if err := m.walk(r.Body, r.Method+" "+r.Path, inBody); err != nil {
+				return nil, err
 			}
-			if err := m.walk(t, r.Method+" "+r.Path); err != nil {
+		}
+		if r.Resp != nil {
+			if err := m.walk(r.Resp, r.Method+" "+r.Path, inAnswer); err != nil {
 				return nil, err
 			}
 		}
@@ -161,8 +170,16 @@ func build(c web.ContractSpec) (*model, error) {
 		if e.Data == nil {
 			return nil, fmt.Errorf("event %s has no data type", e.Name)
 		}
-		if err := m.walk(e.Data, "event "+e.Name); err != nil {
+		if err := m.walk(e.Data, "event "+e.Name, inAnswer); err != nil {
 			return nil, err
+		}
+	}
+	for t := range inBody {
+		if inAnswer[t] {
+			return nil, fmt.Errorf("%s is reached by a request body and by a response or an event: give the body its own type", t)
+		}
+		for i := range m.fields[t] {
+			m.fields[t][i].optional = true
 		}
 	}
 
@@ -220,9 +237,10 @@ func (m *model) walkQuery(t reflect.Type, where string) error {
 	return nil
 }
 
-// walk registers every named struct type t reaches, with its JSON fields. It
-// only collects: tsType reports a type it cannot write.
-func (m *model) walk(t reflect.Type, where string) error {
+// walk registers every named struct type t reaches, with its JSON fields, and
+// adds each to reached. It only collects: tsType reports a type it cannot
+// write.
+func (m *model) walk(t reflect.Type, where string, reached reach) error {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -234,21 +252,26 @@ func (m *model) walk(t reflect.Type, where string) error {
 		if t.Name() == "" {
 			return nil
 		}
-		if _, done := m.fields[t]; done {
+		if reached[t] {
 			return nil
 		}
-		fields, err := jsonFields(t)
-		if err != nil {
-			return fmt.Errorf("%s: %w", where, err)
+		reached[t] = true
+		fields, ok := m.fields[t]
+		if !ok {
+			var err error
+			fields, err = jsonFields(t)
+			if err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+			m.fields[t] = fields
 		}
-		m.fields[t] = fields
 		for _, f := range fields {
-			if err := m.walk(f.typ, where+" "+t.Name()+"."+f.name); err != nil {
+			if err := m.walk(f.typ, where+" "+t.Name()+"."+f.name, reached); err != nil {
 				return err
 			}
 		}
 	case reflect.Slice, reflect.Array, reflect.Map:
-		return m.walk(t.Elem(), where)
+		return m.walk(t.Elem(), where, reached)
 	}
 	return nil
 }

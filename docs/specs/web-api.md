@@ -273,12 +273,12 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `AnswerBody`
 
-- `answers`: `Record<string, QuestionAnswerBody> | null`
-- `chat`: `boolean`
-- `chat_text`: `string`
-- `allow`: `boolean`
-- `suggestion`: `number`
-- `message`: `string`
+- `answers?`: `Record<string, QuestionAnswerBody>`
+- `chat?`: `boolean`
+- `chat_text?`: `string`
+- `allow?`: `boolean`
+- `suggestion?`: `number`
+- `message?`: `string`
 
 ### `Ask`
 
@@ -315,13 +315,13 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `CreateBody`
 
-- `workspace`: `number`
-- `title`: `string`
-- `prompt`: `string`
-- `account`: `string`
-- `model`: `string`
-- `permission_mode`: `string`
-- `effort`: `string`
+- `workspace?`: `number`
+- `title?`: `string`
+- `prompt?`: `string`
+- `account?`: `string`
+- `model?`: `string`
+- `permission_mode?`: `string`
+- `effort?`: `string`
 
 ### `Created`
 
@@ -336,9 +336,9 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `DeviceBody`
 
-- `waiting`: `boolean | null`
-- `finished`: `boolean | null`
-- `pause`: `string | null`
+- `waiting?`: `boolean`
+- `finished?`: `boolean`
+- `pause?`: `string`
 
 ### `Diff`
 
@@ -576,7 +576,7 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `MergeBody`
 
-- `source`: `number`
+- `source?`: `number`
 
 ### `Message`
 
@@ -612,7 +612,7 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `PairBody`
 
-- `code`: `string`
+- `code?`: `string`
 
 ### `PastRun`
 
@@ -644,9 +644,9 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `QuestionAnswerBody`
 
-- `labels`: `string[] | null`
-- `other`: `string`
-- `note`: `string`
+- `labels?`: `string[]`
+- `other?`: `string`
+- `note?`: `string`
 
 ### `QuickReplies`
 
@@ -654,11 +654,11 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `QuickRepliesBody`
 
-- `replies`: `string[] | null`
+- `replies?`: `string[]`
 
 ### `SendBody`
 
-- `text`: `string`
+- `text?`: `string`
 
 ### `Session`
 
@@ -722,14 +722,14 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 ### `SubscriptionBody`
 
-- `endpoint`: `string`
-- `expirationTime`: `unknown`
-- `keys`: `SubscriptionKeys`
+- `endpoint?`: `string`
+- `expirationTime?`: `unknown`
+- `keys?`: `SubscriptionKeys`
 
 ### `SubscriptionKeys`
 
-- `p256dh`: `string`
-- `auth`: `string`
+- `p256dh?`: `string`
+- `auth?`: `string`
 
 ### `Suggestion`
 

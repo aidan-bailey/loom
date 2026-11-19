@@ -59,12 +59,12 @@ export interface AgentPage {
 }
 
 export interface AnswerBody {
-  answers: Record<string, QuestionAnswerBody> | null;
-  chat: boolean;
-  chat_text: string;
-  allow: boolean;
-  suggestion: number;
-  message: string;
+  answers?: Record<string, QuestionAnswerBody>;
+  chat?: boolean;
+  chat_text?: string;
+  allow?: boolean;
+  suggestion?: number;
+  message?: string;
 }
 
 export interface Ask {
@@ -101,13 +101,13 @@ export interface Block {
 }
 
 export interface CreateBody {
-  workspace: number;
-  title: string;
-  prompt: string;
-  account: string;
-  model: string;
-  permission_mode: string;
-  effort: string;
+  workspace?: number;
+  title?: string;
+  prompt?: string;
+  account?: string;
+  model?: string;
+  permission_mode?: string;
+  effort?: string;
 }
 
 export interface Created {
@@ -122,9 +122,9 @@ export interface Device {
 }
 
 export interface DeviceBody {
-  waiting: boolean | null;
-  finished: boolean | null;
-  pause: string | null;
+  waiting?: boolean;
+  finished?: boolean;
+  pause?: string;
 }
 
 export interface Diff {
@@ -362,7 +362,7 @@ export interface MdNode {
 }
 
 export interface MergeBody {
-  source: number;
+  source?: number;
 }
 
 export interface Message {
@@ -398,7 +398,7 @@ export interface Pair {
 }
 
 export interface PairBody {
-  code: string;
+  code?: string;
 }
 
 export interface PastRun {
@@ -430,9 +430,9 @@ export interface PushKey {
 }
 
 export interface QuestionAnswerBody {
-  labels: string[] | null;
-  other: string;
-  note: string;
+  labels?: string[];
+  other?: string;
+  note?: string;
 }
 
 export interface QuickReplies {
@@ -440,11 +440,11 @@ export interface QuickReplies {
 }
 
 export interface QuickRepliesBody {
-  replies: string[] | null;
+  replies?: string[];
 }
 
 export interface SendBody {
-  text: string;
+  text?: string;
 }
 
 export interface Session {
@@ -508,14 +508,14 @@ export interface Step {
 }
 
 export interface SubscriptionBody {
-  endpoint: string;
-  expirationTime: unknown;
-  keys: SubscriptionKeys;
+  endpoint?: string;
+  expirationTime?: unknown;
+  keys?: SubscriptionKeys;
 }
 
 export interface SubscriptionKeys {
-  p256dh: string;
-  auth: string;
+  p256dh?: string;
+  auth?: string;
 }
 
 export interface Suggestion {

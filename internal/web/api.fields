@@ -9,12 +9,6 @@ AgentPage.started: string
 AgentPage.state: AgentPageState
 AgentPage.teammate: boolean
 AgentPage.type: string
-AnswerBody.allow: boolean
-AnswerBody.answers: Record<string, QuestionAnswerBody> | null
-AnswerBody.chat: boolean
-AnswerBody.chat_text: string
-AnswerBody.message: string
-AnswerBody.suggestion: number
 Ask.agent: string
 Ask.answering: boolean
 Ask.id: string
@@ -36,13 +30,6 @@ Block.cut?: boolean
 Block.label: string
 Block.mono?: boolean
 Block.text: string
-CreateBody.account: string
-CreateBody.effort: string
-CreateBody.model: string
-CreateBody.permission_mode: string
-CreateBody.prompt: string
-CreateBody.title: string
-CreateBody.workspace: number
 Created.id: number
 Created.notices: Notice[] | null
 DELETE /api/v1/device ok=204
@@ -50,9 +37,6 @@ DELETE /api/v1/device/push ok=204
 Device.name: string
 Device.notify: Notify
 Device.push: string
-DeviceBody.finished: boolean | null
-DeviceBody.pause: string | null
-DeviceBody.waiting: boolean | null
 Diff.added: number
 Diff.removed: number
 Exit.code: number
@@ -222,7 +206,6 @@ MdNode.line?: number
 MdNode.start?: number
 MdNode.t: string
 MdNode.v?: string
-MergeBody.source: number
 Message.blocks: (MdNode | null)[] | null
 Message.text: string
 Message.truncated: boolean
@@ -250,7 +233,6 @@ POST /api/v1/sessions/{id}/send body=SendBody resp=Notices ok=200
 PUT /api/v1/device body=DeviceBody resp=Device ok=200
 PUT /api/v1/quick-replies body=QuickRepliesBody resp=QuickReplies ok=200
 Pair.device: string
-PairBody.code: string
 PastRun.end: string
 PastRun.ended: string
 PastRun.file: string
@@ -267,12 +249,7 @@ Pr.number: number
 Pr.state: PrState
 Pr.url?: string
 PushKey.key: string
-QuestionAnswerBody.labels: string[] | null
-QuestionAnswerBody.note: string
-QuestionAnswerBody.other: string
 QuickReplies.quick_replies: string[] | null
-QuickRepliesBody.replies: string[] | null
-SendBody.text: string
 Session.account: string
 Session.agents: Agent[] | null
 Session.ahead: number
@@ -321,11 +298,6 @@ Step.finished: boolean
 Step.state: StepState
 Step.summary: string
 Step.tool: string
-SubscriptionBody.endpoint: string
-SubscriptionBody.expirationTime: unknown
-SubscriptionBody.keys: SubscriptionKeys
-SubscriptionKeys.auth: string
-SubscriptionKeys.p256dh: string
 Suggestion.label: string
 Suggestion.persists?: boolean
 Turn.at: string
@@ -477,3 +449,31 @@ union TurnFrom "peer"
 union TurnFrom "plugin"
 union TurnFrom "task"
 union TurnFrom "you"
+AnswerBody.allow?: boolean
+AnswerBody.answers?: Record<string, QuestionAnswerBody>
+AnswerBody.chat?: boolean
+AnswerBody.chat_text?: string
+AnswerBody.message?: string
+AnswerBody.suggestion?: number
+CreateBody.account?: string
+CreateBody.effort?: string
+CreateBody.model?: string
+CreateBody.permission_mode?: string
+CreateBody.prompt?: string
+CreateBody.title?: string
+CreateBody.workspace?: number
+DeviceBody.finished?: boolean
+DeviceBody.pause?: string
+DeviceBody.waiting?: boolean
+MergeBody.source?: number
+PairBody.code?: string
+QuestionAnswerBody.labels?: string[]
+QuestionAnswerBody.note?: string
+QuestionAnswerBody.other?: string
+QuickRepliesBody.replies?: string[]
+SendBody.text?: string
+SubscriptionBody.endpoint?: string
+SubscriptionBody.expirationTime?: unknown
+SubscriptionBody.keys?: SubscriptionKeys
+SubscriptionKeys.auth?: string
+SubscriptionKeys.p256dh?: string
