@@ -262,3 +262,12 @@ Both licences ask that their text travel with a redistribution, so each follows.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+## Bundled packages: the new web app
+
+The new web app (`internal/web/ui/`, built into `internal/web/dist/`) bundles
+npm packages and two fonts (Inter and JetBrains Mono, from
+`@fontsource-variable`). The build writes each bundled package's and font's
+licence into `internal/web/dist/THIRD_PARTY.txt`, which the daemon serves
+with the app and `pnpm run dist:check` keeps in step with the bundle; that
+file is their notice.

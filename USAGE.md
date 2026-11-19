@@ -813,6 +813,13 @@ and answers only phones you have paired.
   "Notifications are failing (<status>); turn them on again."). When the
   app finds the phone's own subscription gone it also says "Notifications
   stopped on this phone. Turn them on again in Settings."
+- **The new app.** A new version of the phone app is being built beside
+  this one. Settings has **Try the new app**, which switches this phone
+  (the choice is per phone, kept in a cookie, and nothing else about the
+  pairing changes: the same device, notifications and Home Screen icon).
+  For now the new app shows the fleet, and each other screen shows a
+  placeholder with **Back to classic**, which switches back. Offline, the
+  switch happens the next time the app opens.
 
 #### Set it up
 
