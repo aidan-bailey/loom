@@ -162,6 +162,6 @@ From a recon of main at `8daa4b94` (part 1 merged) and the owner's answers the s
 
 **Decisions by the owner at `/flow:draft` (2026-11-19), from the skeleton review:**
 
-19. **The session, ask and job commands are drafted in full and reviewed before the run** (the plan's Story 3), and they own the pure helpers that build an allow's arguments (its 1-based suggestion, `0` for the plain Allow, and whether the rule persists) and an answer's body from its draft; the ask forms only call them. The seen times keep the classic double encoding (decision 12), which the plan states exactly and a test pins against a value the classic app wrote.
+19. **The session, ask and job commands are drafted in full and reviewed before the run** (the plan's Story 3), and they own the pure helpers that build an allow's arguments (its 1-based suggestion, `0` for the plain Allow, and whether the rule persists) and an answer's body from its draft; the ask forms only call them. The seen times keep the classic double encoding (decision 12), which the plan states exactly and a test pins against a value the classic app wrote. The subagent view stays brief (the plan's Story 11), its gone timer and last refresh named in its Form reason and checked by the run's full review.
 
 Left to part 3: the classic app's "Loading…" head for a session just created (it comes with new session), the flow tab, and everything else Delivery lists for it.
