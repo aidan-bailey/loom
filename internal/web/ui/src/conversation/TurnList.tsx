@@ -224,7 +224,7 @@ function ClaudeSide(props: {
   if (items.length === 0) return null;
   const said = items.some((i) => i.kind !== "compacted");
   const at = clock(items[items.length - 1]?.at ?? "");
-  const lastOf = (kind: string): number => items.map((i) => i.kind).lastIndexOf(kind as ItemKind);
+  const lastOf = (kind: ItemKind): number => items.map((i) => i.kind).lastIndexOf(kind);
   const lastSteps = lastOf("steps");
   const lastThinking = lastOf("thinking");
   const label = props.live ? "CLAUDE · ◐ WORKING" : at === "" ? "CLAUDE" : `CLAUDE · ${at}`;
