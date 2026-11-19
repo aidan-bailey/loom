@@ -2,21 +2,24 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixturePatch, fixtureTurns } from "@/fixtures";
+import { fixtureJobLog, fixturePatch, fixtureTurns } from "@/fixtures";
 import type { AgentPage, JobLog, Outcome, Patch, Turn, Turns } from "./gen";
 import { queryClient } from "./queries";
 import {
   appendLog,
   keepScroll,
   keptScroll,
+  KEEP_JOBS,
   KEEP_SESSIONS,
   mergeTurns,
   MAX_LOG_CHARS,
   useHeldTurns,
+  useJobLog,
   usePatch,
   useTurnPages,
   type HeldLog,
   type HeldTurns,
+  type JobLogOptions,
   type PatchOptions,
   type TurnPagesOptions,
   type TurnsLoad,
@@ -29,13 +32,17 @@ const spyOnTurns = () =>
   vi.spyOn(api, "turns").mockRejectedValue(new Error("unexpected turns read"));
 const spyOnDiff = () => vi.spyOn(api, "diff").mockRejectedValue(new Error("unexpected diff read"));
 let turnsRead: ReturnType<typeof spyOnTurns>;
+const spyOnLog = () =>
+  vi.spyOn(api, "jobLog").mockRejectedValue(new Error("unexpected job log read"));
 let diffRead: ReturnType<typeof spyOnDiff>;
+let logRead: ReturnType<typeof spyOnLog>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   queryClient.clear();
   turnsRead = spyOnTurns();
   diffRead = spyOnDiff();
+  logRead = spyOnLog();
 });
 
 afterEach(() => {
@@ -670,5 +677,173 @@ describe("usePatch", () => {
     });
     await settle();
     expect(result.current.error).toBe("");
+  });
+});
+const logOptions = (extra: Partial<JobLogOptions> = {}): JobLogOptions => ({
+  session: 7,
+  job: 214,
+  live: false,
+  ...extra,
+});
+
+function mountLog(initial: JobLogOptions) {
+  return renderHook((props: JobLogOptions) => useJobLog(props), {
+    initialProps: initial,
+    wrapper,
+  });
+}
+
+describe("useJobLog", () => {
+  it("reads the tail on mount and holds the fixture's page", async () => {
+    const tail = fixtureJobLog();
+    logRead.mockResolvedValueOnce(ok(tail));
+    const { result } = mountLog(logOptions());
+    expect(result.current.log).toBeUndefined();
+    expect(result.current.loading).toBe(true);
+    await settle();
+    expect(logRead).toHaveBeenCalledTimes(1);
+    expect(logRead).toHaveBeenCalledWith(7, 214, undefined);
+    expect(result.current.log).toEqual({ text: tail.text, end: tail.end, cut: tail.cut });
+    expect(result.current.gone).toBe("");
+    expect(result.current.error).toBe("");
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("draws the kept log first when a job is opened again, and reads after its end", async () => {
+    const tail = fixtureJobLog();
+    const more = logPage("and more\n", tail.end + 9, { start: tail.end });
+    logRead.mockResolvedValueOnce(ok(tail));
+    const view = mountLog(logOptions());
+    await settle();
+    view.unmount();
+    await settle(10 * 60_000);
+    logRead.mockResolvedValueOnce(ok(more));
+    const again = mountLog(logOptions());
+    expect(again.result.current.log?.text).toBe(tail.text);
+    await settle();
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, { after: String(tail.end) });
+    expect(again.result.current.log?.text).toBe(tail.text + "and more\n");
+    expect(again.result.current.log?.end).toBe(more.end);
+  });
+
+  it("reads after the end every 2 s while live and appends what it gets", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const { result } = mountLog(logOptions({ live: true }));
+    await settle();
+    logRead.mockResolvedValueOnce(ok(logPage("b\n", 4)));
+    await settle(2000);
+    expect(logRead).toHaveBeenCalledTimes(2);
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, { after: "2" });
+    expect(result.current.log).toEqual({ text: "a\nb\n", end: 4, cut: false });
+  });
+
+  it("stops polling when the job ends, after one more read", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const view = mountLog(logOptions({ live: true }));
+    await settle();
+    logRead.mockResolvedValueOnce(ok(logPage("last\n", 7)));
+    view.rerender(logOptions({ live: false }));
+    await settle();
+    expect(logRead).toHaveBeenCalledTimes(2);
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, { after: "2" });
+    expect(view.result.current.log?.text).toBe("a\nlast\n");
+    await settle(20_000);
+    expect(logRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read once more when it was never live", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const view = mountLog(logOptions({ live: false }));
+    await settle();
+    view.rerender(logOptions({ live: false }));
+    await settle(20_000);
+    expect(logRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a 409 means the job left the queue, keeps the log, and stops reading", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const { result } = mountLog(logOptions({ live: true }));
+    await settle();
+    logRead.mockResolvedValueOnce(refused(409, "job 214 has left the queue"));
+    await settle(2000);
+    expect(result.current.gone).toBe("job 214 has left the queue");
+    expect(result.current.error).toBe("");
+    expect(result.current.log?.text).toBe("a\n");
+    await settle(20_000);
+    expect(logRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the next tick after a read that timed out", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const { result } = mountLog(logOptions({ live: true }));
+    await settle();
+    logRead.mockResolvedValueOnce({ kind: "timeout", message: "timed out" });
+    await settle(2000);
+    expect(result.current.error).toBe("timed out");
+    expect(result.current.gone).toBe("");
+    logRead.mockResolvedValueOnce(ok(logPage("b\n", 4)));
+    await settle(2000);
+    expect(logRead).toHaveBeenCalledTimes(3);
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, { after: "2" });
+    expect(result.current.error).toBe("");
+    expect(result.current.log?.text).toBe("a\nb\n");
+  });
+
+  it("reads once more at the job's end, once, when a read is still out then", async () => {
+    const first = deferred<Outcome<JobLog>>();
+    logRead.mockReturnValueOnce(first.promise);
+    const view = mountLog(logOptions({ live: true }));
+    await settle();
+    view.rerender(logOptions({ live: false }));
+    await settle();
+    expect(logRead).toHaveBeenCalledTimes(1);
+    logRead.mockResolvedValueOnce(ok(logPage("last\n", 7)));
+    first.resolve(ok(logPage("a\n", 2)));
+    await settle();
+    expect(logRead).toHaveBeenCalledTimes(2);
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, { after: "2" });
+    expect(view.result.current.log?.text).toBe("a\nlast\n");
+    await settle(20_000);
+    expect(logRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a change of job as a new key, with no read beyond the observer's own", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const view = mountLog(logOptions({ live: true }));
+    await settle();
+    logRead.mockResolvedValueOnce(ok(logPage("b\n", 3)));
+    view.rerender(logOptions({ job: 215, live: false }));
+    await settle(100);
+    expect(logRead).toHaveBeenCalledTimes(2);
+    expect(logRead).toHaveBeenLastCalledWith(7, 215, undefined);
+    await settle(20_000);
+    expect(logRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts the least recently opened job's log for a sixth", async () => {
+    const openJob = async (job: number): Promise<void> => {
+      logRead.mockResolvedValueOnce(ok(logPage("j", 1)));
+      const view = mountLog(logOptions({ session: 5, job }));
+      await settle();
+      view.unmount();
+    };
+    for (let job = 1; job <= KEEP_JOBS + 1; job++) await openJob(job);
+    await openJob(2);
+    expect(logRead).toHaveBeenLastCalledWith(5, 2, { after: "1" });
+    await openJob(1);
+    expect(logRead).toHaveBeenLastCalledWith(5, 1, undefined);
+  });
+
+  it("drops the logs with the cache when the pairing is revoked", async () => {
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const view = mountLog(logOptions());
+    await settle();
+    view.unmount();
+    queryClient.clear();
+    logRead.mockResolvedValueOnce(ok(logPage("a\n", 2)));
+    const again = mountLog(logOptions());
+    expect(again.result.current.log).toBeUndefined();
+    await settle();
+    expect(logRead).toHaveBeenLastCalledWith(7, 214, undefined);
   });
 });

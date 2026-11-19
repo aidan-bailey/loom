@@ -6,7 +6,7 @@
 import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { AgentPage, JobLog, Patch, Turn, Turns, TurnsParams } from "./gen";
-import { queryClient, unwrap } from "./queries";
+import { OutcomeError, queryClient, unwrap } from "./queries";
 import { api } from "./request";
 
 /** How many conversations keep their pages and scroll: a ninth evicts the least recently opened. */
@@ -365,5 +365,104 @@ export function usePatch({ session, signature, live }: PatchOptions): PatchView 
     error: errorText(query.error, "Could not read the diff."),
     loading: query.isFetching,
     reload,
+  };
+}
+// How often a live job's log is read again, as the classic app does.
+const LOG_POLL = 2000;
+
+const logKey = (session: number, job: number): QueryKey => ["job-log", session, job];
+
+// The jobs kept, least recently opened first.
+let keptJobs: QueryKey[] = [];
+
+function openJob(session: number, job: number): void {
+  keptJobs = keepRecent(keptJobs, logKey(session, job), KEEP_JOBS);
+}
+
+// goneText is the text of a 409 (the job has left the queue), "" for any other error.
+function goneText(error: Error | null | undefined): string {
+  if (!(error instanceof OutcomeError)) return "";
+  if (error.outcome.kind !== "refused" || error.outcome.status !== 409) return "";
+  return error.message !== "" ? error.message : "This job is no longer in the queue.";
+}
+
+// readLog reads what the log holds past the end held, or its tail when none is held, and appends
+// it. A held log is always read `after`: a tail answer never says it is a reset, so a tail
+// appended to a held log would repeat it.
+async function readLog(session: number, job: number): Promise<HeldLog> {
+  const key = logKey(session, job);
+  try {
+    const held = queryClient.getQueryData<HeldLog>(key);
+    const page = unwrap(
+      await api.jobLog(session, job, held === undefined ? undefined : { after: String(held.end) }),
+    );
+    return appendLog(held, page);
+  } finally {
+    askedAgain(key, () => requestLog(session, job));
+  }
+}
+
+// requestLog reads the log now: one read is in flight at a time, and a read asked for meanwhile
+// runs once when it lands.
+function requestLog(session: number, job: number): void {
+  const key = logKey(session, job);
+  if (inFlight(key)) {
+    again.add(hashOf(key));
+    return;
+  }
+  startRead(key, () => readLog(session, job), Infinity);
+}
+
+export interface JobLogOptions {
+  session: number;
+  job: number;
+  /** The job has yet to end: its log is read every 2 s, and once more when this turns false. */
+  live: boolean;
+}
+
+export interface JobLogView {
+  log: HeldLog | undefined;
+  /** The text of a 409: the job has left the queue and nothing more is read; "" for none. */
+  gone: string;
+  /** Why the last read failed, other than a 409, "" for none; the log held stays. */
+  error: string;
+  /** A read is in flight. */
+  loading: boolean;
+}
+
+/**
+ * Reads a job's log: on mount the kept log drawn first and a read after its end (or the tail when
+ * none is kept), then after the end every 2 s while `live` and not gone, and once more when
+ * `live` turns false. A 409 sets `gone` and stops; a timeout or a network failure waits for the
+ * next tick. A job's log stays in the cache until KEEP_JOBS evicts it or an unpair clears it.
+ */
+export function useJobLog({ session, job, live }: JobLogOptions): JobLogView {
+  const query = useQuery<HeldLog>({
+    queryKey: logKey(session, job),
+    queryFn: () => readLog(session, job),
+    gcTime: Infinity,
+    retry: false,
+    refetchInterval: (q) => (live && goneText(q.state.error) === "" ? LOG_POLL : false),
+  });
+  useEffect(() => {
+    openJob(session, job);
+  }, [session, job]);
+  // was follows the key: a change of job is no end of the old one, so only the observer's own
+  // read is made for the new key.
+  const was = useRef({ session, job, live });
+  useEffect(() => {
+    const before = was.current;
+    was.current = { session, job, live };
+    const ended = before.session === session && before.job === job && before.live && !live;
+    if (ended && goneText(queryClient.getQueryState(logKey(session, job))?.error) === "") {
+      requestLog(session, job);
+    }
+  }, [live, session, job]);
+  const gone = goneText(query.error);
+  return {
+    log: query.data,
+    gone,
+    error: gone === "" ? errorText(query.error, "Could not read the job's log.") : "",
+    loading: query.isFetching,
   };
 }
