@@ -8,7 +8,7 @@ import { useFleet, useLink } from "@/store/fleet";
 
 import { panelFor, type PanelId, type PanelProps } from "./panels";
 import { hrefFor, panelProps, useRoute } from "./routes";
-import { switchApp } from "./switchApp";
+import { CommandButton } from "./CommandButton";
 
 // SCREEN_NAMES is what each screen is called where the app names it: the
 // placeholder's heading and an error boundary's message.
@@ -101,14 +101,7 @@ export function Placeholder({ panel }: { panel: PanelId }): ReactElement {
       <p className="text-muted-foreground">
         {name} is not in the new app yet. It is in the classic one.
       </p>
-      <Button
-        variant="secondary"
-        onClick={() => {
-          void switchApp("classic");
-        }}
-      >
-        Back to classic
-      </Button>
+      <CommandButton id="app.backToClassic" variant="secondary" />
     </section>
   );
 }
