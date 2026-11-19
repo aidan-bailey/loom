@@ -168,3 +168,26 @@ func TestFeedbackFix_StartsTheSession(t *testing.T) {
 	_, _, err = runFeedback(t, "fix", "1", "-w", "ws-a")
 	assert.ErrorContains(t, err, "is still there", "a live fix session")
 }
+
+func TestFeedbackFix_LaunchesOnTheModelAndEffortAsked(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+
+	_, _, err := runFeedback(t, "fix", "1", "-w", "ws-a", "--model", "gpt")
+	assert.ErrorContains(t, err, `model "gpt": want one of default`)
+	_, _, err = runFeedback(t, "fix", "1", "-w", "ws-a", "--effort", "huge")
+	assert.ErrorContains(t, err, `effort "huge"`)
+	title := feedback.FixTitle(1, "loom job run: --after refuses another session's job")
+	_, ok := d.view(t, "ws-a", title)
+	require.False(t, ok, "a refused fix starts nothing")
+
+	_, _, err = runFeedback(t, "fix", "1", "-w", "ws-a", "--model", "opus", "--effort", "high")
+	require.NoError(t, err)
+	v, ok := d.view(t, "ws-a", title)
+	require.True(t, ok)
+	assert.Contains(t, v.Program, "--model 'opus'")
+	assert.Contains(t, v.Program, "--effort high")
+}

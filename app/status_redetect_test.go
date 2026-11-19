@@ -244,6 +244,7 @@ func TestQuietDuringLoadingSchedulesRedetect(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ws().AddForTest(inst)
 	m.syncViews()
+	m.Update(noopMsg{}) // settle: a Loading row's spinner starts on the first Update
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "quiet during Loading must arm a re-check, not drop")

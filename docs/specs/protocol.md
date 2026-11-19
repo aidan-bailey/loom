@@ -620,7 +620,7 @@ Result: `{}`
 
 ### FixThread (request)
 
-Params: `{"thread":0,"workspace":"","req":0}`
+Params: `{"thread":0,"workspace":"","model":"","effort":"","req":0}`
 
 Result: `{}`
 

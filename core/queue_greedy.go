@@ -41,7 +41,9 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 	var used int64
 	for i := range q.store.Jobs {
 		rec := q.store.Jobs[i]
-		if rec.State != sched.Running {
+		// The fit counts no agent or run job, so their memory, already gone
+		// from MemAvailable, is no room either.
+		if rec.State != sched.Running || sched.Unclaimed(rec.Kind) {
 			continue
 		}
 		used += q.usage[rec.ID].RSSKB
@@ -62,8 +64,10 @@ func (m *Model) greedyInputs(p sched.Policy, now time.Time) (sched.Greedy, bool)
 
 // predictRunning is a running job's prediction from now (cgroup spec §7.2):
 // a contained job whose command has curves follows them from its progress;
-// any other counts flat at its hold or claim until its expected end; and a
-// job using more than predicted counts flat at its use plus the margin.
+// any other counts flat at its hold or claim until its expected end, usually
+// at its command's usual peak (withUsualPeak); and a job using more than
+// predicted counts flat at its use plus the margin, and one using less at
+// least that usually (usual plus one worst spec).
 func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sched.Record) time.Duration) sched.Prediction {
 	q := m.queue
 	if rec.Paused() {
@@ -91,23 +95,40 @@ func (m *Model) predictRunning(rec sched.Record, now time.Time, expect func(sche
 		if h, held := q.holding[rec.ID]; held {
 			gb = h.MemoryGB
 		}
-		pred = sched.Flat(int64(gb)*kbPerGB, now, end)
+		pred = m.withUsualPeak(rec, sched.Flat(int64(gb)*kbPerGB, now, end))
 	}
 	if use := sched.WithMarginKB(q.usage[rec.ID].RSSKB); use > pred.At(now) {
 		pred = sched.Flat(use, now, later(end, pred.End()))
+	} else {
+		pred = pred.UsualAtLeast(use)
 	}
 	return pred
 }
 
 // predictNew is a job's prediction from start: its command's curves, or flat
-// at its claim for its expected duration.
+// at its claim for its expected duration, usually at its command's usual
+// peak (withUsualPeak).
 func (m *Model) predictNew(r sched.Record, start time.Time, expect func(sched.Record) time.Duration) sched.Prediction {
 	if r.Requeues < sched.MaxRequeues {
 		if pred, ok := sched.Predict(sched.CurvedRuns(m.queue.beliefOf(r.Signature)), 0, start); ok {
 			return pred
 		}
 	}
-	return sched.Flat(int64(r.Claim.MemoryGB)*kbPerGB, start, start.Add(expect(r)))
+	return m.withUsualPeak(r, sched.Flat(int64(r.Claim.MemoryGB)*kbPerGB, start, start.Add(expect(r))))
+}
+
+// withUsualPeak is flat prediction p with its usual level at the usual peak
+// of r's own runs (sched.UsualPeakKB; usual plus one worst spec), or p as it
+// is for a job with none, one the ladder holds, and one requeued
+// MaxRequeues times, which runs at its full claim.
+func (m *Model) withUsualPeak(r sched.Record, p sched.Prediction) sched.Prediction {
+	if r.Rung != "" || r.Requeues >= sched.MaxRequeues {
+		return p
+	}
+	if kb, ok := sched.UsualPeakKB(m.queue.beliefOf(r.Signature)); ok {
+		return p.UsualAtMost(kb)
+	}
+	return p
 }
 
 // later is the later of a and b.

@@ -223,6 +223,10 @@ func newJobSubmitCmd() *cobra.Command {
 			}
 			return withDaemon(c, func(d *client) error {
 				id, err := d.submitJob(sub)
+				var lost *lostAfterSend
+				if errors.As(err, &lost) {
+					return fmt.Errorf("%w; the job may be queued (loom job list shows it)", err)
+				}
 				if err != nil {
 					return err
 				}
@@ -256,9 +260,12 @@ func newJobSubmitCmd() *cobra.Command {
 // job's ID, or the daemon's refusal. The warning an unknown launch earns
 // rides the Reply and goes to errOut.
 func (d *client) submitJob(sub sched.Submit) (sched.JobID, error) {
+	gone := d.Err() != nil // a daemon already lost is sent nothing
 	d.SubmitJob(sub, sessionReq)
 	reply, err := d.awaitReply(sessionReq)
 	switch {
+	case err != nil && !gone && d.Err() != nil:
+		return 0, &lostAfterSend{err: err}
 	case err != nil:
 		return 0, err
 	case reply.Err != nil:
@@ -269,6 +276,14 @@ func (d *client) submitJob(sub sched.Submit) (sched.JobID, error) {
 	}
 	return reply.Job, nil
 }
+
+// lostAfterSend is submitJob's error when the daemon was lost after the
+// submission went out: the daemon saves a job before it replies, so it may
+// be queued, and the client can't tell.
+type lostAfterSend struct{ err error }
+
+func (e *lostAfterSend) Error() string { return e.err.Error() }
+func (e *lostAfterSend) Unwrap() error { return e.err }
 
 // errNotReported is awaitJob's error when the daemon accepted a job but its
 // view never arrived.

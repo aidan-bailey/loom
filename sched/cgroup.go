@@ -134,16 +134,8 @@ func CgroupKill(root, path string) error {
 	if err := checkJobScope(path, "kill"); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(root, path, "cgroup.kill"), os.O_WRONLY, 0)
-	if err != nil {
-		return fmt.Errorf("open cgroup.kill: %w", err)
-	}
-	_, werr := f.Write([]byte("1"))
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return fmt.Errorf("write cgroup.kill: %w", werr)
+	if err := writeControl(filepath.Join(root, path, "cgroup.kill"), "1"); err != nil {
+		return fmt.Errorf("cgroup.kill: %w", err)
 	}
 	return nil
 }
@@ -172,17 +164,7 @@ func CgroupReclaim(root, path string, kb int64) error {
 	if err := checkJobScope(path, "reclaim from"); err != nil {
 		return err
 	}
-	write := func(arg string) error {
-		f, err := os.OpenFile(filepath.Join(root, path, "memory.reclaim"), os.O_WRONLY, 0)
-		if err != nil {
-			return err
-		}
-		_, werr := f.Write([]byte(arg))
-		if cerr := f.Close(); werr == nil {
-			werr = cerr
-		}
-		return werr
-	}
+	write := func(arg string) error { return writeControl(filepath.Join(root, path, "memory.reclaim"), arg) }
 	amount := strconv.FormatInt(kb<<10, 10)
 	err := write(amount + " swappiness=200")
 	if errors.Is(err, syscall.EINVAL) {

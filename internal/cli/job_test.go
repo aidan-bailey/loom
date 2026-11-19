@@ -448,6 +448,10 @@ func TestJobOutcome(t *testing.T) {
 	// a start that failed, as the notice and the TUI do, and so does the CLI.
 	reasonedWithExit := ran(sched.Failed, &sched.Exit{Code: 3})
 	reasonedWithExit.Failure = "its folder is gone"
+	// A reason beside a signal is why loom or the kernel killed a job that
+	// ran (killed for memory and not requeued).
+	oom := ran(sched.Failed, &sched.Exit{Code: -1, Signal: "SIGKILL"})
+	oom.Failure = "the kernel killed it: out of memory"
 
 	for _, tc := range []struct {
 		name string
@@ -467,6 +471,7 @@ func TestJobOutcome(t *testing.T) {
 		{"lost", lost, "job 5 was lost: its runner died without a result (the host may have rebooted)", exitNotRun},
 		{"its start failed", noStart, "job 5 could not start: its folder is gone", exitNotRun},
 		{"a reason beside an exit record without an error", reasonedWithExit, "job 5 could not start: its folder is gone", exitNotRun},
+		{"killed for memory", oom, "job 5 was killed by SIGKILL after 3m10s (the kernel killed it: out of memory)", 137},
 		{"its exec failed", execFailed, `job 5 could not start: exec: "nope": executable file not found in $PATH`, exitNotRun},
 	} {
 		line, code := jobOutcome(tc.job)
@@ -662,10 +667,15 @@ func TestJobRun_NothingSubmittedExits125(t *testing.T) {
 		assert.Equal(t, 125, exit.Code)
 		assert.Equal(t, "loom: nothing was submitted: no daemon to join", exit.Msg)
 	})
-	t.Run("the daemon lost before the reply", func(t *testing.T) {
+	t.Run("the daemon lost before the submit went out", func(t *testing.T) {
 		Join = func() (*rpc.Client, error) {
 			c, err := dial()
 			d.srv.Close() // before the submit is sent
+			// and seen lost before it is: then the client knows nothing went out.
+			deadline := time.Now().Add(5 * time.Second)
+			for err == nil && c.Err() == nil && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
 			return c, err
 		}
 		_, _, err := runJob(t, "run", "-d", "x", "--", "true")
@@ -680,6 +690,22 @@ func TestJobRun_NothingSubmittedExits125(t *testing.T) {
 		var asExit *ExitError
 		assert.False(t, errors.As(err, &asExit), "cobra's usage errors exit 1 as for every command")
 	})
+}
+
+// A daemon lost after the submit went out may have queued the job (it saves
+// before it replies): `run` says so and how to look, not that nothing was
+// submitted, which would have the caller run the build twice. A refusal, or
+// a daemon gone before the submit went out, submitted nothing.
+func TestJobRun_ALossAfterTheSubmitWentOutMayHaveQueuedIt(t *testing.T) {
+	lost := &lostAfterSend{err: errors.New("lost the loom daemon: EOF")}
+	exit := exitOf(t, submitFailure(lost))
+	assert.Equal(t, 125, exit.Code)
+	assert.NotContains(t, exit.Msg, "nothing was submitted")
+	assert.Contains(t, exit.Msg, "may be queued (loom job list shows it)")
+	assert.Contains(t, exit.Msg, "lost the loom daemon: EOF")
+
+	exit = exitOf(t, submitFailure(errors.New("claims 5000 cores")))
+	assert.Equal(t, "loom: nothing was submitted: claims 5000 cores", exit.Msg)
 }
 
 // The Windows refusal comes before anything is submitted, so `run` ends it

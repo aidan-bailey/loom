@@ -93,18 +93,35 @@ type fitter interface {
 
 // claimFit counts running jobs at their holds or claims.
 type claimFit struct {
-	p     Policy
-	holds map[JobID]Need
-	used  Need
+	p      Policy
+	holds  map[JobID]Need
+	used   Need
+	paused Need // the paused jobs' part of used
 }
 
-func (f *claimFit) count(r Record)       { f.used = f.used.plus(runningNeed(r, f.p, f.holds)) }
+func (f *claimFit) count(r Record) {
+	n := runningNeed(r, f.p, f.holds)
+	f.used = f.used.plus(n)
+	if r.Paused() {
+		f.paused = f.paused.plus(n)
+	}
+}
+
 func (f *claimFit) fits(r Record) string { return shortfall(f.used, r.Claim.Need(f.p.Caps), f.p.Caps) }
 func (f *claimFit) take(r Record)        { f.used = f.used.plus(r.Claim.Need(f.p.Caps)) }
 
-// alone is always "": an empty host has the caps, and a claim over them is
-// the over-cap skip's.
-func (f *claimFit) alone(Record) string { return "" }
+// alone is why r doesn't fit beside the paused jobs alone, which only the
+// owner's resume ends (job controls spec §7.2); "" with none paused: an
+// empty host has the caps, and a claim over them is the over-cap skip's.
+func (f *claimFit) alone(r Record) string {
+	if f.paused == (Need{}) {
+		return ""
+	}
+	if why := shortfall(f.paused, r.Claim.Need(f.p.Caps), f.p.Caps); why != "" {
+		return why + " beside the jobs you paused"
+	}
+	return ""
+}
 
 // Admit decides which queued jobs start now (spec §5.2) by their claims: a
 // Running exclusive claim takes every cap as it stands, and any other

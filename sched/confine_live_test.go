@@ -228,3 +228,44 @@ func TestConfiner_Live_ReclaimsAFrozenScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "intact\n", line)
 }
+
+// TestConfiner_Live_AReclaimItCannotMeetReturns: memory.reclaim answers
+// EAGAIN when it can't free the amount asked, and CgroupReclaim must return
+// then. Written through a file Go's poller holds, the write parked for good
+// instead (2026-11-18: a lend's reclaim held the daemon's ladder and
+// give-backs off for nine hours).
+func TestConfiner_Live_AReclaimItCannotMeetReturns(t *testing.T) {
+	addr := os.Getenv(testenv.EnvRealDBus)
+	if addr == "" {
+		t.Skip("no user bus")
+	}
+	t.Setenv(testenv.EnvDBus, addr)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, err := NewConfiner(ctx)
+	require.NoError(t, err)
+	defer c.Close()
+	slice := fmt.Sprintf("loom_test%d_eagain.slice", os.Getpid())
+	unit := fmt.Sprintf("loom-test%d-job-3-1.scope", os.Getpid())
+	t.Cleanup(func() { removeTestSlice(t, slice) })
+	require.NoError(t, c.EnsureSlice(ctx, slice, SliceProps{CPUWeight: 30, MemoryMaxBytes: 1 << 30}))
+	cmd := exec.Command("sleep", "60")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	require.NoError(t, c.JoinScope(ctx, ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100}, cmd.Process.Pid))
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", cmd.Process.Pid))
+	require.NoError(t, err)
+	path, err := parseSelfCgroup(data)
+	require.NoError(t, err)
+	require.NoError(t, c.Freeze(ctx, unit))
+	t.Cleanup(func() { _ = c.Thaw(context.Background(), unit) })
+
+	done := make(chan error, 1)
+	go func() { done <- CgroupReclaim(CgroupRoot, path, 64<<20) }() // 64 GB from a sleep
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "a short reclaim is no error")
+	case <-time.After(30 * time.Second):
+		t.Fatal("CgroupReclaim never returned from a reclaim it could not meet")
+	}
+}

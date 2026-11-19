@@ -74,6 +74,13 @@ func TestControlJob_Refusals(t *testing.T) {
 	assert.ErrorContains(t, l.m.controlJob(JobControl{Job: run, Action: JobPause}), "agent job")
 	rec.Kind = ""
 	assert.NoError(t, l.m.controlJob(JobControl{Job: run, Action: JobPause}), "and with none of those, it pauses")
+
+	// An agent or run job starts by its own rule, which no park would stop.
+	for kind, want := range map[string]string{sched.KindAgent: "agent job", sched.KindRun: "flow run"} {
+		l.rec(t, q).Kind = kind
+		assert.ErrorContains(t, l.m.controlJob(JobControl{Job: q, Action: JobPark}), want)
+		assert.False(t, l.rec(t, q).Parked, kind)
+	}
 }
 
 // wqLocked submits a sleep naming lock, which the test's running job holds,
@@ -262,4 +269,7 @@ func TestQueueView_APausedJobsOverdueClockStandsStill(t *testing.T) {
 	require.Positive(t, base, "its runs give it an overdue mark")
 	rec.PausedSecs = 600
 	assert.Equal(t, base+10*time.Minute, m.queueJobView(m.queue, *rec, nil).OverdueAfter)
+	// Nor does a lent job's (memory borrowing spec §6.4).
+	rec.LentSecs = 300
+	assert.Equal(t, base+15*time.Minute, m.queueJobView(m.queue, *rec, nil).OverdueAfter)
 }

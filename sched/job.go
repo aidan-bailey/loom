@@ -243,6 +243,7 @@ type Record struct {
 	Laddered    bool      `json:"laddered,omitempty"`
 	Requeues    int       `json:"requeues,omitempty"`
 	LastRequeue string    `json:"last_requeue,omitempty"`
+	Requeued    time.Time `json:"requeued,omitzero"` // its last requeue (QueuedSince)
 	Requeue     string    `json:"requeue,omitempty"`
 	NoRequeue   bool      `json:"no_requeue,omitempty"`
 	Starved     bool      `json:"starved,omitempty"`
@@ -294,15 +295,17 @@ type Record struct {
 
 // QueuedSince is when r joined the queue: Ready, or Submitted on a record
 // with none (a held job, or one from a build before dependent jobs), or
-// Unparked when that is later (job controls spec §5.2), so an unparked job's
-// starvation wait starts again.
+// Unparked or Requeued when either is later (job controls spec §5.2), so an
+// unparked or requeued job's starvation wait starts again.
 func (r Record) QueuedSince() time.Time {
 	at := r.Ready
 	if at.IsZero() {
 		at = r.Submitted
 	}
-	if r.Unparked.After(at) {
-		at = r.Unparked
+	for _, t := range []time.Time{r.Unparked, r.Requeued} {
+		if t.After(at) {
+			at = t
+		}
 	}
 	return at
 }

@@ -298,17 +298,39 @@ func DisplayIndex(items []core.InstanceView, i int) int {
 	return i + 1 - wsOffset
 }
 
-func (l *List) String() string {
+// window returns the rows and the [start, end) range of them the rail draws,
+// after scrolling the selection into view.
+func (l *List) window() (items []core.InstanceView, start, end int) {
 	l.ensureSelectedVisible()
-	items := l.items()
-	sel := l.selectedIdx
+	items = l.items()
+	start = l.scrollOffset
+	end = min(start+l.maxVisibleItems(), len(items))
+	return items, start, end
+}
 
-	maxVisible := l.maxVisibleItems()
-	startIdx := l.scrollOffset
-	endIdx := startIdx + maxVisible
-	if endIdx > len(items) {
-		endIdx = len(items)
+// DrawsSpinner reports whether a card the rail draws shows the spinner: a
+// Running or Loading row inside the visible window. The spinner's tick
+// redraws the whole TUI, so it runs only while this (or the overview's
+// equivalent) holds.
+func (l *List) DrawsSpinner() bool {
+	items, start, end := l.window()
+	for _, v := range items[start:end] {
+		if ShowsSpinner(v.Status) {
+			return true
+		}
 	}
+	return false
+}
+
+// ShowsSpinner reports whether a card in status s shows the spinner
+// (cardStatusLine).
+func ShowsSpinner(s session.Status) bool {
+	return s == session.Running || s == session.Loading
+}
+
+func (l *List) String() string {
+	items, startIdx, endIdx := l.window()
+	sel := l.selectedIdx
 
 	titleText := "Instances"
 	if l.workspaceName != "" {

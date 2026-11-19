@@ -35,6 +35,10 @@ func TestRunOf(t *testing.T) {
 		{"a start failure", func(r *Record) { r.State, r.Exit, r.Failure = Failed, &Exit{Code: 127, Error: "no"}, "no" }, "", false},
 		{"its folder gone", func(r *Record) { r.State, r.Failure = Failed, "its folder is gone" }, "", false},
 		{"lost", func(r *Record) { r.State = Lost }, "", false},
+		{"killed for memory: a reason beside a signal", func(r *Record) {
+			r.State, r.Exit, r.Failure = Failed, &Exit{Code: -1, Signal: "SIGKILL"}, "the kernel killed it: out of memory"
+		}, OutcomeSignal, true},
+		{"a reason beside an exit with no signal", func(r *Record) { r.State, r.Exit, r.Failure = Failed, &Exit{Code: 3}, "x" }, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

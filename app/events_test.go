@@ -171,6 +171,7 @@ func TestStatusDetection_NoClientGivesNoOpinion(t *testing.T) {
 	name := inst.Pane().TmuxSessionName()
 	m.panes.Retain(nil) // its client was released
 	require.Nil(t, m.panes.For(rowOf(t, m, inst)).Client())
+	m.Update(noopMsg{}) // settle: a running row's spinner starts on the first Update
 
 	_, cmd := m.Update(redetectMsg{session: name})
 	if cmd != nil {

@@ -193,11 +193,12 @@ type Core interface {
 	// Feedback from sessions (session feedback spec): the inbox, which a
 	// replica answers, and the requests that change it. FileFeedback's
 	// Reply carries the new note (Note); FixThread's Reply and Started are
-	// a Create's.
+	// a Create's. FixThread's model and effort ("" for the workspace's
+	// own) are the launch's, as `loom session new` takes them.
 	Feedback() FeedbackView // rpc:local
 	FileFeedback(note FeedbackNote, req ReqID)
 	CloseThread(thread feedback.ThreadID, req ReqID)
-	FixThread(thread feedback.ThreadID, workspace string, req ReqID)
+	FixThread(thread feedback.ThreadID, workspace, model, effort string, req ReqID)
 
 	// The issue watcher (spec 2026-11-13-issue-watcher): the workspace's
 	// switch, written to its own config.json, and a read of its state,

@@ -43,9 +43,9 @@ func TestBudget(t *testing.T) {
 func TestAdmitGreedy_PeaksThatDontMeetBothStart(t *testing.T) {
 	g := Greedy{
 		BudgetKB: gb(12),
-		Running:  map[JobID]Prediction{1: {{t0, t0.Add(time.Minute), gb(9)}, {t0.Add(time.Minute), t0.Add(10 * time.Minute), gb(1)}}},
+		Running:  map[JobID]Prediction{1: {{t0, t0.Add(time.Minute), gb(9), 0}, {t0.Add(time.Minute), t0.Add(10 * time.Minute), gb(1), 0}}},
 		Predict: flatPredict(map[JobID]func(time.Time) Prediction{2: func(s time.Time) Prediction {
-			return Prediction{{s, s.Add(5 * time.Minute), gb(1)}, {s.Add(5 * time.Minute), s.Add(8 * time.Minute), gb(9)}}
+			return Prediction{{s, s.Add(5 * time.Minute), gb(1), 0}, {s.Add(5 * time.Minute), s.Add(8 * time.Minute), gb(9), 0}}
 		}}),
 	}
 	jobs := []Record{running(1, Claim{CPUs: 4, MemoryGB: 10}), queued(2, Claim{CPUs: 4, MemoryGB: 10})}
@@ -191,4 +191,18 @@ func TestAdmitGreedy_AnExclusiveHeadIsNeverPassedOver(t *testing.T) {
 	assert.Empty(t, d.Start)
 	assert.Equal(t, "waits for the host to empty", d.Waiting[1])
 	assert.Equal(t, "waits for job 1, which has waited past 10m", d.Waiting[2])
+}
+
+func TestAdmitGreedy_CountsTheUsualRunsPlusOneWorst(t *testing.T) {
+	// Job 1 and job 2 both peak at 8 GB, but usually at 2: 2 + 8 together.
+	pred := func(start time.Time) Prediction {
+		return Flat(gb(8), start, start.Add(10*time.Minute)).UsualAtMost(gb(2))
+	}
+	jobs := []Record{running(1, Claim{CPUs: 2, MemoryGB: 8}), queued(2, Claim{CPUs: 2, MemoryGB: 8})}
+	g := Greedy{BudgetKB: gb(10), Running: map[JobID]Prediction{1: pred(t0)}, Predict: flatPredict(map[JobID]func(time.Time) Prediction{2: pred})}
+	assert.Equal(t, []JobID{2}, AdmitGreedy(jobs, greedyPolicy(), t0, g).Start, "worst cases alone would sum to 16 GB")
+	g.BudgetKB = gb(10) - 1
+	d := AdmitGreedy(jobs, greedyPolicy(), t0, g)
+	assert.Empty(t, d.Start)
+	assert.Equal(t, "needs ~2 GB at its peak (forecast leaves 1)", d.Waiting[2], "its start adds its usual 2 GB to job 1's worst")
 }

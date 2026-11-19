@@ -149,6 +149,9 @@ type jobObs struct {
 	killed  bool           // SIGKILL went to the group
 	silent  bool           // a failed start's shim (passJob.silent)
 	cleared bool           // silent only: its SIGKILL went, or the shim is gone, so nothing is owed
+	// cancelSig is the cancel's signal that went to the group in this pass
+	// (tendCancel), for the rest of its session once the sample is in.
+	cancelSig syscall.Signal
 	// signalErr is why a signal failed.
 	signalErr error
 	// cg is its cgroup's reading, cgErr why it failed (cgroup spec §5.3).
@@ -285,6 +288,11 @@ func runQueuePass(p queuePass) queuePassResult {
 			clearSilent(ob, res.snap)
 			continue
 		}
+		if ob.cancelSig != 0 && res.snap != nil {
+			if err := signalSessionRest(*res.snap, ob.pid, ob.cancelSig); err != nil {
+				ob.signalErr = errors.Join(ob.signalErr, err)
+			}
+		}
 		if !ob.gone || ob.exit != nil || ob.queued || res.snap == nil || !orphanedGroup(*res.snap, ob.pid) {
 			continue
 		}
@@ -351,12 +359,15 @@ func tendCancel(ob *jobObs, dir string, j passJob, p queuePass) {
 		sent, err := signalAlive(dir, ob.pid, syscall.SIGTERM)
 		ob.signalErr = err
 		if sent {
-			ob.termAt = p.now
+			ob.termAt, ob.cancelSig = p.now, syscall.SIGTERM
 		}
 	case p.now.Sub(j.signalledAt) >= p.escalate:
 		sent, err := signalAlive(dir, ob.pid, syscall.SIGKILL)
 		ob.signalErr = err
 		ob.killed = sent
+		if sent {
+			ob.cancelSig = syscall.SIGKILL
+		}
 		if sent && j.cgroup != "" {
 			// What left the group is still in the scope (cgroup spec §15, 5).
 			if err := sched.CgroupKill(p.cgroupRoot, j.cgroup); err != nil {
@@ -364,6 +375,34 @@ func tendCancel(ob *jobObs, dir string, j passJob, p queuePass) {
 			}
 		}
 	}
+}
+
+// signalSessionRest sends a cancel's sig to every process group of session
+// sid but the shim's own, which tendCancel signalled: what left the job's
+// group (coreutils timeout runs in a group of its own) and would otherwise
+// run on past a job that settled cancelled. The session is the job's: the
+// shim led it (Setsid) and Linux reuses no pid that is still a session's ID,
+// so a process the sample shows in session sid is the job's even once the
+// shim is gone; a group of such a process lies within that session. A
+// sample that can't tell sessions (ps elsewhere, which gives each
+// process's group as its session) shows no other group. A group gone by now
+// is no error.
+func signalSessionRest(snap sched.Snapshot, sid int, sig syscall.Signal) error {
+	if sid <= 1 {
+		return nil
+	}
+	var errs []error
+	seen := map[int]bool{sid: true}
+	for _, p := range snap.Procs {
+		if p.SID != sid || p.PGID <= 1 || seen[p.PGID] {
+			continue
+		}
+		seen[p.PGID] = true
+		if err := sched.SignalGroup(p.PGID, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			errs = append(errs, fmt.Errorf("signal group %d of the job's session: %w", p.PGID, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // readStarted reads a job's started.json: the record and the shim's pid, nil
@@ -426,7 +465,8 @@ func (m *Model) deliverQueuePass(r queuePassResult) {
 	}
 	switch {
 	case r.sampleErr != nil:
-		// ps failing leaves usage frozen at its last values: say so once per
+		// ps failing leaves an uncontained job's usage frozen at its last
+		// values (a contained one's comes from its cgroup): say so once per
 		// run of failures, not at every pass.
 		if !q.sampleFailing {
 			log.For("core").Warn("queue.sample_failed", "err", r.sampleErr)
@@ -620,7 +660,8 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 			m.requeueJob(i, why, now)
 			return
 		}
-		rec.Failure, state = "killed: "+why, sched.Failed
+		killedForMemory(rec, why, now)
+		state = sched.Failed
 	}
 	m.finishJob(i, state, now)
 }
@@ -631,7 +672,8 @@ func (m *Model) settleGone(i int, ob jobObs, now time.Time) {
 // measurement spec §5.2), the peak so far, and the cores used since the last
 // sample; adds a point to the trace of a job not adopted, and breaks a hold
 // the usage passed (past-peak holds spec §5.1, §5.4). A job with neither
-// reading keeps its last values.
+// reading keeps its last values. A cgroup reading is timed by the pass
+// (r.at), a session's by its sample (r.snap.Taken).
 func (m *Model) applyUsage(r queuePassResult) {
 	q := m.queue
 	for _, ob := range r.obs {
@@ -688,31 +730,36 @@ func (m *Model) applyUsage(r queuePassResult) {
 				q.moved()
 			}
 		}
+		// A cgroup reading is timed by its pass, which read it before the
+		// process sample (and needs none: a failed sample leaves r.snap
+		// nil); a session's usage by the sample it came from.
 		var rss int64
 		var cpu time.Duration
+		var at time.Time
 		switch {
 		case ob.cg != nil:
-			rss, cpu = ob.cg.WorkingKB, ob.cg.CPU
+			rss, cpu, at = ob.cg.WorkingKB, ob.cg.CPU, r.at
 			delete(q.cgroupLogged, ob.id)
 		case r.snap != nil && rec.PID > 1:
 			rss, cpu, _ = r.snap.Session(rec.PID)
+			at = r.snap.Taken
 		default:
 			continue
 		}
 		cores := 0.0
 		if mark, ok := q.cpuMarks[ob.id]; ok {
-			if dt := r.snap.Taken.Sub(mark.at); dt > 0 {
+			if dt := at.Sub(mark.at); dt > 0 {
 				cores = max(0, (cpu-mark.cpu).Seconds()) / dt.Seconds()
 			}
 		}
-		q.cpuMarks[ob.id] = cpuMark{cpu: cpu, at: r.snap.Taken}
+		q.cpuMarks[ob.id] = cpuMark{cpu: cpu, at: at}
 		if !rec.Adopted {
 			tr := q.traces[ob.id]
 			if tr == nil {
 				tr = &sched.Trace{}
 				q.traces[ob.id] = tr
 			}
-			tr.Add(r.snap.Taken, sched.TracePoint{X: cpu.Seconds(), RSSKB: rss, Cores: cores})
+			tr.Add(at, sched.TracePoint{X: cpu.Seconds(), RSSKB: rss, Cores: cores})
 		}
 		if what := q.holds[ob.id].Exceeded(rss, cores); what != "" {
 			m.breakHold(rec, what, rss, cores)

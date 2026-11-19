@@ -12,7 +12,7 @@ func TestRecentRuns(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	wrote := int64(1536 << 20)
 	runs := []sched.Run{ // newest first, as a belief keeps them
-		{Ended: now.Add(-90 * time.Second), Outcome: sched.OutcomeDone, Claim: sched.Claim{CPUs: 4, MemoryGB: 6}, Spare: 2,
+		{Ended: now.Add(-90 * time.Second), Outcome: sched.OutcomeDone, Claim: sched.Claim{CPUs: 6, MemoryGB: 6}, Spare: 2, // the claim it ran with, its 2 spare cores in it (sched.RunOf)
 			WallSeconds: 12.6, PeakKB: 2_936_013, WriteBytes: &wrote, Checkout: "/src/wt"},
 		{Ended: now.Add(-time.Hour), Outcome: sched.OutcomeFailed, Claim: sched.Claim{CPUs: 2, MemoryGB: 4},
 			WallSeconds: 2, PeakKB: 512_000, Checkout: "/src/main"},

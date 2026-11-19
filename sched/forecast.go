@@ -14,7 +14,9 @@ const (
 // Forecast is when each queued job is expected to start (spec §5.5), a pure
 // function of its arguments: it runs Admit forward from now. A running job
 // is expected to end at its start plus its usual duration (usual's answer,
-// or fallback when it has none), or a minute from now when that has passed,
+// or fallback when it has none) and the time it was paused and lent in this
+// attempt, as greedy admission predicts it, or a minute from now when that
+// has passed,
 // and counts at its hold in holds until then (past-peak holds spec §6); a
 // job the simulation starts counts at its claim.
 // At each expected end the job's claim is freed and Admit runs again with
@@ -68,7 +70,7 @@ func forecastWith(jobs []Record, p Policy, now time.Time, usual func(Record) (ti
 			// §7.2): only the owner ends a pause.
 			sim = append(sim, r)
 		case r.State == Running:
-			at := r.Started.Add(expect(r))
+			at := r.Started.Add(expect(r) + r.LentFor(now) + r.PausedFor(now))
 			if !at.After(now) {
 				at = now.Add(time.Minute)
 			}

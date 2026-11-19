@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -275,6 +276,11 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 		}
 		if s.fatal == nil {
 			for _, ev := range snap {
+				if !c.readsDiffText() {
+					if lean, ok := withoutDiffText(ev); ok {
+						ev = lean
+					}
+				}
 				f, err := encodeEvent(ev)
 				if err != nil {
 					s.setFatalLocked(encodeFatal(ev, err))
@@ -463,10 +469,52 @@ func (s *Server) sendLocked(events []core.Event) {
 			s.setFatalLocked(encodeFatal(ev, err))
 			return
 		}
+		// The web layer and CLI commands get it without its diff text,
+		// encoded once for all of them.
+		var lean *Frame
 		for c := range s.conns {
-			c.enqueue(f, coalesceKey(ev))
+			out := f
+			if !c.readsDiffText() {
+				if lean == nil {
+					lf := f
+					if lev, ok := withoutDiffText(ev); ok {
+						if lf, err = encodeEvent(lev); err != nil {
+							s.setFatalLocked(encodeFatal(lev, err))
+							return
+						}
+					}
+					lean = &lf
+				}
+				out = *lean
+			}
+			c.enqueue(out, coalesceKey(ev))
 		}
 	}
+}
+
+// withoutDiffText returns ev with its views' diff text emptied, and whether
+// there was any: a ViewsChanged carries each selected session's whole diff,
+// re-sent on every publish, and only a TUI reads it (readsDiffText). The
+// counts stay. The views are copied: the model's are never touched.
+func withoutDiffText(ev core.Event) (core.Event, bool) {
+	vc, ok := ev.(core.ViewsChanged)
+	if !ok {
+		return ev, false
+	}
+	var views []core.InstanceView
+	for i, v := range vc.Views {
+		if v.Diff.Content == "" {
+			continue
+		}
+		if views == nil {
+			views = slices.Clone(vc.Views)
+		}
+		views[i].Diff.Content = ""
+	}
+	if views == nil {
+		return ev, false
+	}
+	return core.ViewsChanged{WS: vc.WS, Views: views}, true
 }
 
 // clientsLocked counts the connections that are clients as far as the

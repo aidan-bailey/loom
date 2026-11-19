@@ -64,10 +64,12 @@ func (m *Model) probeConfinerAtBoot() {
 
 // maybeProbeConfiner reaches for the user's service manager again from a
 // job, every probeEvery while jobs wait and start uncontained with contain
-// on; an idle queue makes no call.
+// on, or while the ladder or the give-back machine holds a job, which only
+// a confiner can thaw (releaseHeld); an idle queue makes no call.
 func (m *Model) maybeProbeConfiner(p sched.Policy) {
 	q := m.queue
-	if newConfiner == nil || queueGOOS != "linux" || !p.Contain || q.confiner != nil || q.probing || !q.hasQueued() ||
+	want := (p.Contain && q.hasQueued()) || q.heldByLadder() != nil
+	if newConfiner == nil || queueGOOS != "linux" || !want || q.confiner != nil || q.probing ||
 		(!q.lastProbe.IsZero() && time.Since(q.lastProbe) < probeEvery) {
 		return
 	}

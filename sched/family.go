@@ -115,18 +115,66 @@ func stepOf(words []string) (string, bool) {
 		return cargoStep(args), true
 	case "go":
 		return goStep(args), true
+	case "timeout":
+		// It sizes nothing: its command is the step.
+		if rest, ok := timeoutCommand(args); ok {
+			return stepOf(rest)
+		}
+		return otherStep(prog, args), true
 	default:
 		return otherStep(prog, args), true
 	}
 }
 
-// cargoStep is a cargo command's step: its subcommand (nextest with the
-// word after it), --workspace, --doc and --release, and its crates.
+// timeoutCommand is the command coreutils timeout runs, after its options
+// and its duration; false for an option it doesn't know.
+func timeoutCommand(args []string) ([]string, bool) {
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-k" || a == "--kill-after" || a == "-s" || a == "--signal":
+			i++
+		case strings.HasPrefix(a, "--kill-after=") || strings.HasPrefix(a, "--signal=") ||
+			a == "--foreground" || a == "--preserve-status" || a == "-v" || a == "--verbose":
+		case strings.HasPrefix(a, "-"):
+			return nil, false
+		default:
+			return args[i+1:], true
+		}
+	}
+	return nil, true
+}
+
+// valueFlags names, by program, the flags whose value is the next word
+// when not joined with "=": cargo's global ones before its subcommand, and
+// go's build and test ones.
+var valueFlags = map[string]map[string]bool{
+	"cargo": {"--color": true, "--config": true, "-C": true, "-Z": true, "--explain": true},
+	"go": {"C": true, "p": true, "asmflags": true, "buildmode": true, "compiler": true, "gccgoflags": true,
+		"gcflags": true, "installsuffix": true, "ldflags": true, "mod": true, "modfile": true, "overlay": true,
+		"pgo": true, "pkgdir": true, "tags": true, "toolexec": true, "o": true, "exec": true, "run": true,
+		"skip": true, "bench": true, "benchtime": true, "count": true, "cpu": true, "parallel": true,
+		"timeout": true, "fuzz": true, "fuzztime": true, "fuzzminimizetime": true, "list": true, "shuffle": true,
+		"coverprofile": true, "coverpkg": true, "covermode": true, "cpuprofile": true, "memprofile": true,
+		"memprofilerate": true, "blockprofile": true, "blockprofilerate": true, "mutexprofile": true,
+		"mutexprofilefraction": true, "outputdir": true, "trace": true, "vet": true},
+}
+
+// cargoStep is a cargo command's step: the folder -C names, its
+// subcommand (nextest with the word after it), --workspace, --doc and
+// --release, and its crates. A global flag's value is no subcommand.
 func cargoStep(args []string) string {
-	sub, rest := "", []string(nil)
-	for i, a := range args {
+	sub, dir, rest := "", "", []string(nil)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--" {
 			break
+		}
+		if valueFlags["cargo"][a] && i+1 < len(args) {
+			if a == "-C" {
+				dir = args[i+1]
+			}
+			i++
+			continue
 		}
 		if !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "+") {
 			sub, rest = a, args[i+1:]
@@ -158,6 +206,9 @@ func cargoStep(args []string) string {
 		}
 	}
 	parts := []string{"cargo"}
+	if dir != "" {
+		parts = append(parts, "-C", dir)
+	}
 	if sub != "" {
 		parts = append(parts, sub)
 	}
@@ -176,11 +227,22 @@ func cargoStep(args []string) string {
 	return strings.Join(parts, " ")
 }
 
-// goStep is a go command's step: its subcommand, -race, -tags and its
-// package patterns, up to -args.
+// goStep is a go command's step: the folder -C names, its subcommand,
+// -race, -tags and its packages (every word, up to -args, that is no flag
+// and no flag's value).
 func goStep(args []string) string {
-	sub, rest := "", []string(nil)
-	for i, a := range args {
+	sub, dir, rest := "", "", []string(nil)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case (a == "-C" || a == "--C") && i+1 < len(args):
+			dir = args[i+1]
+			i++
+			continue
+		case strings.HasPrefix(a, "-C="):
+			dir = strings.TrimPrefix(a, "-C=")
+			continue
+		}
 		if !strings.HasPrefix(a, "-") {
 			sub, rest = a, args[i+1:]
 			break
@@ -202,14 +264,20 @@ func goStep(args []string) string {
 			i++
 		case dashed && strings.HasPrefix(flag, "tags="):
 			tags = strings.TrimPrefix(flag, "tags=")
-		case a == "." || strings.HasPrefix(a, "./") || strings.HasPrefix(a, "../"):
-			if len(a) > 2 {
+		case dashed && valueFlags["go"][flag]:
+			i++ // its value
+		case dashed:
+		default:
+			if len(a) > 2 && (a == "./" || strings.HasPrefix(a, "./") || strings.HasPrefix(a, "../")) {
 				a = strings.TrimSuffix(a, "/")
 			}
 			pkgs = append(pkgs, a)
 		}
 	}
 	parts := []string{"go"}
+	if dir != "" {
+		parts = append(parts, "-C", dir)
+	}
 	if sub != "" {
 		parts = append(parts, sub)
 	}

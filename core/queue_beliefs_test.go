@@ -173,6 +173,25 @@ func TestForgetBelief_DropsItAndRefusesWhatItCannot(t *testing.T) {
 	assert.ErrorContains(t, requestReply(t, m, 4).Err, "no belief")
 }
 
+// A belief forgotten while a job of it runs starts again from that job's
+// run, the first on whatever made the owner forget it: none would be
+// recorded with no belief to take it.
+func TestForgetBelief_AJobStillRunningTeachesTheNewBelief(t *testing.T) {
+	m := wqLiveModel(t)
+	sub := wqJob(t, "sleep", "0.3")
+	sig := wqSigOf(t, sub.Argv, sub.Cwd)
+	id, _, err := m.submitJob(sub)
+	require.NoError(t, err)
+	require.Equal(t, sched.Running, wqRecord(t, m, id).State)
+	require.NotNil(t, m.queue.beliefs.Find(sig.ID()))
+	require.NoError(t, m.forgetBelief(sig.ID()))
+
+	wqSettle(t, m, id)
+	b := m.queue.beliefs.Find(sig.ID())
+	require.NotNil(t, b, "a new belief for the running job's run")
+	assert.Len(t, b.Runs, 1)
+}
+
 // wqWideBelief gives sub's signature a done run at 4 cores that kept 3.8
 // busy (p ≈ 0.98): a job of it is sized 4c/2G and is efficient up to 8
 // cores, twice the 4 it had.

@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,7 +283,7 @@ func fbThread(t *testing.T, m *Model, title string) {
 func TestFixThread_CreatesInTheWorkspaceAndMarksFixing(t *testing.T) {
 	m, _ := fbModel(t, "")
 	fbThread(t, m, "loom job run refuses --after")
-	m.FixThread(1, "a", 7)
+	m.FixThread(1, "a", "", "", 7)
 	out := m.Drain()
 	rs := replies(out)
 	require.Len(t, rs, 1)
@@ -305,18 +306,26 @@ func TestFixThread_CreatesInTheWorkspaceAndMarksFixing(t *testing.T) {
 func TestFixThread_Refusals(t *testing.T) {
 	m, _ := fbModel(t, "")
 	fbThread(t, m, "t")
-	refused := func(name string, thread feedback.ThreadID, ws string) {
+	refusedWith := func(name string, thread feedback.ThreadID, ws, model, effort string) {
 		t.Helper()
-		m.FixThread(thread, ws, 8)
+		m.FixThread(thread, ws, model, effort, 8)
 		rs := replies(m.Drain())
 		require.Len(t, rs, 1, name)
 		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
 	}
+	refused := func(name string, thread feedback.ThreadID, ws string) {
+		t.Helper()
+		refusedWith(name, thread, ws, "", "")
+	}
 	refused("an unknown thread", 9, "a")
 	refused("no workspace and no setting", 1, "")
 	refused("an unserved workspace", 1, "nope")
+	refusedWith("an unknown model", 1, "a", "gpt", "")
+	refusedWith("an unknown effort", 1, "a", "", "huge")
+	assert.False(t, slices.ContainsFunc(m.Views(m.Workspaces()[0].ID), func(v InstanceView) bool { return v.Title == feedback.FixTitle(1, "t") }),
+		"a refusal starts nothing")
 
-	m.FixThread(1, "a", 7)
+	m.FixThread(1, "a", "", "", 7)
 	m.Drain()
 	refused("a live fix session", 1, "a")
 
@@ -325,10 +334,36 @@ func TestFixThread_Refusals(t *testing.T) {
 	refused("a closed thread", 1, "a")
 }
 
+func TestFixThread_LaunchesWithTheModelAndEffortAsked(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.FixThread(1, "a", "opus", "high", 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+	inst := m.InstanceForTest(rs[0].ID)
+	require.NotNil(t, inst)
+	assert.Contains(t, inst.Program(), "--model 'opus'")
+	assert.Contains(t, inst.Program(), "--effort high")
+}
+
+func TestFixThread_WithoutAModelOrEffortKeepsTheWorkspacesOwn(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.FixThread(1, "a", "", "", 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+	inst := m.InstanceForTest(rs[0].ID)
+	require.NotNil(t, inst)
+	assert.NotContains(t, inst.Program(), "--model")
+	assert.NotContains(t, inst.Program(), "--effort")
+}
+
 func TestFixThread_TheSettingNamesTheWorkspace(t *testing.T) {
 	m, _ := fbModel(t, `{"feedback":{"workspace":"a"}}`)
 	fbThread(t, m, "t")
-	m.FixThread(1, "", 7)
+	m.FixThread(1, "", "", "", 7)
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
 	assert.NoError(t, rs[0].Err)
@@ -337,12 +372,12 @@ func TestFixThread_TheSettingNamesTheWorkspace(t *testing.T) {
 func TestFixThread_AGoneFixSessionCanBeFixedAgain(t *testing.T) {
 	m, _ := fbModel(t, "")
 	fbThread(t, m, "t")
-	m.FixThread(1, "a", 7)
+	m.FixThread(1, "a", "", "", 7)
 	first := replies(m.Drain())[0].ID
 	m.removeEverywhere(m.InstanceForTest(first))
 	m.Drain()
 
-	m.FixThread(1, "a", 8)
+	m.FixThread(1, "a", "", "", 8)
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
 	require.NoError(t, rs[0].Err)

@@ -882,6 +882,8 @@ type CloseThreadResult struct {
 type FixThreadParams struct {
 	Thread    feedback.ThreadID `json:"thread"`
 	Workspace string            `json:"workspace"`
+	Model     string            `json:"model"`
+	Effort    string            `json:"effort"`
 	Req       core.ReqID        `json:"req"`
 }
 
@@ -1714,7 +1716,7 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
-		b.FixThread(p.Thread, p.Workspace, p.Req)
+		b.FixThread(p.Thread, p.Workspace, p.Model, p.Effort, p.Req)
 		return FixThreadResult{}, nil, true
 	case "SetWatch":
 		var p SetWatchParams
@@ -2300,9 +2302,9 @@ func (c *Client) CloseThread(thread feedback.ThreadID, req core.ReqID) {
 }
 
 // FixThread is core.Core's FixThread (request).
-func (c *Client) FixThread(thread feedback.ThreadID, workspace string, req core.ReqID) {
+func (c *Client) FixThread(thread feedback.ThreadID, workspace string, model string, effort string, req core.ReqID) {
 	var r FixThreadResult
-	c.noteRefused(c.requestNoErr("FixThread", FixThreadParams{Thread: thread, Workspace: workspace, Req: req}, &r), req)
+	c.noteRefused(c.requestNoErr("FixThread", FixThreadParams{Thread: thread, Workspace: workspace, Model: model, Effort: effort, Req: req}, &r), req)
 }
 
 // SetWatch is core.Core's SetWatch (request).

@@ -179,12 +179,12 @@ func writeWatchStatus(w io.Writer, label string, v core.WatchView) error {
 // writeWatchDryRun prints what the next tick would do for label: its actions
 // (the ones that act), then the issues that would wait, with why, then the
 // issues whose last action failed, with its text. The view is a dry run's,
-// so nothing was done.
+// so nothing was done; a switched-off watcher's says so first, then what its
+// first tick would do.
 func writeWatchDryRun(w io.Writer, label string, v core.WatchView) error {
 	fmt.Fprintf(w, "Dry run for %s: nothing was done.\n", label)
 	if !v.On {
-		fmt.Fprintln(w, "Watch is off: the next tick would take no action.")
-		return nil
+		fmt.Fprintln(w, "Watch is off: this is what its first tick would do once it is on.")
 	}
 	if v.Err != "" {
 		fmt.Fprintf(w, "Error: %s\n", v.Err)
