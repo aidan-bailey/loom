@@ -425,6 +425,22 @@ describe("the fleet panel", () => {
     }
   });
 
+  it("FleetHead ignores the flows of a session in a hidden workspace", () => {
+    withSnapshot((s) => {
+      const flows = Object.values(s.sessions!)
+        .flatMap((list) => list!)
+        .find((x) => (x.flows ?? []).length > 0)?.flows;
+      if (flows === undefined || flows === null) throw new Error("the fixture holds no flows");
+      const hidden = s.workspaces!.find((w) => w.shown !== false)!;
+      for (const list of Object.values(s.sessions!)) {
+        for (const x of list!) x.flows = x.workspace === hidden.id ? flows : null;
+      }
+      hidden.shown = false;
+    });
+    render(<FleetHead />);
+    expect(screen.queryByRole("link", { name: "Flows" })).not.toBeInTheDocument();
+  });
+
   it("FleetHead links settings and new to their panels", () => {
     withSnapshot();
     render(<FleetHead />);
