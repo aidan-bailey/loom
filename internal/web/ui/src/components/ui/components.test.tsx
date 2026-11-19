@@ -15,6 +15,7 @@ import {
   DrawerTitle,
 } from "./drawer";
 import { Skeleton } from "./skeleton";
+import { Textarea } from "./textarea";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
 import { Toaster, toastManager } from "./toast";
 
@@ -154,6 +155,28 @@ describe("Skeleton", () => {
   });
 });
 
+describe("Textarea", () => {
+  it("Textarea: a plain textarea that takes its props, at 16px, growing with its content to 120px", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Textarea placeholder="reply" onChange={onChange} />);
+    const el = screen.getByPlaceholderText("reply");
+    expect(el.tagName).toBe("TEXTAREA");
+    expect(el).toHaveAttribute("data-slot", "textarea");
+    expect(el).toHaveClass("field-sizing-content", "max-h-[120px]", "text-[16px]");
+    await user.type(el, "hi");
+    expect(el).toHaveValue("hi");
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("Textarea: a caller's class wins over the one it conflicts with", () => {
+    render(<Textarea placeholder="tall" className="max-h-40" />);
+    const el = screen.getByPlaceholderText("tall");
+    expect(el).toHaveClass("max-h-40");
+    expect(el).not.toHaveClass("max-h-[120px]");
+  });
+});
+
 function SampleDrawer({
   open,
   onOpenChange,
@@ -233,6 +256,7 @@ describe("no <style> element", () => {
         </Collapsible>
         <SampleDrawer open onOpenChange={vi.fn()} />
         <Skeleton />
+        <Textarea />
         <Toaster />
       </>,
     );
