@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
-import type { Item, Turn } from "@/api/gen";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Item, Step, Turn } from "@/api/gen";
 import { AGENT_ID } from "@/app/routes";
+import { fixtureTurns } from "@/fixtures";
 import { clock, TurnList, turnLabel } from "./TurnList";
 
 function turn(over: Partial<Turn> = {}): Turn {
@@ -20,7 +21,33 @@ function turn(over: Partial<Turn> = {}): Turn {
   };
 }
 
+const NOW = Date.parse("2026-11-18T12:00:00Z");
 const AT = "2026-11-18T09:10:00Z";
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const step = (over: Partial<Step> = {}): Step => ({
+  tool: "Bash",
+  summary: "go test",
+  at: new Date(NOW - 3 * 60_000).toISOString(),
+  state: "done",
+  finished: false,
+  ...over,
+});
+const stepsItem = (steps: Step[], over: Partial<Item> = {}): Item => ({
+  kind: "steps",
+  at: AT,
+  total: steps.length,
+  steps,
+  ...over,
+});
+const thinking = (text: string): Item => ({ kind: "thinking", at: AT, text });
 const textItem: Item = { kind: "text", at: AT, blocks: [{ t: "p", c: [{ t: "text", v: "ok" }] }] };
 const lines = (n: number): string =>
   Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
@@ -131,5 +158,241 @@ describe("TurnList", () => {
     const { container } = list([turn({ text: "<b>hi</b><script>x</script>" })]);
     expect(container.textContent).toContain("<b>hi</b><script>x</script>");
     expect(container.querySelector("b, script")).toBeNull();
+  });
+});
+
+describe("TurnList items", () => {
+  it("TurnList: the fixture's conversation draws each kind of item", () => {
+    render(
+      <TurnList
+        turns={fixtureTurns().turns ?? []}
+        sessionId={1}
+        live={false}
+        remote="https://claude.ai/code/webshot"
+      />,
+    );
+    expect(screen.getAllByText(/^YOU/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/^COMPACTED/)).toBeInTheDocument();
+    expect(screen.getByText("Its start is earlier.")).toBeInTheDocument();
+    expect(screen.getByText("× Interrupted by you")).toBeInTheDocument();
+    const err = screen.getByText("API error: overloaded, retrying");
+    expect(err.textContent?.startsWith("×")).toBe(false);
+    expect(screen.getByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(screen.getByText("7 steps")).toBeInTheDocument();
+    expect(screen.getByText("· 1 failed")).toBeInTheDocument();
+    expect(
+      screen.getByText("▸ thinking: The ui tests may be slow, so start with TestPane"),
+    ).toBeInTheDocument();
+  });
+
+  it("TurnList: a text item draws its tree and continues in Claude when cut", () => {
+    const cut: Item = { ...textItem, truncated: true };
+    const { container, unmount } = list([turn({ items: [cut] })]);
+    expect(screen.getByText("ok")).toBeInTheDocument();
+    expect(container.textContent).toContain("… continues in Claude");
+    const a = screen.getByRole("link", { name: "Claude" });
+    expect(a).toHaveAttribute("href", "https://claude.ai/code/x");
+    expect(a).toHaveAttribute("target", "_blank");
+    expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    unmount();
+    const bare = render(
+      <TurnList turns={[turn({ items: [cut] })]} sessionId={1} live={false} remote="" />,
+    );
+    expect(bare.container.textContent).toContain("… continues in Claude");
+    expect(screen.queryByRole("link")).toBeNull();
+    bare.unmount();
+    const whole = list([turn({ items: [textItem] })]);
+    expect(whole.container.textContent).not.toContain("continues in");
+  });
+
+  it("TurnList: a thinking item folds to its first non-blank line", async () => {
+    const user = userEvent.setup();
+    list([turn({ items: [{ ...thinking("\n  \nsecond\nthird"), truncated: true }] })]);
+    const trigger = screen.getByRole("button", { name: "▸ thinking: second" });
+    await waitFor(() => expect(screen.queryByText(/third/)).toBeNull());
+    await user.click(trigger);
+    expect((await screen.findByText(/third/)).textContent).toBe("\n  \nsecond\nthird…");
+  });
+
+  it("TurnList: a steps fold counts its steps and its failures", async () => {
+    const user = userEvent.setup();
+    list([
+      turn({
+        items: [
+          stepsItem([step()]),
+          stepsItem([step(), step(), step()], { failed: 2 }),
+          stepsItem([step(), step(), step()], { total: 5 }),
+        ],
+      }),
+    ]);
+    expect(screen.getByText("1 step")).toBeInTheDocument();
+    expect(screen.getByText("3 steps")).toBeInTheDocument();
+    expect(screen.getByText("· 2 failed")).toBeInTheDocument();
+    await user.click(screen.getByText("5 steps"));
+    expect(await screen.findByText("2 earlier steps not shown")).toBeInTheDocument();
+  });
+
+  it("TurnList: a step's glyph and end by its state", async () => {
+    list([turn({ items: [stepsItem([step({ summary: "p", state: "pending" })])] })], true);
+    const live = (await screen.findByText("p")).parentElement as HTMLElement;
+    expect(live.textContent).toContain("◐");
+    expect(live.textContent).toContain("running 3m");
+  });
+
+  it("TurnList: a pending step in a turn that is not live has no glyph", async () => {
+    const user = userEvent.setup();
+    list([turn({ items: [stepsItem([step({ summary: "p", state: "pending" })])] })]);
+    await user.click(screen.getByText("1 step"));
+    const row = (await screen.findByText("p")).parentElement as HTMLElement;
+    expect(row.textContent).not.toContain("◐");
+    expect(row.textContent).toContain("no result");
+  });
+
+  it("TurnList: failed, interrupted and done steps draw their glyphs", async () => {
+    const user = userEvent.setup();
+    list([
+      turn({
+        items: [
+          stepsItem([
+            step({ summary: "f", state: "failed" }),
+            step({ summary: "i", state: "interrupted" }),
+            step({ summary: "d", state: "done" }),
+          ]),
+        ],
+      }),
+    ]);
+    await user.click(screen.getByText("3 steps"));
+    const f = (await screen.findByText("f")).parentElement as HTMLElement;
+    const i = screen.getByText("i").parentElement as HTMLElement;
+    const d = screen.getByText("d").parentElement as HTMLElement;
+    expect(f.querySelector(".text-error")?.textContent).toBe("×");
+    expect(i.textContent).toContain("×");
+    expect(i.querySelector(".text-error")).toBeNull();
+    expect(d.textContent).not.toMatch(/[×◐]/);
+    expect(d.textContent).not.toContain("no result");
+  });
+
+  it("TurnList: a step that launched a subagent links to its screen", async () => {
+    const user = userEvent.setup();
+    list([
+      turn({
+        items: [
+          stepsItem([
+            step({ tool: "Agent", summary: "open", agent: "a1f00dcafe0001" }),
+            step({ tool: "Agent", summary: "shut", agent: "a1f00dcafe0002", finished: true }),
+            step({ tool: "Agent", summary: "bad", agent: "a b/c" }),
+          ]),
+        ],
+      }),
+    ]);
+    await user.click(screen.getByText("3 steps"));
+    await screen.findByText("open");
+    const links = screen.getAllByRole("link");
+    expect(links).toHaveLength(2);
+    expect(links[0]).toHaveAttribute("href", "#/s/1/agent/a1f00dcafe0001");
+    expect(links[0]?.textContent).toContain("◐");
+    expect(links[0]?.textContent?.endsWith("›")).toBe(true);
+    expect(links[1]?.textContent).not.toContain("◐");
+    expect(links[1]?.textContent?.endsWith("›")).toBe(true);
+    const bad = screen.getByText("bad").parentElement as HTMLElement;
+    expect(bad.tagName).not.toBe("A");
+    expect(bad.textContent).not.toContain("›");
+  });
+
+  it("TurnList: the live newest turn opens its last steps fold and last thinking item", async () => {
+    const items = [
+      stepsItem([step({ summary: "s1" })]),
+      stepsItem([step({ summary: "s2" })]),
+      thinking("think one"),
+      thinking("think two"),
+    ];
+    const { unmount } = list([turn({ items })], true);
+    expect(await screen.findByText("s2")).toBeInTheDocument();
+    expect(await screen.findByText("think two")).toBeInTheDocument();
+    expect(screen.queryByText("s1")).toBeNull();
+    expect(screen.queryByText("think one")).toBeNull();
+    unmount();
+    list([turn({ items })], false);
+    for (const x of ["s1", "s2", "think one", "think two"])
+      expect(screen.queryByText(x)).toBeNull();
+  });
+
+  it("TurnList: only the newest turn's last folds open", async () => {
+    const mk = (id: number, summary: string): Turn =>
+      turn({ id, items: [stepsItem([step({ summary })])] });
+    list([mk(1, "old"), mk(2, "new")], true);
+    expect(await screen.findByText("new")).toBeInTheDocument();
+    expect(screen.queryByText("old")).toBeNull();
+  });
+
+  it("TurnList: a fold closes by itself when the turn stops being live and a fold the reader opened stays open", async () => {
+    const user = userEvent.setup();
+    const turns = [turn({ items: [stepsItem([step({ summary: "auto" })])] })];
+    const view = render(<TurnList turns={turns} sessionId={1} live={true} remote="" />);
+    expect(await screen.findByText("auto")).toBeInTheDocument();
+    view.rerender(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
+    await waitFor(() => expect(screen.queryByText("auto")).toBeNull());
+    view.unmount();
+
+    const held = render(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
+    await user.click(screen.getByText("1 step"));
+    expect(await screen.findByText("auto")).toBeInTheDocument();
+    held.rerender(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
+    expect(screen.getByText("auto")).toBeInTheDocument();
+  });
+
+  it("TurnList: a compacted rule carries its time", () => {
+    list([
+      turn({
+        items: [
+          { kind: "compacted", at: AT },
+          { kind: "compacted", at: "" },
+        ],
+      }),
+    ]);
+    expect(screen.getByText(`COMPACTED ${clock(AT)}`)).toBeInTheDocument();
+    expect(screen.getByText("COMPACTED")).toBeInTheDocument();
+  });
+
+  it("TurnList: a note is dim with a cross, or red when it is an error", () => {
+    list([
+      turn({
+        items: [
+          { kind: "note", at: AT, text: "Interrupted by you" },
+          { kind: "note", at: AT, text: "API error: overloaded, retrying", error: true },
+        ],
+      }),
+    ]);
+    expect(screen.getByText("× Interrupted by you")).not.toHaveClass("text-error");
+    expect(screen.getByText("API error: overloaded, retrying")).toHaveClass("text-error");
+  });
+
+  it("TurnList: an item of an unknown kind draws its kind and text in neutral styling", () => {
+    const odd = (text?: string): Item =>
+      ({ kind: "mystery", at: AT, ...(text === undefined ? {} : { text }) }) as unknown as Item;
+    const { container } = list([turn({ text: "prompt", items: [odd("hello"), odd()] })]);
+    expect(screen.getAllByText("mystery")).toHaveLength(2);
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(container.querySelector(".text-error")).toBeNull();
+    expect(container.querySelector("[data-slot=collapsible]")).toBeNull();
+  });
+
+  it("TurnList: steps, thinking and notes holding markup render as text", async () => {
+    const user = userEvent.setup();
+    const { container } = list([
+      turn({
+        items: [
+          stepsItem([step({ summary: "<img src=x onerror=alert(1)>" })]),
+          thinking("<b>x</b>"),
+          { kind: "note", at: AT, text: "<script>y</script>" },
+        ],
+      }),
+    ]);
+    await user.click(screen.getByText("1 step"));
+    await user.click(screen.getByRole("button", { name: /thinking/ }));
+    await screen.findByText("<b>x</b>");
+    expect(container.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(container.textContent).toContain("<script>y</script>");
+    expect(container.querySelector("img, b, script")).toBeNull();
   });
 });
