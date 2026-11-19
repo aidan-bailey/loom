@@ -56,6 +56,7 @@ beforeEach(() => {
   vi.mocked(clearSnapshot).mockResolvedValue(undefined);
   vi.mocked(shellBuild).mockReturnValue("");
   vi.mocked(checkPushSubscription).mockResolvedValue(undefined);
+  vi.mocked(upgradeShell).mockReturnValue(true);
   vi.mocked(connectStream).mockImplementation((h) => {
     handlers = h;
     return closeStream;
@@ -300,8 +301,20 @@ describe("startFleet", () => {
     expect(checkPushSubscription).not.toHaveBeenCalled();
   });
 
+  it("still checks the push subscription when the build was already asked for", () => {
+    vi.mocked(shellBuild).mockReturnValue("b-old");
+    vi.mocked(upgradeShell).mockReturnValue(false);
+    start();
+    const snapshot = { ...fixtureSnapshot(NOW), build: "b-new" };
+    handlers.onEvent("snapshot", snapshot);
+    expect(upgradeShell).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).toHaveBeenCalledTimes(1);
+    expect(checkPushSubscription).toHaveBeenCalledWith(snapshot.device);
+  });
+
   it("leaves the push check to the reloaded page when the snapshot asks for a new shell", () => {
     vi.mocked(shellBuild).mockReturnValue("b-old");
+    vi.mocked(upgradeShell).mockReturnValue(true);
     start();
     handlers.onEvent("snapshot", { ...fixtureSnapshot(NOW), build: "b-new" });
     expect(upgradeShell).toHaveBeenCalledTimes(1);

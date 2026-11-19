@@ -43,11 +43,12 @@ export function shellBuild(): string {
 // tab, so a shell that cannot update does not reload forever. When the worker cannot be asked, or
 // does not take over within UPGRADE_RELOAD_MS, the page reloads itself, unless the ask could not be
 // recorded (no sessionStorage): each reload's first snapshot would then start another timer, so
-// such a page leaves the reload to the worker's takeover.
-export function upgradeShell(build: string): void {
+// such a page leaves the reload to the worker's takeover. It returns whether it started a reload or
+// a takeover: false when this tab already asked for the build, so the caller may go on as usual.
+export function upgradeShell(build: string): boolean {
   let remembered = true;
   try {
-    if (sessionStorage.getItem(UPGRADE_KEY) === build) return;
+    if (sessionStorage.getItem(UPGRADE_KEY) === build) return false;
     sessionStorage.setItem(UPGRADE_KEY, build);
   } catch {
     // No sessionStorage: the shell is still asked, on every call.
@@ -55,7 +56,7 @@ export function upgradeShell(build: string): void {
   }
   if (!("serviceWorker" in navigator)) {
     page.reload();
-    return;
+    return true;
   }
   navigator.serviceWorker
     .getRegistration()
@@ -73,6 +74,7 @@ export function upgradeShell(build: string): void {
     .catch(() => {
       page.reload();
     });
+  return true;
 }
 
 function pushSupported(): boolean {

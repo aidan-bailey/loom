@@ -239,9 +239,10 @@ export function startFleet(): () => void {
         // A snapshot from another build than the shell's asks the worker for the new shell (once
         // per build); a build unknown on either side asks for nothing.
         const shell = shellBuild();
-        const upgrading = Boolean(event.data.build && shell && event.data.build !== shell);
-        if (upgrading) upgradeShell(event.data.build);
-        // A page that is about to reload for a new shell leaves the check to its next launch.
+        const differs = Boolean(event.data.build && shell && event.data.build !== shell);
+        const upgrading = differs && upgradeShell(event.data.build);
+        // A page that has just started a reload for a new shell leaves the check to its next
+        // launch; one whose build was already asked for (and did not change) checks as usual.
         if (!launched && !upgrading) {
           launched = true;
           void checkPushSubscription(event.data.device);

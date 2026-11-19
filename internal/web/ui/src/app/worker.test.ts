@@ -131,8 +131,8 @@ describe("upgradeShell", () => {
 
   it("asks once per build, and again for the next one", async () => {
     m.getRegistration.mockResolvedValue({ update: () => Promise.resolve() });
-    upgradeShell("b-2");
-    upgradeShell("b-2");
+    expect(upgradeShell("b-2")).toBe(true);
+    expect(upgradeShell("b-2")).toBe(false);
     await settle();
     expect(m.getRegistration).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem("loom-next.upgrade")).toBe("b-2");
@@ -144,7 +144,7 @@ describe("upgradeShell", () => {
 
   it("does nothing for a build this tab already asked about", async () => {
     sessionStorage.setItem("loom-next.upgrade", "b-2");
-    upgradeShell("b-2");
+    expect(upgradeShell("b-2")).toBe(false);
     await vi.advanceTimersByTimeAsync(10000);
     expect(m.getRegistration).not.toHaveBeenCalled();
     expect(m.reload).not.toHaveBeenCalled();
@@ -166,7 +166,7 @@ describe("upgradeShell", () => {
 
   it("reloads at once where there is no service worker", () => {
     Reflect.deleteProperty(navigator, "serviceWorker");
-    upgradeShell("b-2");
+    expect(upgradeShell("b-2")).toBe(true);
     expect(m.reload).toHaveBeenCalledTimes(1);
   });
 
