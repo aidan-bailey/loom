@@ -8,6 +8,10 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'flow/**'
+      - 'internal/web/dist/**'
+      - 'internal/web/api.fields'
+      - 'docs/specs/web-api.md'
+      - 'internal/web/ui/src/api/gen.ts'
       - '.github/workflows/build.yml'
   pull_request:
     branches: [ main ]
@@ -16,6 +20,10 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'flow/**'
+      - 'internal/web/dist/**'
+      - 'internal/web/api.fields'
+      - 'docs/specs/web-api.md'
+      - 'internal/web/ui/src/api/gen.ts'
       - '.github/workflows/build.yml'
 
 jobs:

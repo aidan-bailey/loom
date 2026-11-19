@@ -1,0 +1,80 @@
+name: Web
+
+# The new app (internal/web/ui), its committed bundle (internal/web/dist) and
+# the webshot tool that renders it: pnpm's frozen install, the app's checks, a
+# bundle that matches its source, and every route rendered under the layer's
+# CSP. build.yml cannot run this: no Go file changes when the bundle does.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'internal/web/ui/**'
+      - 'internal/web/dist/**'
+      - 'tools/webshot/**'
+      - '.github/workflows/web.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'internal/web/ui/**'
+      - 'internal/web/dist/**'
+      - 'tools/webshot/**'
+      - '.github/workflows/web.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: pnpm check, bundle and webshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the packageManager pin in package.json, so no version is set here.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: internal/web/ui/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: internal/web/ui/pnpm-lock.yaml
+
+      # webshot is a Go program, and build.yml's pinned Go is older than go.mod's.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: internal/web/ui
+
+      - name: Check
+        run: pnpm run check
+        working-directory: internal/web/ui
+
+      # A stale dist/ fails here.
+      - name: Bundle is fresh
+        run: pnpm run dist:check
+        working-directory: internal/web/ui
+
+      # Ubuntu 24.04 runners restrict the user namespaces Chrome's sandbox needs,
+      # and webshot passes no --no-sandbox, so without this the browser exits
+      # before the first screen.
+      - name: Allow Chrome's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # webshot exits 1 on a console error, a CSP violation, an uncaught
+      # exception or an API route the fixture cannot answer. It finds the
+      # runner's google-chrome as its browser.
+      - name: Render every route
+        env:
+          CGO_ENABLED: 0
+        run: go run ./tools/webshot -app next -out "$RUNNER_TEMP/shots"
