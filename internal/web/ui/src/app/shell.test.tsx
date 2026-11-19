@@ -216,4 +216,16 @@ describe("router", () => {
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(window.location.hash).toBe("#/settings");
   });
+
+  it("draws the fleet for a path no route matches (spec §27)", async () => {
+    definePanel({ id: "fleet", title: () => "Fleet", Body: () => <p>the fleet panel</p> });
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate({ to: "/s/5/unknown" });
+    });
+
+    expect(await screen.findByText("the fleet panel")).toBeInTheDocument();
+  });
 });
