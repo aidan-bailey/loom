@@ -17,7 +17,7 @@ import { useFleet } from "@/store/fleet";
 
 import { askConfirm } from "./ConfirmSheet";
 import { definePanel, type PanelProps } from "./panels";
-import { router } from "./routes";
+import { router, useRoute } from "./routes";
 import { AppShell, ContextRow, PanelHost, Placeholder, SessionTabs, StatusRow } from "./shell";
 import { switchApp } from "./switchApp";
 import { showMessage } from "./toasts";
@@ -461,6 +461,23 @@ describe("AppShell's chrome", () => {
     expect(footer()).toBeNull();
 
     await userEvent.click(document.body);
+    expect(footer()).not.toBeNull();
+  });
+
+  it("brings the footer back when a route change removes the focused field", async () => {
+    function Screen(): ReactElement {
+      return useRoute().panel === "fleet" ? <input aria-label="reply" /> : <p>elsewhere</p>;
+    }
+    live(withGroups(["needs_you"]));
+    shellAt("#/", <Screen />);
+
+    await userEvent.click(await screen.findByLabelText("reply"));
+    expect(footer()).toBeNull();
+
+    act(() => {
+      window.location.hash = "#/s/100/info";
+    });
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
     expect(footer()).not.toBeNull();
   });
 

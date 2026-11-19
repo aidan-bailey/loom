@@ -19,7 +19,7 @@ import { useFleet, useFleetGroups, useLink, useSession } from "@/store/fleet";
 import { CommandButton } from "./CommandButton";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
-import { hrefFor, panelProps, routeOf, useRoute } from "./routes";
+import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./routes";
 
 // SCREEN_NAMES is what each screen is called where the app names it: the
 // placeholder's heading and an error boundary's message.
@@ -148,7 +148,7 @@ export function AppShell(): ReactElement {
   const hasSnapshot = useFleet((s) => s.snapshot !== null);
   const { state } = useLink();
   const session = useSession(props.sessionId);
-  const typing = useTextFieldFocus();
+  const typing = useTextFieldFocus(route);
   const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
   const waiting = !hasSnapshot && route.panel !== "pair";
   const Head = panelFor(route.panel)?.Head;
@@ -226,9 +226,17 @@ function isTextField(target: EventTarget | null): boolean {
 }
 
 // useTextFieldFocus is true while a text field has focus: the keyboard is up,
-// so the footer gives its room to the text (spec §34).
-function useTextFieldFocus(): boolean {
+// so the footer gives its room to the text (spec §34). A route change can
+// remove the focused field without a focusout reaching the document, so the
+// focus is read again whenever the route changes.
+function useTextFieldFocus(route: RouteState): boolean {
   const [typing, setTyping] = useState(() => isTextField(document.activeElement));
+  useEffect(() => {
+    // After this commit has removed or kept the field, not during it.
+    queueMicrotask(() => {
+      setTyping(isTextField(document.activeElement));
+    });
+  }, [route]);
   useEffect(() => {
     const focusIn = (e: FocusEvent): void => {
       setTyping(isTextField(e.target));
