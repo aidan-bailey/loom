@@ -42,7 +42,7 @@ describe("SessionRow", () => {
   const link = () => screen.getByRole("link");
 
   const flow = (over: Partial<FlowSummary> = {}): FlowSummary => ({
-    ...(byId(6).flows as FlowSummary[])[0]!,
+    ...(byId(6).flows as FlowSummary[])[0],
     ...over,
   });
 
