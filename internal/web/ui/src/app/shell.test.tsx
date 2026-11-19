@@ -86,6 +86,33 @@ describe("PanelHost", () => {
       spy.mockRestore();
     }
   });
+
+  it("recovers when only the search changes (another plan or document)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "changes",
+        title: () => "Changes",
+        Body: (p: PanelProps) => {
+          if (p.search.plan === "bad.md") throw new Error("boom");
+          return <p>fine</p>;
+        },
+      });
+      const at = (plan: string): PanelProps => ({
+        sessionId: 1,
+        params: { id: "1" },
+        search: { plan },
+      });
+      const { rerender } = render(<PanelHost panel="changes" props={at("bad.md")} />);
+      expect(screen.getByRole("alert")).toHaveTextContent("boom");
+
+      rerender(<PanelHost panel="changes" props={at("good.md")} />);
+      expect(screen.getByText("fine")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 // shellAt draws AppShell at the hash, over a one-route router of its own

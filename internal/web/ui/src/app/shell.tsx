@@ -31,9 +31,10 @@ const SCREEN_NAMES: Record<PanelId, string> = {
 };
 
 // resetKey changes with the route, so a boundary that caught an error starts
-// over once the route is another one.
+// over once the route is another one: another session, or another board or
+// document (`?plan=`, `?at=`) of the same panel.
 function resetKey(panel: PanelId, props: PanelProps): string {
-  return `${panel}/${JSON.stringify(props.params)}`;
+  return `${panel}/${JSON.stringify(props.params)}/${JSON.stringify(props.search)}`;
 }
 
 interface BoundaryProps {
