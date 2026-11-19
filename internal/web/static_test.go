@@ -220,6 +220,35 @@ func TestStatic_ServiceWorkerCarriesTheBuildAndTheShell(t *testing.T) {
 	require.ElementsMatch(t, want, shell)
 }
 
+func TestStatic_NextServiceWorkerCarriesTheBuildAndTheShell(t *testing.T) {
+	sw := string(nextStaticAssets(t)["/sw.js"].body)
+	require.NotContains(t, sw, "__LOOM_")
+	require.Contains(t, sw, `const CACHE = "loom-next-" + BUILD;`, "the new worker caches under its own prefix")
+
+	buildLine := regexp.MustCompile(`(?m)^const BUILD = (.*);$`).FindStringSubmatch(sw)
+	require.NotNil(t, buildLine, "the new worker lost its BUILD line")
+	var gotBuild string
+	require.NoError(t, json.Unmarshal([]byte(buildLine[1]), &gotBuild))
+	require.Equal(t, "b-test", gotBuild)
+
+	shellLine := regexp.MustCompile(`(?m)^const SHELL = (.*);$`).FindStringSubmatch(sw)
+	require.NotNil(t, shellLine, "the new worker lost its SHELL line")
+	var shell []string
+	require.NoError(t, json.Unmarshal([]byte(shellLine[1]), &shell))
+
+	want := []string{"/"}
+	require.NoError(t, fs.WalkDir(nextFiles, "dist", func(name string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			want = append(want, strings.TrimPrefix(name, "dist"))
+		}
+		return err
+	}))
+	require.ElementsMatch(t, want, shell, "the shell list is the new tree's own files, not the classic one's")
+	for _, file := range []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest"} {
+		require.Contains(t, shell, file, "the worker fetches these as ?ui=next, so they must be listed")
+	}
+}
+
 func TestStatic_BuildRefusesAnAppThatCannotBeServed(t *testing.T) {
 	good := func() fstest.MapFS {
 		return fstest.MapFS{

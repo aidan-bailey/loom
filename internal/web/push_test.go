@@ -851,13 +851,15 @@ func TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents(t *testing.T
 	require.NoError(t, json.Unmarshal(raw, &keys))
 	require.NotEmpty(t, keys)
 
-	sw, err := os.ReadFile("static/sw.js")
-	require.NoError(t, err)
-	for key := range keys {
-		assert.Contains(t, string(sw), "data."+key, "sw.js never reads the push payload's %q", key)
+	for _, worker := range []string{"static/sw.js", "ui/public/sw.js"} {
+		sw, err := os.ReadFile(worker)
+		require.NoError(t, err)
+		for key := range keys {
+			assert.Contains(t, string(sw), "data."+key, "%s never reads the push payload's %q", worker, key)
+		}
+		assert.Contains(t, string(sw), `addEventListener("push"`, worker)
+		assert.Contains(t, string(sw), `addEventListener("notificationclick"`, worker)
 	}
-	assert.Contains(t, string(sw), `addEventListener("push"`)
-	assert.Contains(t, string(sw), `addEventListener("notificationclick"`)
 }
 
 func TestPusher_TheSenderPostsAnEscalationFromAWorkspaceProjection(t *testing.T) {
