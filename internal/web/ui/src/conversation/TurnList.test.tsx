@@ -235,7 +235,7 @@ describe("TurnList items", () => {
   it("TurnList: a step's glyph and end by its state", async () => {
     list([turn({ items: [stepsItem([step({ summary: "p", state: "pending" })])] })], true);
     const live = (await screen.findByText("p")).parentElement as HTMLElement;
-    expect(live.textContent).toContain("◐");
+    expect(live.querySelector(".text-turn")?.textContent).toBe("◐");
     expect(live.textContent).toContain("running 3m");
   });
 
@@ -274,22 +274,29 @@ describe("TurnList items", () => {
 
   it("TurnList: a step that launched a subagent links to its screen", async () => {
     const user = userEvent.setup();
-    list([
-      turn({
-        items: [
-          stepsItem([
-            step({ tool: "Agent", summary: "open", agent: "a1f00dcafe0001" }),
-            step({ tool: "Agent", summary: "shut", agent: "a1f00dcafe0002", finished: true }),
-            step({ tool: "Agent", summary: "bad", agent: "a b/c" }),
-          ]),
-        ],
-      }),
-    ]);
+    render(
+      <TurnList
+        turns={[
+          turn({
+            items: [
+              stepsItem([
+                step({ tool: "Agent", summary: "open", agent: "a1f00dcafe0001" }),
+                step({ tool: "Agent", summary: "shut", agent: "a1f00dcafe0002", finished: true }),
+                step({ tool: "Agent", summary: "bad", agent: "a b/c" }),
+              ]),
+            ],
+          }),
+        ]}
+        sessionId={9}
+        live={false}
+        remote=""
+      />,
+    );
     await user.click(screen.getByText("3 steps"));
     await screen.findByText("open");
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(2);
-    expect(links[0]).toHaveAttribute("href", "#/s/1/agent/a1f00dcafe0001");
+    expect(links[0]).toHaveAttribute("href", "#/s/9/agent/a1f00dcafe0001");
     expect(links[0]?.textContent).toContain("◐");
     expect(links[0]?.textContent?.endsWith("›")).toBe(true);
     expect(links[1]?.textContent).not.toContain("◐");
@@ -337,6 +344,9 @@ describe("TurnList items", () => {
     const held = render(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
     await user.click(screen.getByText("1 step"));
     expect(await screen.findByText("auto")).toBeInTheDocument();
+    held.rerender(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
+    expect(screen.getByText("auto")).toBeInTheDocument();
+    held.rerender(<TurnList turns={turns} sessionId={1} live={true} remote="" />);
     held.rerender(<TurnList turns={turns} sessionId={1} live={false} remote="" />);
     expect(screen.getByText("auto")).toBeInTheDocument();
   });
