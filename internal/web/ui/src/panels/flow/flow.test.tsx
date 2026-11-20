@@ -56,9 +56,12 @@ function show(
   return render(<FlowBody sessionId={6} params={{ id: "6" }} search={opts.search ?? {}} />);
 }
 
-// board is the canned board; a test changes what it needs.
+// board is the canned board; a test changes what it needs. The fixture's run stage is in state
+// "now", which fillTimes reads as a time and fills in, so it is put back here.
 function board(over: (flow: Flow) => void = () => undefined): Flow {
   const flow = fixtureFlow();
+  const run = flow.stages?.find((s) => s.name === "run");
+  if (run !== undefined) run.state = "now";
   over(flow);
   return flow;
 }
@@ -250,8 +253,13 @@ describe("FlowBody", () => {
     expect(screen.getByText("running · story 3 · 1m 40s")).toBeInTheDocument();
     view.unmount();
 
-    const withQuestion = show({ flow: board((f) => (f.summary.phase = "story 3")) });
-    expect(screen.queryByText(/ · story 3/)).toBeNull();
+    const withQuestion = show({
+      flow: board((f) => {
+        f.summary.phase = "story 3";
+        f.summary.status = "running";
+      }),
+    });
+    expect(screen.queryByText(/^running · story 3/)).toBeNull();
     withQuestion.unmount();
 
     const ended = show({ flow: running(new Date(NOW - 60_000).toISOString()) });
@@ -286,5 +294,181 @@ describe("FlowBody", () => {
 
     show({ session: session6({ flows: flows.slice(0, 1) }), flow });
     expect(screen.queryByRole("combobox")).toBeNull();
+  });
+});
+
+describe("FlowBody boxes", () => {
+  const plan = (): string => session6().flows?.[0]?.plan ?? "";
+  const stageLinks = (): HTMLElement[] =>
+    Array.from(screen.getByRole("navigation", { name: "Stages" }).children) as HTMLElement[];
+  const rows = (): HTMLElement[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('a[href^="#/s/6/flow/"]')).filter(
+      (a) => !(a.getAttribute("href") ?? "").startsWith("#/s/6/flow/doc/"),
+    );
+  const row = (id: string): HTMLElement => {
+    const found = rows().find((a) => a.getAttribute("href")?.startsWith(`#/s/6/flow/${id}?`));
+    if (found === undefined) throw new Error(`no row ${id}`);
+    return found;
+  };
+  const meta = (id: string): string => row(id).querySelector(".ml-auto")?.textContent ?? "";
+  const cells = (id: string): HTMLElement[] =>
+    Array.from(row(id).querySelectorAll<HTMLElement>("[aria-label]"));
+
+  it("the stage strip: five stages in order, each with its document where it has one", () => {
+    show({ flow: board() });
+    const items = stageLinks();
+    expect(items.map((el) => el.textContent)).toEqual([
+      "design ✓",
+      "spec ✓",
+      "draft ✓",
+      "run 2/5",
+      "record",
+    ]);
+    const flow = board();
+    ["spec", "skeleton", "plan"].forEach((doc, i) => {
+      expect(items[i]?.tagName).toBe("A");
+      expect(items[i]).toHaveAttribute(
+        "href",
+        hrefFor("flowDoc", { id: "6", doc }, { plan: plan() }),
+      );
+      expect(items[i]).toHaveAttribute("title", flow.stages?.[i]?.detail);
+    });
+    expect(items[3]?.tagName).toBe("SPAN");
+    expect(items[4]?.tagName).toBe("SPAN");
+  });
+
+  it("the stage strip: a stage the board lacks is to come, and an unknown state draws its raw state in neutral styling", () => {
+    const view = show({ flow: board((f) => (f.stages = null)) });
+    const items = stageLinks();
+    expect(items.map((el) => el.textContent)).toEqual([
+      "design",
+      "spec",
+      "draft",
+      "run 2/5",
+      "record",
+    ]);
+    for (const el of items) {
+      expect(el.tagName).toBe("SPAN");
+      expect(el).toHaveClass("text-faint");
+    }
+    view.unmount();
+
+    show({
+      flow: board((f) => {
+        const first = f.stages?.[0];
+        if (first !== undefined) (first as { state: string }).state = "paused";
+      }),
+    });
+    const first = stageLinks()[0];
+    expect(first).toHaveTextContent("design (paused)");
+    expect(first).toHaveClass("text-muted-foreground");
+    expect(first).not.toHaveClass("text-working");
+  });
+
+  it("the question box: the kind and story, the text, and the way to the manager's conversation", () => {
+    const flow = board();
+    const view = show({ flow });
+    expect(screen.getByText("parked · blocked-decision · story 3")).toBeInTheDocument();
+    expect(screen.getByText(flow.question?.text ?? "")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "open manager ›" })).toHaveAttribute("href", "#/s/6");
+    view.unmount();
+
+    const noStory = show({
+      flow: board((f) => {
+        if (f.question !== null) f.question.story = "";
+      }),
+    });
+    expect(screen.getByText("parked · blocked-decision")).toBeInTheDocument();
+    noStory.unmount();
+
+    show({ flow: board((f) => (f.question = null)) });
+    expect(screen.queryByText(/^parked · blocked-decision/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "open manager ›" })).toBeNull();
+  });
+
+  it("the stories box: the premise row, the stories and the final row, each a link to its row", () => {
+    const view = show({ flow: board() });
+    expect(screen.getByText("stories")).toBeInTheDocument();
+    const ids = ["P", "1", "2", "3", "4", "5", "F"];
+    expect(rows().map((a) => a.getAttribute("href"))).toEqual(
+      ids.map((story) => hrefFor("flowStory", { id: "6", story }, { plan: plan() })),
+    );
+    view.unmount();
+
+    show({
+      flow: board((f) => {
+        f.premise = null;
+        f.final = null;
+      }),
+    });
+    expect(rows()).toHaveLength(5);
+  });
+
+  it("the stories' right-hand text: commits and spend once started, tier and review before, premises and final", () => {
+    const view = show({ flow: board() });
+    expect(meta("1")).toBe("7c · $1.41");
+    expect(meta("2")).toBe("4c · $1.10");
+    expect(meta("3")).toBe("$0.62");
+    expect(meta("4")).toBe("");
+    expect(meta("5")).toBe("deep · full");
+    expect(meta("P")).toBe("premises");
+    expect(meta("F")).toBe("final");
+    view.unmount();
+
+    show({
+      flow: board((f) => {
+        const one = f.stories?.[0];
+        if (one !== undefined) one.commits = 0;
+        if (f.costs.by_story !== null) delete f.costs.by_story["1"];
+        const five = f.stories?.[4];
+        if (five !== undefined) five.review = "";
+      }),
+    });
+    expect(meta("1")).toBe("");
+    expect(meta("5")).toBe("deep");
+  });
+
+  it("the cells: each kind's word, ? for asks, a dash for skipped, todo for a missing cell, by row kind", () => {
+    const view = show({ flow: board() });
+    const labelled = (id: string): string[] =>
+      cells(id).map((el) => el.getAttribute("aria-label") ?? "");
+    expect(cells("3")[0]).toHaveTextContent("dev?");
+    expect(cells("3")[0]).toHaveAttribute("aria-label", "dev: asks");
+    expect(cells("2")[3]).toHaveTextContent("—");
+    expect(cells("2")[3]).toHaveAttribute("aria-label", "fix: skipped");
+    expect(cells("1").map((el) => el.textContent)).toEqual(["dev", "gate", "rev", "fix", "doc"]);
+    expect(cells("P").map((el) => el.textContent)).toEqual(["prem"]);
+    expect(labelled("P")).toEqual(["premise: passed"]);
+    expect(cells("F").map((el) => el.textContent)).toEqual(["gate", "rev", "fix"]);
+    expect(labelled("F")).toEqual(["gates: passed", "review: running", "fix: todo"]);
+    view.unmount();
+
+    show({
+      flow: board((f) => {
+        const one = f.stories?.[0];
+        if (one !== undefined) one.cells = null;
+      }),
+    });
+    expect(labelled("1")).toEqual([
+      "dev: todo",
+      "gates: todo",
+      "review: todo",
+      "fix: todo",
+      "docs: todo",
+    ]);
+  });
+
+  it("a cell with an unknown state draws its raw state in neutral styling", () => {
+    show({
+      flow: board((f) => {
+        const cell = f.stories?.[0]?.cells;
+        if (cell != null) (cell as Record<string, string>).dev = "weird";
+      }),
+    });
+    const dev = cells("1")[0];
+    expect(dev).toHaveTextContent("weird");
+    expect(dev).toHaveAttribute("aria-label", "dev: weird");
+    expect(dev).toHaveClass("text-muted-foreground");
+    expect(dev).not.toHaveClass("text-working");
   });
 });
