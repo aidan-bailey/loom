@@ -172,6 +172,17 @@ function PatchLine(props: { patch: Patch }): ReactElement {
   );
 }
 
+// ChangesMark is the tab's mark: the session's line counts while either is above 0.
+export function ChangesMark(props: { session: Session }): ReactElement {
+  const { added, removed } = props.session.diff;
+  if (added <= 0 && removed <= 0) return <></>;
+  return (
+    <span className="ml-1.5 font-mono text-xs">
+      <span className="text-working">+{added}</span> <span className="text-error">−{removed}</span>
+    </span>
+  );
+}
+
 // Changes is a session's diff: read through usePatch, a fold per file, the open set kept across
 // refreshes.
 export function Changes(props: { session: Session }): ReactElement {

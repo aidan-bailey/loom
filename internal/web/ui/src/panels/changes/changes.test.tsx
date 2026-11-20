@@ -6,13 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { File, Outcome, Patch, Session, Snapshot } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { api } from "@/api/request";
+import { panelFor, type Panel } from "@/app/panels";
 import "@/commands";
 import { deferred } from "@/commands/testkit";
 import { fixturePatch, fixtureSnapshot } from "@/fixtures";
+import "@/panels";
+import { SessionHead } from "@/session/SessionHead";
 import { useDrafts } from "@/store/drafts";
 import { useFleet } from "@/store/fleet";
 
-import { Changes } from "./Changes";
+import { Changes, ChangesMark } from "./Changes";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 
@@ -466,5 +469,95 @@ describe("Changes: an open file", () => {
     const shown = screen.getByText(line, same);
     expect(shown.textContent).toBe(line);
     expect(view.container.querySelector("b, img")).toBeNull();
+  });
+});
+
+describe("ChangesMark", () => {
+  it("draws the added and removed counts", () => {
+    render(<ChangesMark session={show(1)} />);
+    expect(screen.getByText("+212").classList.contains("text-working")).toBe(true);
+    expect(screen.getByText("−40").classList.contains("text-error")).toBe(true);
+  });
+
+  it("draws one count when the other is 0", () => {
+    const base = show(1);
+    const first = render(
+      <ChangesMark session={{ ...base, diff: { ...base.diff, added: 5, removed: 0 } }} />,
+    );
+    expect(screen.getByText("+5")).toBeTruthy();
+    expect(screen.getByText("−0")).toBeTruthy();
+    first.unmount();
+    render(<ChangesMark session={{ ...base, diff: { ...base.diff, added: 0, removed: 3 } }} />);
+    expect(screen.getByText("+0")).toBeTruthy();
+    expect(screen.getByText("−3")).toBeTruthy();
+  });
+
+  it("draws nothing for no changes", () => {
+    const base = show(1);
+    const view = render(
+      <ChangesMark session={{ ...base, diff: { ...base.diff, added: 0, removed: 0 } }} />,
+    );
+    expect(view.container.innerHTML).toBe("");
+  });
+});
+
+describe("the changes panel", () => {
+  const props = { sessionId: 1, params: { id: "1" }, search: {} };
+
+  function panel(): Panel {
+    const found = panelFor("changes");
+    if (found === undefined) throw new Error("no changes panel is registered");
+    return found;
+  }
+
+  it("is registered as the changes tab, second, with a session head and no strip", () => {
+    const registered = panel();
+    expect(registered.tab).toEqual({ order: 2, label: "changes", Mark: ChangesMark });
+    expect(registered.Head).toBe(SessionHead);
+    expect(registered.Strip).toBeUndefined();
+    expect(registered.title(props)).toBe("Changes");
+  });
+
+  it("applies to a session whose diff can be read, and to no other", () => {
+    const applies = panel().appliesTo;
+    if (applies === undefined) throw new Error("the changes panel has no appliesTo");
+    expect(applies(show(1))).toBe(true);
+    expect(applies(show(1, { status: "Ready", group: "your_turn" }))).toBe(true);
+    expect(applies(show(1, { status: "Loading" }))).toBe(false);
+    expect(applies(show(1, { status: "Deleting" }))).toBe(false);
+    expect(applies(show(1, { status: "Paused", group: "paused" }))).toBe(false);
+    expect(applies(show(1, { status: "Recoverable", group: "paused" }))).toBe(false);
+  });
+
+  it("the Body draws the changes of a session the snapshot lists", async () => {
+    diff.mockResolvedValue(ok(fixturePatch()));
+    show(1);
+    const Body = panel().Body;
+    render(<Body {...props} />, { wrapper });
+    await settle();
+    expect(screen.getByText("5 files")).toBeTruthy();
+  });
+
+  it("the Body says the session is gone for one the snapshot does not list", async () => {
+    show(1);
+    const Body = panel().Body;
+    render(<Body {...props} sessionId={99} />, { wrapper });
+    await settle();
+    expect(screen.getByRole("status").textContent).toContain("This session is gone.");
+    expect(diff).not.toHaveBeenCalled();
+  });
+
+  it("a different session does not inherit the open files", async () => {
+    show(1);
+    diff.mockImplementation((id) =>
+      Promise.resolve(ok(id === 1 ? patchOf({ path: "ui/pane.go" }) : fixturePatch())),
+    );
+    const Body = panel().Body;
+    const view = render(<Body {...props} />, { wrapper });
+    await settle();
+    expect(row(/pane\.go/).getAttribute("aria-expanded")).toBe("true");
+    view.rerender(<Body {...props} sessionId={7} />);
+    await settle();
+    expect(row(/pane\.go/).getAttribute("aria-expanded")).toBe("false");
   });
 });

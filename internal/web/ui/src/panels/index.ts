@@ -4,3 +4,4 @@
 import "./fleet";
 import "./turns";
 import "./info";
+import "./changes";
