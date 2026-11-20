@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,20 @@ var skipDirs = map[string]bool{"deps": true, "build": true, "incremental": true,
 // candidateName is a cargo executable's name in deps/ or examples/: the
 // crate or target name, a dash and a 16-digit hash, no extension.
 var candidateName = regexp.MustCompile(`^[A-Za-z0-9_]+-[0-9a-f]{16}$`)
+
+// unitExecutable is an executable's name in a build unit's out/ (cargo's
+// build-dir layout v2, the default from cargo 1.100): a bin's or an
+// example's name alone, a test's with its hash; no extension.
+var unitExecutable = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// unitDir is a build unit's dir name in layout v2: build/<pkg>/<hash>/.
+var unitDir = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// runnableKinds are the fingerprint name prefixes of the units whose
+// executables the sweep may delete: bins, tests, benches and examples. A
+// library's unit (lib-) and a build script's (build-script-,
+// run-build-script-) never qualify, nor does any kind not named here.
+var runnableKinds = []string{"bin-", "test-", "bench-", "example-"}
 
 // sweepMu keeps one sweep at a time in the process: the daemon's periodic
 // one and a `loom sweep` request.
@@ -130,13 +145,18 @@ func (s Sweeper) sweep(t Target, after time.Duration, dryRun bool, mounts []moun
 }
 
 // profileDirs are the dirs under target, up to maxDepth levels down, that
-// hold both deps/ and .fingerprint/: cargo's profile dirs. The walk
-// follows no symlink and stops at each profile dir.
+// hold both deps/ and .fingerprint/ (cargo's layout up to 1.99) or a build
+// unit (layout v2, buildUnits): cargo's profile dirs. The walk follows no
+// symlink and stops at each profile dir.
 func profileDirs(target string) ([]string, error) {
 	var out []string
 	var walk func(dir string, depth int) error
 	walk = func(dir string, depth int) error {
-		if isDir(filepath.Join(dir, "deps")) && isDir(filepath.Join(dir, ".fingerprint")) {
+		units, err := buildUnits(dir)
+		if err != nil {
+			return err
+		}
+		if len(units) > 0 || isDir(filepath.Join(dir, "deps")) && isDir(filepath.Join(dir, ".fingerprint")) {
 			out = append(out, dir)
 			return nil
 		}
@@ -158,6 +178,63 @@ func profileDirs(target string) ([]string, error) {
 		return nil
 	}
 	return out, walk(target, 0)
+}
+
+// buildUnits are profile's build units in cargo's layout v2: each
+// build/<pkg>/<hash>/ holding fingerprint/. A profile of the older layout
+// has none: its build/<pkg>-<hash>/ dirs hold build scripts.
+func buildUnits(profile string) ([]string, error) {
+	build := filepath.Join(profile, "build")
+	if !isDir(build) {
+		return nil, nil
+	}
+	pkgs, err := os.ReadDir(build)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, p := range pkgs {
+		if !p.IsDir() {
+			continue
+		}
+		units, err := os.ReadDir(filepath.Join(build, p.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range units {
+			dir := filepath.Join(build, p.Name(), u.Name())
+			if u.IsDir() && unitDir.MatchString(u.Name()) && isDir(filepath.Join(dir, "fingerprint")) {
+				out = append(out, dir)
+			}
+		}
+	}
+	return out, nil
+}
+
+// runnableUnit reports whether every kind unit's fingerprint names is a
+// runnable one (runnableKinds), and it names at least one. An unreadable
+// fingerprint, or a kind the sweep doesn't know, keeps the unit.
+func runnableUnit(unit string) bool {
+	entries, err := os.ReadDir(filepath.Join(unit, "fingerprint"))
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, e := range entries {
+		n := e.Name()
+		if n == "invoked.timestamp" || strings.HasPrefix(n, "dep-") || strings.HasPrefix(n, "output-") {
+			continue
+		}
+		runnable := false
+		for _, k := range runnableKinds {
+			runnable = runnable || strings.HasPrefix(n, k)
+		}
+		if !runnable {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // lockAll takes every cargo lock file present in each profile dir; held
@@ -190,9 +267,11 @@ func unlockAll(locks []*os.File) {
 }
 
 // sweepProfile deletes, or with dryRun only lists, the executables in
-// profile's deps/ and examples/ last used before cutoff, each with its
-// other names in profile and examples/ (cargo's uplifted hard links). A
-// file linked from anywhere else is kept: deleting it would free nothing.
+// profile's deps/ and examples/, and in its runnable build units' out/
+// (layout v2), last used before cutoff, each with its other names in
+// profile and examples/ (cargo's uplifted hard links). A file linked from
+// anywhere else is kept: deleting it would free nothing. A profile cargo
+// upgraded in place holds both layouts, and both are swept.
 func sweepProfile(r *Result, wt, profile string, cutoff time.Time, dryRun bool) {
 	examples := filepath.Join(profile, "examples")
 	names, err := namesByInode(profile, examples)
@@ -200,7 +279,22 @@ func sweepProfile(r *Result, wt, profile string, cutoff time.Time, dryRun bool) 
 		r.Errors = append(r.Errors, err.Error())
 		return
 	}
-	for _, dir := range []string{filepath.Join(profile, "deps"), examples} {
+	type source struct {
+		dir   string
+		names *regexp.Regexp
+	}
+	sources := []source{{filepath.Join(profile, "deps"), candidateName}, {examples, candidateName}}
+	units, err := buildUnits(profile)
+	if err != nil {
+		r.Errors = append(r.Errors, err.Error())
+	}
+	for _, u := range units {
+		if runnableUnit(u) {
+			sources = append(sources, source{filepath.Join(u, "out"), unitExecutable})
+		}
+	}
+	for _, src := range sources {
+		dir := src.dir
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
@@ -209,7 +303,7 @@ func sweepProfile(r *Result, wt, profile string, cutoff time.Time, dryRun bool) 
 			continue
 		}
 		for _, e := range entries {
-			if !e.Type().IsRegular() || !candidateName.MatchString(e.Name()) {
+			if !e.Type().IsRegular() || !src.names.MatchString(e.Name()) {
 				continue
 			}
 			fi, err := e.Info()

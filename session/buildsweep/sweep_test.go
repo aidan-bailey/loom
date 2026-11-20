@@ -101,6 +101,122 @@ func TestSweep_DeletesOnlyExecutablesUnusedPastTheThreshold(t *testing.T) {
 	assert.Empty(t, r.Errors)
 }
 
+// v2Tree is a worktree whose target/ cargo 1.100 laid out (build-dir
+// layout v2): debug/ holds build units, build/<pkg>/<hash>/ with
+// fingerprint/ and out/, and no deps/ or .fingerprint/. It returns the
+// worktree and debug/.
+func v2Tree(t *testing.T) (wt, debug string) {
+	t.Helper()
+	wt = t.TempDir()
+	debug = filepath.Join(wt, "target", "debug")
+	for _, d := range []string{"build", "incremental", "examples"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(debug, d), 0o755))
+	}
+	put(t, filepath.Join(wt, "target", "CACHEDIR.TAG"), 0o644, now)
+	return wt, debug
+}
+
+// unit writes a layout v2 build unit of pkg with hash, its fingerprint
+// naming kinds the way cargo does (a kind file, its .json, its dep- file
+// and its output- file, and invoked.timestamp), and returns its out/.
+func unit(t *testing.T, debug, pkg, hash string, kinds ...string) string {
+	t.Helper()
+	dir := filepath.Join(debug, "build", pkg, hash)
+	put(t, filepath.Join(dir, "fingerprint", "invoked.timestamp"), 0o644, now)
+	for _, k := range kinds {
+		for _, n := range []string{k, k + ".json", "dep-" + k, "output-" + k} {
+			put(t, filepath.Join(dir, "fingerprint", n), 0o644, now)
+		}
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "out"), 0o755))
+	return filepath.Join(dir, "out")
+}
+
+// TestSweep_LayoutV2 sweeps the executables of a profile cargo 1.100 laid
+// out: a bin's, a test's and an example's, with their uplifted links, and
+// keeps a build script's (its name has no hash either), a library's, and
+// those of a unit whose kind it doesn't know or can't read.
+func TestSweep_LayoutV2(t *testing.T) {
+	s := fakeSystem(t, "rw")
+	wt, debug := v2Tree(t)
+	old := now.Add(-3 * day)
+	bin := filepath.Join(unit(t, debug, "app", "0000000000000001", "bin-app"), "app")
+	put(t, bin, 0o755, old)
+	require.NoError(t, os.Link(bin, filepath.Join(debug, "app")))
+	test := filepath.Join(unit(t, debug, "app", "0000000000000002", "test-integration-test-it"), "it-0000000000000002")
+	put(t, test, 0o755, old)
+	example := filepath.Join(unit(t, debug, "app", "0000000000000003", "example-demo"), "demo")
+	put(t, example, 0o755, old)
+	require.NoError(t, os.Link(example, filepath.Join(debug, "examples", "demo")))
+	live := filepath.Join(unit(t, debug, "app", "0000000000000004", "test-bin-app"), "app-0000000000000004")
+	put(t, live, 0o755, now.Add(-time.Hour))
+	kept := []string{
+		filepath.Join(unit(t, debug, "app", "0000000000000005", "build-script-build-script-build"), "build_script_build"),
+		filepath.Join(unit(t, debug, "app", "0000000000000006", "lib-app"), "libapp-0000000000000006.rlib"),
+		filepath.Join(unit(t, debug, "app", "0000000000000007", "lib-app"), "libapp-0000000000000007.so"),
+		filepath.Join(unit(t, debug, "app", "0000000000000008", "bin-app", "lib-app"), "app"),
+		filepath.Join(unit(t, debug, "app", "0000000000000009", "newkind-app"), "app"),
+		filepath.Join(unit(t, debug, "app", "000000000000000a", "test-bin-app"), "app.d"),
+		filepath.Join(unit(t, debug, "app", "000000000000000b"), "app"),
+	}
+	for _, k := range kept {
+		put(t, k, 0o755, old)
+	}
+	noPrint := filepath.Join(debug, "build", "app", "000000000000000c", "out", "app")
+	put(t, noPrint, 0o755, old)
+
+	r := sweepOne(s, wt, 2*day, false)
+
+	require.Empty(t, r.Skip, r.Detail)
+	assert.Empty(t, r.Errors)
+	assert.ElementsMatch(t, []string{
+		"target/debug/build/app/0000000000000001/out/app",
+		"target/debug/build/app/0000000000000002/out/it-0000000000000002",
+		"target/debug/build/app/0000000000000003/out/demo",
+	}, paths(r))
+	for _, gone := range []string{bin, filepath.Join(debug, "app"), test, example, filepath.Join(debug, "examples", "demo")} {
+		assert.NoFileExists(t, gone)
+	}
+	for _, k := range append(kept, live, noPrint) {
+		assert.FileExists(t, k)
+	}
+}
+
+// A profile of layout v2 alone is still a profile its locks guard, and
+// one cargo upgraded in place (both layouts side by side) is swept in
+// both.
+func TestSweep_LayoutV2LocksAndAnUpgradedProfile(t *testing.T) {
+	t.Run("a lock held", func(t *testing.T) {
+		s := fakeSystem(t, "rw")
+		wt, debug := v2Tree(t)
+		bin := filepath.Join(unit(t, debug, "app", "0000000000000001", "bin-app"), "app")
+		put(t, bin, 0o755, now.Add(-3*day))
+		put(t, filepath.Join(debug, ".cargo-build-lock"), 0o644, now)
+		cargo, held, err := tryLock(filepath.Join(debug, ".cargo-build-lock"))
+		require.NoError(t, err)
+		require.False(t, held)
+		defer cargo.Close()
+
+		r := sweepOne(s, wt, 2*day, false)
+
+		assert.Equal(t, SkipBuilding, r.Skip)
+		assert.FileExists(t, bin)
+	})
+	t.Run("both layouts", func(t *testing.T) {
+		s := fakeSystem(t, "rw")
+		wt, debug := cargoTree(t)
+		v1 := filepath.Join(debug, "deps", "app-0123456789abcdef")
+		put(t, v1, 0o755, now.Add(-3*day))
+		v2 := filepath.Join(unit(t, debug, "app", "0000000000000001", "test-bin-app"), "app-0000000000000001")
+		put(t, v2, 0o755, now.Add(-3*day))
+
+		r := sweepOne(s, wt, 2*day, false)
+
+		require.Empty(t, r.Skip, r.Detail)
+		assert.ElementsMatch(t, []string{"target/debug/deps/app-0123456789abcdef", "target/debug/build/app/0000000000000001/out/app-0000000000000001"}, paths(r))
+	})
+}
+
 func TestSweep_TheThresholdIsExclusive(t *testing.T) {
 	s := fakeSystem(t, "rw")
 	wt, debug := cargoTree(t)
