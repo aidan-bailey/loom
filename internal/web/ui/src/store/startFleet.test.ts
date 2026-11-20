@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Notice, Snapshot } from "@/api/gen";
 import { queryClient } from "@/api/queries";
-import { emitStopping, emitUnpaired, onNotices } from "@/api/request";
+import { emitNotices, emitStopping, emitUnpaired, onNotices } from "@/api/request";
 import { connectStream, RESTART_GRACE, type StreamHandlers } from "@/api/stream";
 import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { fixtureSnapshot } from "@/fixtures";
@@ -168,6 +168,36 @@ describe("startFleet", () => {
     expect(heard).toEqual([[n]]);
     expect(store().snapshot?.notices?.at(-1)).toEqual(n);
     off();
+  });
+
+  it("keeps a response's notices, which only the onNotices listeners hear", () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    const held = store().snapshot?.notices?.length ?? 0;
+    const n = notice("Pushed to origin");
+    emitNotices([n]);
+    expect(store().snapshot?.notices).toHaveLength(held + 1);
+    expect(store().snapshot?.notices?.at(-1)).toEqual(n);
+  });
+
+  it("keeps a stream notice exactly once", () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    handlers.onEvent("notice", notice("stash kept: def456"));
+    const kept = (store().snapshot?.notices ?? []).filter((n) => n.text === "stash kept: def456");
+    expect(kept).toHaveLength(1);
+  });
+
+  it("keeps no notice before the first snapshot, and none once the start is stopped", () => {
+    const stop = start();
+    emitNotices([notice("early")]);
+    expect(store().snapshot).toBeNull();
+
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    stop();
+    const held = store().snapshot?.notices?.length ?? 0;
+    emitNotices([notice("late")]);
+    expect(store().snapshot?.notices).toHaveLength(held);
   });
 
   it("clears the store, the saved snapshot, the cached queries and the badge, and closes the stream, when unpaired", () => {
@@ -345,7 +375,7 @@ describe("startFleet", () => {
     handlers.onEvent("snapshot", first);
     handlers.onEvent("snapshot", {
       ...fixtureSnapshot(NOW),
-      device: { ...first.device, push: "expired" },
+      device: { ...first.device, push: "failing: 410 Gone" },
     });
     expect(checkPushSubscription).toHaveBeenCalledTimes(1);
     expect(checkPushSubscription).toHaveBeenCalledWith(first.device);

@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Notice, Session } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
-import { useFleet, useFleetGroups, useLink, useSession } from "./fleet";
+import { MAX_NOTICES, useFleet, useFleetGroups, useLink, useSession } from "./fleet";
 import { clearSnapshot } from "./persist";
 
 vi.mock("./persist");
@@ -78,13 +78,42 @@ describe("the store", () => {
     expect(store().snapshot?.device).toEqual(device);
   });
 
-  it("keeps the last 20 notices", () => {
+  it("keeps the last MAX_NOTICES notices it is given, the oldest dropped", () => {
     store().apply("snapshot", fixtureSnapshot(NOW));
-    for (let i = 0; i < 25; i++) store().apply("notice", notice(`n${i}`));
+    for (let i = 0; i < MAX_NOTICES + 5; i++) store().addNotices([notice(`n${i}`)]);
     const texts = (store().snapshot?.notices ?? []).map((n) => n.text);
-    expect(texts).toHaveLength(20);
+    expect(MAX_NOTICES).toBe(20);
+    expect(texts).toHaveLength(MAX_NOTICES);
     expect(texts[0]).toBe("n5");
-    expect(texts[19]).toBe("n24");
+    expect(texts.at(-1)).toBe(`n${MAX_NOTICES + 4}`);
+  });
+
+  it("appends a batch in order after the notices already held", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    const held = store().snapshot?.notices ?? [];
+    store().addNotices([notice("a"), notice("b")]);
+    expect(store().snapshot?.notices).toEqual([...held, notice("a"), notice("b")]);
+  });
+
+  it("keeps no notice while there is no snapshot", () => {
+    store().addNotices([notice("a")]);
+    expect(store().snapshot).toBeNull();
+  });
+
+  it("does not stamp the time for notices it is given: they are not news from the daemon", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    vi.advanceTimersByTime(7000);
+    store().addNotices([notice("a")]);
+    expect(store().updated).toBe(NOW);
+  });
+
+  it("keeps nothing for a stream notice event and stamps the time: the onNotices listener keeps it", () => {
+    store().apply("snapshot", fixtureSnapshot(NOW));
+    const held = store().snapshot?.notices;
+    vi.advanceTimersByTime(7000);
+    store().apply("notice", notice("x"));
+    expect(store().snapshot?.notices).toEqual(held);
+    expect(store().updated).toBe(NOW + 7000);
   });
 
   it("stamps the time on a ping and changes nothing on a bye", () => {

@@ -3,9 +3,9 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import type { Session, Snapshot, StreamEvents } from "@/api/gen";
+import type { Notice, Session, Snapshot, StreamEvents } from "@/api/gen";
 import { queryClient } from "@/api/queries";
-import { emitNotices, onStopping, onUnpaired } from "@/api/request";
+import { emitNotices, onNotices, onStopping, onUnpaired } from "@/api/request";
 import { connectStream, RESTART_GRACE, type LinkState } from "@/api/stream";
 import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
@@ -20,6 +20,7 @@ export interface FleetState {
   updated: number;
   apply: <E extends keyof StreamEvents>(name: E, data: StreamEvents[E]) => void;
   setLink: (state: LinkState) => void;
+  addNotices: (notices: Notice[]) => void;
   load: (saved: Snapshot, updated: number) => void;
   clear: () => Promise<void>;
 }
@@ -28,8 +29,8 @@ type AnyEvent = {
   [E in keyof StreamEvents]: { name: E; data: StreamEvents[E] };
 }[keyof StreamEvents];
 
-// The snapshot keeps the last 20 notices.
-const RECENT_NOTICES = 20;
+// The snapshot keeps the last 20 notices, those of responses and of the stream alike.
+export const MAX_NOTICES = 20;
 
 // The timer of the save waiting to run (scheduled by startFleet). clear() must cancel it, so it
 // lives beside the store.
@@ -92,13 +93,10 @@ function applied(state: FleetState, event: AnyEvent, now: number): Partial<Fleet
       const device = event.data;
       return change((s) => ({ ...s, device }));
     }
-    case "notice": {
-      const notice = event.data;
-      return change((s) => ({
-        ...s,
-        notices: [...(s.notices ?? []), notice].slice(-RECENT_NOTICES),
-      }));
-    }
+    case "notice":
+      // Kept by the onNotices listener startFleet registers (addNotices), which hears this
+      // notice from afterEvent and a response's notices too: appending here would keep it twice.
+      return { updated: now };
   }
 }
 
@@ -116,6 +114,20 @@ export const useFleet = create<FleetState>()((set, get) => ({
 
   setLink(state) {
     set({ link: state, stale: state !== "live" });
+  },
+
+  // Keeps notices among the recent ones the snapshot carries (the daemon keeps a response's for
+  // the next snapshot, which replaces this list). It does not stamp `updated`: a response's
+  // notices are not news from the daemon.
+  addNotices(notices) {
+    const current = get().snapshot;
+    if (current === null || notices.length === 0) return;
+    set({
+      snapshot: {
+        ...current,
+        notices: [...(current.notices ?? []), ...notices].slice(-MAX_NOTICES),
+      },
+    });
   },
 
   // A cold start's saved snapshot: stale until the stream's first one, and never over a live view.
@@ -273,6 +285,13 @@ export function startFleet(): () => void {
     }, RESTART_GRACE);
   });
 
+  // Every notice delivered, a response's and each stream notice (afterEvent hands those over),
+  // is kept in the snapshot, and saved with it.
+  const offNotices = onNotices((notices) => {
+    useFleet.getState().addNotices(notices);
+    scheduleSave();
+  });
+
   const offUnpaired = onUnpaired(() => {
     closeStream();
     void useFleet.getState().clear();
@@ -290,6 +309,7 @@ export function startFleet(): () => void {
     closeStream();
     offUnpaired();
     offStopping();
+    offNotices();
     clearTimeout(stoppingTimer);
     cancelSave();
     if (running === stop) running = undefined;
