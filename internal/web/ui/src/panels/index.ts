@@ -12,3 +12,4 @@ import "./flow";
 import "./flows";
 import "./new";
 import "./settings";
+import "./pair";
