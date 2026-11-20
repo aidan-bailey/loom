@@ -62,7 +62,8 @@ type feedbackState struct {
 
 	// issueErrs is the issue poll's last error for each published thread
 	// whose check failed; it lives in memory only (feedback_issues.go).
-	issueErrs map[feedback.ThreadID]string
+	issueErrs    map[feedback.ThreadID]string
+	issueChecked map[feedbackIssueKey]time.Time // when each published issue was last asked about
 
 	settings    advisor.Settings // the grouper's, resolved
 	settingsErr error

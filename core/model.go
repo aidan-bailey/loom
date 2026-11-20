@@ -543,6 +543,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverAdvisor(msg)
 	case groupResult:
 		m.deliverFeedbackGroup(msg)
+	case feedbackIssuesResult:
+		m.deliverFeedbackIssues(msg)
 	case verdictResult:
 		m.deliverVerdict(msg)
 	case tracked:

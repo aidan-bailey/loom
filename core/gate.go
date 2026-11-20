@@ -36,6 +36,9 @@ const (
 	// workspace's watchState.polling is the in-flight bit, cleared by
 	// every delivery (deliverWatch).
 	gateWatch
+	// gateFeedbackIssues throttles the poll of published feedback threads'
+	// issues (maybeCheckFeedbackIssues).
+	gateFeedbackIssues
 
 	numGateKinds
 )
@@ -63,6 +66,8 @@ func (k gateKind) String() string {
 		return "feedback"
 	case gateWatch:
 		return "watch"
+	case gateFeedbackIssues:
+		return "feedback_issues"
 	}
 	return "unknown"
 }
@@ -78,6 +83,9 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateBuildSweep: buildSweepInterval,
 	gateQueue:      queueInterval,
 	gateWatch:      watchInterval,
+
+	// gateFeedbackIssues asks about published threads' issues every five minutes.
+	gateFeedbackIssues: feedbackIssuesInterval,
 	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
 	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.
