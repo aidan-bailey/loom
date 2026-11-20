@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ import {
   DrawerTitle,
 } from "./drawer";
 import { Input } from "./input";
+import { InputOTP, InputOTPSeparator, InputOTPSlot } from "./input-otp";
 import {
   Select,
   SelectContent,
@@ -452,5 +454,94 @@ describe("Select", () => {
       expect(option.className).toContain("min-h-11");
     }
     expect(within(list).getByText("Active")).toHaveAttribute("data-slot", "select-label");
+  });
+});
+
+const OTP_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+
+// A copy of the pairing screen's normaliser for the test: idempotent, as Base UI requires.
+function normalizeCode(value: string): string {
+  return [...value.toUpperCase()].filter((c) => OTP_ALPHABET.includes(c)).join("");
+}
+
+function SampleOTP() {
+  const [value, setValue] = useState("");
+  const slot = (n: number) => (
+    <InputOTPSlot key={n} {...(n === 1 ? {} : { "aria-label": `Character ${n} of 8` })} />
+  );
+  return (
+    <>
+      <output data-testid="value">{value}</output>
+      <label htmlFor="code">Code</label>
+      <InputOTP
+        id="code"
+        length={8}
+        validationType="alphanumeric"
+        value={value}
+        onValueChange={setValue}
+        normalizeValue={normalizeCode}
+        data-testid="root"
+      >
+        <div>{[1, 2, 3, 4].map(slot)}</div>
+        <InputOTPSeparator />
+        <div>{[5, 6, 7, 8].map(slot)}</div>
+      </InputOTP>
+    </>
+  );
+}
+
+describe("InputOTP", () => {
+  it("InputOTP: typing fills the slots in order through the caller's normaliser", async () => {
+    const user = userEvent.setup();
+    render(<SampleOTP />);
+    const slots = () => screen.getAllByRole("textbox");
+    await user.click(screen.getByRole("textbox", { name: "Code" }));
+    await user.keyboard("k7qm");
+    expect(screen.getByTestId("value")).toHaveTextContent("K7QM");
+    expect(
+      slots()
+        .slice(0, 4)
+        .map((s) => (s as HTMLInputElement).value),
+    ).toEqual(["K", "7", "Q", "M"]);
+    expect(slots()[4]).toHaveFocus();
+    await user.keyboard("o0");
+    expect(screen.getByTestId("value")).toHaveTextContent(/^K7QM$/);
+    await user.keyboard("2xpa");
+    expect(screen.getByTestId("value")).toHaveTextContent("K7QM2XPA");
+  });
+
+  it("InputOTP: a paste is normalised and clamped to the length", async () => {
+    const user = userEvent.setup();
+    render(<SampleOTP />);
+    await user.click(screen.getByRole("textbox", { name: "Code" }));
+    await user.paste("k7qm-2xpa9");
+    expect(screen.getByTestId("value")).toHaveTextContent("K7QM2XPA");
+  });
+
+  it("InputOTP: eight 44px slots, a separator, the root's id on the first slot and the caller's props", () => {
+    const { container } = render(<SampleOTP />);
+    const root = screen.getByTestId("root");
+    expect(root).toHaveAttribute("data-slot", "input-otp");
+    expect(root.className).toContain("flex");
+    const slots = container.querySelectorAll("input[data-slot='input-otp-slot']");
+    expect(slots.length).toBe(8);
+    for (const slot of slots) {
+      expect(slot.className).toContain("size-11");
+      expect(slot.className).toContain("text-[16px]");
+    }
+    expect(screen.getByRole("textbox", { name: "Code" })).toBe(slots[0]);
+    expect(slots[0]).toHaveAttribute("id", "code");
+    expect(screen.getByRole("textbox", { name: "Character 2 of 8" })).toBe(slots[1]);
+    expect(container.querySelector("[data-slot='input-otp-separator']")).not.toBeNull();
+
+    render(
+      <InputOTP length={2}>
+        <InputOTPSlot />
+        <InputOTPSlot className="size-12" aria-label="wide" />
+      </InputOTP>,
+    );
+    const wide = screen.getByRole("textbox", { name: "wide" });
+    expect(wide.className).toContain("size-12");
+    expect(wide.className).not.toContain("size-11");
   });
 });
