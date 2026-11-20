@@ -26,6 +26,7 @@ describe("the commands module", () => {
     "quickReplies.save",
     "device.unpair",
     "device.pair",
+    "push.enable",
   ])("registers %s on import", (id) => {
     expect(commandById(id)).toBeDefined();
   });
