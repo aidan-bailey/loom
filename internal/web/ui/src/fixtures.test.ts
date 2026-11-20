@@ -237,6 +237,8 @@ const unionFields: { fixture: keyof typeof typed; path: string; union: Record<st
   { fixture: "flow.json", path: "stories/*/cells/*", union: flowCell },
   { fixture: "flow.json", path: "premise/steps/*/kind", union: flowStepKind },
   { fixture: "flow.json", path: "stories/*/steps/*/kind", union: flowStepKind },
+  { fixture: "flow.json", path: "final/cells/*", union: flowCell },
+  { fixture: "flow.json", path: "final/steps/*/kind", union: flowStepKind },
   { fixture: "flows.json", path: "live/*/flow/stage", union: flowStageName },
   { fixture: "flows.json", path: "live/*/flow/status", union: flowStatus },
   { fixture: "flows.json", path: "live/*/flow/asks", union: flowQuestionKind },

@@ -364,7 +364,7 @@
       "line": 1301,
       "end": 1500,
       "reading": "spec \u00a75",
-      "status": "",
+      "status": "developing",
       "commits": 0,
       "deviations": 0,
       "findings": [
@@ -373,13 +373,30 @@
         0
       ],
       "cells": {
-        "dev": "todo",
+        "dev": "running",
         "gates": "todo",
         "review": "todo",
         "fix": "todo",
         "docs": "todo"
       },
-      "steps": []
+      "steps": [
+        {
+          "name": "2026-11-09-flow-visualisation-s4-dev1",
+          "kind": "dev",
+          "k": 1,
+          "role": "junior-dev",
+          "status": "running",
+          "jobs": [
+            46
+          ],
+          "report": false,
+          "gates": [],
+          "started": "now-2m",
+          "ended": "",
+          "unreadable": "",
+          "waiting": "waiting for an agent slot"
+        }
+      ]
     },
     {
       "id": "5",
@@ -407,7 +424,80 @@
       "steps": []
     }
   ],
-  "final": null,
+  "final": {
+    "id": "F",
+    "developer": "",
+    "tier": "",
+    "review": "",
+    "line": 0,
+    "end": 0,
+    "reading": "",
+    "status": "",
+    "commits": 0,
+    "deviations": 0,
+    "findings": [
+      0,
+      0,
+      0
+    ],
+    "cells": {
+      "gates": "passed",
+      "review": "running",
+      "fix": "todo"
+    },
+    "steps": [
+      {
+        "name": "2026-11-09-flow-visualisation-final-gates1",
+        "kind": "gates",
+        "k": 1,
+        "role": "",
+        "status": "passed",
+        "jobs": [
+          50,
+          51,
+          52
+        ],
+        "report": false,
+        "gates": [
+          {
+            "text": "gofmt check",
+            "verdict": "PASS",
+            "job": 50
+          },
+          {
+            "text": "go vet ./...",
+            "verdict": "PASS",
+            "job": 51
+          },
+          {
+            "text": "go test ./...",
+            "verdict": "PASS",
+            "job": 52
+          }
+        ],
+        "started": "now-20m",
+        "ended": "now-16m",
+        "unreadable": "",
+        "waiting": ""
+      },
+      {
+        "name": "2026-11-09-flow-visualisation-final-review1",
+        "kind": "review",
+        "k": 1,
+        "role": "code-quality-reviewer",
+        "status": "running",
+        "jobs": [
+          53
+        ],
+        "report": false,
+        "gates": [],
+        "started": "now-3m",
+        "ended": "",
+        "unreadable": "",
+        "waiting": ""
+      }
+    ]
+  },
   "question": {
     "key": "blocked:2026-11-09-flow-visualisation-s3-dev1",
     "kind": "blocked-decision",
@@ -417,7 +507,14 @@
   "kept": [
     "Minor internal/flowview/detail.go:88 name the cache key"
   ],
-  "others": [],
+  "others": [
+    {
+      "id": "2026-11-08-flow-visualisation",
+      "status": "stopped",
+      "start": "now-26h",
+      "unreadable": ""
+    }
+  ],
   "costs": {
     "spent": 4.71,
     "by_story": {
@@ -433,7 +530,9 @@
       "premise-check": 0.12,
       "manager": 0.99
     },
-    "unpriced": [],
+    "unpriced": [
+      "2026-11-09-flow-visualisation-s4-dev1"
+    ],
     "design": 3.14,
     "draft": 12.05,
     "flow": 19.9,

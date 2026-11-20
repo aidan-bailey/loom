@@ -556,6 +556,66 @@ func TestFixture_TheDeviceIsExpiredAndPausedAndTwoNoticesOneAnError(t *testing.T
 	}
 }
 
+func TestFixture_TheBoardHoldsAFinalRowARunningStepAnOtherRunAndAnUnpricedAgent(t *testing.T) {
+	c := &cannedLoom{now: time.Now}
+	raw, err := c.fixture("flow.json")
+	require.NoError(t, err)
+	type step struct {
+		Name    string `json:"name"`
+		Kind    string `json:"kind"`
+		Status  string `json:"status"`
+		Ended   string `json:"ended"`
+		Waiting string `json:"waiting"`
+	}
+	type row struct {
+		ID     string            `json:"id"`
+		Status string            `json:"status"`
+		Cells  map[string]string `json:"cells"`
+		Steps  []step            `json:"steps"`
+	}
+	var board struct {
+		Stories []row    `json:"stories"`
+		Final   *row     `json:"final"`
+		Kept    []string `json:"kept"`
+		Others  []struct {
+			ID    string `json:"id"`
+			Start string `json:"start"`
+		} `json:"others"`
+		Costs struct {
+			Unpriced []string `json:"unpriced"`
+		} `json:"costs"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &board))
+
+	require.NotNil(t, board.Final, "the final row")
+	assert.Equal(t, "F", board.Final.ID)
+	assert.Equal(t, map[string]string{"gates": "passed", "review": "running", "fix": "todo"}, board.Final.Cells)
+	require.Len(t, board.Final.Steps, 2)
+	assert.Equal(t, []string{"gates", "review"}, []string{board.Final.Steps[0].Kind, board.Final.Steps[1].Kind})
+	assert.Equal(t, []string{"passed", "running"}, []string{board.Final.Steps[0].Status, board.Final.Steps[1].Status})
+
+	var ids []string
+	for _, s := range board.Stories {
+		ids = append(ids, s.ID)
+	}
+	assert.Equal(t, []string{"1", "2", "3", "4", "5"}, ids)
+	four := board.Stories[3]
+	assert.Equal(t, "developing", four.Status)
+	assert.Equal(t, "running", four.Cells["dev"])
+	require.Len(t, four.Steps, 1)
+	assert.Equal(t, "dev", four.Steps[0].Kind)
+	assert.Equal(t, "running", four.Steps[0].Status)
+	assert.Empty(t, four.Steps[0].Ended, "the step is still running")
+	assert.NotEmpty(t, four.Steps[0].Waiting)
+	assert.Equal(t, "asks", board.Stories[2].Cells["dev"])
+
+	require.Len(t, board.Others, 1)
+	assert.NotEmpty(t, board.Others[0].ID)
+	assert.NotEmpty(t, board.Others[0].Start)
+	assert.Equal(t, []string{four.Steps[0].Name}, board.Costs.Unpriced)
+	assert.NotEmpty(t, board.Kept)
+}
+
 func TestFixture_TheTurnsHoldEveryItemKindAnInterruptedStepAndTheTreesNodes(t *testing.T) {
 	c := &cannedLoom{now: time.Now}
 	raw, err := c.fixture("turns.json")
