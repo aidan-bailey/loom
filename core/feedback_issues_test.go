@@ -403,3 +403,12 @@ func TestFeedbackIssues_OneInFlightEveryFiveMinutes(t *testing.T) {
 	m.gate(gateFeedbackIssues).last = time.Now().Add(-feedbackIssuesInterval)
 	assert.True(t, m.maybeCheckFeedbackIssues(), "five minutes on")
 }
+
+func TestTickInst_ChecksTheFeedbackIssues(t *testing.T) {
+	m, gh, dir, _ := fbIssueRig(t, feedbackIssueKey{"o/r", 5})
+	fbScript(gh, dir, map[int]string{5: fbOpen})
+
+	m.tickInst(nil)
+
+	assert.True(t, m.gate(gateFeedbackIssues).inFlight, "the health tick starts the issue poll")
+}
