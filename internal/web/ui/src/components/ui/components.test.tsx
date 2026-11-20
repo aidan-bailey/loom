@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
@@ -304,7 +306,7 @@ describe("no <style> element", () => {
 });
 
 // Vitest replaces a stylesheet's text with "" (also under ?raw), so the file is read from disk.
-const appCss = readFileSync("src/styles/app.css", "utf8");
+const appCss = readFileSync(resolve(fileURLToPath(import.meta.url), "../../../styles/app.css"), "utf8");
 
 describe("the scrollbar rules", () => {
   it("app.css carries the two .base-ui-disable-scrollbar rules Base UI no longer injects", () => {
