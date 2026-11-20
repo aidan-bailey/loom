@@ -294,7 +294,11 @@ describe("Changes: the files", () => {
     diff.mockResolvedValue(ok(fixturePatch()));
     const view = draw(show());
     await settle();
-    expect(screen.getByRole("textbox", { name: "Reply" })).toBeTruthy();
+    const reply = screen.getByRole("textbox", { name: "Reply" });
+    const folds = screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"));
+    expect(folds.length).toBeGreaterThan(0);
+    const lastFold = folds[folds.length - 1];
+    expect(lastFold.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     view.unmount();
     queryClient.clear();
 
