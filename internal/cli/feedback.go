@@ -159,8 +159,9 @@ func rowID(r feedback.Row) string {
 	return "n" + strconv.Itoa(int(r.Note))
 }
 
-// writeFeedbackList prints rows as a table, then the grouper's state and
-// the inbox's error when there are any.
+// writeFeedbackList prints rows as a table, then a line for each thread
+// whose last issue check failed, the grouper's state and the inbox's error
+// when there are any.
 func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, now time.Time) error {
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "No feedback.")

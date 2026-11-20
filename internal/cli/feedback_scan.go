@@ -39,7 +39,7 @@ type scanInputs struct {
 	Workspaces []scanWorkspace
 	// Accounts are the registered accounts, the implicit default included.
 	Accounts []scanAccount
-	// Notes are the notes of the thread `--thread` names, none without it.
+	// Notes are the notes of every thread `--thread` names, none without it.
 	Notes []feedback.Note
 }
 
@@ -169,22 +169,22 @@ const (
 )
 
 func newFeedbackScanCmd() *cobra.Command {
-	var thread string
+	var threads []string
 	var allow []string
 	cmd := &cobra.Command{
-		Use:   "scan <file|-> [--thread <T>] [--allow <word>]…",
+		Use:   "scan <file|-> [--thread <T>]… [--allow <word>]…",
 		Short: "Check a draft for text private to this host before it is posted",
 		Long: "Read a draft from a file or standard input and report, as <line>:<col> <kind>: <match>, every " +
 			"absolute path, credential, email, UUID and name that is private to this host: the home directory, the " +
 			"user and host names, the accounts, every workspace and session but the one the current directory " +
-			"belongs to, and with --thread the thread's notes' sessions, transcripts, branches and filers. " +
+			"belongs to, and with --thread (repeatable: every thread named counts) the threads' notes' sessions, transcripts, branches and filers. " +
 			"--allow drops the hits whose whole match is that word and prints them as allowed. Exit 0 with no hit, " +
 			"1 with a hit, 2 on any error, a missing daemon included.",
 		Args: func(c *cobra.Command, args []string) error {
 			return scanUsage(cobra.ExactArgs(1)(c, args))
 		},
 		RunE: func(c *cobra.Command, args []string) error {
-			hit, err := scanDraft(c, args[0], thread, allow)
+			hit, err := scanDraft(c, args[0], threads, allow)
 			switch {
 			case err != nil:
 				return &ExitError{Code: scanExitError, Msg: err.Error()}
@@ -197,7 +197,7 @@ func newFeedbackScanCmd() *cobra.Command {
 	loomErrors(cmd)
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return scanUsage(err) })
 	fl := cmd.Flags()
-	fl.StringVar(&thread, "thread", "", "Also look for the names this thread's notes carry")
+	fl.StringArrayVar(&threads, "thread", nil, "Also look for the names this thread's notes carry (repeatable)")
 	fl.StringArrayVar(&allow, "allow", nil, "Drop the hits whose match is this word (repeatable)")
 	return cmd
 }
@@ -212,22 +212,26 @@ func scanUsage(err error) error {
 
 // scanDraft scans src ("-" is standard input) and prints what it found:
 // the hits, then the allowed ones. It reports whether there was a hit. The
-// draft, the flags and the thread's number are read before the daemon is
+// draft, the flags and the threads' numbers are read before the daemon is
 // joined.
-func scanDraft(c *cobra.Command, src, thread string, allow []string) (bool, error) {
+func scanDraft(c *cobra.Command, src string, threads, allow []string) (bool, error) {
 	text, err := readScanInput(c.InOrStdin(), src)
 	if err != nil {
 		return false, err
 	}
-	var t feedback.ThreadID
-	if thread != "" {
-		if t, err = parseThread(thread); err != nil {
+	var ids []feedback.ThreadID
+	for _, s := range threads {
+		t, err := parseThread(s)
+		if err != nil {
 			return false, fmt.Errorf("--thread: %w", err)
+		}
+		if !slices.Contains(ids, t) {
+			ids = append(ids, t)
 		}
 	}
 	var hits, dropped []feedback.ScanHit
 	err = withDaemon(c, func(d *client) error {
-		in, err := gatherScanInputs(c.Context(), d, t)
+		in, err := gatherScanInputs(c.Context(), d, ids)
 		if err != nil {
 			return err
 		}
@@ -273,10 +277,10 @@ func readScanInput(stdin io.Reader, src string) (string, error) {
 // directory, $USER (else the account's user name), the host name, git's
 // user.email, the served workspaces with their sessions' titles (and the
 // titles their storage preserves unread), the
-// accounts and, for a non-zero thread, its notes. Any answer it can't get
+// accounts and the notes of every thread in threads. Any answer it can't get
 // is an error: a scan with a term missing would pass a draft it should
 // not.
-func gatherScanInputs(ctx context.Context, d *client, thread feedback.ThreadID) (scanInputs, error) {
+func gatherScanInputs(ctx context.Context, d *client, threads []feedback.ThreadID) (scanInputs, error) {
 	var in scanInputs
 	var err error
 	if in.Home, err = os.UserHomeDir(); err != nil {
@@ -315,15 +319,17 @@ func gatherScanInputs(ctx context.Context, d *client, thread feedback.ThreadID) 
 			in.Accounts = append(in.Accounts, scanAccount{Name: name, Email: d.RCAuthFor(name).Identity.Email})
 		}
 	}
-	if thread != 0 {
+	if len(threads) > 0 {
 		inbox := d.Feedback().Inbox
-		th, ok := inbox.Thread(thread)
-		if !ok {
-			return in, fmt.Errorf("thread %d doesn't exist", thread)
-		}
-		for _, id := range th.Notes {
-			if n, ok := inbox.Note(id); ok {
-				in.Notes = append(in.Notes, n)
+		for _, thread := range threads {
+			th, ok := inbox.Thread(thread)
+			if !ok {
+				return in, fmt.Errorf("thread %d doesn't exist", thread)
+			}
+			for _, id := range th.Notes {
+				if n, ok := inbox.Note(id); ok {
+					in.Notes = append(in.Notes, n)
+				}
 			}
 		}
 	}

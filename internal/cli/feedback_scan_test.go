@@ -323,8 +323,12 @@ func TestFeedbackScan_ATitleOnlyTheStoragePreservesIsStillAHit(t *testing.T) {
 	assert.Equal(t, "1:5 session: future build\n2:5 session: other\n", out)
 }
 
+// scanSID2 is thread 2's note's Claude session ID.
+const scanSID2 = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
 // seedScanThread writes thread 1 before the daemon boots: n1 from the own
 // workspace ws-a on main, n2 from a workspace and a session the daemon no
+// longer serves. Thread 2 holds n3, from another workspace the daemon no
 // longer serves.
 func seedScanThread(t *testing.T) {
 	t.Helper()
@@ -338,6 +342,11 @@ func seedScanThread(t *testing.T) {
 		From: feedback.Session{ID: 2, Title: "deploy nightly", Workspace: "gone-ws", Branch: "me/secret-branch",
 			ClaudeSession: scanSID, Transcript: "/home/u/.claude/projects/p/s.jsonl"}})
 	require.NoError(t, in.Attach(n2, th))
+	n3 := in.Add(feedback.Note{Kind: feedback.KindBug, Title: "t3", Text: "z", At: at.Add(2 * time.Minute),
+		From: feedback.Session{ID: 3, Title: "reindex weekly", Workspace: "other-gone", Branch: "me/other-branch",
+			ClaudeSession: scanSID2}})
+	_, err = in.OpenThread(n3, "another problem")
+	require.NoError(t, err)
 	writeInbox(t, in)
 }
 
@@ -368,6 +377,30 @@ func TestFeedbackScan_TheThreadFlagAddsTheThreadsNotes(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "4:4 uuid: "+scanSID+"\n4:44 path: /home/u/.claude/projects/p/s.jsonl\n", out,
 		"without --thread the notes' names are not terms")
+}
+
+func TestFeedbackScan_EveryThreadNamedCounts(t *testing.T) {
+	isolateWorkspaces(t)
+	isolateScan(t, "")
+	repoA := gitRepoIn(t, filepath.Join(t.TempDir(), "repo-a"))
+	registeredAt(t, "ws-a", repoA, "")
+	seedScanThread(t)
+	serveDaemon(t, "true")
+	t.Chdir(repoA)
+	file := draft(t, "branch me/secret-branch\nbranch me/other-branch\nworkspace other-gone\n")
+
+	out, code, _ := runScanCmd(t, "", file, "--thread", "1", "--thread", "2")
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "1:8 thread: me/secret-branch\n2:8 thread: me/other-branch\n3:11 thread: other-gone\n", out,
+		"a hit from each thread's names")
+
+	out, code, _ = runScanCmd(t, "", file, "--thread", "1")
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "1:8 thread: me/secret-branch\n", out, "one thread's names alone leave the other's out")
+
+	_, code, msg := runScanCmd(t, "", file, "--thread", "1", "--thread", "9")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, msg, "thread 9 doesn't exist", "a thread the daemon lacks fails the whole scan")
 }
 
 func TestFeedbackScan_AllowDropsTheWordAndSaysSo(t *testing.T) {

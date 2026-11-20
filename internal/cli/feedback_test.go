@@ -461,3 +461,26 @@ func TestFeedbackShow_PrintsTheLinkAndTheReasonFromTheDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "issue #57 closed (completed)")
 }
+
+func TestFeedbackShow_AFailedIssueCheckReachesItOverTheWire(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	// A gh that fails every call: the daemon's poll of the published
+	// thread's issue records its error, which the daemon sends with the view.
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	serveDaemon(t, "true")
+	_, _, err := runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#57", "--through", "n1")
+	require.NoError(t, err)
+
+	var out string
+	assert.Eventually(t, func() bool {
+		var err error
+		out, _, err = runFeedback(t, "show", "1")
+		require.NoError(t, err)
+		return strings.Contains(out, "issue check failed")
+	}, 10*time.Second, 50*time.Millisecond, "the poll ran and its error reached a client that joined after it")
+	assert.Contains(t, out, "issue check failed: gh issue view: exit status 1", "the daemon's error text, not a client's")
+	assert.NotContains(t, out, "thread 1 (bug, closed", "a failed check changes no status")
+}
