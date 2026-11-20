@@ -9,9 +9,10 @@ import { useTurnPages } from "@/api/reads";
 import { api } from "@/api/request";
 import { definePanel } from "@/app/panels";
 import { fixtureSnapshot, fixtureTurns } from "@/fixtures";
+import { allSessions } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
 
-import { AgentHead, AgentStrip } from "./Agent";
+import { Agent, AgentHead, AgentStrip } from "./Agent";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 const AGENT = "a1f00dcafe0001";
@@ -199,5 +200,202 @@ describe("AgentStrip", () => {
     );
     await settle();
     expect(other.container.querySelector('[data-slot="agent-strip"]')).toBeNull();
+  });
+});
+
+const refused = (status: number, message: string): Outcome<never> => ({
+  kind: "refused",
+  status,
+  message,
+});
+
+function draw(session = 1): ReturnType<typeof render> {
+  return render(<Agent {...props(session)} />, { wrapper });
+}
+
+describe("the subagent's screen", () => {
+  it("says Loading… until the first page lands, then draws the brief", async () => {
+    let release: (o: Outcome<Turns>) => void = () => undefined;
+    turnsRead.mockImplementationOnce(
+      () =>
+        new Promise<Outcome<Turns>>((resolve) => {
+          release = resolve;
+        }),
+    );
+    draw();
+    await settle();
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    await act(async () => {
+      release(ok(page()));
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.queryByText("Loading…")).toBeNull();
+    expect(screen.getByText(/You are mapping callers\./)).toBeTruthy();
+    expect(screen.getAllByText(/BRIEF/).length).toBeGreaterThan(0);
+  });
+
+  it("shows a failed first read with a retry that loads the newest page", async () => {
+    turnsRead.mockResolvedValueOnce(refused(500, "boom"));
+    draw();
+    await settle();
+    expect(screen.getByText("boom")).toBeTruthy();
+    turnsRead.mockResolvedValueOnce(ok(page()));
+    fireEvent.click(screen.getByRole("button", { name: "retry" }));
+    await settle();
+    expect(screen.getByText(/You are mapping callers\./)).toBeTruthy();
+    expect(screen.queryByText("boom")).toBeNull();
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("draws no reply box and no needs-you box, even when the session needs you", async () => {
+    draw(2);
+    await settle();
+    expect(screen.getByText(/You are mapping callers\./)).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByText(/Open in Claude/)).toBeNull();
+  });
+
+  it("says No turns yet. for a page without turns", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "finished" }, { turns: [] })));
+    draw();
+    await settle();
+    expect(screen.getByText("No turns yet.")).toBeTruthy();
+  });
+
+  it("says some records could not be read and pages back to the earlier turns", async () => {
+    turnsRead.mockResolvedValue(ok(page({}, { skipped: 2, earlier: 5 })));
+    const first = draw();
+    await settle();
+    expect(screen.getByText("Some records could not be read.")).toBeTruthy();
+    turnsRead.mockResolvedValueOnce(ok(page({}, { skipped: 2, earlier: null })));
+    fireEvent.click(screen.getByRole("button", { name: "↑ earlier turns" }));
+    await settle();
+    expect(turnsRead).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({ agent: AGENT, before: "5" }),
+    );
+    first.unmount();
+
+    queryClient.clear();
+    turnsRead.mockResolvedValue(ok(page({}, { skipped: 0, earlier: null })));
+    draw();
+    await settle();
+    expect(screen.queryByText("Some records could not be read.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "↑ earlier turns" })).toBeNull();
+  });
+
+  it("says Starting… while the agent's record is missing, and gone after 30 seconds", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "running", missing: true })));
+    draw();
+    await settle();
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    await settle(29_000);
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    await settle(2_000);
+    expect(screen.getByText("This subagent's record is gone.")).toBeTruthy();
+  });
+
+  it("is gone at once when the agent finished and its record is missing", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "finished", missing: true })));
+    const first = draw();
+    await settle();
+    expect(screen.getByText("This subagent's record is gone.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "retry" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "‹ conversation" }).getAttribute("href")).toBe("#/s/1");
+    first.unmount();
+
+    queryClient.clear();
+    turnsRead.mockResolvedValue(ok(page({ state: "finished", missing: false })));
+    draw();
+    await settle();
+    expect(screen.queryByText("This subagent's record is gone.")).toBeNull();
+    expect(screen.getByText(/You are mapping callers\./)).toBeTruthy();
+  });
+
+  it("retries a gone record, which restarts the 30 second wait", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "running", missing: true })));
+    draw();
+    await settle();
+    await settle(31_000);
+    expect(screen.getByText("This subagent's record is gone.")).toBeTruthy();
+    const reads = turnsRead.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "retry" }));
+    await settle();
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    expect(turnsRead.mock.calls.length).toBeGreaterThan(reads);
+    expect(turnsRead.mock.calls[turnsRead.mock.calls.length - 1]?.[1]).not.toHaveProperty("after");
+    await settle(29_000);
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    await settle(2_000);
+    expect(screen.getByText("This subagent's record is gone.")).toBeTruthy();
+  });
+
+  it("polls every 5 seconds while the agent runs, and once more when it finishes, then stops", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "running" })));
+    draw();
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    await settle(5_000);
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+    turnsRead.mockResolvedValue(ok(page({ state: "finished" })));
+    // The poll that learns of the finish is the third read, and the one more is the fourth.
+    await settle(5_000);
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(4);
+    await settle(30_000);
+    expect(turnsRead).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not poll a finished agent, nor refresh for a first page that says finished", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "finished" })));
+    draw();
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    await settle(30_000);
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls an unknown state while the session is running", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "unknown" })));
+    draw();
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    await settle(5_000);
+    expect(turnsRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not poll an unknown state while the session is not running", async () => {
+    const snapshot = fixtureSnapshot(NOW);
+    const session = allSessions(snapshot).find((s) => s.id === 1);
+    if (session === undefined) throw new Error("fixture has no session 1");
+    session.status = "Ready";
+    useFleet.getState().apply("snapshot", snapshot);
+    turnsRead.mockResolvedValue(ok(page({ state: "unknown" })));
+    draw();
+    await settle();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    await settle(30_000);
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the turns when a refresh fails, with a retry that refreshes", async () => {
+    turnsRead.mockResolvedValue(ok(page({ state: "running" })));
+    draw();
+    await settle();
+    turnsRead.mockResolvedValueOnce(refused(502, "boom"));
+    await settle(5_000);
+    expect(screen.getByText(/You are mapping callers\./)).toBeTruthy();
+    expect(screen.getByText(/Could not refresh: boom/)).toBeTruthy();
+    turnsRead.mockResolvedValue(ok(page({ state: "finished" })));
+    fireEvent.click(screen.getByRole("button", { name: "retry" }));
+    await settle();
+    expect(screen.queryByText(/Could not refresh/)).toBeNull();
+  });
+
+  it("draws This session is gone. for a session the snapshot does not list, and reads nothing", async () => {
+    draw(99);
+    await settle();
+    expect(screen.getByText("This session is gone.")).toBeTruthy();
+    expect(turnsRead).not.toHaveBeenCalled();
   });
 });
