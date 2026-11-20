@@ -185,3 +185,82 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 	delete(assets, "/index.html")
 	require.ErrorContains(t, checkFirstLoad(assets, firstLoadBudget), "/index.html")
 }
+
+// checkLazyViews is whether the job and mockup screens are chunks of their own that index.html
+// does not load: one file per name, named by neither its URL nor its file name in the page, and
+// not among the first load's files.
+func checkLazyViews(assets map[string]staticAsset) error {
+	index, ok := assets["/index.html"]
+	if !ok {
+		return fmt.Errorf("the bundle has no /index.html")
+	}
+	page := string(index.body)
+	files, err := firstLoadFiles(page)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"JobBody", "MockupBody"} {
+		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
+		var chunks []string
+		for url := range assets {
+			if re.MatchString(url) {
+				chunks = append(chunks, url)
+			}
+		}
+		slices.Sort(chunks)
+		switch {
+		case len(chunks) == 0:
+			return fmt.Errorf("the bundle has no lazy chunk for %s: its panel is imported statically, or the build renamed it", name)
+		case len(chunks) > 1:
+			return fmt.Errorf("the bundle has more than one lazy chunk for %s: %s", name, strings.Join(chunks, ", "))
+		}
+		url := chunks[0]
+		if strings.Contains(page, url) || strings.Contains(page, strings.TrimPrefix(url, "/assets/")) || slices.Contains(files, url) {
+			return fmt.Errorf("index.html names the lazy chunk %s: it would load on every launch", url)
+		}
+	}
+	return nil
+}
+
+func TestDist_LazyViewsAreChunksOfTheirOwn(t *testing.T) {
+	require.NoError(t, checkLazyViews(nextStaticAssets(t)))
+}
+
+func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
+	const entry = `<!doctype html><script type="module" crossorigin src="/assets/index-a.js"></script>`
+	build := func(page string, files ...string) map[string]staticAsset {
+		assets := map[string]staticAsset{}
+		if page != "" {
+			assets["/index.html"] = staticAsset{body: []byte(page), ctype: "text/html; charset=utf-8"}
+		}
+		for _, f := range files {
+			assets[f] = staticAsset{body: []byte("export {};"), ctype: "text/javascript; charset=utf-8"}
+		}
+		return assets
+	}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js"}
+
+	for _, tc := range []struct {
+		name   string
+		assets map[string]staticAsset
+		want   string
+	}{
+		{"both chunks apart from the page", build(entry, all...), ""},
+		{"no mockup chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js"), "MockupBody"},
+		{"no job chunk", build(entry, "/assets/index-a.js", "/assets/MockupBody-c.js"), "JobBody"},
+		{"a second job chunk", build(entry, append([]string{"/assets/JobBody-z.js"}, all...)...), "more than one"},
+		{"a preloaded chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...), "/assets/JobBody-b.js"},
+		{"a chunk named in the page's text", build(entry+`<script>load("MockupBody-c.js")</script>`, all...), "MockupBody"},
+		{"no index.html", build("", all...), "/index.html"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkLazyViews(tc.assets)
+			if tc.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+	require.ErrorContains(t, checkLazyViews(build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...)), "launch")
+}
