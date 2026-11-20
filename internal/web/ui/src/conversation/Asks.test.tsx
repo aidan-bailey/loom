@@ -315,12 +315,16 @@ describe("Asks", () => {
       expect(answerButton()).toBeDisabled();
     });
 
-    it("an Other of exactly 64 KiB plus a trailing space says Too long and turns Answer off", async () => {
+    it("an Other or a note of exactly 64 KiB plus whitespace is not too long: the trimmed text is what is sent", async () => {
       setup([question]);
       await userEvent.click(radio(o0));
-      fireEvent.change(other(Q1), { target: { value: `${"a".repeat(MAX_MESSAGE_BYTES)} ` } });
-      expect(screen.getByText("Too long: an answer is at most 64 KiB.")).toBeInTheDocument();
-      expect(answerButton()).toBeDisabled();
+      fireEvent.change(other(Q1), { target: { value: ` ${"a".repeat(MAX_MESSAGE_BYTES)} ` } });
+      expect(screen.queryByText(/Too long/)).toBeNull();
+      expect(answerButton()).toBeEnabled();
+      fireEvent.change(other(Q1), { target: { value: "x" } });
+      fireEvent.change(note(Q1), { target: { value: `${"a".repeat(MAX_MESSAGE_BYTES)} ` } });
+      expect(screen.queryByText(/Too long/)).toBeNull();
+      expect(answerButton()).toBeEnabled();
     });
 
     it("Chat about this sends the sheet's text and nothing when the sheet is cancelled", async () => {

@@ -125,8 +125,11 @@ function change(ask: Ask, text: string, edit: (answer: QuestionDraft) => Questio
 function QuestionAsk({ ask, off }: { ask: Ask; off: boolean }): ReactElement {
   const stored = useDrafts((s) => s.asks[ask.id]);
   const draft = stored ?? emptyDraft(ask);
+  // The text answerBody would send: trimmed, so the line shows exactly when Answer is held off.
   const tooLong = Object.values(draft.answers).some(
-    (a) => utf8Length(a.other) > MAX_MESSAGE_BYTES || utf8Length(a.note) > MAX_MESSAGE_BYTES,
+    (a) =>
+      utf8Length(a.other.trim()) > MAX_MESSAGE_BYTES ||
+      utf8Length(a.note.trim()) > MAX_MESSAGE_BYTES,
   );
   const body = answerBody(ask, stored);
   return (
