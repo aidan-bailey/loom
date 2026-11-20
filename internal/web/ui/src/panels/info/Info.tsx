@@ -1,10 +1,13 @@
 // The info panel's body, a port of the classic Info: the sub-line, the Changes, PR and Account
 // tiles, the session's subagents and jobs, its actions and the reply box.
 import { ChevronRight, ExternalLink } from "lucide-react";
-import type { ReactElement, ReactNode } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 
 import type { Agent, Job, Session } from "@/api/gen";
+import { CommandButton } from "@/app/CommandButton";
 import { AGENT_ID, hrefFor } from "@/app/routes";
+import { ReplyBox } from "@/conversation/ReplyBox";
+import { useMarkSeen } from "@/fleet/seen";
 import { isStale, resetPassed, resetText, shareText, shownWindow, usageFor } from "@/fleet/usage";
 import { sessionActions } from "@/commands/session";
 import { cn } from "@/lib/utils";
@@ -226,9 +229,39 @@ function clock(): number {
   return Date.now();
 }
 
+// Actions is the row of the session's actions `sessionActions` offers, as command buttons: the
+// commands own their sheets, in-flight key, stale gate and toasts. No row when none is on offer.
+function Actions({ session }: { session: Session }): ReactElement | null {
+  const offered = sessionActions(session);
+  const buttons: ReactElement[] = [];
+  if (offered.pause)
+    buttons.push(<CommandButton key="pause" id="session.pause" variant="secondary" />);
+  if (offered.resume) buttons.push(<CommandButton key="resume" id="session.resume" />);
+  if (offered.push)
+    buttons.push(<CommandButton key="push" id="session.push" variant="secondary" />);
+  if (offered.merge)
+    buttons.push(<CommandButton key="merge" id="session.merge" variant="secondary" />);
+  if (offered.kill)
+    buttons.push(<CommandButton key="kill" id="session.kill" variant="destructive" />);
+  if (buttons.length === 0) return null;
+  return <div className="flex gap-2 [&>button]:flex-1">{buttons}</div>;
+}
+
 // Info is a session's info view. `now` is read at each render, so a running job's time moves
-// whenever the view draws again.
+// whenever the view draws again: a running job redraws it every 5 s.
 export function Info({ session }: { session: Session }): ReactElement {
+  useMarkSeen(session.id);
+  const [, setTick] = useState(0);
+  const timing = (session.jobs ?? []).some((j) => j.state === "running");
+  useEffect(() => {
+    if (!timing) return;
+    const timer = setInterval(() => {
+      setTick((n) => n + 1);
+    }, 5000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [timing]);
   const now = clock();
   return (
     <div className="flex flex-col gap-4 px-4 pb-6">
@@ -236,6 +269,8 @@ export function Info({ session }: { session: Session }): ReactElement {
       <Tiles session={session} now={now} />
       <Agents session={session} />
       <Jobs session={session} now={now} />
+      <Actions session={session} />
+      <ReplyBox session={session} />
     </div>
   );
 }

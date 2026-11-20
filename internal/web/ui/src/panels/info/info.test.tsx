@@ -1,9 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Job, Session, Snapshot } from "@/api/gen";
+import { api } from "@/api/request";
 import "@/commands";
+import { noticesOk } from "@/commands/testkit";
+import { toastManager } from "@/components/ui/toast";
 import { fixtureSnapshot } from "@/fixtures";
+import { readSeen } from "@/fleet/seen";
 import { useFleet } from "@/store/fleet";
 
 import { Info } from "./Info";
@@ -17,6 +22,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
   window.localStorage.clear();
   window.history.replaceState(null, "", window.location.pathname);
@@ -255,5 +261,122 @@ describe("Info: the jobs", () => {
   it("no jobs, no Jobs heading", () => {
     render(<Info session={show(6)} />);
     expect(screen.queryByRole("heading", { name: /Jobs/ })).toBeNull();
+  });
+});
+
+describe("Info: the actions, the reply box and the clock", () => {
+  beforeEach(() => {
+    vi.spyOn(toastManager, "add").mockImplementation(() => "toast");
+  });
+
+  const FIVE = ["Pause", "Resume", "Push", "Merge", "Kill"];
+  const offered = (): string[] =>
+    screen
+      .queryAllByRole("button")
+      .map((b) => b.textContent)
+      .filter((t): t is string => t !== null && FIVE.includes(t));
+
+  it("a Running session offers pause, push, merge and kill, in that order, and no resume", () => {
+    render(<Info session={show(1)} />);
+    expect(offered()).toEqual(["Pause", "Push", "Merge", "Kill"]);
+  });
+
+  it("a Paused session offers resume, push, merge and kill, and no pause", () => {
+    render(<Info session={show(5, { status: "Paused", group: "paused" })} />);
+    expect(offered()).toEqual(["Resume", "Push", "Merge", "Kill"]);
+  });
+
+  it("a Recoverable session offers kill alone", () => {
+    render(<Info session={show(5, { status: "Recoverable", group: "paused" })} />);
+    expect(offered()).toEqual(["Kill"]);
+  });
+
+  it("a Loading or Deleting session offers none of the five, and no row", () => {
+    for (const status of ["Loading", "Deleting"] as const) {
+      const view = render(<Info session={show(1, { status })} />);
+      expect(offered()).toEqual([]);
+      view.unmount();
+    }
+  });
+
+  it("Resume is the primary button and Kill the destructive one", () => {
+    render(<Info session={show(5, { status: "Paused", group: "paused" })} />);
+    expect(screen.getByRole("button", { name: "Resume" }).className).toContain("bg-primary");
+    expect(screen.getByRole("button", { name: "Kill" }).className).toContain("text-destructive");
+  });
+
+  it("a button runs its command", async () => {
+    const pause = vi.spyOn(api, "pause").mockResolvedValue(noticesOk());
+    render(<Info session={show(1)} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => {
+      expect(pause).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it("the buttons are off while the snapshot is stale", () => {
+    render(<Info session={show(1)} />);
+    act(() => {
+      useFleet.setState({ stale: true, link: "offline" });
+    });
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Pause" }).disabled).toBe(true);
+  });
+
+  it("draws the reply box for a session that can take a reply, and says to resume for a paused one", () => {
+    const view = render(<Info session={show(1)} />);
+    expect(screen.getByRole("textbox", { name: "Reply" })).toBeTruthy();
+    view.unmount();
+    render(<Info session={show(5, { status: "Paused", group: "paused" })} />);
+    expect(screen.getByText("Resume the session to reply.")).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("marks the session seen when it opens and again when it closes", () => {
+    const view = render(<Info session={show(1)} />);
+    expect(readSeen()["1"]).toBe(NOW);
+    vi.setSystemTime(NOW + 60_000);
+    view.unmount();
+    expect(readSeen()["1"]).toBe(NOW + 60_000);
+  });
+
+  it("a running job's time moves every 5 s", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    render(<Info session={show(1)} />);
+    expect(screen.getByText("job 214 · 2m 10s")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText("job 214 · 2m 15s")).toBeTruthy();
+  });
+
+  const finished = (snapshot: Snapshot): void => {
+    const job = sessionOf(snapshot, 1).jobs?.find((j) => j.id === 214) as Job;
+    job.state = "done";
+    job.exit = { code: 0 };
+    job.ended = new Date(NOW - 295_000).toISOString();
+  };
+
+  it("no timer runs for a session with no running job", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    render(<Info session={show(1, {}, finished)} />);
+    expect(screen.getByText("job 214 · exit 0 · 4m ago")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText("job 214 · exit 0 · 4m ago")).toBeTruthy();
+  });
+
+  it("the interval stops when the last running job ends", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const view = render(<Info session={show(1)} />);
+    view.rerender(<Info session={show(1, {}, finished)} />);
+    expect(screen.getByText("job 214 · exit 0 · 4m ago")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText("job 214 · exit 0 · 4m ago")).toBeTruthy();
   });
 });
