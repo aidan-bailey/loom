@@ -3450,7 +3450,7 @@ git commit -m "feat(web): register the launch and device commands, and rebuild t
 - **Review:** deep
 - **Form:** full (outside calls in an order iOS enforces: the permission inside the gesture, a subscription made and dropped again on a failed post)
 
-This story ports `push.mjs`'s enable flow as the command `push.enable` (spec Part 3 settlement 12) and gives Settings the phone's push state. The command asks for the notification permission first, inside the tap (iOS asks only inside a gesture, so `Notification.requestPermission()` is the first call `run` makes and nothing is awaited before it), then waits up to 5 s for an active worker, reads the key, drops the phone's old subscription, subscribes with the key, and posts the subscription, dropping the new one again when the post fails. Each failure is an error toast in the classic words, and success toasts "Notifications are on.". The push helpers `pushSupported`, `activeRegistration` and `subscriptionBody` move from `app/worker.ts` into the new `app/push.ts` with their bodies unchanged, and `usePushStatus` reads the phone beside them: classic `pushView`'s states, re-read when `device.push` changes and when a `push.enable` run ends. Three tasks: the move, the hook, the command. Each rebuilds the bundle, which comes out unchanged where nothing imports the new code (Task 5.2's hook until Task 5.3 and Story 6 use it) and changes in Task 5.3, since `main.tsx` imports the commands module. None of the code holds a landmine marker.
+This story ports `push.mjs`'s enable flow as the command `push.enable` (spec Part 3 settlement 12) and gives Settings the phone's push state. The command asks for the notification permission first, inside the tap (iOS asks only inside a gesture, so `Notification.requestPermission()` is the first call `run` makes and nothing is awaited before it), then waits up to 5 s for an active worker, reads the key, drops the phone's old subscription, subscribes with the key, and posts the subscription, dropping the new one again when the post fails. Each failure is an error toast in the classic words, and success toasts "Notifications are on.". The push helpers `pushSupported`, `activeRegistration` and `subscriptionBody` move from `app/worker.ts` into the new `app/push.ts` with their bodies unchanged, and `usePushStatus` reads the phone beside them: classic `pushView`'s states, re-read when `device.push` changes and when a `push.enable` run ends. Three tasks: the move, the hook, the command. Each rebuilds the bundle: Task 5.1's move changes the entry script (its hash and so `internal/web/dist/`), Task 5.2's may come out unchanged (nothing imports the hook until Task 5.3 and Story 6 use it), and Task 5.3's changes, since `main.tsx` imports the commands module. None of the code holds a landmine marker.
 
 ### Task 5.1: Move the push helpers into `app/push.ts`
 
@@ -4173,7 +4173,7 @@ git commit -m "feat(web): usePushStatus, the push control's states read from the
 Create `internal/web/ui/src/commands/push.test.ts`:
 
 ```ts
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { api } from "@/api/request";
 import { commandById, commandEnabled, runCommand } from "@/app/commands";
@@ -4211,8 +4211,8 @@ let newSubscription: { toJSON: () => object; unsubscribe: ReturnType<typeof vi.f
 let getSubscription: ReturnType<typeof vi.fn>;
 let subscribe: ReturnType<typeof vi.fn>;
 let registration: ServiceWorkerRegistration;
-let pushKey: ReturnType<typeof vi.spyOn<typeof api, "pushKey">>;
-let postPush: ReturnType<typeof vi.spyOn<typeof api, "postPush">>;
+let pushKey: MockInstance<typeof api.pushKey>;
+let postPush: MockInstance<typeof api.postPush>;
 
 const settings = () => context(undefined, { panel: "settings" });
 const enable = () => runCommand(command("push.enable"), settings(), undefined);
