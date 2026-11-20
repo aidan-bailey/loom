@@ -22,7 +22,7 @@ func TestRank_BySessionsThenLatest(t *testing.T) {
 	newer, _ := in.OpenThread(in.Add(note(5, "newer", 30)), "")
 	// Thread 4: closed.
 	closed, _ := in.OpenThread(in.Add(note(6, "closed", 40)), "")
-	require.NoError(t, in.Close(closed))
+	require.NoError(t, in.Close(closed, "", t0))
 	// An ungrouped note.
 	loose := in.Add(note(7, "loose", 20))
 

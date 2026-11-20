@@ -1,8 +1,10 @@
 package feedback
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -102,8 +104,11 @@ func (in *Inbox) Fail(n NoteID, why string, retryAt time.Time) {
 	}
 }
 
-// Close closes thread t; an unknown or closed thread is an error.
-func (in *Inbox) Close(t ThreadID) error {
+// Close closes thread t at now and stores reason (trimmed; "" for none, else
+// one line of at most MaxCloseReason bytes). An unknown or closed thread or a
+// bad reason is an error and changes nothing. A published thread keeps its
+// Issue.
+func (in *Inbox) Close(t ThreadID, reason string, now time.Time) error {
 	j := in.threadAt(t)
 	switch {
 	case j < 0:
@@ -111,16 +116,106 @@ func (in *Inbox) Close(t ThreadID) error {
 	case in.Threads[j].Status == Closed:
 		return fmt.Errorf("thread %d is already closed", t)
 	}
-	in.Threads[j].Status = Closed
+	reason = strings.TrimSpace(reason)
+	switch {
+	case strings.ContainsAny(reason, "\r\n"):
+		return fmt.Errorf("the close reason must be one line")
+	case len(reason) > MaxCloseReason:
+		return fmt.Errorf("the close reason is %d bytes: at most %d", len(reason), MaxCloseReason)
+	}
+	in.Threads[j].Status, in.Threads[j].Closed = Closed, Closure{At: now, Reason: reason}
 	return nil
 }
 
+// CloseIssue closes, at now and with reason as given, every published thread
+// linked to issue number of repo (names compare without case) whose Issue.At
+// is not after linkedBy, and returns their IDs in order. The issue poll passes
+// the time its poll began, so a thread linked during the poll, which the poll
+// may not have seen, stays published for the next one. Threads already closed,
+// threads linked elsewhere and threads linked after linkedBy are left alone;
+// with none to close it returns nil.
+func (in *Inbox) CloseIssue(repo string, number int, reason string, linkedBy time.Time, now time.Time) []ThreadID {
+	var closed []ThreadID
+	for i := range in.Threads {
+		th := &in.Threads[i]
+		if th.Status == Published && sameIssue(th.Issue, repo, number) && !th.Issue.At.After(linkedBy) {
+			th.Status, th.Closed = Closed, Closure{At: now, Reason: reason}
+			closed = append(closed, th.ID)
+		}
+	}
+	slices.Sort(closed)
+	return closed
+}
+
+// Publish links thread t to issue number of repo and marks it published; a
+// fixing thread keeps its Fix. It sets Issue.Posted to through, and on a
+// repeat for the same issue moves Posted to through only when through sits
+// later in the thread's Notes than Posted, never back (note IDs don't
+// decide: a retried note joins after a newer one). A repeat leaves the
+// first link's Repo, URL and At. Refused, changing nothing: an empty repo or a
+// number below 1 (the link would read as none), an unknown or closed thread,
+// a thread linked to another issue, a through that is not one of its notes.
+func (in *Inbox) Publish(t ThreadID, repo string, number int, through NoteID, now time.Time) error {
+	switch {
+	case repo == "":
+		return fmt.Errorf("the issue repository is empty")
+	case number < 1:
+		return fmt.Errorf("issue number %d: want at least 1", number)
+	}
+	j := in.threadAt(t)
+	if j < 0 {
+		return fmt.Errorf("thread %d doesn't exist", t)
+	}
+	th := &in.Threads[j]
+	switch {
+	case th.Status == Closed:
+		return fmt.Errorf("thread %d is already closed", t)
+	case th.Issue.Number != 0 && !sameIssue(th.Issue, repo, number):
+		return fmt.Errorf("thread %d is linked to %s#%d", t, th.Issue.Repo, th.Issue.Number)
+	}
+	at := slices.Index(th.Notes, through)
+	if at < 0 {
+		return fmt.Errorf("note n%d is not in thread %d", through, t)
+	}
+	if th.Issue.Number == 0 {
+		th.Issue = Issue{Repo: repo, Number: number, URL: IssueURL(repo, number), At: now, Posted: through}
+	} else if at > slices.Index(th.Notes, th.Issue.Posted) {
+		th.Issue.Posted = through
+	}
+	th.Status = Published
+	return nil
+}
+
+// sameIssue reports whether link names issue number of repo; GitHub names
+// don't differ by case.
+func sameIssue(link Issue, repo string, number int) bool {
+	return link.Number == number && strings.EqualFold(link.Repo, repo)
+}
+
+// Published is the threads linked to an issue and not closed, by ID. The
+// threads share their Notes slices with in.
+func (in Inbox) Published() []Thread {
+	var out []Thread
+	for _, t := range in.Threads {
+		if t.Status == Published {
+			out = append(out, t)
+		}
+	}
+	slices.SortFunc(out, func(a, b Thread) int { return cmp.Compare(a.ID, b.ID) })
+	return out
+}
+
 // SetFix records thread t's fix session and marks it fixing; an unknown or
-// closed thread is an error.
+// closed thread is an error, and so is a published one (PublishedFixError: it
+// would leave Published while keeping its Issue, and never close with the
+// issue). Either way the inbox is unchanged.
 func (in *Inbox) SetFix(t ThreadID, f Fix) error {
 	j := in.threadAt(t)
 	if j < 0 || in.Threads[j].Status == Closed {
 		return fmt.Errorf("thread %d doesn't exist or is closed", t)
+	}
+	if in.Threads[j].Status == Published {
+		return PublishedFixError(in.Threads[j])
 	}
 	in.Threads[j].Status, in.Threads[j].Fix = Fixing, f
 	return nil

@@ -76,7 +76,7 @@ func (m *Model) CloseThread(t feedback.ThreadID, req ReqID) {
 		return
 	}
 	prev := f.inbox.Clone()
-	if err := f.inbox.Close(t); err != nil {
+	if err := f.inbox.Close(t, "", time.Now()); err != nil {
 		m.refuse(req, 0, err)
 		return
 	}

@@ -47,7 +47,7 @@ func seedInbox(t *testing.T) feedback.Inbox {
 		From: feedback.Session{ID: 2, Title: "tester", Workspace: "ws-a"}, At: at.Add(time.Minute)}), t1))
 	t2, err := in.OpenThread(in.Add(feedback.Note{Kind: feedback.KindDocs, Title: "old", Text: "x", From: feedback.Session{ID: 3}, At: at}), "")
 	require.NoError(t, err)
-	require.NoError(t, in.Close(t2))
+	require.NoError(t, in.Close(t2, "", at))
 	in.Add(feedback.Note{Kind: feedback.KindMissing, Title: "a loose note", Text: "y", From: feedback.Session{ID: 3, Title: "s3"}, At: at})
 	require.NoError(t, feedback.Save(filepath.Join(global, "feedback"), in))
 	return in
