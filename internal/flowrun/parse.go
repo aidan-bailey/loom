@@ -78,6 +78,9 @@ func ParseReview(text string) (Review, error) {
 	var r Review
 	for _, line := range strings.Split(text, "\n") {
 		if v, ok := TagLine(line, "FINDING:"); ok {
+			if noFinding(v) {
+				continue
+			}
 			f, err := parseFinding(v)
 			if err != nil {
 				return Review{}, err
@@ -94,6 +97,12 @@ func ParseReview(text string) (Review, error) {
 	}
 	return r, nil
 }
+
+// noFinding reports whether a FINDING line's value says there is none
+// (`FINDING: none`), as a reviewer that found nothing may write, the way
+// flow's plan-stage reviewers are told to; any other value is a finding to
+// read.
+func noFinding(v string) bool { return strings.EqualFold(strings.TrimSuffix(v, "."), "none") }
 
 // parseFinding reads a FINDING line's value.
 func parseFinding(v string) (Finding, error) {
@@ -122,7 +131,7 @@ func ParseDocs(text string) (DocPass, error) {
 			d.Docs++
 		} else if v, ok := TagLine(line, "LESSON:"); ok && v != "" {
 			d.Lessons++
-		} else if v, ok := TagLine(line, "FINDING:"); ok {
+		} else if v, ok := TagLine(line, "FINDING:"); ok && !noFinding(v) {
 			f, err := parseFinding(v)
 			if err != nil {
 				return DocPass{}, err

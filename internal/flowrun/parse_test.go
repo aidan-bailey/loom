@@ -42,6 +42,29 @@ func TestParseReview(t *testing.T) {
 	assert.Equal(t, []string{"`snapshot` redraws the cell under `cursor`"}, r.Plan)
 }
 
+// A reviewer that found nothing and says so in a FINDING line reported no
+// finding, not a failure (a story review's `FINDING: none` parked a run on
+// 2026-11-11 as a failed agent); a value that only starts with "none" is
+// still a line it can't read.
+func TestParseReview_AFindingOfNoneIsNoFinding(t *testing.T) {
+	for _, text := range []string{"FINDING: none\nVERDICT: APPROVED", "**FINDING:** None.\nVERDICT: APPROVED", "`FINDING: none`\nVERDICT: APPROVED"} {
+		r, err := ParseReview(text)
+		require.NoError(t, err, text)
+		assert.Empty(t, r.Findings, text)
+		assert.Equal(t, "APPROVED", r.Verdict, text)
+	}
+	r, err := ParseReview("FINDING: none\nFINDING: Minor a.go:1 rename it\nVERDICT: APPROVED")
+	require.NoError(t, err)
+	assert.Equal(t, []Finding{{Severity: "Minor", File: "a.go", Line: 1, Fix: "rename it"}}, r.Findings, "a real finding beside it still counts")
+	for _, text := range []string{"FINDING: none of the tests can fail\nVERDICT: APPROVED", "FINDING: Minor none\nVERDICT: APPROVED"} {
+		_, err := ParseReview(text)
+		assert.ErrorContains(t, err, "a FINDING line it can't read", text)
+	}
+	d, err := ParseDocs("FINDING: none\nSTATUS: DONE")
+	require.NoError(t, err)
+	assert.Equal(t, DocPass{}, d, "a doc pass's FINDING: none is no finding too")
+}
+
 // TagLine takes a markdown wrapper off a tagged line, and never a code
 // span of its value (feedback thread 18).
 func TestParseDocs(t *testing.T) {
