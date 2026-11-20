@@ -7,3 +7,4 @@ import "./info";
 import "./changes";
 import "./agent";
 import "./job";
+import "./mockup";
