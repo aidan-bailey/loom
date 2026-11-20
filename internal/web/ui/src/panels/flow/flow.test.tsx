@@ -85,15 +85,21 @@ describe("flow parts", () => {
     vi.setSystemTime(start);
     const slow = renderHook(() => useClock(30_000));
     expect(slow.result.current).toBe(start);
-    act(() => vi.advanceTimersByTime(29_000));
+    act(() => {
+      vi.advanceTimersByTime(29_000);
+    });
     expect(slow.result.current).toBe(start);
-    act(() => vi.advanceTimersByTime(1_000));
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
     expect(slow.result.current).toBe(start + 30_000);
     slow.unmount();
 
     const now = Date.now();
     const fast = renderHook(() => useClock(1_000));
-    act(() => vi.advanceTimersByTime(1_000));
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
     expect(fast.result.current).toBe(now + 1_000);
     fast.unmount();
     expect(vi.getTimerCount()).toBe(0);
