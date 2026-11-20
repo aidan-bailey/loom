@@ -1,7 +1,7 @@
-import { act, render, screen, type RenderResult } from "@testing-library/react";
+import { act, render, screen, within, type RenderResult } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Flow, Session } from "@/api/gen";
+import type { Flow, FlowStep, FlowStory, Session } from "@/api/gen";
 import { flowKey, useFlow } from "@/api/reads";
 import { hrefFor } from "@/app/routes";
 import { fixtureFlow, fixtureSnapshot } from "@/fixtures";
@@ -215,5 +215,264 @@ describe("FlowStoryBody", () => {
       vi.advanceTimersByTime(30_000);
     });
     expect(facts(ticking)).toBe("junior-dev · light · vouched · 2m 30s");
+  });
+});
+
+// stepsOf is the step items the view draws, in order.
+function stepsOf(view: RenderResult): HTMLElement[] {
+  return Array.from(view.container.querySelectorAll<HTMLElement>('[data-slot="step"]'));
+}
+
+function story(flow: Flow, id: string): FlowStory {
+  const found = id === "F" ? flow.final : (flow.stories ?? []).find((s) => s.id === id);
+  if (found === null || found === undefined) throw new Error(`the canned board lacks row ${id}`);
+  return found;
+}
+
+function stepOf(flow: Flow, id: string, index: number): FlowStep {
+  const found = story(flow, id).steps?.[index];
+  if (found === undefined) throw new Error(`the canned row ${id} lacks step ${index}`);
+  return found;
+}
+
+describe("FlowStoryBody steps", () => {
+  it("each in order with its word, role, status and elapsed time, and the cost where the agent is priced", () => {
+    const flow = board((f) => {
+      f.costs.by_agent = { "2026-11-09-flow-visualisation-s1-dev1": 0.4 };
+    });
+    const view = show({ flow });
+    const items = stepsOf(view);
+    expect(items.map((li) => li.textContent?.match(/^(dev|gates|fix|review)\d/)?.[0])).toEqual([
+      "dev1",
+      "gates1",
+      "fix1",
+      "gates2",
+      "review1",
+    ]);
+    expect(items[0]).toHaveTextContent("intermediate-dev · DONE");
+    expect(items[0]).toHaveTextContent("14m 0s $0.40");
+    expect(items[1]).toHaveTextContent("gates · failed");
+    expect(items[1]).toHaveTextContent("3m 0s");
+    expect(items[1]?.textContent).not.toContain("$");
+    view.unmount();
+
+    const bare = show({
+      flow: board((f) => {
+        const step = stepOf(f, "1", 0);
+        step.started = "";
+        step.ended = "";
+      }),
+    });
+    expect(stepsOf(bare)[0]).toHaveTextContent(/^dev1 intermediate-dev · DONE$/);
+  });
+
+  it("the outcome of each decides its dot, and an unknown status is neutral and raw", () => {
+    const outcomes = (id: string, flow?: Flow): (string | null)[] => {
+      const view = show({ story: id, flow });
+      const found = stepsOf(view).map((li) => li.getAttribute("data-outcome"));
+      view.unmount();
+      return found;
+    };
+    expect(outcomes("1")).toEqual(["passed", "failed", "passed", "passed", "passed"]);
+    expect(outcomes("3")).toEqual(["failed"]);
+    expect(outcomes("4")).toEqual(["running"]);
+    const four = show({ story: "4" });
+    expect(stepsOf(four)[0]).toHaveTextContent("2m 0s");
+    four.unmount();
+
+    const withStatus = (status: string): Flow =>
+      board((f) => {
+        stepOf(f, "4", 0).status = status;
+      });
+    expect(outcomes("4", withStatus("starting"))).toEqual(["running"]);
+
+    const todo = show({ story: "4", flow: withStatus("") });
+    expect(stepsOf(todo)[0]?.getAttribute("data-outcome")).toBe("todo");
+    expect(stepsOf(todo)[0]).toHaveTextContent("unreadable");
+    todo.unmount();
+
+    const weird = show({ story: "4", flow: withStatus("weird") });
+    const item = stepsOf(weird)[0];
+    expect(item?.getAttribute("data-outcome")).toBe("unknown");
+    expect(item).toHaveTextContent("weird");
+    const dot = item?.querySelector("span[aria-hidden]");
+    expect(dot).toHaveClass("bg-muted-foreground");
+    expect(dot).not.toHaveClass("bg-error");
+    expect(dot).not.toHaveClass("bg-working");
+  });
+
+  it("a step with a report links to it, and one without is not a link", () => {
+    const view = show({});
+    const [dev, gates] = stepsOf(view);
+    expect(within(dev).getByRole("link")).toHaveAttribute(
+      "href",
+      hrefFor(
+        "flowDoc",
+        { id: "6", doc: "report:2026-11-09-flow-visualisation-s1-dev1" },
+        { plan: planOfSession(0) },
+      ),
+    );
+    expect(
+      within(gates)
+        .queryAllByRole("link")
+        .map((a) => a.getAttribute("href")?.includes("flow/doc")),
+    ).not.toContain(true);
+  });
+
+  it("the unreadable and waiting lines", () => {
+    const four = show({ story: "4" });
+    expect(screen.getByText("waiting for an agent slot")).toHaveClass("text-muted-foreground");
+    four.unmount();
+
+    const bad = show({
+      story: "4",
+      flow: board((f) => {
+        stepOf(f, "4", 0).unreadable = "bad report";
+      }),
+    });
+    expect(screen.getByText("bad report")).toHaveClass("text-error");
+    bad.unmount();
+
+    show({});
+    expect(screen.queryByText("bad report")).toBeNull();
+    expect(screen.queryByText("waiting for an agent slot")).toBeNull();
+  });
+
+  it("the gate lines: the verdict, the text and a link to the job", () => {
+    const view = show({});
+    const gates = Array.from(
+      stepsOf(view)[1]?.querySelectorAll<HTMLElement>('[data-slot="gate"]') ?? [],
+    );
+    expect(gates.map((g) => g.textContent)).toEqual([
+      "PASS gofmt check",
+      "PASS go vet ./...",
+      "FAIL go test ./...",
+    ]);
+    expect(within(gates[0]).getByText("PASS")).toHaveClass("text-working");
+    expect(within(gates[2]).getByText("FAIL")).toHaveClass("text-error");
+    expect(gates[2]).toHaveAttribute("href", hrefFor("job", { id: "6", job: "34" }));
+    view.unmount();
+
+    const empty = show({
+      flow: board((f) => {
+        const gate = stepOf(f, "1", 1).gates?.[0];
+        if (gate !== undefined) Object.assign(gate, { verdict: "", job: 0 });
+      }),
+    });
+    const first = stepsOf(empty)[1]?.querySelector('[data-slot="gate"]');
+    expect(first?.textContent).toBe("… gofmt check");
+    expect(first?.querySelector("span")).toHaveClass("text-muted-foreground");
+    expect(first?.tagName).not.toBe("A");
+  });
+
+  it("a row with no step says so", () => {
+    const view = show({ story: "5" });
+    expect(screen.getByText("steps")).toBeInTheDocument();
+    expect(screen.getByText("no step yet")).toBeInTheDocument();
+    expect(stepsOf(view)).toHaveLength(0);
+  });
+});
+
+describe("FlowStoryBody findings and reads", () => {
+  it("the findings box: the counts, the kept lines of the final row, none for the premise row", () => {
+    const two = show({ story: "2" });
+    const line = screen.getByText("Critical 0 · Important 0 · Minor 1");
+    expect(line).not.toHaveClass("text-muted-foreground");
+    two.unmount();
+
+    const one = show({});
+    expect(screen.getByText("Critical 0 · Important 0 · Minor 0")).toHaveClass(
+      "text-muted-foreground",
+    );
+    expect(screen.queryByText(/name the cache key/)).toBeNull();
+    one.unmount();
+
+    const short = show({
+      flow: board((f) => {
+        story(f, "1").findings = [];
+      }),
+    });
+    expect(screen.getByText("none yet")).toBeInTheDocument();
+    short.unmount();
+
+    const final = show({ story: "F" });
+    expect(screen.getByText(/^Critical \d+ · Important \d+ · Minor \d+$/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Minor internal/flowview/detail.go:88 name the cache key"),
+    ).toBeInTheDocument();
+    final.unmount();
+
+    show({ story: "P" });
+    expect(screen.queryByText("findings")).toBeNull();
+  });
+
+  it("the reads box: the plan's lines, each spec section once and the changes", () => {
+    const plan = planOfSession(0);
+    const view = show({});
+    const link = (name: string): HTMLElement => screen.getByRole("link", { name });
+    expect(link("plan · Story 1 (L212–604)")).toHaveAttribute(
+      "href",
+      hrefFor("flowDoc", { id: "6", doc: "plan" }, { plan, at: "212" }),
+    );
+    expect(link("spec §1")).toHaveAttribute(
+      "href",
+      hrefFor("flowDoc", { id: "6", doc: "spec" }, { plan, at: "§1" }),
+    );
+    expect(link("spec §2")).toHaveAttribute(
+      "href",
+      hrefFor("flowDoc", { id: "6", doc: "spec" }, { plan, at: "§2" }),
+    );
+    expect(link("7 commits → changes")).toHaveAttribute("href", hrefFor("changes", { id: "6" }));
+    view.unmount();
+
+    const four = show({
+      story: "4",
+      flow: board((f) => {
+        story(f, "4").line = 0;
+      }),
+    });
+    const bare = screen.getByRole("link", { name: "plan · Story 4" });
+    expect(bare).toHaveAttribute("href", hrefFor("flowDoc", { id: "6", doc: "plan" }, { plan }));
+    expect(bare.getAttribute("href")).not.toContain("at=");
+    expect(screen.queryByRole("link", { name: /changes/ })).toBeNull();
+    four.unmount();
+  });
+
+  it("a section the reading names twice is one link, and spaces in it do not matter", () => {
+    const withReading = (reading: string): Flow =>
+      board((f) => {
+        story(f, "1").reading = reading;
+      });
+    const specLinks = (): string[] =>
+      screen.queryAllByRole("link", { name: /^spec §/ }).map((a) => a.textContent ?? "");
+    const plan = planOfSession(0);
+
+    const twice = show({ flow: withReading("spec §1, §2, §1 and § 1") });
+    expect(specLinks()).toEqual(["spec §1", "spec §2"]);
+    twice.unmount();
+
+    const none = show({ flow: withReading("none") });
+    expect(specLinks()).toEqual([]);
+    none.unmount();
+
+    show({ flow: withReading("spec §3.2") });
+    expect(screen.getByRole("link", { name: "spec §3.2" })).toHaveAttribute(
+      "href",
+      hrefFor("flowDoc", { id: "6", doc: "spec" }, { plan, at: "§3.2" }),
+    );
+  });
+
+  it("the premise and final rows draw no reads box", () => {
+    const premise = show({ story: "P" });
+    expect(screen.queryByText("reads")).toBeNull();
+    premise.unmount();
+
+    const final = show({ story: "F" });
+    expect(screen.queryByText("reads")).toBeNull();
+    expect(screen.queryByRole("link", { name: /^plan · Story/ })).toBeNull();
+    const items = stepsOf(final);
+    expect(items[0]).toHaveTextContent("gates1");
+    expect(items[1]).toHaveTextContent("review1");
+    expect(items[1]?.getAttribute("data-outcome")).toBe("running");
   });
 });
