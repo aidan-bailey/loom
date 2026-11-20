@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Session } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
 
-import { definePanel, panelFor, sessionTabs, type PanelProps } from "./panels";
+import { definePanel, panelFor, sessionTabs, type PanelId, type PanelProps } from "./panels";
 
 const Body = (): null => null;
 const props: PanelProps = { sessionId: undefined, params: {}, search: {} };
@@ -63,4 +63,35 @@ describe("the panel registry", () => {
     ]);
     expect(sessionTabs(aSession({ claude: false })).map((p) => p.id)).toEqual(["info"]);
   });
+
+  it("has a panel for every PanelId once @/panels is imported", async () => {
+    // A fresh registry that only the real panel modules fill: they import
+    // @/app/panels, which resolves to the same fresh module as ./panels.
+    vi.resetModules();
+    const registry = await import("./panels");
+    expect(registry.panelFor("fleet")).toBeUndefined();
+    await import("@/panels");
+
+    // Typed so a PanelId added later without a line here fails the typecheck.
+    const ids: Record<PanelId, true> = {
+      fleet: true,
+      turns: true,
+      info: true,
+      changes: true,
+      mockup: true,
+      mockupFull: true,
+      agent: true,
+      job: true,
+      flow: true,
+      flowStory: true,
+      flowDoc: true,
+      flows: true,
+      new: true,
+      settings: true,
+      pair: true,
+    };
+    for (const id of Object.keys(ids) as PanelId[]) {
+      expect(registry.panelFor(id)?.id).toBe(id);
+    }
+  }, 30_000);
 });
