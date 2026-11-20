@@ -1,16 +1,21 @@
-import { act, render, renderHook, screen, type RenderResult } from "@testing-library/react";
+import { act, render, renderHook, screen, within, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Flow, Session } from "@/api/gen";
 import { flowKey, useFlow } from "@/api/reads";
+import { panelFor, type PanelProps } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { PanelHost, SessionTabs } from "@/app/shell";
 import { resetFleet, seed } from "@/commands/testkit";
 import { fixtureFlow, fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import "@/panels";
+import { SessionHead } from "@/session/SessionHead";
 
 import { usd as rowUsd } from "../fleet/SessionRow";
 import FlowBody from "./FlowBody";
+import { FlowMark, flowPanel } from "./index";
 import { Bars, median, planOf, usd, useClock } from "./parts";
 
 vi.mock("@/api/reads", async (original) => ({
@@ -658,5 +663,85 @@ describe("FlowBody cost box and other runs", () => {
       }),
     });
     expect(screen.getByText("weird")).toBeInTheDocument();
+  });
+});
+
+describe("the flow panel", () => {
+  // askingOnly is session 6 with only the flow at `index` asking (none for undefined).
+  const askingOnly = (index?: number): Session => {
+    const session = session6();
+    return {
+      ...session,
+      flows: (session.flows ?? []).map((f, i) => ({
+        ...f,
+        asks: i === index ? "blocked-decision" : "",
+      })),
+    };
+  };
+
+  it("FlowMark: an amber dot while any flow asks, nothing otherwise", () => {
+    const view = render(<FlowMark session={session6()} />);
+    const dot = screen.getByRole("img", { name: "asks" });
+    expect(dot).toHaveClass("bg-attention");
+    view.unmount();
+
+    const quiet = render(<FlowMark session={askingOnly()} />);
+    expect(quiet.container).toBeEmptyDOMElement();
+    quiet.unmount();
+
+    const none = render(<FlowMark session={session6({ flows: null })} />);
+    expect(none.container).toBeEmptyDOMElement();
+    none.unmount();
+
+    render(<FlowMark session={askingOnly(1)} />);
+    expect(screen.getByRole("img", { name: "asks" })).toBeInTheDocument();
+  });
+
+  it("the flow panel: the fifth tab for a session with flows, under the session's head, its body a lazy chunk", () => {
+    expect(panelFor("flow")).toBe(flowPanel);
+    expect(flowPanel.tab).toEqual({ order: 5, label: "flow", Mark: FlowMark });
+    expect(flowPanel.Head).toBe(SessionHead);
+    expect(flowPanel.appliesTo?.(session6())).toBe(true);
+    expect(flowPanel.appliesTo?.(session6({ flows: [] }))).toBe(false);
+    expect(flowPanel.appliesTo?.(session6({ flows: null }))).toBe(false);
+  });
+
+  it("the session's tabs: the flow tab is last, links to the board with no plan and lights on the board", () => {
+    const session = session6();
+    seed([session]);
+    window.history.replaceState(null, "", "#/s/6/flow");
+    const view = render(<SessionTabs session={session} />);
+    const links = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole(
+      "link",
+    );
+    const last = links[links.length - 1];
+    expect(last).toHaveTextContent("flow");
+    expect(last).toHaveAttribute("href", "#/s/6/flow");
+    expect(last).toHaveAttribute("aria-current", "page");
+    expect(within(last as HTMLElement).getByRole("img", { name: "asks" })).toBeInTheDocument();
+    view.unmount();
+
+    window.history.replaceState(null, "", "#/s/6/info");
+    const info = render(<SessionTabs session={session} />);
+    const tabs = within(screen.getByRole("navigation", { name: "Session views" })).getAllByRole(
+      "link",
+    );
+    expect(tabs[tabs.length - 1]).not.toHaveAttribute("aria-current");
+    info.unmount();
+
+    const flowless = render(<SessionTabs session={session6({ flows: [] })} />);
+    expect(screen.queryByRole("link", { name: /^flow/ })).toBeNull();
+    flowless.unmount();
+  });
+
+  it("the flow panel draws the board through PanelHost once its chunk loads", async () => {
+    const flow = board();
+    seed([session6()]);
+    vi.mocked(useFlow).mockReturnValue({ flow, error: "", loading: false });
+    window.history.replaceState(null, "", "#/s/6/flow");
+    const props: PanelProps = { sessionId: 6, params: { id: "6" }, search: {} };
+    render(<PanelHost panel="flow" props={props} />);
+    expect(await screen.findByText(flow.summary.title, { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByText("stories")).toBeInTheDocument();
   });
 });
