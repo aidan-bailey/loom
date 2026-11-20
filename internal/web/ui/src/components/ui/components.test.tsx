@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { CSPProvider } from "@base-ui/react/csp-provider";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -16,6 +17,15 @@ import {
   DrawerTitle,
 } from "./drawer";
 import { Input } from "./input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "./select";
 import { Skeleton } from "./skeleton";
 import { Switch } from "./switch";
 import { Textarea } from "./textarea";
@@ -350,5 +360,97 @@ describe("Switch", () => {
     expect(on.className).toContain("after:min-h-11");
     expect(on.className).toContain("after:min-w-11");
     expect(on).toHaveAttribute("data-slot", "switch");
+  });
+});
+
+function SampleSelect({
+  value,
+  onValueChange,
+  disabled,
+  triggerClassName,
+}: {
+  value: string;
+  onValueChange: (value: string | null) => void;
+  disabled?: boolean;
+  triggerClassName?: string;
+}) {
+  return (
+    <CSPProvider disableStyleElements>
+      <Select
+        items={{ a: "Alpha", b: "Bravo", c: "Charlie" }}
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
+      >
+        <SelectTrigger aria-label="Pick" id="pick" className={triggerClassName}>
+          <SelectValue placeholder="(default)" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectLabel>Active</SelectLabel>
+            <SelectItem value="a">Alpha</SelectItem>
+            <SelectItem value="b">Bravo</SelectItem>
+          </SelectGroup>
+          <SelectGroup>
+            <SelectLabel>Other</SelectLabel>
+            <SelectItem value="c">Charlie</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </CSPProvider>
+  );
+}
+
+describe("Select", () => {
+  it("Select: the trigger shows the chosen label, opening lists the groups, and picking an item reports its value", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    const { rerender } = render(<SampleSelect value="b" onValueChange={fn} />);
+    expect(screen.getByRole("combobox", { name: "Pick" })).toHaveTextContent("Bravo");
+    rerender(<SampleSelect value="" onValueChange={fn} />);
+    const trigger = screen.getByRole("combobox", { name: "Pick" });
+    expect(trigger).toHaveTextContent("(default)");
+
+    await user.click(trigger);
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getByText("Active")).toBeInTheDocument();
+    expect(within(list).getByText("Other")).toBeInTheDocument();
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Alpha", "Bravo", "Charlie"]);
+    await user.click(within(list).getByRole("option", { name: "Charlie" }));
+    expect(fn.mock.calls[0]?.[0]).toBe("c");
+  });
+
+  it("Select: a disabled one does not open", async () => {
+    const user = userEvent.setup();
+    render(<SampleSelect value="a" onValueChange={vi.fn()} disabled />);
+    await user.click(screen.getByRole("combobox", { name: "Pick" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("Select: its trigger, items and label keep the phone sizes, the slots and the caller's props", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SampleSelect value="a" onValueChange={vi.fn()} />);
+    const trigger = screen.getByRole("combobox", { name: "Pick" });
+    expect(trigger).toHaveAttribute("data-slot", "select-trigger");
+    expect(trigger).toHaveAttribute("id", "pick");
+    expect(trigger.className).toContain("min-h-11");
+    expect(trigger.className).toContain("text-[16px]");
+
+    rerender(<SampleSelect value="a" onValueChange={vi.fn()} triggerClassName="w-40" />);
+    const narrow = screen.getByRole("combobox", { name: "Pick" });
+    expect(narrow.className).toContain("w-40");
+    expect(narrow.className).not.toContain("w-full");
+
+    await user.click(narrow);
+    const list = await screen.findByRole("listbox");
+    for (const option of within(list).getAllByRole("option")) {
+      expect(option).toHaveAttribute("data-slot", "select-item");
+      expect(option.className).toContain("min-h-11");
+    }
+    expect(within(list).getByText("Active")).toHaveAttribute("data-slot", "select-label");
   });
 });
