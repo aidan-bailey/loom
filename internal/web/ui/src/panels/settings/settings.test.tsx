@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,8 +7,9 @@ import type { Device, Notice, Outcome, Snapshot } from "@/api/gen";
 import { api } from "@/api/request";
 import { askConfirm } from "@/app/ConfirmSheet";
 import { panelFor } from "@/app/panels";
+import { activeRegistration, pushSupported, usePushStatus } from "@/app/push";
 import { hrefFor } from "@/app/routes";
-import { askedSheet, resetFleet } from "@/commands/testkit";
+import { askedSheet, deferred, resetFleet, spyOnAdd } from "@/commands/testkit";
 import { fixtureSnapshot } from "@/fixtures";
 import { useFleet } from "@/store/fleet";
 
@@ -19,6 +20,14 @@ vi.mock("@/app/ConfirmSheet", async (original) => ({
   ...(await original<typeof import("@/app/ConfirmSheet")>()),
   askConfirm: vi.fn(),
 }));
+// The phone's own push state and the browser calls the command makes are the test's to answer;
+// the command itself stays real.
+vi.mock("@/app/push", async (original) => ({
+  ...(await original<typeof import("@/app/push")>()),
+  usePushStatus: vi.fn(),
+  pushSupported: vi.fn(),
+  activeRegistration: vi.fn(),
+}));
 
 const NOW = Date.parse("2026-11-20T12:00:00Z");
 
@@ -28,15 +37,20 @@ const PHONE: Device = {
   push: "ok",
 };
 
+let add: ReturnType<typeof spyOnAdd>;
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
   window.history.replaceState(null, "", "#/settings");
+  add = spyOnAdd();
+  vi.mocked(usePushStatus).mockReturnValue("off");
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.mocked(askConfirm).mockReset();
   resetFleet();
   window.history.replaceState(null, "", window.location.pathname);
@@ -173,5 +187,262 @@ describe("SettingsBody: Recent notices", () => {
     live({ notices: null });
     render(<SettingsBody />);
     expect(within(section("Recent notices")).getByText("None.")).toBeInTheDocument();
+  });
+});
+
+// pausedUntil is a device whose pause ends this long from now.
+const pausedFor = (ms: number): Device => ({
+  ...PHONE,
+  notify: { ...PHONE.notify, paused_until: new Date(NOW + ms).toISOString() },
+});
+
+const aSwitch = (name: string): HTMLElement => screen.getByRole("switch", { name });
+
+describe("SettingsBody: the push control", () => {
+  it.each([
+    [
+      "unsupported",
+      "Notifications need loom on the Home Screen. Tap Share, then Add to Home Screen, and open loom from there.",
+    ],
+    [
+      "denied",
+      "Notifications are blocked for loom. Allow them in the phone's Settings, under Notifications, then loom.",
+    ],
+    ["on", "Notifications are on for this phone."],
+  ] as const)(
+    "says %s in the classic words and offers no button to turn it on",
+    (status, words) => {
+      vi.mocked(usePushStatus).mockReturnValue(status);
+      live();
+      render(<SettingsBody />);
+      expect(within(section("Notifications")).getByText(words)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /notifications/i })).toBeNull();
+    },
+  );
+
+  it("draws nothing for the push control while the phone's state loads", () => {
+    vi.mocked(usePushStatus).mockReturnValue("loading");
+    live();
+    render(<SettingsBody />);
+    expect(screen.queryByRole("button", { name: /notifications/i })).toBeNull();
+    expect(screen.queryByText(/Home Screen|blocked for loom|are on for this phone/)).toBeNull();
+  });
+
+  it("offers Turn on notifications when it is off and Turn notifications on again when it lapsed", () => {
+    vi.mocked(usePushStatus).mockReturnValue("off");
+    live();
+    const view = render(<SettingsBody />);
+    expect(screen.getByRole("button", { name: "Turn on notifications" })).toBeEnabled();
+    expect(usePushStatus).toHaveBeenCalledWith(PHONE);
+    view.unmount();
+
+    vi.mocked(usePushStatus).mockReturnValue("again");
+    live({ device: { ...PHONE, push: "expired" } });
+    render(<SettingsBody />);
+    expect(screen.getByRole("button", { name: "Turn notifications on again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Turn on notifications" })).toBeNull();
+  });
+
+  it("is off while the snapshot is stale", () => {
+    live();
+    useFleet.setState({ stale: true, link: "offline" });
+    render(<SettingsBody />);
+    expect(screen.getByRole("button", { name: "Turn on notifications" })).toBeDisabled();
+  });
+
+  it("reads Turning on… with its note while push.enable runs, and still does after a visit elsewhere", async () => {
+    const registration = deferred<ServiceWorkerRegistration | null>();
+    vi.mocked(pushSupported).mockReturnValue(true);
+    vi.mocked(activeRegistration).mockReturnValue(registration.promise);
+    vi.stubGlobal("Notification", { requestPermission: vi.fn().mockResolvedValue("granted") });
+    live();
+    const first = render(<SettingsBody />);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Turn on notifications" }));
+    expect(await screen.findByRole("button", { name: "Turning on…" })).toBeDisabled();
+    expect(screen.getByText("The phone can take a minute or two.")).toBeInTheDocument();
+
+    first.unmount();
+    render(<SettingsBody />);
+    expect(screen.getByRole("button", { name: "Turning on…" })).toBeDisabled();
+
+    await act(async () => {
+      registration.resolve(null);
+      await registration.promise;
+    });
+    expect(await screen.findByRole("button", { name: "Turn on notifications" })).toBeEnabled();
+    expect(screen.queryByText("The phone can take a minute or two.")).toBeNull();
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+  });
+});
+
+describe("SettingsBody: the expired or failing line", () => {
+  it.each([
+    ["expired", "Notifications stopped; turn them on again."],
+    ["failing: 410 Gone", "Notifications are failing (410 Gone); turn them on again."],
+  ])("says %s in red", (push, words) => {
+    live({ device: { ...PHONE, push } });
+    render(<SettingsBody />);
+    expect(screen.getByText(words)).toHaveClass("text-error");
+  });
+
+  it.each(["", "ok"])("says nothing for a push state of %j", (push) => {
+    live({ device: { ...PHONE, push } });
+    render(<SettingsBody />);
+    expect(screen.queryByText(/Notifications stopped|Notifications are failing/)).toBeNull();
+  });
+});
+
+describe("SettingsBody: the notification Switches", () => {
+  it("shows the stored values", () => {
+    live({ device: { ...PHONE, notify: { ...PHONE.notify, waiting: true, finished: false } } });
+    render(<SettingsBody />);
+    expect(aSwitch("When a session needs you")).toHaveAttribute("aria-checked", "true");
+    expect(aSwitch("When a session finishes")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("shows the value asked for while the write is in flight, holds a second tap, then shows the stored one", async () => {
+    const write = deferred<Outcome<Device>>();
+    const put = vi.spyOn(api, "putDevice").mockReturnValue(write.promise);
+    live();
+    render(<SettingsBody />);
+    const user = userEvent.setup();
+    const waiting = aSwitch("When a session needs you");
+
+    await user.click(waiting);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith({ waiting: false });
+    // Asked for, while the store still holds true.
+    expect(waiting).toHaveAttribute("aria-checked", "false");
+    expect(useFleet.getState().snapshot?.device.notify.waiting).toBe(true);
+
+    // Off while its write runs, so the second tap reaches nothing and the asked value stays.
+    expect(waiting).toHaveAttribute("data-disabled");
+    await user.click(waiting);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(waiting).toHaveAttribute("aria-checked", "false");
+
+    await act(async () => {
+      write.resolve(ok({ ...PHONE, notify: { ...PHONE.notify, waiting: false } }));
+      await write.promise;
+    });
+    expect(useFleet.getState().snapshot?.device.notify.waiting).toBe(false);
+    expect(waiting).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("writes only the field it is for", async () => {
+    const put = vi
+      .spyOn(api, "putDevice")
+      .mockResolvedValue(ok({ ...PHONE, notify: { ...PHONE.notify, finished: true } }));
+    live();
+    render(<SettingsBody />);
+
+    await userEvent.setup().click(aSwitch("When a session finishes"));
+    await waitFor(() => expect(put).toHaveBeenCalledWith({ finished: true }));
+    expect(put).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(aSwitch("When a session finishes")).toHaveAttribute("aria-checked", "true"),
+    );
+  });
+
+  it("snaps back to the stored value, and toasts the daemon's words, when the write is refused", async () => {
+    vi.spyOn(api, "putDevice").mockResolvedValue({
+      kind: "refused",
+      status: 400,
+      message: "the device was unpaired",
+    });
+    live();
+    render(<SettingsBody />);
+
+    await userEvent.setup().click(aSwitch("When a session finishes"));
+    await waitFor(() =>
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "the device was unpaired", type: "error" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(aSwitch("When a session finishes")).toHaveAttribute("aria-checked", "false"),
+    );
+    expect(useFleet.getState().snapshot?.device.notify.finished).toBe(false);
+  });
+
+  it("shows what the daemon stored when it answers otherwise than asked", async () => {
+    vi.spyOn(api, "putDevice").mockResolvedValue(
+      ok({ ...PHONE, notify: { ...PHONE.notify, waiting: true } }),
+    );
+    live();
+    render(<SettingsBody />);
+
+    await userEvent.setup().click(aSwitch("When a session needs you"));
+    await waitFor(() =>
+      expect(aSwitch("When a session needs you")).toHaveAttribute("aria-checked", "true"),
+    );
+  });
+
+  it("is off while the snapshot is stale", async () => {
+    const put = vi.spyOn(api, "putDevice");
+    live();
+    useFleet.setState({ stale: true, link: "offline" });
+    render(<SettingsBody />);
+
+    // Story 2's Switch is a span, so a disabled one shows `data-disabled`, not the `disabled` property.
+    expect(aSwitch("When a session needs you")).toHaveAttribute("data-disabled");
+    expect(aSwitch("When a session finishes")).toHaveAttribute("data-disabled");
+
+    await userEvent.setup().click(aSwitch("When a session needs you"));
+    expect(put).not.toHaveBeenCalled();
+    expect(aSwitch("When a session needs you")).toHaveAttribute("aria-checked", "true");
+  });
+});
+
+describe("SettingsBody: the pause row", () => {
+  it("offers Pause for an hour when not paused", async () => {
+    const put = vi.spyOn(api, "putDevice").mockResolvedValue(ok(pausedFor(3_600_000)));
+    live();
+    render(<SettingsBody />);
+    expect(screen.getByText("Not paused")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Pause for an hour" }));
+    expect(put).toHaveBeenCalledWith({ pause: "1h" });
+    expect(await screen.findByRole("button", { name: "Resume now" })).toBeInTheDocument();
+    expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+  });
+
+  it("says when the pause ends and offers Resume now", async () => {
+    const put = vi.spyOn(api, "putDevice").mockResolvedValue(ok(PHONE));
+    live({ device: pausedFor(40 * 60_000) });
+    render(<SettingsBody />);
+    expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+    expect(screen.queryByText("Not paused")).toBeNull();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Resume now" }));
+    expect(put).toHaveBeenCalledWith({ pause: "none" });
+    expect(await screen.findByText("Not paused")).toBeInTheDocument();
+  });
+
+  it("draws the row again when the pause ends", () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ now: NOW });
+    live({ device: pausedFor(60_000) });
+    render(<SettingsBody />);
+    expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(59_000);
+    });
+    expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByText("Not paused")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause for an hour" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume now" })).toBeNull();
+  });
+
+  it("says Not paused for a pause that ended before the screen opened", () => {
+    live({ device: pausedFor(-60_000) });
+    render(<SettingsBody />);
+    expect(screen.getByText("Not paused")).toBeInTheDocument();
   });
 });

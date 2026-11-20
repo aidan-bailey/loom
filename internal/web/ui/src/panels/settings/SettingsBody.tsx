@@ -1,8 +1,19 @@
 // The settings body (a chunk of its own): this phone, the way back to the classic app and the
 // recent notices. A port of the classic settings.mjs (spec Part 3 settlement 9).
-import type { ReactElement, ReactNode } from "react";
+import { useEffect, useReducer, useState, type ReactElement, type ReactNode } from "react";
 
+import type { Device } from "@/api/gen";
 import { CommandButton } from "@/app/CommandButton";
+import {
+  commandById,
+  commandEnabled,
+  runCommand,
+  useCommandBusy,
+  useCommandContext,
+  type Command,
+} from "@/app/commands";
+import { usePushStatus } from "@/app/push";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { ago } from "@/panels/fleet/SessionRow";
 import { useFleet } from "@/store/fleet";
@@ -29,6 +40,185 @@ function Row({ label, children }: { label: string; children: ReactNode }): React
   );
 }
 
+// The classic app's words for the push control's states that draw no button.
+const PUSH_WORDS = {
+  unsupported:
+    "Notifications need loom on the Home Screen. Tap Share, then Add to Home Screen, and open loom from there.",
+  denied:
+    "Notifications are blocked for loom. Allow them in the phone's Settings, under Notifications, then loom.",
+  on: "Notifications are on for this phone.",
+} as const;
+
+// MAX_DELAY is the longest delay setTimeout takes (2^31 - 1 ms); a longer wait is re-armed.
+const MAX_DELAY = 2_147_483_647;
+
+// commandOf is the registered command with this id; the commands module registers it, so a miss
+// is a bug and fails loudly, as CommandButton does.
+function commandOf(id: string): Command<unknown> {
+  const command = commandById(id);
+  if (command === undefined) throw new Error(`loom: unknown command ${id}`);
+  return command;
+}
+
+// now reads this phone's clock; kept apart from the components, which the purity lint holds to
+// render the same for the same props.
+function now(): number {
+  return Date.now();
+}
+
+// pushLine is what the card says when the push subscription stopped working, and "" while it
+// works or was never made (device.push is "", "ok", "expired" or "failing: <status>").
+function pushLine(push: string): string {
+  if (push === "expired") return "Notifications stopped; turn them on again.";
+  if (push.startsWith("failing")) {
+    return `Notifications are failing (${push.replace(/^failing:\s*/, "")}); turn them on again.`;
+  }
+  return "";
+}
+
+// clock words a time as the phone's own hours and minutes.
+function clock(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// PushControl is the push control: its state from the phone and the device, and the turn-on's
+// buttons. "Turning on…" is the command's in-flight state, which is module-level, so a visit
+// elsewhere and back finds it still waiting and takes no second tap.
+function PushControl({ device }: { device: Device }): ReactElement | null {
+  const ctx = useCommandContext();
+  const status = usePushStatus(device);
+  const turning = useCommandBusy(commandOf("push.enable"), ctx, undefined);
+
+  if (turning) {
+    // subscribe() can take minutes: after an unsubscribe iOS took over two.
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <CommandButton id="push.enable" label="Turning on…" />
+        <p className={NOTE}>The phone can take a minute or two.</p>
+      </div>
+    );
+  }
+  switch (status) {
+    case "loading":
+      return null;
+    case "unsupported":
+    case "denied":
+    case "on":
+      return <p className={NOTE}>{PUSH_WORDS[status]}</p>;
+    case "again":
+      return (
+        <div className="flex">
+          <CommandButton id="push.enable" label="Turn notifications on again" />
+        </div>
+      );
+    case "off":
+      return (
+        <div className="flex">
+          <CommandButton id="push.enable" />
+        </div>
+      );
+  }
+}
+
+// NotifySwitch is one of the device's notification toggles. A Switch is not a button, so it runs
+// device.update through runCommand with the one field it sets. It shows the value asked for from
+// the tap until the write settles, then the stored one, so a refusal snaps it back; it is off
+// while its write is in flight and while the command is off (a stale snapshot).
+function NotifySwitch({
+  field,
+  label,
+  checked,
+}: {
+  field: "waiting" | "finished";
+  label: string;
+  checked: boolean;
+}): ReactElement {
+  const ctx = useCommandContext();
+  const update = commandOf("device.update");
+  const [asked, setAsked] = useState<boolean | null>(null);
+  const busy = useCommandBusy(update, ctx, { [field]: checked });
+
+  const change = (next: boolean): void => {
+    setAsked(next);
+    void runCommand(update, ctx, { [field]: next }).finally(() => setAsked(null));
+  };
+
+  return (
+    <label className="flex min-h-11 items-center justify-between gap-3">
+      <span>{label}</span>
+      <Switch
+        aria-label={label}
+        checked={asked ?? checked}
+        disabled={busy || !commandEnabled(update, ctx)}
+        onCheckedChange={change}
+      />
+    </label>
+  );
+}
+
+// usePaused reports whether the pause that ends at `iso` is still running, and draws again when it
+// ends: classic keeps "Paused until" past the end.
+function usePaused(iso: string): boolean {
+  const until = Date.parse(iso);
+  const [ticks, redraw] = useReducer((n: number) => n + 1, 0);
+  const paused = !Number.isNaN(until) && until > now();
+
+  useEffect(() => {
+    if (!paused) return undefined;
+    // A wait past MAX_DELAY ends early and is armed again by the redraw it causes.
+    const timer = setTimeout(redraw, Math.min(Math.max(until - now(), 0), MAX_DELAY));
+    return () => clearTimeout(timer);
+  }, [paused, until, ticks]);
+
+  return paused;
+}
+
+// PauseRow is "Paused until <time>" with Resume now, or "Not paused" with Pause for an hour.
+function PauseRow({ pausedUntil }: { pausedUntil: string }): ReactElement {
+  const paused = usePaused(pausedUntil);
+  return (
+    <Row label={paused ? `Paused until ${clock(pausedUntil)}` : "Not paused"}>
+      {paused ? (
+        <CommandButton
+          id="device.update"
+          args={{ pause: "none" }}
+          label="Resume now"
+          variant="secondary"
+        />
+      ) : (
+        <CommandButton
+          id="device.update"
+          args={{ pause: "1h" }}
+          label="Pause for an hour"
+          variant="secondary"
+        />
+      )}
+    </Row>
+  );
+}
+
+// Notifications is the push control, its failing line, the two toggles and the pause row.
+function Notifications({ device }: { device: Device }): ReactElement {
+  const line = pushLine(device.push);
+  return (
+    <Section title="Notifications">
+      <PushControl device={device} />
+      {line === "" ? null : <p className="text-sm text-error">{line}</p>}
+      <NotifySwitch
+        field="waiting"
+        label="When a session needs you"
+        checked={device.notify.waiting}
+      />
+      <NotifySwitch
+        field="finished"
+        label="When a session finishes"
+        checked={device.notify.finished}
+      />
+      <PauseRow pausedUntil={device.notify.paused_until} />
+    </Section>
+  );
+}
+
 export default function SettingsBody(): ReactElement {
   const device = useFleet((s) => s.snapshot?.device);
   const host = useFleet((s) => s.snapshot?.host ?? "");
@@ -52,6 +242,7 @@ export default function SettingsBody(): ReactElement {
 
   return (
     <div className="flex flex-col pb-8">
+      <Notifications device={device} />
       <Section title="This phone">
         <Row label="Paired as">
           <span className="min-w-0 truncate">{device.name}</span>
