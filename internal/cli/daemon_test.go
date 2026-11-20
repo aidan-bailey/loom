@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -85,6 +87,8 @@ func serveDaemonOn(t *testing.T, program string, ex cmd.Executor) *testDaemon {
 	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("loomclitest-%d", time.Now().UnixNano()))
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
+	global, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
 	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: ex})
 	// A job here is a real process group: its runner is this test binary
 	// (sched.TestRunner), installed before Boot, which adopts and starts jobs.
@@ -103,12 +107,69 @@ func serveDaemonOn(t *testing.T, program string, ex cmd.Executor) *testDaemon {
 	c, err := dial()
 	require.NoError(t, err)
 	t.Cleanup(func() {
+		// The jobs the daemon has started, read while it still serves.
+		var started []sched.JobID
+		if c.FlushForTest() == nil {
+			c.Sync()
+			for _, j := range c.Queue().Jobs {
+				if j.State == sched.Running {
+					started = append(started, j.ID)
+				}
+			}
+		}
 		Join = orig
 		c.Close()
 		srv.Close()
 		loop.Stop()
+		endJobs(t, filepath.Join(global, "jobs"), started)
 	})
 	return &testDaemon{loop: loop, client: c, srv: srv}
+}
+
+// endJobs kills every job the stopped daemon left running under jobs (a
+// group whose shim still holds its run.lock) and waits until each one's
+// shim has let go of it. A job outlives
+// the daemon's Stop, and one still writing into its dir when the test's
+// temp dir is removed fails the test ("directory not empty"). A job the
+// daemon started (started) whose shim hasn't written its started.json yet
+// is waited on until it has, and then killed; a queued job never starts.
+func endJobs(t *testing.T, jobs string, started []sched.JobID) {
+	t.Helper()
+	begin := time.Now()
+	for {
+		entries, err := os.ReadDir(jobs)
+		if err != nil {
+			return // no queue dir: no job ever ran
+		}
+		pending := 0
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(jobs, e.Name())
+			st, err := sched.ReadStarted(dir)
+			// Signal only a group the held run.lock proves is still the job's.
+			alive, _ := sched.Probe(dir)
+			if alive && err == nil {
+				_ = sched.SignalGroup(st.PID, syscall.SIGKILL)
+			}
+			_, exitErr := os.Stat(filepath.Join(dir, sched.ExitFile))
+			starting := err != nil && exitErr != nil && slices.ContainsFunc(started, func(id sched.JobID) bool {
+				return fmt.Sprint(id) == e.Name()
+			})
+			if alive || starting {
+				pending++
+			}
+		}
+		if pending == 0 {
+			return
+		}
+		if time.Since(begin) > 10*time.Second {
+			t.Logf("endJobs: %d jobs under %s still running after 10s", pending, jobs)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // workspaces are the names of the workspaces the daemon serves, "" the
