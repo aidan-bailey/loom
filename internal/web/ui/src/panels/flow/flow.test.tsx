@@ -472,3 +472,191 @@ describe("FlowBody boxes", () => {
     expect(dev).not.toHaveClass("text-working");
   });
 });
+
+describe("FlowBody cost box and other runs", () => {
+  // costs changes the canned board's costs and draws it.
+  const withCosts = (over: (costs: Flow["costs"], flow: Flow) => void): RenderResult =>
+    show({ flow: board((f) => over(f.costs, f)) });
+  const box = (): HTMLElement => {
+    const legend = screen.getByText(/^cost/);
+    if (legend.parentElement === null) throw new Error("the legend has no box");
+    return legend.parentElement;
+  };
+  const segments = (): HTMLElement[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('[data-slot="role-segment"]'));
+  const bars = (): HTMLElement[] =>
+    Array.from(document.querySelectorAll<HTMLElement>('[data-slot="bar"]'));
+  const caption = (): string | undefined =>
+    Array.from(document.querySelectorAll("p"))
+      .find((p) => p.textContent?.startsWith("per story"))
+      ?.textContent?.trim();
+
+  it("the cost box: the run's spend, the whole flow, the projection and the list-price legend", () => {
+    show({ flow: board() });
+    expect(screen.getByText("cost · list prices")).toBeInTheDocument();
+    expect(box()).toHaveTextContent("run $4.71");
+    expect(box()).toHaveTextContent("flow $19.90");
+    expect(box()).toHaveTextContent("~$9.80 projected");
+    expect(box()).not.toHaveTextContent("of 3 parts");
+  });
+
+  it("the cost box: a run still to come, a flow priced from fewer parts, a projection that is missing and why", () => {
+    const view = show({ flow: board((f) => (f.summary.run = "")) });
+    expect(box()).toHaveTextContent("no run yet");
+    expect(box()).not.toHaveTextContent("list pricesrun");
+    view.unmount();
+
+    const parts = withCosts((c) => (c.flow_parts = 2));
+    expect(box()).toHaveTextContent("flow $19.90 (2 of 3 parts)");
+    parts.unmount();
+
+    const none = withCosts((c) => (c.flow_parts = 0));
+    expect(box()).not.toHaveTextContent("flow $");
+    none.unmount();
+
+    const why = withCosts((c) => {
+      c.projection = null;
+      c.why = "no history";
+    });
+    expect(box()).toHaveTextContent("· no history");
+    expect(box()).not.toHaveTextContent("projected");
+    why.unmount();
+
+    show({
+      flow: board((f) => {
+        f.summary.run = "";
+        f.costs.projection = null;
+        f.costs.why = "no history";
+      }),
+    });
+    expect(box()).not.toHaveTextContent("no history");
+  });
+
+  it("the cost box: a role bar of exact shares, a segment for each role class and a legend in order", () => {
+    const view = show({ flow: board() });
+    expect(segments().map((el) => el.getAttribute("data-role"))).toEqual([
+      "dev",
+      "review",
+      "manager",
+      "other",
+    ]);
+    [2.1, 1.5, 0.99, 0.12].forEach((sum, i) => {
+      expect(parseFloat(segments()[i]?.style.width ?? "")).toBeCloseTo((sum / 4.71) * 100, 3);
+    });
+    const text = box().textContent ?? "";
+    const keys = ["■ dev $2.10", "■ review $1.50", "■ manager $0.99", "■ other $0.12"];
+    expect(keys.map((k) => text.indexOf(k))).toEqual(
+      keys.map((k) => text.indexOf(k)).sort((a, b) => a - b),
+    );
+    for (const k of keys) expect(screen.getByText(k)).toBeInTheDocument();
+    view.unmount();
+
+    withCosts((c) => {
+      if (c.by_role !== null) c.by_role["mystery-agent"] = 1;
+    });
+    expect(screen.getByText("■ other $1.12")).toBeInTheDocument();
+  });
+
+  it("the cost box: no bar for no spend, and zero roles left out", () => {
+    const view = withCosts((c) => (c.by_role = null));
+    expect(segments()).toHaveLength(0);
+    expect(screen.queryByText(/^■/)).toBeNull();
+    expect(box()).toHaveTextContent("run $4.71");
+    view.unmount();
+
+    withCosts((c) => (c.by_role = { manager: 0 }));
+    expect(segments()).toHaveLength(0);
+    expect(screen.queryByText(/^■/)).toBeNull();
+    expect(box()).toHaveTextContent("run $4.71");
+  });
+
+  it("the cost box: the unpriced line counts the agents still running", () => {
+    const view = show({ flow: board() });
+    expect(screen.getByText("not priced yet: 1 running")).toBeInTheDocument();
+    view.unmount();
+    for (const unpriced of [[], null]) {
+      const empty = withCosts((c) => (c.unpriced = unpriced));
+      expect(screen.queryByText(/not priced yet/)).toBeNull();
+      empty.unmount();
+    }
+    withCosts((c) => (c.unpriced = ["a", "b", "c"]));
+    expect(screen.getByText("not priced yet: 3 running")).toBeInTheDocument();
+  });
+
+  it("the cost box: the per-story comparison draws its bars and its caption", () => {
+    const view = show({ flow: board() });
+    expect(bars()).toHaveLength(6);
+    expect(bars()[5]).toHaveAttribute("data-current", "true");
+    expect(caption()).toBe("per story: last 5 runs, median $2.52 · this run $2.36");
+    view.unmount();
+
+    const noMedian = withCosts((c) => (c.median = null));
+    expect(caption()).toBe("per story: last 5 runs · this run $2.36");
+    noMedian.unmount();
+
+    withCosts((c) => (c.this = null));
+    expect(caption()).toBe("per story: last 5 runs, median $2.52");
+    expect(bars()).toHaveLength(5);
+  });
+
+  it("the cost box: under two values no comparison draws", () => {
+    const cases: [number[] | null, number | null, number][] = [
+      [[], null, 0],
+      [[1.5], null, 0],
+      [[1.5], 2.36, 2],
+      [null, 2.36, 0],
+    ];
+    for (const [past, now, count] of cases) {
+      const view = withCosts((c) => {
+        c.past = past;
+        c.this = now;
+      });
+      expect(bars()).toHaveLength(count);
+      if (count === 0) expect(caption()).toBeUndefined();
+      view.unmount();
+    }
+  });
+
+  it("the cost box: a cost error is all it says", () => {
+    withCosts((c) => (c.error = "no cost records"));
+    expect(screen.getByText("cost")).toBeInTheDocument();
+    expect(screen.getByText("no cost records")).toBeInTheDocument();
+    expect(box()).not.toHaveTextContent("run");
+    expect(box()).not.toHaveTextContent("flow");
+    expect(segments()).toHaveLength(0);
+    expect(bars()).toHaveLength(0);
+    expect(screen.queryByText(/^■/)).toBeNull();
+  });
+
+  it("the other runs: a box of each other run's id and status, unreadable when it is, none without", () => {
+    const view = show({ flow: board() });
+    expect(screen.getByText("other runs")).toBeInTheDocument();
+    expect(screen.getByText("2026-11-08-flow-visualisation")).toBeInTheDocument();
+    expect(screen.getByText("stopped")).toBeInTheDocument();
+    view.unmount();
+
+    const bad = show({
+      flow: board((f) => {
+        const run = f.others?.[0];
+        if (run !== undefined) run.unreadable = "bad";
+      }),
+    });
+    expect(screen.getByText("unreadable")).toBeInTheDocument();
+    expect(screen.queryByText("stopped")).toBeNull();
+    bad.unmount();
+
+    for (const others of [[], null]) {
+      const empty = show({ flow: board((f) => (f.others = others)) });
+      expect(screen.queryByText("other runs")).toBeNull();
+      empty.unmount();
+    }
+
+    show({
+      flow: board((f) => {
+        const run = f.others?.[0];
+        if (run !== undefined) run.status = "weird";
+      }),
+    });
+    expect(screen.getByText("weird")).toBeInTheDocument();
+  });
+});
