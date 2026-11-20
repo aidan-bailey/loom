@@ -24,27 +24,6 @@ import { ConfirmSheet } from "./ConfirmSheet";
 import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
 import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./routes";
 
-// SCREEN_NAMES is what each screen is called by the placeholder, which draws
-// where no panel is registered; a registered panel's own title names it in its
-// error boundaries.
-const SCREEN_NAMES: Record<PanelId, string> = {
-  fleet: "Fleet",
-  turns: "Conversation",
-  info: "Info",
-  changes: "Changes",
-  mockup: "Mockup",
-  mockupFull: "Mockup",
-  agent: "Subagent",
-  job: "Job",
-  flow: "Flow",
-  flowStory: "Flow story",
-  flowDoc: "Flow document",
-  flows: "Flows",
-  new: "New session",
-  settings: "Settings",
-  pair: "Pairing",
-};
-
 // resetKey changes with the route, so a boundary that caught an error starts
 // over once the route is another one: another session, or another board or
 // document (`?plan=`, `?at=`) of the same panel.
@@ -101,26 +80,6 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
   }
 }
 
-// Placeholder draws a route no panel is registered for: it names the screen
-// and offers the way back to the classic app (spec §7).
-export function Placeholder({ panel }: { panel: PanelId }): ReactElement {
-  const name = SCREEN_NAMES[panel];
-  return (
-    <section className="flex flex-col items-start gap-3 px-4 py-8">
-      {panel === "fleet" ? null : (
-        <a href={hrefFor("fleet")} className="text-sm text-muted-foreground">
-          ‹ fleet
-        </a>
-      )}
-      <h1 className="text-lg font-semibold">{name}</h1>
-      <p className="text-muted-foreground">
-        {name} is not in the new app yet. It is in the classic one.
-      </p>
-      <CommandButton id="app.backToClassic" variant="secondary" />
-    </section>
-  );
-}
-
 // BodyLoading is the fallback of a lazy body: two skeletons under a named status.
 function BodyLoading(): ReactElement {
   return (
@@ -132,13 +91,20 @@ function BodyLoading(): ReactElement {
 }
 
 // PanelHost draws the panel registered under `panel` inside an error
-// boundary, or the placeholder when none is. A body that is `React.lazy`
+// boundary, or nothing when none is (every PanelId has one, which
+// app/panels.test.ts pins). A body that is `React.lazy`
 // suspends under a skeleton, and its chunk failing to load reaches the
 // boundary, which offers a reload: the Suspense stays inside the Boundary, so
 // a failed load is the boundary's and a pending one never is.
-export function PanelHost({ panel, props }: { panel: PanelId; props: PanelProps }): ReactElement {
+export function PanelHost({
+  panel,
+  props,
+}: {
+  panel: PanelId;
+  props: PanelProps;
+}): ReactElement | null {
   const entry = panelFor(panel);
-  if (entry === undefined) return <Placeholder panel={panel} />;
+  if (entry === undefined) return null;
   return (
     <Boundary key={resetKey(panel, props)} what={entry.title(props)}>
       <Suspense fallback={<BodyLoading />}>
@@ -160,10 +126,9 @@ const SPLASH: Record<LinkState, string> = {
 // AppShell is the app's frame: the pinned header (the panel's Head), main
 // (the router's outlet, or the splash while the store holds no snapshot,
 // except on pairing) and the pinned footer. Pairing and the full mockup
-// have no header or footer, and neither has a screen with no snapshot. A route
-// no panel is registered for still draws its placeholder under the splash, so
-// the way back to the classic app works with the daemon down and nothing
-// saved.
+// have no header or footer, and neither has a screen with no snapshot. The
+// splash draws the way back to the classic app on every route, so it works
+// with the daemon down and nothing saved.
 export function AppShell(): ReactElement {
   const route = useRoute();
   const props = panelProps(route);
@@ -174,6 +139,7 @@ export function AppShell(): ReactElement {
   const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
   const waiting = !hasSnapshot && route.panel !== "pair";
   const entry = panelFor(route.panel);
+  const title = entry === undefined ? route.panel : entry.title(props);
   const Head = entry?.Head;
   const Strip = entry?.Strip;
 
@@ -192,7 +158,7 @@ export function AppShell(): ReactElement {
           {Head === undefined ? null : (
             <Boundary
               key={resetKey(route.panel, props)}
-              what={`The ${entry?.title(props) ?? SCREEN_NAMES[route.panel]} header`}
+              what={`The ${title} header`}
               fallback={null}
             >
               <Head {...props} />
@@ -204,7 +170,7 @@ export function AppShell(): ReactElement {
               {Strip === undefined ? null : (
                 <Boundary
                   key={resetKey(route.panel, props)}
-                  what={`The ${entry?.title(props) ?? SCREEN_NAMES[route.panel]} strip`}
+                  what={`The ${title} strip`}
                   fallback={null}
                 >
                   <Strip {...props} />
@@ -220,7 +186,9 @@ export function AppShell(): ReactElement {
             <div role="status" className="px-4 py-12 text-center text-muted-foreground">
               {SPLASH[state]}
             </div>
-            {panelFor(route.panel) === undefined ? <Placeholder panel={route.panel} /> : null}
+            <div className="flex justify-center px-4">
+              <CommandButton id="app.backToClassic" variant="secondary" />
+            </div>
           </>
         ) : (
           <Outlet />

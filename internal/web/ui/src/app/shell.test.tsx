@@ -18,7 +18,7 @@ import { useFleet } from "@/store/fleet";
 import { askConfirm } from "./ConfirmSheet";
 import { definePanel, type PanelProps } from "./panels";
 import { router, useRoute } from "./routes";
-import { AppShell, ContextRow, PanelHost, Placeholder, SessionTabs, StatusRow } from "./shell";
+import { AppShell, ContextRow, PanelHost, SessionTabs, StatusRow } from "./shell";
 import { switchApp } from "./switchApp";
 import { showMessage } from "./toasts";
 
@@ -32,22 +32,13 @@ afterEach(() => {
   window.history.replaceState(null, "", window.location.pathname);
 });
 
-describe("Placeholder", () => {
-  it("names the screen, links back to the fleet and offers the classic app", async () => {
-    render(<Placeholder panel="flows" />);
-
-    expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /fleet/ })).toHaveAttribute("href", "#/");
-
-    await userEvent.click(screen.getByRole("button", { name: "Back to classic" }));
-    expect(switchApp).toHaveBeenCalledWith("classic");
-  });
-});
-
 describe("PanelHost", () => {
-  it("draws the placeholder for a panel nothing registered", () => {
-    render(<PanelHost panel="flowDoc" props={props} />);
-    expect(screen.getByRole("heading", { name: "Flow document" })).toBeInTheDocument();
+  it("draws nothing for a panel nothing registered", () => {
+    const { container } = render(<PanelHost panel="flowDoc" props={props} />);
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to classic" })).toBeNull();
   });
 
   it("draws a registered panel's body with its props", () => {
@@ -196,13 +187,35 @@ describe("AppShell", () => {
     expect(footer()).toBeNull();
   });
 
-  it("offers the way back to the classic app on a route no panel is registered for, with no snapshot", async () => {
+  it.each(["#/", "#/s/5/flow", "#/settings", "#/new"])(
+    "offers the way back to the classic app under the splash on %s, with no snapshot",
+    async (hash) => {
+      useFleet.setState({ link: "offline" });
+      shellAt(hash);
+
+      expect(await screen.findByText("Can't reach loom. Retrying…")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Back to classic" })).toHaveLength(1);
+      expect(screen.queryByRole("heading")).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "Back to classic" }));
+      expect(switchApp).toHaveBeenCalledWith("classic");
+    },
+  );
+
+  it("offers the way back on a route whose panel is registered, with no snapshot", async () => {
+    definePanel({ id: "settings", title: () => "Settings", Body: () => <p>the settings panel</p> });
     useFleet.setState({ link: "offline" });
     shellAt("#/settings");
 
     expect(await screen.findByText("Can't reach loom. Retrying…")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Back to classic" }));
-    expect(switchApp).toHaveBeenCalledWith("classic");
+    expect(screen.getByRole("button", { name: "Back to classic" })).toBeInTheDocument();
+  });
+
+  it("draws no way back of its own once the snapshot is held", async () => {
+    useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
+    shellAt("#/");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to classic" })).toBeNull();
   });
 
   it("draws pairing without a snapshot, and without chrome", async () => {
@@ -210,6 +223,7 @@ describe("AppShell", () => {
 
     expect(await screen.findByText("outlet")).toBeInTheDocument();
     expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to classic" })).toBeNull();
     expect(header()).toBeNull();
     expect(footer()).toBeNull();
   });
@@ -264,7 +278,8 @@ describe("AppShell", () => {
 });
 
 describe("router", () => {
-  it("draws the placeholder of a route no panel is registered for", async () => {
+  it("draws the panel registered for a route", async () => {
+    definePanel({ id: "settings", title: () => "Settings", Body: () => <p>the settings panel</p> });
     useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
     render(<RouterProvider router={router} />);
 
@@ -272,7 +287,7 @@ describe("router", () => {
       await router.navigate({ to: "/settings" });
     });
 
-    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByText("the settings panel")).toBeInTheDocument();
     expect(window.location.hash).toBe("#/settings");
   });
 
