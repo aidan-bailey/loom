@@ -76,7 +76,7 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 
 ## Claude Code automation
 
-- **Skills:** `loom-dev` (run, drive and screenshot a dev build safely from inside loom)
+- **Skills:** `loom-dev` (run, drive and screenshot a dev build safely from inside loom), `feedback-triage` (publish feedback threads as watcher issues)
 - No commands, hooks or rules files are checked in under `.claude/`, and the lint refuses a CLAUDE.md or a rules dir there, which would load without its checks. A CLAUDE.local.md is personal: the lint leaves it alone, so keep it out of commits.
 - Explore and Plan subagents load no CLAUDE.md. When delegating to them, restate the rules that matter in the prompt: scratch files outside the worktree, never run loom in a pane, and the package rules of the files they touch. General-purpose subagents load the files.
 
@@ -96,7 +96,7 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 - **The lint checks structure, not truth.** It catches a path, a test name or a file-and-symbol reference that no longer resolves, but a moved symbol named plainly, a count, or a rule that is no longer true passes it forever. Re-run it after merges, and re-verify with [`docs/claude/auditing-claude-md-currency.md`](docs/claude/auditing-claude-md-currency.md). Deleting a package or retiring a concept means grepping every `CLAUDE.md`, README and guide for it.
 - **When entering an unfamiliar package**, read its `README.md` once for orientation before broad exploration.
 - `CLAUDE.md` is per worktree: a session in a worktree reads that branch's files, so rules land on `main` only when the branch merges. Commit a rule with the work that taught it; when a written rule is broken again, make it mechanical ([`docs/claude/adding-an-enforce-test.md`](docs/claude/adding-an-enforce-test.md)). Repo lessons go here and in `docs/claude/`, not in personal memory.
-- Not adopted yet, because loom has nothing for them: ADRs and an ADR index (design history stays in `docs/superpowers/specs/`), an issue-label table, a hook-launch check (no hooks are checked in), a `/distill` command, and anchor checks in links.
+- Not adopted yet, because loom has nothing for them: ADRs and an ADR index, an issue-label table, a hook-launch check, a `/distill` command, and anchor checks in links.
 
 ## Updating docs/claude/
 
