@@ -817,8 +817,8 @@ and answers only phones you have paired.
   this one. Settings has **Try the new app**, which switches this phone
   (the choice is per phone, kept in a cookie, and nothing else about the
   pairing changes: the same device, notifications and Home Screen icon).
-  For now the new app shows the fleet, and each other screen shows a
-  placeholder with **Back to classic**, which switches back. Offline, the
+  The new app draws every screen the classic one does, pairing included,
+  and Settings has **Back to classic**, which switches back. Offline, the
   switch happens the next time the app opens.
 
 #### Set it up
