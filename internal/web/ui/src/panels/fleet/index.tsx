@@ -16,7 +16,7 @@ import { SessionRow } from "./SessionRow";
 
 // The classic app keeps the workspace filter in localStorage under this key, as a JSON string
 // holding a workspace ID or "", so the filter survives a switch between the apps.
-const FILTER_KEY = "loom.filter";
+export const FILTER_KEY = "loom.filter";
 const ALL = "all";
 
 function readFilter(): string {
