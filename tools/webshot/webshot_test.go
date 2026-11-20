@@ -736,18 +736,24 @@ func TestCanned_AnUnpairedLoomAnswersEveryAPIRequest401AsAuthedDoes(t *testing.T
 	assert.Equal(t, http.StatusOK, code, "the paired loom is as it was")
 
 	c.unpaired = true
-	for _, rq := range []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/stream"},
-		{http.MethodGet, "/api/v1/sessions/1/turns"},
-		{http.MethodGet, "/api/v1/push-key"},
-		{http.MethodPost, "/api/v1/pair"},
+	// -serve mounts apiHandler and everything else ServeHTTP, each with a branch of its own.
+	apiOnly := httptest.NewServer(c.apiHandler())
+	t.Cleanup(apiOnly.Close)
+	for _, rq := range []struct{ method, base, path string }{
+		{http.MethodGet, srv.URL, "/api/v1/stream"},
+		{http.MethodGet, srv.URL, "/api/v1/sessions/1/turns"},
+		{http.MethodGet, srv.URL, "/api/v1/push-key"},
+		{http.MethodPost, srv.URL, "/api/v1/pair"},
+		{http.MethodGet, apiOnly.URL, "/api/v1/stream"},
+		{http.MethodGet, apiOnly.URL, "/api/v1/sessions/1/turns"},
+		{http.MethodPost, apiOnly.URL, "/api/v1/pair"},
 	} {
 		var res *http.Response
 		var err error
 		if rq.method == http.MethodPost {
-			res, err = http.Post(srv.URL+rq.path, "application/json", strings.NewReader("{}"))
+			res, err = http.Post(rq.base+rq.path, "application/json", strings.NewReader("{}"))
 		} else {
-			res, err = http.Get(srv.URL + rq.path)
+			res, err = http.Get(rq.base + rq.path)
 		}
 		require.NoError(t, err, rq.path)
 		body, err := io.ReadAll(res.Body)
