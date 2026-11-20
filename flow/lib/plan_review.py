@@ -1,44 +1,35 @@
 #!/usr/bin/env python3
-"""The `**Plan review:**` line of a plan /flow:draft reviewed, and which stories its review reads.
+"""Which stories of a plan /flow:draft drafted its plan review (flow:risk-reviewer) reads.
 
-usage: plan_review.py [--select] PLAN
+usage: plan_review.py --select PLAN
 
-/flow:draft's plan review (the dispatch guide's) copies each story's draft to D/reviewing/S<id>.md
-when its review starts, and to D/reviewed/S<id>.md once that review, or its one re-check, is clean.
-A deep story is vouched only when D/reviewed/S<id>.md is byte-identical to D/S<id>.md, the text the
-join puts in the plan, so any change after the review un-vouches it. This prints the line the
-manager writes above the skeleton's `## Stories`:
-
-    **Plan review:** /flow:draft plan review; deep: 1, 6; light: 2, 3; full: 4
-
-`deep:` lists the vouched deep stories, `light:` every light story (the run always reviews a light
-story in full) and `full:` every other deep story; an empty list is left out. The stories and their
-tiers come from the joined PLAN, D is the plan's drafts directory.
-
-With --select, it prints instead which stories the plan review reads, one line a story and a count,
-before the review starts:
+It prints, before the review starts, one line a story and a count:
 
     Story 1: review (landmines: user_id = $; risk: Task 1.2)
     Story 2: skip
     Story 3: review (no risk file)
     2 of 3 stories to review: 1, 3
 
-A story is reviewed when its fenced code holds one of the profile's landmine markers, or its drafter's
-risk file, D/risk/S<id>.md, lists a task whose code invents logic for store writes, transactions,
-concurrency, outside calls, bounds or auth, or that file is missing or is neither `none` nor a `- `
-list (so a draft from an older flow copy is reviewed). Every other story is skipped: the run reviews
-it in full, as it does every story the plan review doesn't vouch for (the owner, 2026-11-16).
+The stories come from the joined PLAN, each with its draft in D, the plan's drafts directory. A story is
+reviewed when its fenced code holds one of the profile's landmine markers, or its drafter's risk file,
+D/risk/S<id>.md, lists a task whose code invents logic for store writes, transactions, concurrency,
+outside calls, bounds or auth, or that file is missing or is neither `none` nor a `- ` list (so a draft
+from an older flow copy is reviewed). Every other story is skipped (the owner, 2026-11-16); the run gives
+every story the full review, read here or not (the owner, 2026-11-20).
 
 A mechanical or brief story (its `**Form:**` line; the plan treatment spec §4) is skipped whatever its
 markers or risk file say, `Story 2: skip (mechanical)`: the plan holds none of its code to review. But
 when its drafter's risk file lists a task its Form reason doesn't name (`Task 2.1` in the reason), the
-story hides risky logic in a form without plan code, and --select fails naming each such story and
-task: the manager takes it to the owner, who makes the story full or names the task in the reason.
+story hides risky logic in a form without plan code, and it fails naming each such story and task: the
+manager takes it to the owner, who makes the story full or names the task in the reason.
 
-Exit 0 with the line on stdout; 1, with the reason on stderr and nothing on stdout, when the plan
-holds no story, D/join.json is missing (D itself, or a plan never joined), a story has no draft or,
-with --select, the repo has no usable profile or a mechanical or brief story's drafter lists a task its
-reason doesn't name; 2 on a usage error.
+--select is required. Without it the script once printed a plan's `**Plan review:**` line, which the
+owner removed on 2026-11-20; it is a usage error now.
+
+Exit 0 with the selection on stdout; 1, with the reason on stderr and nothing on stdout, when the plan
+holds no story, D/join.json is missing (D itself, or a plan never joined), a story has no draft, the
+repo has no usable profile or a mechanical or brief story's drafter lists a task its reason doesn't
+name; 2 on a usage error, --select missing among them.
 """
 
 from __future__ import annotations
@@ -53,12 +44,11 @@ import check_plan  # noqa: E402
 from flowconf import FlowError, load_profile  # noqa: E402
 from plan_join import drafts_dir  # noqa: E402
 
-LABEL = "/flow:draft plan review"
 RISK_DIR = "risk"
 
 
 class ReviewError(Exception):
-    """What keeps the line from being written; the message is a sentence."""
+    """What keeps the selection from being made; the message is a sentence."""
 
 
 def drafted(text: str, drafts: Path) -> list[check_plan.Story]:
@@ -73,20 +63,6 @@ def drafted(text: str, drafts: Path) -> list[check_plan.Story]:
         if not draft.is_file():
             raise ReviewError(f"Story {story.sid} has no draft {draft}")
     return stories
-
-
-def tiers(text: str, drafts: Path) -> dict[str, list[str]]:
-    """The plan's story ids under `deep` (vouched), `light` and `full`, in plan order."""
-    lists: dict[str, list[str]] = {"deep": [], "light": [], "full": []}
-    for story in drafted(text, drafts):
-        draft = drafts / f"S{story.sid}.md"
-        if story.tier == "light":
-            lists["light"].append(story.sid)
-            continue
-        reviewed = drafts / "reviewed" / f"S{story.sid}.md"
-        clean = reviewed.is_file() and reviewed.read_bytes() == draft.read_bytes()
-        lists["deep" if clean else "full"].append(story.sid)
-    return lists
 
 
 def risk_file(path: Path) -> tuple[str | None, list[str]]:
@@ -162,25 +138,20 @@ def selection_lines(chosen: list[tuple[str, list[str], str]]) -> list[str]:
     return out
 
 
-def line(lists: dict[str, list[str]]) -> str:
-    """The `**Plan review:**` line: the label, then each non-empty list in deep, light, full order."""
-    parts = [LABEL, *(f"{name}: {', '.join(ids)}" for name, ids in lists.items() if ids)]
-    return "**Plan review:** " + "; ".join(parts)
-
-
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="plan_review.py", description="Print the Plan review line of a plan /flow:draft reviewed, or with --select which stories its review reads.")
-    parser.add_argument("--select", action="store_true", help="print which stories the plan review reads, before it starts")
+    parser = argparse.ArgumentParser(prog="plan_review.py", usage="%(prog)s --select PLAN",
+                                     description="Print which stories /flow:draft's plan review reads, before it starts.")
+    parser.add_argument("--select", action="store_true", help="print which stories the plan review reads (required)")
     parser.add_argument("plan", type=Path, help="the joined plan")
     args = parser.parse_args(argv)
+    if not args.select:
+        # parser.error exits 2 with the usage line, as any other usage error does.
+        parser.error("--select is required (the **Plan review:** line the bare form printed was removed on 2026-11-20)")
     plan: Path = args.plan
     try:
         text = plan.read_text(encoding="utf-8")
-        if args.select:
-            markers = load_profile(check_plan.repo_root(plan)).markers
-            result = "\n".join(selection_lines(selection(text, drafts_dir(plan), markers)))
-        else:
-            result = line(tiers(text, drafts_dir(plan)))
+        markers = load_profile(check_plan.repo_root(plan)).markers
+        result = "\n".join(selection_lines(selection(text, drafts_dir(plan), markers)))
     except (OSError, UnicodeDecodeError, FlowError, ReviewError) as err:
         print(f"plan_review.py: {plan}: {err}", file=sys.stderr)
         return 1

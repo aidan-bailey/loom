@@ -369,17 +369,7 @@ func (fx *runFX) Conformance(story, base, head string) (flowrun.Conformance, err
 	if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
 		return flowrun.Conformance{}, err
 	}
-	c := flowrun.Conformance{Path: path}
-	for _, l := range strings.Split(out, "\n") {
-		if v, ok := strings.CutPrefix(l, "MARKERS: "); ok {
-			for _, m := range strings.Split(v, ", ") {
-				if m = strings.TrimSpace(m); m != "" {
-					c.Markers = append(c.Markers, m)
-				}
-			}
-		}
-	}
-	return c, nil
+	return flowrun.Conformance{Path: path}, nil
 }
 
 func (fx *runFX) Premises(rev string) (string, error) { return fx.tools.Premises(fx.plan, rev) }

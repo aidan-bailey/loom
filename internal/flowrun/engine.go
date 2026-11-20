@@ -49,10 +49,11 @@ type Regenerated struct {
 	Paths []string `json:"paths,omitempty"`
 }
 
-// Conformance is loom flow conformance's output for a story.
+// Conformance is loom flow conformance's output for a story: the file its
+// first review's brief names. A state an older build saved may also hold
+// the markers it parsed for the vouched-story review, which decoding drops.
 type Conformance struct {
-	Path    string   `json:"path"`
-	Markers []string `json:"markers,omitempty"`
+	Path string `json:"path"`
 }
 
 // Scope is what an agent's package rules cover (package rules spec
@@ -1064,11 +1065,10 @@ func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	if err != nil {
 		return err
 	}
-	role := "story-reviewer"
-	if s.Review != "vouched" || dev.Status == "DONE_WITH_CONCERNS" || len(conf.Markers) > 0 {
-		role = "code-quality-reviewer"
-	}
-	rev, rep, err := e.review(p+"-review", role, ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path), e.storyScope(s, base))
+	// Every story's first review is the full one: /flow:draft no longer
+	// reviews a plan's code (2026-11-20). A run an older build started may
+	// hold a story-reviewer's: its memo is by name, so a replay takes it.
+	rev, rep, err := e.review(p+"-review", "code-quality-reviewer", ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path), e.storyScope(s, base))
 	if err != nil {
 		return err
 	}

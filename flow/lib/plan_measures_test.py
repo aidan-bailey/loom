@@ -19,6 +19,8 @@ def agent(name, usd):
 STAGE = ("- Design stage: /flow:draft session 7e7a8520-e18b-42d8-9b20-6eb9f39a2788, 2026-11-12T07:57:50Z to "
          "2026-11-12T09:07:19Z UTC: $20.00 logged, $20.50 with estimated thinking; 10,000 plan lines, $2.00 per "
          "1,000 lines; plan review $6.00; loom flow roster aaaaaaaaaaaa.\n")
+# A record from before 2026-11-20: its Stories table has the Review column (`vouched` or `full`) the engine wrote
+# then, which no measure reads, and its Design stage line the two reviewers' `plan review $`.
 RECORD = (
     "# Run: r\n\n- Plan: p.md (3 stories)\n- Definitions: loom flow roster bbbbbbbbbbbb → loom flow roster cccccccccccc\n"
     + STAGE
@@ -84,8 +86,15 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(m.run_usd, 40.0)
         # Story 1: fix1 3 + review2 4; Story 3: fix1 7 + review2 8 (the second session's table); never Story 2's.
         self.assertEqual(m.fix_usd, 22.0)
-        self.assertEqual((m.stories, m.vouched), (3, 1))
+        self.assertEqual(m.stories, 3)
         self.assertEqual(m.review_usd, 6.0)
+        self.assertFalse(m.risk_only, "`plan review $`: a draft's plan and risk reviewers together, before 2026-11-20")
+
+    def test_a_risk_review_is_the_plan_review_by_the_risk_reviewer_alone(self):
+        text = RECORD.replace("; plan review $6.00;", "; skeleton review $1.50; risk review $2.50;")
+        m = plan_measures.measure("r", text, 40.0)
+        self.assertEqual((m.review_usd, m.risk_only), (2.5, True))
+        self.assertEqual(m.skeleton_usd, 1.5)
 
     def test_the_skeleton_reviews_cost_is_read_apart_from_the_plan_reviews(self):
         text = RECORD.replace("; plan review $6.00;", "; skeleton review $1.50; plan review $6.00;")
@@ -97,6 +106,7 @@ class MeasureTest(unittest.TestCase):
         text = RECORD.replace("; plan review $6.00; loom flow roster aaaaaaaaaaaa.", ".")
         m = plan_measures.measure("r", text, 40.0)
         self.assertIsNone(m.review_usd)
+        self.assertFalse(m.risk_only)
         self.assertIsNone(m.skeleton_usd)
         self.assertIsNone(m.draft_copy)
         self.assertEqual(m.plan_lines, 10000)
@@ -116,10 +126,24 @@ class TableTest(unittest.TestCase):
         b = plan_measures.measure("b", RECORD.replace(STAGE, ""), 10.0)
         out = plan_measures.table([a, b])
         self.assertIn("## Plan code", out)
-        self.assertIn("| a | aaaaaaaaaaaa | cccccccccccc | 10,000 | 2 | 0.20 | $20.00 | $40.00 | $6.00 | $22.00 | 3 | 1 | $6.00 | $2.00 | n/a |", out)
-        self.assertIn("| b | n/a | cccccccccccc | n/a | 2 | n/a | n/a | $10.00 | n/a | $22.00 | 3 | 1 | n/a | n/a | n/a |", out)
+        self.assertNotIn("Vouched", out)
+        self.assertIn("| a | aaaaaaaaaaaa | cccccccccccc | 10,000 | 2 | 0.20 | $20.00 | $40.00 | $6.00 | $22.00 | 3 | $6.00 | $2.00 | n/a |", out)
+        self.assertIn("| b | n/a | cccccccccccc | n/a | 2 | n/a | n/a | $10.00 | n/a | $22.00 | 3 | n/a | n/a | n/a |", out)
         # Pooled: the per-1,000 figures only over a (the run with plan lines); questions and dollars over both.
-        self.assertIn("| Pooled (2 runs) | | | 10,000 | 4 | 0.20 | $20.00 | $50.00 | $6.00 | $44.00 | 6 | 2 | $6.00 | $2.00 | n/a |", out)
+        self.assertIn("| Pooled (2 runs) | | | 10,000 | 4 | 0.20 | $20.00 | $50.00 | $6.00 | $44.00 | 6 | $6.00 | $2.00 | n/a |", out)
+        header = next(line for line in out.splitlines() if line.startswith("| Run |"))
+        rule = out.splitlines()[out.splitlines().index(header) + 1]
+        self.assertEqual(header.count("|"), rule.count("|"), "the rule has a cell per column")
+
+    def test_either_review_token_fills_the_one_plan_review_column(self):
+        both = plan_measures.measure("both", RECORD, 40.0)
+        risk = plan_measures.measure("risk", RECORD.replace("; plan review $6.00;", "; risk review $3.00;"), 40.0)
+        out = plan_measures.table([both, risk])
+        self.assertEqual(out.count("| Plan review |"), 1)
+        self.assertTrue(any(line.startswith("| risk |") and line.endswith("| 3 | $3.00 | $1.00 | n/a |") for line in out.splitlines()), out)
+        # Pooled: $6 and $3 over 6 stories.
+        pooled = next(line for line in out.splitlines() if line.startswith("| Pooled"))
+        self.assertTrue(pooled.endswith("| 6 | $9.00 | $1.50 | n/a |"), pooled)
 
     def test_the_pooled_skeleton_review_is_the_average_a_plan_over_the_runs_with_it(self):
         def skeleton(usd):

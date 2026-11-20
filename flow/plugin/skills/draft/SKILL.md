@@ -245,8 +245,8 @@ resumes it.
    each other story's Plan review column of `STATE.md`. Never review a
    skipped story on a hunch: a review of every story cost more than the fix
    rounds it saved (the owner, 2026-11-16). The review is the risk
-   reviewer's alone and vouches for no story: the run reviews every story
-   in full (the owner, 2026-11-20). A reviewer's brief holds the plan's
+   reviewer's alone, and the run reviews every story in full (the owner,
+   2026-11-20). A reviewer's brief holds the plan's
    path, the story's id and plan lines (its `line` and `end` in
    `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>`, the
    drafter's profile block, the story's `--select` line (the landmine
@@ -330,9 +330,7 @@ resumes it.
      (`wc -l < $ARGUMENTS`) and this session's flow copy
      (`loom flow conf roster`).
    - Write the Design stage line (below) into `STATE.md`'s **Design stage**
-     slot, and into the skeleton's head, directly above `## Stories`. Write
-     no `**Plan review:**` line: without one `loom flow check-plan` vouches
-     for no story, and the run reviews each in full. Then run
+     slot, and into the skeleton's head, directly above `## Stories`. Then run
      step 3's `loom flow join` and `loom flow check-plan` again, and fix what fails
      before the commit.
    - Commit the plan by pathspec, and nothing else, in the repo's commit
@@ -353,7 +351,7 @@ resumes it.
 
 The Design stage line is one physical line:
 
-`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; plan review $<risk-reviewer USD>; budget $<the Budget line's draft figure>; forms: <form> <n> stories $<USD>, …; <loom flow conf roster's output>.`
+`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; risk review $<risk-reviewer USD>; budget $<the Budget line's draft figure>; forms: <form> <n> stories $<USD>, …; <loom flow conf roster's output>.`
 
 It leaves out the design session's own cost, which the owner measures by
 hand, and `budget` when the skeleton has no Budget line. `forms:` lists each

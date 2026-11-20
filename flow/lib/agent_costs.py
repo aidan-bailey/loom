@@ -746,7 +746,9 @@ def subagent_entries(main: Path) -> list[tuple[str, str, Path, bool]]:
 
 # A story a drafter's label names: `S3`, `S10b` (`S5-S6` names both), or `Story 7`.
 STORY_TOKEN_RE = re.compile(r"\bS([0-9]\w*)\b|\bStor(?:y|ies) ([0-9]\w*)")
-# Rows the Design stage line prices in segments of their own (`skeleton review $X; plan review $Y`).
+# Rows the Design stage line prices in segments of their own (`skeleton review $X; risk review $Y`, and
+# `plan review $Y` before 2026-11-20). plan-reviewer stays although the owner removed it that day: draft
+# sessions from before still hold its rows to price.
 NO_FORM_TYPES = frozenset({"skeleton-reviewer", "plan-reviewer", "risk-reviewer"})
 FORM_ORDER = ("full", "mechanical", "brief")
 

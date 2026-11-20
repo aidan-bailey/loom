@@ -42,8 +42,7 @@ holds no `###` heading outside a `## Story` section.
 confirms the spec exists, lists the pairs of stories that may run at once
 (disjoint files, at most one exclusive build), fails a light story whose code
 holds a landmine marker its Review reason doesn't name, and prints each story's
-tier, whether a plan review vouches for it (`review: vouched` or `review: full`)
-and the landmine markers its code holds. The markers and the exclusive builds
+tier and the landmine markers its code holds. The markers and the exclusive builds
 come from the repo's profile.
 `loom flow premises <plan>` checks what the plan
 quotes of the tree: the files its tasks modify and the lines they name, every
@@ -268,9 +267,9 @@ more to review and fix the copies, before anything ran (the owner,
 | For | logic for store writes or id allocation, transactions, concurrency, outside calls, bounds or auth; a landmine | where code lives or what it is called, not what it does: moves, renames, visibility, import rewiring, dead code | routine new code the gates cover: plumbing a flag or field, a message, docs, tests of existing behaviour |
 | Plan text | the complete code and tests | per task, the items it moves or renames (now, new path, new visibility), the grep that lists their uses, the rewrites, the gate; fenced code only for glue | the behaviour, the contract names, each test by name with what it asserts and its `Fails without:` line; no implementation code |
 | Plan review | when `loom flow plan-review --select` marks it | never | never |
-| First run review | `flow:code-quality-reviewer` (`flow:story-reviewer` for a story an older plan's review line vouches for) | `flow:code-quality-reviewer`, told to read the diff with git's moved-code detection and review only what isn't a move | `flow:code-quality-reviewer`, told the plan holds none of the code |
+| First run review | `flow:code-quality-reviewer` | `flow:code-quality-reviewer`, told to read the diff with git's moved-code detection and review only what isn't a move | `flow:code-quality-reviewer`, told the plan holds none of the code |
 
-Only a full story is vouched. `loom flow check-plan` fails a mechanical or
+`loom flow check-plan` fails a mechanical or
 brief story whose code holds a landmine marker its Form reason doesn't name,
 and warns on each mechanical task whose fenced code passes the cap in loom's
 `flow/lib/estimates.toml`. `loom flow plan-review --select` fails a
@@ -432,10 +431,10 @@ wrong, settled like a DESIGN verdict. Findings join the story's fix job.
 After the fixes, a reviewed story whose draft changed since its review gets
 one re-check of the diff and of the uses of what it changed, never a loop.
 
-The review vouches for no story, and the run reviews every story in full.
-Until 2026-11-20 a `flow:plan-reviewer` (Sonnet @ high) read each marked story
-whole first and escalated its risky tasks, and a story both passed went to the
-run's narrower `flow:story-reviewer`. In the review files of 10 plans, 30 of
+The run reviews every story in full. Until 2026-11-20 a `flow:plan-reviewer`
+(Sonnet @ high) read each marked story whole first and escalated its risky
+tasks, and a story both passed got a narrower first review in the run; the
+owner removed both that day. In the review files of 10 plans, 30 of
 its 114 Critical and Important findings were what the compiler and lints
 report (all 17 of its Criticals), 45 were tests the run's review raises at
 about $1.17 each to fix, and 5 were behaviour bugs; over the 8 plans priced it
@@ -445,10 +444,9 @@ evidence).
 
 `/flow:draft` copies every draft to `D/reviewing/` as the review starts, a
 skipped story's too: the seams re-check and the risk re-check diff against it.
-A plan drafted before 2026-11-20 may carry a `**Plan review:**` line, which
-`loom flow plan-review <plan>` wrote from the clean reviews' `D/reviewed/`
-copies; `loom flow check-plan` still vouches for the deep stories it lists
-under `deep:`, whose first run review is `flow:story-reviewer`'s.
+A plan drafted before 2026-11-20 may carry a `**Plan review:**` line:
+`loom flow check-plan` warns that it ignores the line, and the run reviews
+those stories in full too.
 
 ### Fixing the plan
 
@@ -510,8 +508,6 @@ under `deep:`, whose first run review is `flow:story-reviewer`'s.
    commits the plan by pathspec; each spec answer was committed as it was
    written.
 
-With no `**Plan review:**` line, `loom flow check-plan` marks every story
-`review: full`.
 
 
 ### Epics
@@ -636,7 +632,7 @@ divert that spend:
 | Reviewing a story's risky tasks in `/flow:draft`'s plan review, and re-checking their fixes | `flow:risk-reviewer` |
 | Reviewing the design a spec and skeleton fix, in `/flow:draft`'s question round | `flow:skeleton-reviewer` |
 | Writing a plan's stories from its skeleton, and fixing the drafts | `flow:drafter`, from `/flow:draft` |
-| One story that `loom flow check-plan` marks `review: vouched`, and every re-review under `supervised` | `flow:story-reviewer` |
+| Every re-review of a fix round under `supervised`, a story's or the final round's | `flow:story-reviewer` |
 | Running the profile's gates (check-only, in the background) | `flow:verifier` |
 | Plan-task implementation | a developer: `flow:junior-dev` or `flow:intermediate-dev`; `flow:senior-dev` only as a last resort |
 | Review outside the `supervised` option | `flow:spec-reviewer`, then `flow:code-quality-reviewer` |
@@ -818,16 +814,13 @@ Under the `supervised` option the run engine runs the reviews: one per story,
 then one whole-implementation anti-seam pass by `flow:code-quality-reviewer` after
 the last. `loom flow conformance` first maps the story's diff onto the plan:
 which blocks landed as written, which didn't, and which changed lines no block
-covers. `loom flow check-plan` prints a `review:` column per story. For a `vouched`
-story, `flow:story-reviewer` (Opus @ high) reads just those, the developer's
-deviations and tests, and the seams. For a `full` story (a light story, a deep story the plan review
-listed under `full:`, or any story of a plan without a `**Plan review:**` line), `flow:code-quality-reviewer`
-does a combined pass: the plan's code, quality and the seam. A mechanical
-story's brief adds how to read a move diff, and a brief story's that the plan
-holds none of its code ([story forms](#story-forms)). A `vouched` story
-gets that pass too when the developer reported DONE_WITH_CONCERNS or the
-changed lines no plan block covers hold one of the profile's landmine
-markers. Neither is a downgrade of the other.
+covers. `flow:code-quality-reviewer` then does a combined pass on every
+story: the plan's code, quality and the seam. A mechanical story's brief adds
+how to read a move diff, and a brief story's that the plan holds none of its
+code ([story forms](#story-forms)). Each fix round's re-review, a story's or
+the final round's, goes to `flow:story-reviewer` (Opus @ high): it confirms
+each finding is fixed and reviews the fix's own lines. Until 2026-11-20 a story
+the plan review vouched for got a narrower first review from it instead.
 Fixes go to a fresh `flow:intermediate-dev` briefed with the findings, never back
 to the developer that built the story: a resumed developer re-reads its whole
 context on every request. Re-reviews go to `flow:story-reviewer`, with the fix's

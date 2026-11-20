@@ -155,13 +155,21 @@ class CheckPlanTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertNotIn("1+2", out)
 
-    def test_reports_the_plan_review_line(self):
-        _, out = run(GOOD)
-        self.assertIn("Plan review: none recorded", out)
+    def test_an_old_plan_review_line_passes_with_one_warning(self):
+        code, out = run(GOOD)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("Plan review", out)
         reviewed = GOOD.replace("approved.\n", "approved.\n\n**Plan review:** 2026-10-14, code-quality-reviewer and recon, every story\n")
         code, out = run(reviewed)
         self.assertEqual(code, 0, out)
-        self.assertIn("Plan review: 2026-10-14, code-quality-reviewer and recon, every story", out)
+        self.assertNotIn("FAIL", out)
+        warnings = [line for line in out.splitlines() if line.startswith("WARN")]
+        self.assertEqual(len(warnings), 1, out)
+        self.assertRegex(
+            warnings[0],
+            r"^WARN \[lint\] .+plan\.md: line 5: the \*\*Plan review:\*\* line \(from a plan drafted before 2026-11-20\) "
+            r"is ignored: the run gives every story the full review$",
+        )
 
     def test_two_building_stories_never_pair(self):
         code, out = run(GOOD.replace("`pnpm test panel`", "`cargo test -p ui`"))
@@ -261,7 +269,7 @@ class JsonTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         got = json.loads(out)
         self.assertEqual(got["spec"], "docs/spec.md")
-        self.assertIsNone(got["plan_review"])
+        self.assertNotIn("plan_review", got)
         stories = got["stories"]
         self.assertEqual([s["id"] for s in stories], ["1", "2", "3"])
         lines = GOOD.splitlines()
@@ -270,7 +278,7 @@ class JsonTest(unittest.TestCase):
         self.assertEqual(stories[2]["end"], len(lines) + 1, "the plan's last line")
         self.assertEqual(stories[1]["developer"], "intermediate-dev", "backticks and flow: trimmed")
         self.assertEqual(stories[2]["tier"], "light")
-        self.assertEqual(stories[0]["review"], "full", "no Plan review line vouches for nothing")
+        self.assertNotIn("review", stories[0], "the run gives every story the full review")
         self.assertEqual(stories[0]["verify"], "`cargo nextest run -p a store`")
         self.assertEqual(stories[1]["interfaces"], "uses `Store::get` from Story 1")
         self.assertEqual(stories[0]["landmines"], [])
@@ -396,7 +404,7 @@ class MarkerFloorTest(unittest.TestCase):
     def test_the_markers_a_story_holds_are_listed(self):
         code, out = run(tiered(("1", "deep", "let owner = user_id;\n#[tokio::test]")))
         self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 1\s+.*review: full  landmines: #\[tokio::test, user_id")
+        self.assertRegex(out, r"Story 1\s+.*deep   landmines: #\[tokio::test, user_id")
 
     def test_light_story_with_a_marker_fails(self):
         text = tiered(("1", "light", "let owner = user_id;"))
@@ -432,155 +440,62 @@ class MarkerFloorTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
 
-class PlanReviewTierTest(unittest.TestCase):
-    def test_review_tiers_reads_both_lists(self):
-        review = "2026-10-15; code-quality-reviewer on seams; deep: 1, 6; recon on seams; light: 2 3,7"
-        self.assertEqual(check_plan.review_tiers(review), ({"1", "6"}, {"2", "3", "7"}, set()))
+class OldPlanReviewLineTest(unittest.TestCase):
+    """A `**Plan review:**` line, which a plan drafted before 2026-11-20 may carry: warned of, never read."""
 
-    def test_review_tiers_is_none_for_a_line_without_tokens(self):
-        self.assertIsNone(check_plan.review_tiers(None))
-        self.assertIsNone(check_plan.review_tiers("2026-10-14, code-quality-reviewer and recon, every story"))
+    # Lines the removed checks failed: a light story listed as deep, a story under no list, a token that is no
+    # story id, a light story under a line without tiers, and an id under full: that is no story.
+    LINES = (
+        "2026-10-15; deep: 1, 2",
+        "2026-10-15; deep: 1",
+        "2026-10-15; deep: 1; light: 1-3",
+        "2026-10-14, code-quality-reviewer and recon, every story",
+        "/flow:draft plan review; deep: 1; light: 2; full: 3",
+    )
 
-    def test_review_tiers_with_one_token_leaves_the_other_empty(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1"), ({"1"}, set(), set()))
-        self.assertEqual(check_plan.review_tiers("recon on seams; light: 4, 5"), (set(), {"4", "5"}, set()))
+    def test_each_old_line_passes_with_one_warning_and_no_review_column(self):
+        for review in self.LINES:
+            with self.subTest(review=review):
+                text = tiered(("1", "deep", "x"), ("2", "light (docs)", "x"), review=review)
+                code, out = run(text)
+                self.assertEqual(code, 0, out)
+                self.assertNotIn("FAIL", out)
+                warnings = [line for line in out.splitlines() if line.startswith("WARN")]
+                self.assertEqual(len(warnings), 1, out)
+                self.assertIn(
+                    f": line {line_of(text, f'**Plan review:** {review}')}: the **Plan review:** line (from a plan "
+                    "drafted before 2026-11-20) is ignored: the run gives every story the full review",
+                    warnings[0],
+                )
+                self.assertRegex(out, r"(?m)^  Story 1\s+junior-dev\s+1 files\s+no build\s+deep$")
+                self.assertRegex(out, r"(?m)^  Story 2\s+junior-dev\s+1 files\s+no build\s+light$")
 
-    def test_vouched_follows_the_line(self):
-        stories = [check_plan.Story("1", 1), check_plan.Story("2", 2)]
-        self.assertEqual(check_plan.vouched(None, stories), {"1": False, "2": False})
-        self.assertEqual(check_plan.vouched("every story, written before tiers", stories), {"1": True, "2": True})
-        stories[1].fields["Review"] = "light"
-        # A tokenless line vouches for deep stories only: a light story needs the full review.
-        self.assertEqual(check_plan.vouched("every story, written before tiers", stories), {"1": True, "2": False})
-        stories[1].fields.pop("Review")
-        self.assertEqual(check_plan.vouched("deep: 1; light: 2", stories), {"1": True, "2": False})
-        self.assertEqual(check_plan.vouched("light: 1, 2", stories), {"1": False, "2": False})
-
-    def test_output_columns_give_the_tier_and_whether_the_review_vouches(self):
-        review = "2026-10-15; deep: 1, 3; light: 2"
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), ("3", None, "x"), review=review))
-        self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 1\s+junior-dev\s+1 files\s+no build\s+deep\s+review: vouched")
-        self.assertRegex(out, r"Story 2\s+junior-dev\s+1 files\s+no build\s+light\s+review: full")
-        self.assertRegex(out, r"Story 3\s+junior-dev\s+1 files\s+no build\s+deep\s+review: vouched")
-
-    def test_a_line_written_before_tiers_vouches_for_every_story(self):
-        review = "2026-10-14, code-quality-reviewer and recon, every story"
-        code, out = run(tiered(("1", "deep", "x"), ("2", None, "x"), review=review))
-        self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 1\s+.*deep\s+review: vouched")
-        self.assertRegex(out, r"Story 2\s+.*deep\s+review: vouched")
-
-    def test_a_light_story_under_a_line_without_tiers_fails(self):
-        review = "2026-10-14, code-quality-reviewer and recon, every story"
-        text = tiered(("1", "deep", "x"), ("2", "light (docs)", "x"), review=review)
-        code, out = run(text)
-        self.assertEqual(code, 1, out)
-        self.assertIn(
-            f"Story 2 (line {line_of(text, '## Story 2: Title 2')}): light, but the Plan review line lists no "
-            "deep:/light: tiers: list every story under one",
-            out,
-        )
-        self.assertNotIn("Story 1 (", out)
-
-    def test_a_case_typo_in_the_tier_tokens_still_parses(self):
-        self.assertEqual(check_plan.review_tiers("Deep: 1; Light: 2"), ({"1"}, {"2"}, set()))
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="2026-10-15; Deep: 1; LIGHT: 2"))
-        self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 1\s+.*deep\s+review: vouched")
-        self.assertRegex(out, r"Story 2\s+.*light\s+review: full")
-
-    def test_review_tiers_keeps_ids_with_letters(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1a, B2; light: 3-x"), ({"1a", "B2"}, {"3-x"}, set()))
-
-    def test_review_tiers_strips_one_trailing_dot(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1, 7."), ({"1", "7"}, set(), set()))
-        code, out = run(tiered(("1", "deep", "x"), ("7", "light", "x"), review="2026-10-15; deep: 1; light: 7."))
-        self.assertEqual(code, 0, out)
-
-    def test_a_token_that_is_no_story_id_is_reported(self):
-        for token in ("1-3", "`2`"):
-            review = f"2026-10-15; deep: 1; light: {token}"
-            code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review=review))
-            self.assertEqual(code, 1, f"{token!r}: {out}")
-            self.assertIn(
-                f"the Plan review line lists {token} under light:, which is no story id "
-                "(list ids one at a time, on one physical line: no ranges, punctuation or backticks)",
-                out,
-            )
-            self.assertIn("Story 2: the Plan review line lists it under none of deep:, light: and full:", out)
-
-    def test_no_plan_review_line_means_the_full_review(self):
+    def test_without_a_line_there_is_no_warning_and_no_review_column(self):
         code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x")))
         self.assertEqual(code, 0, out)
-        self.assertIn("Plan review: none recorded", out)
-        self.assertRegex(out, r"Story 1\s+.*deep\s+review: full")
-        self.assertRegex(out, r"Story 2\s+.*light\s+review: full")
+        self.assertNotIn("WARN", out)
+        self.assertRegex(out, r"(?m)^  Story 1\s+junior-dev\s+1 files\s+no build\s+deep$")
+        self.assertRegex(out, r"(?m)^  Story 2\s+junior-dev\s+1 files\s+no build\s+light$")
 
-    def test_a_story_listed_under_the_wrong_tier_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="2026-10-15; deep: 1, 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it as deep, its Review line says light", out)
-        self.assertNotIn("Story 1: the Plan review line", out)
-
-    def test_a_story_with_no_review_line_listed_light_says_so(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", None, "x"), review="2026-10-15; deep: 1; light: 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it as light, its tier is deep (no Review line)", out)
-
-    def test_a_story_with_an_unparsable_review_value_is_not_also_compared(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", "maybe", "x"), review="2026-10-15; deep: 1; light: 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("**Review:** must be deep or light", out)
-        self.assertNotIn("the Plan review line lists it as", out)
-
-    def test_a_story_in_neither_list_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", None, "x"), review="2026-10-15; deep: 1"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it under none of deep:, light: and full:", out)
-        self.assertNotIn("Story 1: the Plan review line", out)
-
-    def test_a_story_in_both_lists_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="2026-10-15; deep: 1, 2; light: 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it under both deep: and light:", out)
-        self.assertNotIn("Story 1: the Plan review line", out)
-
-    def test_review_tiers_reads_a_full_list(self):
-        self.assertEqual(check_plan.review_tiers("deep: 1; light: 2; full: 3, 4"), ({"1"}, {"2"}, {"3", "4"}))
-        self.assertEqual(check_plan.review_tiers("Full: 5"), (set(), set(), {"5"}))
-
-    def test_vouched_leaves_a_full_story_unvouched(self):
-        stories = [check_plan.Story("1", 1), check_plan.Story("2", 2)]
-        self.assertEqual(check_plan.vouched("deep: 1; full: 2", stories), {"1": True, "2": False})
-
-    def test_a_deep_story_under_full_passes_and_gets_the_full_review(self):
-        review = "/flow:draft plan review; deep: 1; light: 2; full: 3"
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), ("3", None, "x"), review=review))
+    def test_json_gives_no_review_for_a_plan_with_an_old_line(self):
+        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="2026-10-15; deep: 1; light: 2"), as_json=True)
         self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 1\s+.*deep\s+review: vouched")
-        self.assertRegex(out, r"Story 2\s+.*light\s+review: full")
-        self.assertRegex(out, r"Story 3\s+.*deep\s+review: full")
+        got = json.loads(out)  # no warning on stdout: the engine parses it
+        self.assertNotIn("plan_review", got)
+        self.assertEqual([("review" in story, story["tier"]) for story in got["stories"]], [(False, "deep"), (False, "light")])
 
-    def test_a_light_story_under_full_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", "light", "x"), review="deep: 1; full: 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn(
-            "Story 2: the Plan review line lists it under full:, which holds only deep stories, "
-            "and its Review line says light",
-            out,
-        )
-        self.assertNotIn("Story 1: the Plan review line", out)
-
-    def test_a_story_under_deep_and_full_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), ("2", "deep", "x"), review="deep: 1, 2; full: 2"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it under both deep: and full:", out)
-
-    def test_an_unknown_id_under_full_fails(self):
-        code, out = run(tiered(("1", "deep", "x"), review="deep: 1; full: 9"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("the Plan review line lists 9 under full:, which is no story id", out)
+    def test_only_a_line_before_the_first_story_and_outside_a_fence_is_warned_of(self):
+        self.assertEqual(check_plan.plan_review_line(tiered(("1", "deep", "x"), review="deep: 1")), 5)
+        plain = tiered(("1", "deep", "x"))
+        fenced = plain.replace("**Spec:** `docs/spec.md`\n", f"**Spec:** `docs/spec.md`\n\n{FENCE}\n**Plan review:** deep: 1\n{FENCE}\n", 1)
+        below = plain.replace("### Task 1.1: Task", "**Plan review:** deep: 1\n\n### Task 1.1: Task")
+        for name, text in (("fenced", fenced), ("below the first story", below)):
+            with self.subTest(name):
+                self.assertNotEqual(text, plain)
+                self.assertIsNone(check_plan.plan_review_line(text))
+                code, out = run(text)
+                self.assertEqual(code, 0, out)
+                self.assertNotIn("WARN", out)
 
 
 if __name__ == "__main__":
@@ -944,20 +859,17 @@ class FormTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual([s["form"] for s in json.loads(out)["stories"]], ["full", "mechanical", "brief"])
 
-    def test_a_mechanical_story_is_never_vouched(self):
-        text = formed(("1", None, None, ["x"]), ("2", None, "mechanical", ["x"]), review="deep: 1, 2")
-        code, out = run(text)
-        self.assertEqual(code, 1, out)
-        self.assertIn("Story 2: the Plan review line lists it under deep:, but its Form is mechanical: only a full story is vouched", out)
-        self.assertNotIn("Story 1: the Plan review line", out)
-        stories = list(parsed(text).values())
-        self.assertEqual(check_plan.vouched("deep: 1, 2", stories), {"1": True, "2": False})
-        self.assertEqual(check_plan.vouched("every story, written before tiers", stories), {"1": True, "2": False})
-
-    def test_a_deep_mechanical_story_under_full_passes(self):
-        code, out = run(formed(("1", None, None, ["x"]), ("2", None, "brief", ["x"]), review="deep: 1; full: 2"))
+    def test_an_old_line_listing_a_mechanical_story_under_deep_passes(self):
+        # Until 2026-11-20 the check failed a mechanical story the line listed under deep:.
+        code, out = run(formed(("1", None, None, ["x"]), ("2", None, "mechanical", ["x"]), review="deep: 1, 2"))
         self.assertEqual(code, 0, out)
-        self.assertRegex(out, r"Story 2\s+.*deep\s+review: full  form: brief")
+        self.assertIn("the **Plan review:** line (from a plan drafted before 2026-11-20) is ignored", out)
+        self.assertRegex(out, r"(?m)^  Story 2\s+.*deep   form: mechanical$")
+
+    def test_the_output_names_a_form_other_than_full(self):
+        code, out = run(formed(("1", None, None, ["x"]), ("2", None, "brief", ["x"])))
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"(?m)^  Story 2\s+.*deep   form: brief$")
         self.assertNotRegex(out, r"Story 1\s+.*form:")
 
     def test_a_mechanical_story_holding_a_marker_fails_unless_its_reason_names_it(self):

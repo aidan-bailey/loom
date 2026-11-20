@@ -15,27 +15,19 @@ line, below) loom flow run's engine routes and reviews from:
 
     ### Task 2.1: ...
 
-A plan whose code was reviewed before it was committed (the dispatch guide's
-plan review) records it in a `**Plan review:**` line before the first story.
-The run engine reads it: a story the plan review vouches for (below) gets the narrow
-story-reviewer, which reads only what the plan doesn't vouch for; any other
-gets the full code-quality review.
-
 A story may carry a fifth opening line, `- **Review:** deep` or `- **Review:** light`, either with
-a reason in parentheses. A story without it is deep. And a sixth, `- **Form:** full`, `mechanical` or
-`brief`, each with an optional reason in parentheses (the plan treatment spec §4): a full story's plan
-gives its code, a mechanical one's lists what it moves or renames, a brief one's describes its code
-without writing it. A story without the line is full. Only a full story is vouched; a mechanical or
-brief story whose fenced code holds a landmine marker fails unless its Form reason names the marker;
-and a mechanical story's task whose fenced code passes `estimates.toml`'s `[mechanical] code_cap`
-draws a lint warning. A light story whose fenced code holds one of
-the profile's landmine markers fails the check unless its reason names the marker. A Plan review line
-may list the deep and light story ids as `deep: 1, 6; light: 2, 3`, and the deep stories the review
-didn't vouch for as `full: 4`: a story it lists under the wrong tier, under more than one list or under
-none fails the check, as does a token under any list that is no story id
-(ids are listed one at a time, on one physical line), and so does a light story under a line that
-lists no tiers at all. The output says per story whether the plan review vouches for it (a deep story
-under `deep:`, or a deep story of a line written before tiers).
+a reason in parentheses. A story without it is deep, and the run engine leaves the landmine notes out of
+a light story's developer brief. And a sixth, `- **Form:** full`, `mechanical` or `brief`, each with an
+optional reason in parentheses (the plan treatment spec §4): a full story's plan gives its code, a
+mechanical one's lists what it moves or renames, a brief one's describes its code without writing it. A
+story without the line is full. A light story whose fenced code holds one of the profile's landmine
+markers fails the check unless its Review reason names the marker, and a mechanical or brief one unless
+its Form reason does; a mechanical story's task whose fenced code passes `estimates.toml`'s
+`[mechanical] code_cap` draws a lint warning. The run gives every story the full review.
+
+A plan drafted before 2026-11-20 may carry a `**Plan review:**` line before its first story, which then
+gave the stories it listed a narrower first review in the run. The owner removed that path that day, so
+the check reads nothing from the line and prints a `WARN [lint]` line saying it is ignored, never a FAIL.
 
 Two lints read the stories' text and print a `WARN [lint]` line each, never a FAIL (loom flow run
 re-checks a parked run's plan, and a heuristic must not park it for good; /flow:draft sends each to its
@@ -61,13 +53,12 @@ Usage: check_plan.py PLAN.md [PLAN.md ...]
 
 The markers and the exclusive builds come from the profile of the repo holding each plan
 (flowconf.py); a plan whose repo has no usable profile fails. For a plan that passes it prints the
-spec's path, its plan review, each story's developer, file count, whether its Verify line holds an
-exclusive build, its tier, whether the plan review vouches for it and the landmine markers its code
-holds, then the pairs of stories that may run at once: disjoint files and at most one exclusive
-build. With --json, a plan that passes prints one JSON object instead: its spec, its plan review and
-each story's id, first and last plan lines, developer, tier, review column, landmines, Interfaces and
-Verify lines, which loom flow run reads (flow in loom part 3b), and `part`, `[N, M]`, when the plan has a
-`**Part:** N of M` line; a failing one prints its FAIL lines.
+spec's path, each story's developer, file count, whether its Verify line holds an exclusive build, its
+tier, its form when that isn't full and the landmine markers its code holds, then the pairs of stories
+that may run at once: disjoint files and at most one exclusive build. With --json, a plan that passes
+prints one JSON object instead: its spec and each story's id, first and last plan lines, developer,
+tier, form, landmines, Interfaces and Verify lines, which loom flow run reads (flow in loom part 3b),
+and `part`, `[N, M]`, when the plan has a `**Part:** N of M` line; a failing one prints its FAIL lines.
 Exit 0 when every plan passes, 1 when any fails, 2 on a usage error.
 """
 
@@ -102,7 +93,8 @@ FIELD_RE = re.compile(
     r"^\s*[-*]\s+\*\*(" + "|".join(re.escape(name) for name in FIELDS + OPTIONAL) + r"):\*\*\s*(.*)$"
 )
 SPEC_RE = re.compile(r"^\*\*(?:Spec|Design):\*\*\s*(.*)$")
-REVIEW_RE = re.compile(r"^\*\*Plan review:\*\*\s*(.*)$")
+# A line a plan drafted before 2026-11-20 may carry, which nothing reads now: it is only warned of.
+PLAN_REVIEW_RE = re.compile(r"^\*\*Plan review:\*\*")
 PART_RE = re.compile(r"^\*\*Part:\*\*\s*(.*)$")
 PART_VALUE_RE = re.compile(r"^(\d+) of (\d+)\.?$")
 PARALLEL_RE = re.compile(r"^\*\*Parallel:\*\*\s*(.*)$")
@@ -132,10 +124,6 @@ BUDGET_VALUE_RE = re.compile(r"^draft " + USD + r"; run " + USD + r" \(estimate 
 TASK_ID_RE = re.compile(r"^###\s+(Task\s+[^\s:]+)")
 # The mechanical cap's file, beside this script: loom writes lib/ whole into each session's flow copy.
 ESTIMATES = Path(__file__).resolve().with_name("estimates.toml")
-TIER_RE = re.compile(r"\b(deep|light|full):([^;]*)", re.IGNORECASE)
-# A Plan review line's lists: `deep:` the vouched deep stories, `light:` the light ones, `full:` the deep
-# stories a review didn't vouch for (/flow:draft's plan review writes it).
-TIER_LISTS = ("deep", "light", "full")
 
 
 @dataclass
@@ -245,19 +233,30 @@ def parse(text: str) -> tuple[list[Story], list[str], str | None]:
     return stories, problems, spec
 
 
-def plan_review(text: str) -> str | None:
-    """The plan's `**Plan review:**` line, if one comes before the first story."""
+def plan_review_line(text: str) -> int | None:
+    """The plan line of the first `**Plan review:**` line before the first story, None when the plan has none."""
     fenced = False
-    for line in text.splitlines():
+    for n, line in enumerate(text.splitlines(), 1):
         if FENCE_RE.match(line):
             fenced = not fenced
         elif not fenced:
             if STORY_RE.match(line):
                 return None
-            review = REVIEW_RE.match(line)
-            if review:
-                return review.group(1).strip() or None
+            if PLAN_REVIEW_RE.match(line):
+                return n
     return None
+
+
+def plan_review_warnings(text: str) -> list[str]:
+    """A warning for a plan's `**Plan review:**` line, which nothing reads since the owner removed the narrower first
+    review it gave on 2026-11-20; a WARN, never a FAIL, so a plan drafted before then still passes."""
+    n = plan_review_line(text)
+    if n is None:
+        return []
+    return [
+        f"line {n}: the **Plan review:** line (from a plan drafted before 2026-11-20) is ignored: "
+        "the run gives every story the full review"
+    ]
 
 
 def budget_line(text: str) -> tuple[float, float, str] | None:
@@ -339,35 +338,6 @@ def markers_in(story: Story, markers: Sequence[str]) -> list[tuple[str, int]]:
                 found.append((marker, number))
                 break
     return found
-
-
-def review_tiers(review: str | None) -> tuple[set[str], set[str], set[str]] | None:
-    """The story ids after `deep:`, `light:` and `full:` in a Plan review line.
-
-    Each list runs to the next `;` or the end of the line, its ids separated by commas and
-    spaces, one trailing `.` stripped from each. None when the line has none of the tokens (a line
-    written before tiers) or is missing.
-    """
-    if review is None:
-        return None
-    found = TIER_RE.findall(review)
-    if not found:
-        return None
-    ids: dict[str, set[str]] = {name: set() for name in TIER_LISTS}
-    for tier, rest in found:
-        ids[tier.lower()].update(token.removesuffix(".") for token in re.split(r"[,\s]+", rest) if token.removesuffix("."))
-    return ids["deep"], ids["light"], ids["full"]
-
-
-def vouched(review: str | None, stories: list[Story]) -> dict[str, bool]:
-    """Whether the plan review vouches for each story: no line, none; a line without tiers, the deep stories; else the deep ids."""
-    if review is None:
-        return {story.sid: False for story in stories}
-    tiers = review_tiers(review)
-    if tiers is None:
-        return {story.sid: story.tier == "deep" and story.form == "full" for story in stories}
-    deep = tiers[0]
-    return {story.sid: story.sid in deep and story.form == "full" for story in stories}
 
 
 def failing_names(rest: str) -> list[list[str]]:
@@ -550,52 +520,6 @@ def repo_root(path: Path) -> Path:
     return flowconf.toplevel(Path.cwd())
 
 
-def tier_problems(stories: list[Story], review: str | None) -> list[str]:
-    """What a Plan review line's deep:/light: lists get wrong against the stories; none without a line."""
-    if review is None:
-        return []
-    tiers = review_tiers(review)
-    problems: list[str] = []
-    if tiers is None:
-        # A line without tiers vouches only for deep stories, so a light story would get no review.
-        for story in stories:
-            if story.tier == "light":
-                problems.append(
-                    f"Story {story.sid} (line {story.line}): light, but the Plan review line lists no "
-                    "deep:/light: tiers: list every story under one"
-                )
-        return problems
-    known = {story.sid for story in stories}
-    for name, ids in zip(TIER_LISTS, tiers):
-        for token in sorted(ids - known):
-            problems.append(
-                f"the Plan review line lists {token} under {name}:, which is no story id "
-                "(list ids one at a time, on one physical line: no ranges, punctuation or backticks)"
-            )
-    for story in stories:
-        listed = [name for name, ids in zip(TIER_LISTS, tiers) if story.sid in ids]
-        if not listed:
-            problems.append(f"Story {story.sid}: the Plan review line lists it under none of deep:, light: and full:")
-            continue
-        if len(listed) > 1:
-            names = " and ".join(f"{name}:" for name in listed)
-            problems.append(f"Story {story.sid}: the Plan review line lists it under {'both ' if len(listed) == 2 else ''}{names}")
-            continue
-        if "Review" in story.fields and not REVIEW_VALUE_RE.match(story.fields["Review"]):
-            continue  # its Review value already fails the check
-        says = f"its Review line says {story.tier}" if "Review" in story.fields else f"its tier is {story.tier} (no Review line)"
-        if listed == ["deep"] and story.form != "full":
-            problems.append(
-                f"Story {story.sid}: the Plan review line lists it under deep:, but its Form is {story.form}: only a full story is vouched"
-            )
-        elif listed == ["full"]:
-            if story.tier != "deep":
-                problems.append(f"Story {story.sid}: the Plan review line lists it under full:, which holds only deep stories, and {says}")
-        elif listed != [story.tier]:
-            problems.append(f"Story {story.sid}: the Plan review line lists it as {listed[0]}, {says}")
-    return problems
-
-
 def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], list[str], str | None]:
     """Parse a plan and list everything that keeps it from a supervised run."""
     stories, problems, spec = parse(text)
@@ -645,7 +569,6 @@ def check(text: str, plan: Path, markers: Sequence[str]) -> tuple[list[Story], l
                         f"{where}: {story.form}, but its code has {marker} (line {at}): "
                         "make it full, or name the marker in the Form line's reason"
                     )
-    problems += tier_problems(stories, plan_review(text))
     return stories, problems, spec
 
 
@@ -728,12 +651,12 @@ def pair_problems(stories: list[Story], pairs: list[tuple[str, str]], exclusive:
     return problems
 
 
-def story_json(story: Story, vouch: dict[str, bool], markers: Sequence[str], lane: bool = False) -> dict:
+def story_json(story: Story, markers: Sequence[str], lane: bool = False) -> dict:
     """A story as `--json` gives it, for loom flow run (flow in loom part 3b); a laned story carries `"lane": true`."""
     out = {
         "id": story.sid, "line": story.line, "end": story.end,
         "developer": story.fields["Developer"].strip("` ").removeprefix("flow:"),
-        "tier": story.tier, "review": "vouched" if vouch[story.sid] else "full", "form": story.form,
+        "tier": story.tier, "form": story.form,
         "landmines": [marker for marker, _ in markers_in(story, markers)],
         "interfaces": story.fields.get("Interfaces", ""), "verify": story.fields.get("Verify", ""),
         "files": sorted(story.files),
@@ -818,7 +741,7 @@ def main(argv: list[str]) -> int:
         pairs, pair_errors = declared_pairs(text)
         problems += pair_errors + pair_problems(stories, pairs, profile.exclusive)
         # --json's stdout is the engine's to parse: it prints no warnings.
-        warnings = [] if as_json else lint_warnings(stories, Path(arg))
+        warnings = [] if as_json else plan_review_warnings(text) + lint_warnings(stories, Path(arg))
         if problems:
             failed = True
             for problem in problems:
@@ -826,31 +749,26 @@ def main(argv: list[str]) -> int:
             for warning in warnings:
                 print(f"WARN [lint] {arg}: {warning}")
             continue
-        review = plan_review(text)
         if as_json:
-            vouch = vouched(review, stories)
             laned = {b for _, b in pairs}
-            out = {"spec": spec, "plan_review": review,
-                   "stories": [story_json(s, vouch, profile.markers, s.sid in laned) for s in stories]}
+            out = {"spec": spec, "stories": [story_json(s, profile.markers, s.sid in laned) for s in stories]}
             part = plan_part(text)
             if part:
                 out["part"] = list(part)
             print(json.dumps(out))
             continue
         print(f"OK: {arg}: {len(stories)} stories; spec {spec}")
-        print(f"  Plan review: {review}" if review else "  Plan review: none recorded, so every story gets the full code-quality review")
-        vouch = vouched(review, stories)
         for story in stories:
             developer = story.fields["Developer"].strip("` ").removeprefix("flow:")
             if developer in LAST_RESORT:
                 print(f"  WARN Story {story.sid}: names {developer}, the last resort. Opus writes code only after an "
                       "intermediate-dev fails a slice twice: name intermediate-dev and settle in the plan what the story leaves to judgment")
             build = "build" if story.builds(profile.exclusive) else "no build"
-            review_col = "review: vouched" if vouch[story.sid] else "review: full"
             found = ", ".join(marker for marker, _ in markers_in(story, profile.markers))
             landmines = f"  landmines: {found}" if found else ""
             form = f"  form: {story.form}" if story.form != "full" else ""
-            print(f"  Story {story.sid:<4} {developer:<17} {len(story.files):>3} files  {build:<8}  {story.tier:<5}  {review_col}{form}{landmines}")
+            row = f"  Story {story.sid:<4} {developer:<17} {len(story.files):>3} files  {build:<8}  {story.tier:<5}{form}{landmines}"
+            print(row.rstrip())
         safe = parallel_safe(stories, profile.exclusive)
         listed = ", ".join(f"{a}+{b}" for a, b in safe) if safe else "none"
         print(f"  Parallel-safe pairs (disjoint files, at most one exclusive build): {listed}")

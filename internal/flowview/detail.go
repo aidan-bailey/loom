@@ -67,6 +67,9 @@ type StoryView struct {
 	ID        string
 	Developer string
 	Tier      string
+	// Review is "full" for a run's story: every story's first review has
+	// been the full one since 2026-11-20, and the field stays for the
+	// installed apps that read it.
 	Review    string
 	Line, End int    // its plan range
 	Reading   string // the skeleton entry's **Reading:** line
@@ -187,7 +190,7 @@ func board(d *FlowDetail, st *flowrun.State, h planHeader, agents, gates string)
 		asks, hasAsk = flowrun.QuestionStep(st.ID, *d.Question, st.Stories)
 	}
 	for _, s := range st.Stories {
-		v := StoryView{ID: s.ID, Developer: s.Developer, Tier: s.Tier, Review: s.Review, Line: s.Line, End: s.End,
+		v := StoryView{ID: s.ID, Developer: s.Developer, Tier: s.Tier, Review: "full", Line: s.Line, End: s.End,
 			Reading: h.Readings[s.ID], Row: s.Row, Steps: ordered(byStory[s.ID])}
 		v.Cells = cells(v.Steps, rowKinds, kindReached(s.Row.Status))
 		if hasAsk && !asks.Final && asks.Kind != flowrun.KindPremise && asks.Story == s.ID {

@@ -47,34 +47,34 @@ func TestStepOf_ParsesEveryNameTheEngineSubmits(t *testing.T) {
 		answers map[string]string
 		docs    bool
 	}{
-		"plain": {stories: []Story{story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full")}},
+		"plain": {stories: []Story{story("1", "intermediate-dev"), story("2", "junior-dev")}},
 		"gates fail, are fixed and fail again": {
 			setup:   func(f *fakeFX) { f.gates["r-s1-gates1"], f.gates["r-s1-gates2"] = failed, failed },
-			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			stories: []Story{story("1", "intermediate-dev")},
 			answers: map[string]string{"gates:r-s1-gates2": "Skip the flaky test."},
 		},
 		"kept minors reach the final round": {
 			setup: func(f *fakeFX) {
 				f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nVERDICT: APPROVED\nSTATUS: DONE"}
 			},
-			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			stories: []Story{story("1", "intermediate-dev")},
 		},
 		"premises": {
 			setup: func(f *fakeFX) {
 				f.premises = flagged
 				f.reports["r-premise1"] = Report{Status: "DONE", Text: "plan:120 | MOVED | COSMETIC | a2.go:1 | use a2.go\n"}
 			},
-			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			stories: []Story{story("1", "intermediate-dev")},
 		},
 		"a doc pass with a stray decided": {
 			setup:   func(f *fakeFX) { f.strays["h2"] = []string{"main.go"} },
-			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			stories: []Story{story("1", "intermediate-dev")},
 			answers: map[string]string{"strays:r-s1-docs1": "Undo it."},
 			docs:    true,
 		},
 		"final gates fail": {
 			setup:   func(f *fakeFX) { f.gates["r-final-gates1"] = failed },
-			stories: []Story{story("1", "intermediate-dev", "vouched")},
+			stories: []Story{story("1", "intermediate-dev")},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
