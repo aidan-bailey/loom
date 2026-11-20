@@ -1,11 +1,16 @@
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { watchHash } from "@/app/routes";
+import { goToPairing, watchHash } from "@/app/routes";
 import { watchNotices } from "@/app/toasts";
 import { registerWorker } from "@/app/worker";
+import { onUnpaired } from "@/api/request";
 import { startFleet } from "@/store/fleet";
 
+vi.mock("@/api/request", async (original) => ({
+  ...(await original<typeof import("@/api/request")>()),
+  onUnpaired: vi.fn(() => () => undefined),
+}));
 vi.mock("@/store/fleet", async (original) => ({
   ...(await original<typeof import("@/store/fleet")>()),
   startFleet: vi.fn(() => () => undefined),
@@ -46,6 +51,12 @@ function ios(on: boolean): void {
   );
 }
 
+// unpairedWatchers counts the onUnpaired listeners main itself added (goToPairing); other modules
+// add theirs as they load.
+function unpairedWatchers(): number {
+  return vi.mocked(onUnpaired).mock.calls.filter(([listener]) => listener === goToPairing).length;
+}
+
 // launch draws main into a fresh #app.
 async function launch(): Promise<void> {
   vi.resetModules();
@@ -77,6 +88,7 @@ describe("main", () => {
     expect(startFleet).toHaveBeenCalledTimes(1);
     expect(watchHash).toHaveBeenCalledTimes(1);
     expect(watchNotices).toHaveBeenCalledTimes(1);
+    expect(unpairedWatchers()).toBe(1);
     expect(screen.getByText("router")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue in the browser anyway" })).toBeNull();
   });
@@ -88,6 +100,7 @@ describe("main", () => {
     expect(startFleet).not.toHaveBeenCalled();
     expect(watchHash).not.toHaveBeenCalled();
     expect(watchNotices).not.toHaveBeenCalled();
+    expect(unpairedWatchers()).toBe(0);
     expect(screen.getByRole("button", { name: "Continue in the browser anyway" })).toBeTruthy();
     expect(screen.queryByText("router")).toBeNull();
   });
@@ -95,12 +108,14 @@ describe("main", () => {
   it("main: Continue in the browser anyway stores the choice and starts the app once", async () => {
     ios(true);
     await launch();
+    expect(unpairedWatchers()).toBe(0);
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Continue in the browser anyway" }));
     });
     expect(localStorage.getItem("loom.browser")).toBe("true");
     expect(startFleet).toHaveBeenCalledTimes(1);
     expect(watchHash).toHaveBeenCalledTimes(1);
+    expect(unpairedWatchers()).toBe(1);
     expect(screen.getByText("router")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue in the browser anyway" })).toBeNull();
     expect(registerWorker).toHaveBeenCalledTimes(1);
