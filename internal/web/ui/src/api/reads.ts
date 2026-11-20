@@ -489,7 +489,10 @@ function openFlow(session: number, plan: string): void {
   keptFlows = keepRecent(keptFlows, flowQueryKey(session, plan), KEEP_FLOWS);
 }
 
-/** What a board is read again on: the JSON of the session's flow summaries, as classic keys it. */
+/**
+ * What a board is read again on: the JSON of the session's flow summaries. Only a change of it
+ * matters, so a null list keys as "null" where classic keys it "[]".
+ */
 export function flowKey(session: Session): string {
   return JSON.stringify(session.flows);
 }
@@ -693,7 +696,7 @@ export interface LaunchDefaultsView {
  * page's lifetime: it is never read again on its own, so a stream that comes back or a remount
  * keeps the picks made on it (`retry` reads again after a failure). A failed read is read again
  * by the observer only when the stream comes back or the screen is opened again. No workspace
- * reads nothing.
+ * reads nothing. `retry` reads regardless of `live`: it is the user's own ask after a failure.
  */
 export function useLaunchDefaults(
   workspace: number | undefined,
