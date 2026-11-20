@@ -27,8 +27,9 @@ export interface CommandContext {
 }
 
 // Command is one action. `offline` marks a command that runs while the
-// snapshot is stale (a cold start, the daemon down, unpaired): only
-// app.backToClassic, since the switch works offline (spec §4).
+// snapshot is stale (a cold start, the daemon down, unpaired): app.backToClassic,
+// since the switch works offline (spec §4), and device.pair, since pairing runs
+// before any snapshot exists.
 export interface Command<A = void> {
   id: string;
   title: string | ((ctx: CommandContext) => string);

@@ -18,13 +18,11 @@ function list(id: number): void {
   const base = allSessions(fixtureSnapshot(NOW))[0];
   if (base === undefined) throw new Error("the canned snapshot holds no session");
   const held = useFleet.getState().snapshot?.sessions?.["1"] ?? [];
-  useFleet
-    .getState()
-    .apply("sessions", {
-      workspace: 1,
-      sessions: [...held, { ...base, id, workspace: 1 }],
-      badge: 0,
-    });
+  useFleet.getState().apply("sessions", {
+    workspace: 1,
+    sessions: [...held, { ...base, id, workspace: 1 }],
+    badge: 0,
+  });
 }
 
 beforeEach(() => {

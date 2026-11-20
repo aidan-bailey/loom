@@ -21,6 +21,11 @@ describe("the commands module", () => {
     "job.unpark",
     "job.pause",
     "job.resume",
+    "session.create",
+    "device.update",
+    "quickReplies.save",
+    "device.unpair",
+    "device.pair",
   ])("registers %s on import", (id) => {
     expect(commandById(id)).toBeDefined();
   });
