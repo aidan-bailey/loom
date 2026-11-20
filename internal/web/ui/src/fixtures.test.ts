@@ -23,7 +23,17 @@ import type {
   StepState,
   TurnFrom,
 } from "@/api/gen";
-import { fillTimes, fixtureJobLog, fixturePatch, fixtureSnapshot, fixtureTurns } from "./fixtures";
+import {
+  fillTimes,
+  fixtureFlow,
+  fixtureFlowDoc,
+  fixtureFlows,
+  fixtureJobLog,
+  fixtureLaunchDefaults,
+  fixturePatch,
+  fixtureSnapshot,
+  fixtureTurns,
+} from "./fixtures";
 import agentTurns from "../../../../tools/webshot/fixture/agent-turns.json";
 import diff from "../../../../tools/webshot/fixture/diff.json";
 import flowDoc from "../../../../tools/webshot/fixture/flow-doc.json";
@@ -435,5 +445,46 @@ describe("the session views' inputs", () => {
     expect(after.text).toBe("");
     expect(after.start).toBe(after.end);
     expect(after.end).toBe(tail.end);
+  });
+});
+
+describe("the part 3 loaders", () => {
+  const NOW = Date.parse("2026-11-18T12:00:00Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the loaders fill every relative time and return a fresh copy", () => {
+    for (const value of [fixtureFlow(), fixtureFlows()]) {
+      expect(JSON.stringify(value)).not.toContain('"now');
+    }
+    expect(fixtureFlow().start).toBe("2026-11-18T10:48:00Z");
+    const board = fixtureFlow();
+    board.summary.title = "changed";
+    expect(fixtureFlow().summary.title).not.toBe("changed");
+    const flows = fixtureFlows();
+    const first = flows.live?.[0];
+    if (first !== undefined) first.flow.title = "changed";
+    expect(fixtureFlows().live?.[0]?.flow.title).not.toBe("changed");
+  });
+
+  it("the loaders hold the documents the part 3 screens draw", () => {
+    const sessions = Object.values(fixtureSnapshot(NOW).sessions ?? {}).flatMap((l) => l ?? []);
+    const six = sessions.find((s) => s.id === 6);
+    expect(fixtureFlow().summary.plan).toBe(six?.flows?.[0]?.plan);
+    expect(fixtureFlow().final?.id).toBe("F");
+    expect(fixtureFlowDoc().path).toBe(
+      "docs/superpowers/specs/2026-11-09-flow-visualisation-design.md",
+    );
+    expect((fixtureFlowDoc().blocks ?? []).length).toBeGreaterThan(1);
+    expect((fixtureFlows().live ?? []).some((l) => l.session === 6)).toBe(true);
+    expect((fixtureFlows().past ?? []).length).toBeGreaterThan(0);
+    expect(fixtureLaunchDefaults().accounts).toEqual(["default", "work"]);
+    expect((fixtureLaunchDefaults().models ?? [])[0]).toBe("opus");
   });
 });

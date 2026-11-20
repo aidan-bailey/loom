@@ -1,11 +1,24 @@
-// The canned loom's fixtures (tools/webshot/fixture: the snapshot, the turns, the diff and the job
-// log) for the tests: their relative times ("now-2m", "now+1h40m") filled as tools/webshot's
+// The canned loom's fixtures (tools/webshot/fixture: the snapshot, the turns, the diff, the job
+// log, a flow's board and document, the host's flows and the launch defaults) for the tests: their relative times ("now-2m", "now+1h40m") filled as tools/webshot's
 // fillTimes fills them, so the same fixtures feed Vitest and the screenshots.
-import type { JobLog, Patch, Snapshot, Turns } from "@/api/gen";
+import type {
+  Flow,
+  FlowDoc,
+  Flows,
+  JobLog,
+  LaunchDefaults,
+  Patch,
+  Snapshot,
+  Turns,
+} from "@/api/gen";
 import agentTurnsJson from "../../../../tools/webshot/fixture/agent-turns.json";
 import diffJson from "../../../../tools/webshot/fixture/diff.json";
+import flowDocJson from "../../../../tools/webshot/fixture/flow-doc.json";
+import flowJson from "../../../../tools/webshot/fixture/flow.json";
+import flowsJson from "../../../../tools/webshot/fixture/flows.json";
 import jobLogAfterJson from "../../../../tools/webshot/fixture/job-log-after.json";
 import jobLogJson from "../../../../tools/webshot/fixture/job-log.json";
+import launchDefaultsJson from "../../../../tools/webshot/fixture/launch-defaults.json";
 import snapshotJson from "../../../../tools/webshot/fixture/snapshot.json";
 import turnsJson from "../../../../tools/webshot/fixture/turns.json";
 
@@ -61,4 +74,24 @@ export function fixturePatch(): Patch {
 /** The canned job log's tail (job-log.json), or what comes after it (job-log-after.json) when after is true; a fresh copy. */
 export function fixtureJobLog(after = false): JobLog {
   return fillTimes(after ? jobLogAfterJson : jobLogJson, Date.now()) as JobLog;
+}
+
+/** The canned flow board (flow.json): session 6's run parked on story 3; a fresh copy. */
+export function fixtureFlow(): Flow {
+  return fillTimes(flowJson, Date.now()) as Flow;
+}
+
+/** The canned flow document (flow-doc.json): session 6's spec; a fresh copy. */
+export function fixtureFlowDoc(): FlowDoc {
+  return fillTimes(flowDocJson, Date.now()) as FlowDoc;
+}
+
+/** The canned host's flows (flows.json): the live ones and the past runs; a fresh copy. */
+export function fixtureFlows(): Flows {
+  return fillTimes(flowsJson, Date.now()) as Flows;
+}
+
+/** The canned launch defaults (launch-defaults.json); a fresh copy. */
+export function fixtureLaunchDefaults(): LaunchDefaults {
+  return fillTimes(launchDefaultsJson, Date.now()) as LaunchDefaults;
 }
