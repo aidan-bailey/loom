@@ -192,7 +192,7 @@ describe("the past runs", () => {
   it("a run's row: its stem without the date, then stories, cost, how it ended and its age", () => {
     show({ flows: fixtureFlows() });
     const rows = (el: HTMLElement): string[] =>
-      Array.from(el.querySelectorAll("div.min-h-11")).map((r) => r.textContent ?? "");
+      Array.from(el.querySelectorAll("div[class~='min-h-[44px]']")).map((r) => r.textContent ?? "");
     expect(rows(box("Personal-loom"))).toEqual([
       "pwa-conversation-first4 st · $10.08 · stopped · 3d",
       "work-scheduler6 st · $14.20 · done · 5d",
@@ -221,7 +221,7 @@ describe("the past runs", () => {
   });
 
   it("8 runs are shown and the rest are counted", () => {
-    const rowsOf = (): number => document.querySelectorAll("div.min-h-11").length;
+    const rowsOf = (): number => document.querySelectorAll("div[class~='min-h-[44px]']").length;
     show({ flows: { live: null, past: runs(10) } });
     expect(rowsOf()).toBe(8);
     expect(screen.getByText("and 2 more")).toBeInTheDocument();
@@ -298,8 +298,8 @@ describe("the flows panel", () => {
     expect(screen.getByRole("link", { name: "‹ fleet" })).toHaveAttribute("href", hrefFor("fleet"));
     expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
     const button = screen.getByRole("button", { name: "Read the flows again" });
-    expect(button).toHaveClass("min-h-11");
-    expect(button).toHaveClass("min-w-11");
+    expect(button).toHaveClass("min-h-[44px]");
+    expect(button).toHaveClass("min-w-[44px]");
     await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(button);
     expect(reload).toHaveBeenCalledTimes(1);
   });

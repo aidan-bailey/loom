@@ -46,7 +46,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
   const mk = session.mockup;
   return (
     <section className="flex flex-1 flex-col">
-      <div className="flex min-h-11 items-center gap-1 px-4 text-xs text-muted-foreground">
+      <div className="flex min-h-[44px] items-center gap-1 px-4 text-xs text-muted-foreground">
         <span className="min-w-0 flex-1 truncate">
           {mk === null ? "no mockup" : `${mk.screen} · ${ago(mk.changed)}`}
         </span>
@@ -56,7 +56,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
               variant="ghost"
               size="icon"
               aria-label="Read the mockup again"
-              className="min-h-11 min-w-11"
+              className="min-h-[44px] min-w-[44px]"
               onClick={() => {
                 setAgain((n) => n + 1);
               }}
@@ -66,7 +66,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
             <a
               href={hrefFor("mockupFull", { id: String(session.id) })}
               aria-label="Full screen"
-              className="flex min-h-11 min-w-11 items-center justify-center"
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center"
             >
               ⤢
             </a>
@@ -90,7 +90,7 @@ export function MockupFullBody(props: PanelProps): ReactElement {
       <Frame session={session} again={0} />
       <a
         href={hrefFor("mockup", { id: String(session.id) })}
-        className="absolute top-[calc(env(safe-area-inset-top)+6px)] right-2 flex min-h-11 items-center rounded-lg border border-border bg-card px-3 text-[13px]"
+        className="absolute top-[calc(env(safe-area-inset-top)+6px)] right-2 flex min-h-[44px] items-center rounded-lg border border-border bg-card px-3 text-[13px]"
       >
         ✕ done
       </a>

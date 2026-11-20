@@ -84,7 +84,7 @@ export function AgentStrip(props: PanelProps): ReactElement {
   return (
     <div
       data-slot="agent-strip"
-      className="flex min-h-11 items-center gap-3 px-4 text-xs text-muted-foreground"
+      className="flex min-h-[44px] items-center gap-3 px-4 text-xs text-muted-foreground"
     >
       <span className="min-w-0 flex-1 truncate">
         {lead}
@@ -93,7 +93,7 @@ export function AgentStrip(props: PanelProps): ReactElement {
       {session.group === "needs_you" && (
         <a
           href={hrefFor("turns", { id: String(session.id) })}
-          className="flex min-h-11 flex-none items-center text-attention"
+          className="flex min-h-[44px] flex-none items-center text-attention"
         >
           ● session needs you ›
         </a>
@@ -186,7 +186,7 @@ function AgentTurns(props: { session: Session; agent: string | undefined }): Rea
         </Button>
         <a
           href={hrefFor("turns", { id: String(session.id) })}
-          className="flex min-h-11 items-center text-xs text-muted-foreground"
+          className="flex min-h-[44px] items-center text-xs text-muted-foreground"
         >
           ‹ conversation
         </a>

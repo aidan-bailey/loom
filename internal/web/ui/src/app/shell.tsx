@@ -90,12 +90,12 @@ function BodyLoading(): ReactElement {
   );
 }
 
-// PanelHost draws the panel registered under `panel` inside an error
-// boundary, or nothing when none is (every PanelId has one, which
-// app/panels.test.ts pins). A body that is `React.lazy`
-// suspends under a skeleton, and its chunk failing to load reaches the
-// boundary, which offers a reload: the Suspense stays inside the Boundary, so
-// a failed load is the boundary's and a pending one never is.
+// PanelHost draws the panel registered under `panel` inside an error boundary,
+// or nothing when none is (every PanelId has one, which app/panels.test.ts
+// pins). A body that is `React.lazy` suspends under a skeleton, and its chunk
+// failing to load reaches the boundary, which offers a reload: the Suspense
+// stays inside the Boundary, so a failed load is the boundary's and a pending
+// one never is.
 export function PanelHost({
   panel,
   props,
@@ -291,12 +291,12 @@ export function ContextRow({
   actions?: ReactNode;
 }): ReactElement {
   return (
-    <div className="flex min-h-11 items-center gap-2 px-4">
+    <div className="flex min-h-[44px] items-center gap-2 px-4">
       {back === undefined ? null : (
         <a
           href={back}
           onClick={onBack}
-          className="flex min-h-11 flex-none items-center text-sm text-muted-foreground"
+          className="flex min-h-[44px] flex-none items-center text-sm text-muted-foreground"
         >
           ‹ {backLabel(back)}
         </a>
@@ -350,7 +350,7 @@ export function SessionTabs({ session }: { session: Session }): ReactElement {
             href={hrefFor(tab.id, { id: String(session.id) })}
             aria-current={tab.id === current ? "page" : undefined}
             className={cn(
-              "flex min-h-11 items-center border-b-2 border-transparent px-3 text-sm text-muted-foreground",
+              "flex min-h-[44px] items-center border-b-2 border-transparent px-3 text-sm text-muted-foreground",
               tab.id === current && "border-foreground text-foreground",
             )}
           >
@@ -416,7 +416,7 @@ export function StatusRow(): ReactElement {
   };
 
   return (
-    <div className="flex min-h-11 items-center gap-1 px-4 text-xs">
+    <div className="flex min-h-[44px] items-center gap-1 px-4 text-xs">
       <span
         aria-live="polite"
         className={cn(
@@ -440,7 +440,7 @@ export function StatusRow(): ReactElement {
       {COUNTED.map((g) => {
         const n = groups[g.key].length;
         const tone = cn(
-          "flex min-h-11 flex-none items-center gap-1 px-2 tabular-nums",
+          "flex min-h-[44px] flex-none items-center gap-1 px-2 tabular-nums",
           g.tone,
           state !== "live" && "opacity-60",
         );

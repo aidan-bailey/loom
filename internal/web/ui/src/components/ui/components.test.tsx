@@ -60,8 +60,8 @@ describe("Button", () => {
     for (const size of ["default", "sm", "lg", "icon"] as const) {
       const { unmount } = render(<Button size={size}>{size}</Button>);
       const className = screen.getByRole("button").className;
-      expect(className).toContain("after:min-h-11");
-      expect(className).toContain("after:min-w-11");
+      expect(className).toContain("after:min-h-[44px]");
+      expect(className).toContain("after:min-w-[44px]");
       unmount();
     }
 
@@ -329,7 +329,7 @@ describe("Input", () => {
     expect(input.tagName).toBe("INPUT");
     expect(input).toHaveAttribute("data-slot", "input");
     expect(input.className).toContain("text-[16px]");
-    expect(input.className).toContain("min-h-11");
+    expect(input.className).toContain("min-h-[44px]");
     await user.type(input, "hi");
     expect(input).toHaveValue("hi");
     expect(fn).toHaveBeenCalledTimes(2);
@@ -337,7 +337,7 @@ describe("Input", () => {
     render(<Input className="min-h-14" placeholder="tall" type="password" id="pw" />);
     const tall = screen.getByPlaceholderText("tall");
     expect(tall.className).toContain("min-h-14");
-    expect(tall.className).not.toContain("min-h-11");
+    expect(tall.className).not.toContain("min-h-[44px]");
     expect(tall).toHaveAttribute("type", "password");
     expect(tall).toHaveAttribute("id", "pw");
   });
@@ -386,8 +386,8 @@ describe("Switch", () => {
     expect(off.className).toContain("data-disabled:opacity-50");
     expect(off.className).not.toContain(" disabled:opacity-50");
     const on = screen.getByRole("switch", { name: "On" });
-    expect(on.className).toContain("after:min-h-11");
-    expect(on.className).toContain("after:min-w-11");
+    expect(on.className).toContain("after:min-h-[44px]");
+    expect(on.className).toContain("after:min-w-[44px]");
     expect(on).toHaveAttribute("data-slot", "switch");
   });
 });
@@ -466,7 +466,7 @@ describe("Select", () => {
     const trigger = screen.getByRole("combobox", { name: "Pick" });
     expect(trigger).toHaveAttribute("data-slot", "select-trigger");
     expect(trigger).toHaveAttribute("id", "pick");
-    expect(trigger.className).toContain("min-h-11");
+    expect(trigger.className).toContain("min-h-[44px]");
     expect(trigger.className).toContain("text-[16px]");
 
     rerender(<SampleSelect value="a" onValueChange={vi.fn()} triggerClassName="w-40" />);
@@ -478,7 +478,7 @@ describe("Select", () => {
     const list = await screen.findByRole("listbox");
     for (const option of within(list).getAllByRole("option")) {
       expect(option).toHaveAttribute("data-slot", "select-item");
-      expect(option.className).toContain("min-h-11");
+      expect(option.className).toContain("min-h-[44px]");
     }
     expect(within(list).getByText("Active")).toHaveAttribute("data-slot", "select-label");
   });
@@ -545,7 +545,7 @@ describe("InputOTP", () => {
     expect(screen.getByTestId("value")).toHaveTextContent("K7QM2XPA");
   });
 
-  it("InputOTP: eight 44px slots, a separator, the root's id on the first slot and the caller's props", () => {
+  it("InputOTP: eight 44px-tall slots, a separator, the root's id on the first slot and the caller's props", () => {
     const { container } = render(<SampleOTP />);
     const root = screen.getByTestId("root");
     expect(root).toHaveAttribute("data-slot", "input-otp");
@@ -553,7 +553,8 @@ describe("InputOTP", () => {
     const slots = container.querySelectorAll("input[data-slot='input-otp-slot']");
     expect(slots.length).toBe(8);
     for (const slot of slots) {
-      expect(slot.className).toContain("size-11");
+      expect(slot.className).toContain("h-[44px]");
+      expect(slot.className).toContain("w-[36px]");
       expect(slot.className).toContain("text-[16px]");
     }
     expect(screen.getByRole("textbox", { name: "Code" })).toBe(slots[0]);
@@ -569,6 +570,6 @@ describe("InputOTP", () => {
     );
     const wide = screen.getByRole("textbox", { name: "wide" });
     expect(wide.className).toContain("size-12");
-    expect(wide.className).not.toContain("size-11");
+    expect(wide.className).not.toContain("h-[44px]");
   });
 });

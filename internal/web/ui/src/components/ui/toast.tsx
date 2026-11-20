@@ -29,7 +29,7 @@ function ToastList(): ReactElement {
             // Base UI hides a collapsed stack's close buttons from assistive tech; this list
             // shows every toast in full, so each close control stays reachable.
             aria-hidden={false}
-            className="relative inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-11 after:w-full after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
+            className="relative inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-[44px] after:w-full after:min-w-[44px] after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
           >
             <X className="size-4" aria-hidden="true" />
           </Toast.Close>

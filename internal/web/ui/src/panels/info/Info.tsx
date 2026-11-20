@@ -21,7 +21,7 @@ const LEGEND = "truncate text-[11px] tracking-wide text-muted-foreground upperca
 const SUB = "truncate text-[11px] text-muted-foreground";
 const HEADING = "text-xs font-semibold tracking-wide text-muted-foreground uppercase";
 const ROW =
-  "flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2";
+  "flex min-h-[44px] min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2";
 
 function Chevron(): ReactElement {
   return <ChevronRight aria-hidden="true" className="size-4 flex-none text-muted-foreground" />;

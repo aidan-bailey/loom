@@ -102,7 +102,7 @@ function UnknownAsk({ kind }: { kind: string }): ReactElement {
 }
 
 const TEXT_INPUT =
-  "min-h-11 w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+  "min-h-[44px] w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
 const emptyAnswer = (): QuestionDraft => ({ labels: [], other: "", note: "" });
 
@@ -152,7 +152,7 @@ function QuestionAsk({ ask, off }: { ask: Ask; off: boolean }): ReactElement {
               {question.question}
             </legend>
             {options.map((option) => (
-              <label key={option.label} className="flex min-h-11 items-start gap-2">
+              <label key={option.label} className="flex min-h-[44px] items-start gap-2">
                 <input
                   type={question.multi ? "checkbox" : "radio"}
                   name={`${ask.id}\u0000${question.question}`}

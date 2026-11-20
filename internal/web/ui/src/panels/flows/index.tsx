@@ -21,7 +21,7 @@ export function FlowsHead(): ReactElement {
         <button
           type="button"
           aria-label="Read the flows again"
-          className="min-h-11 min-w-11"
+          className="min-h-[44px] min-w-[44px]"
           onClick={reload}
         >
           ↻

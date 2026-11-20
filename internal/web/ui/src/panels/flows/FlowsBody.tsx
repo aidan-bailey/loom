@@ -59,7 +59,7 @@ function PastBox({ name, runs }: { name: string; runs: PastRun[] }): ReactElemen
           r.end !== "" ? ago(r.end) : "",
         ].filter((f) => f !== "");
         return (
-          <div key={`${r.file}-${i}`} className="flex min-h-11 items-center gap-2">
+          <div key={`${r.file}-${i}`} className="flex min-h-[44px] items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{stemName(r.stem)}</span>
             {r.unreadable !== "" ? (
               <span className="ml-auto text-right text-xs text-error">unreadable</span>
@@ -82,7 +82,7 @@ function Live({ live }: { live: LiveFlow }): ReactElement {
   return (
     <a
       href={hrefFor("flow", { id: String(live.session) }, { plan: flow.plan })}
-      className="flex min-h-11 items-center gap-2"
+      className="flex min-h-[44px] items-center gap-2"
     >
       <span className="min-w-0 flex-1 truncate">
         <span className="font-semibold">{live.title}</span>

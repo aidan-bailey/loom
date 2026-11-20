@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 // Every size carries an invisible 44 by 44 hit area (the after: pseudo-element) without changing
 // the button's look.
 const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-11 after:w-full after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-[44px] after:w-full after:min-w-[44px] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {

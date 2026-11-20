@@ -34,7 +34,7 @@ function Section({ title, children }: { title: string; children: ReactNode }): R
 // Row is a label with its value or control on the right, at the 44px touch height.
 function Row({ label, children }: { label: string; children: ReactNode }): ReactElement {
   return (
-    <div className="flex min-h-11 items-center justify-between gap-3">
+    <div className="flex min-h-[44px] items-center justify-between gap-3">
       <span>{label}</span>
       {children}
     </div>
@@ -145,7 +145,7 @@ function NotifySwitch({
   };
 
   return (
-    <label className="flex min-h-11 items-center justify-between gap-3">
+    <label className="flex min-h-[44px] items-center justify-between gap-3">
       <span>{label}</span>
       <Switch
         aria-label={label}

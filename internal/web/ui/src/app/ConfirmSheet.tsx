@@ -165,7 +165,7 @@ function AskBody({ ask }: { ask: Ask }): ReactElement {
             <select
               id={fieldId}
               value={value}
-              className="h-11 w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-[44px] w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onChange={(event) => {
                 setValue(event.target.value);
               }}

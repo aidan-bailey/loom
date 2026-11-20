@@ -101,7 +101,7 @@ function Strip({ flow, id, plan }: { flow: Flow; id: string; plan: string }): Re
         }
         if (stage.state === "done") word += " ✓";
         if (known === undefined) word += ` (${stage.state})`;
-        const className = `flex min-h-11 min-w-0 flex-1 items-center justify-center px-1 text-center text-[11px] ${known ?? NEUTRAL_STAGE}`;
+        const className = `flex min-h-[44px] min-w-0 flex-1 items-center justify-center px-1 text-center text-[11px] ${known ?? NEUTRAL_STAGE}`;
         const text = <span className="truncate">{word}</span>;
         return stage.doc !== "" ? (
           <a
@@ -134,7 +134,7 @@ function Question({ flow, id }: { flow: Flow; id: string }): ReactElement | null
       <p className="mt-1 break-words whitespace-pre-wrap">{question.text}</p>
       <a
         href={hrefFor("turns", { id })}
-        className="mt-2 inline-flex min-h-11 items-center rounded-lg bg-secondary px-3 text-attention"
+        className="mt-2 inline-flex min-h-[44px] items-center rounded-lg bg-secondary px-3 text-attention"
       >
         open manager ›
       </a>
@@ -201,7 +201,7 @@ function StoryRow({
   return (
     <a
       href={hrefFor("flowStory", { id, story: story.id }, { plan })}
-      className="flex min-h-11 items-center gap-2 border-b border-border last:border-b-0"
+      className="flex min-h-[44px] items-center gap-2 border-b border-border last:border-b-0"
     >
       <span className={`w-6 flex-none font-bold ${mark ? "text-faint" : ""}`}>{story.id}</span>
       <Cells story={story} />
@@ -249,7 +249,7 @@ function Picker({ session, plan }: { session: Session; plan: string }): ReactEle
             hrefFor("flow", { id: String(session.id) }, { plan: e.target.value }),
           );
         }}
-        className="h-11 w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground"
+        className="h-[44px] w-full rounded-lg border border-input bg-background px-3 text-[16px] text-foreground"
       >
         {flows.map((f) => (
           <option key={f.plan} value={f.plan}>
@@ -410,7 +410,7 @@ function OtherRuns({ flow }: { flow: Flow }): ReactElement | null {
       {others.map((run) => (
         <div
           key={run.id}
-          className="flex min-h-11 items-center gap-2 border-b border-border text-xs last:border-b-0"
+          className="flex min-h-[44px] items-center gap-2 border-b border-border text-xs last:border-b-0"
         >
           <span className="min-w-0 truncate">{run.id}</span>
           <span className="ml-auto text-muted-foreground">

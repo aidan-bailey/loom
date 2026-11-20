@@ -25,7 +25,7 @@ export function SessionHead(props: PanelProps): ReactElement {
         href={session.remote_url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex min-h-11 flex-none items-center text-sm text-muted-foreground"
+        className="flex min-h-[44px] flex-none items-center text-sm text-muted-foreground"
       >
         claude <span aria-hidden="true">↗</span>
       </a>

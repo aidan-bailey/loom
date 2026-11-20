@@ -18,7 +18,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       className={(state) =>
         cn(
-          "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+          "flex min-h-[44px] w-full items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
           typeof className === "function" ? className(state) : className,
         )
       }
@@ -114,7 +114,7 @@ function SelectItem({
       data-slot="select-item"
       className={(state) =>
         cn(
-          "flex min-h-11 items-center gap-2 px-3 text-[16px] outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50",
+          "flex min-h-[44px] items-center gap-2 px-3 text-[16px] outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50",
           typeof className === "function" ? className(state) : className,
         )
       }

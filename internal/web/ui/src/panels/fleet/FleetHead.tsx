@@ -9,7 +9,7 @@ import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { cn } from "@/lib/utils";
 import { useFleet, useLink } from "@/store/fleet";
 
-const LINK = "flex min-h-11 min-w-11 flex-none items-center justify-center text-sm";
+const LINK = "flex min-h-[44px] min-w-[44px] flex-none items-center justify-center text-sm";
 
 export function FleetHead(): ReactElement {
   const hasFlows = useFleet((s) => {

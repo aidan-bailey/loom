@@ -10,7 +10,7 @@ function Textarea({ className, ...props }: ComponentProps<"textarea">): ReactEle
     <textarea
       data-slot="textarea"
       className={cn(
-        "field-sizing-content max-h-[120px] min-h-11 w-full resize-none overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-[16px] text-foreground outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+        "field-sizing-content max-h-[120px] min-h-[44px] w-full resize-none overflow-y-auto rounded-lg border border-input bg-background px-3 py-2.5 text-[16px] text-foreground outline-none placeholder:text-faint focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
         className,
       )}
       {...props}

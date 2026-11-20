@@ -169,7 +169,7 @@ function LaunchOptions({
 }): ReactElement {
   return (
     <Collapsible>
-      <CollapsibleTrigger className="flex min-h-11 w-full items-center text-sm text-muted-foreground">
+      <CollapsibleTrigger className="flex min-h-[44px] w-full items-center text-sm text-muted-foreground">
         Launch options
       </CollapsibleTrigger>
       <CollapsibleContent>

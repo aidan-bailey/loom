@@ -59,7 +59,7 @@ export function FactStrip(props: PanelProps): ReactElement {
       ? hrefFor("job", { id, job: String(session.jobs_focus) })
       : hrefFor("info", { id });
   return (
-    <div className="flex min-h-11 items-center px-4 text-xs text-muted-foreground">
+    <div className="flex min-h-[44px] items-center px-4 text-xs text-muted-foreground">
       <a href={hrefFor("info", { id })} className="min-w-0 flex-1 truncate">
         {facts.map((fact, i) => (
           <span key={i}>

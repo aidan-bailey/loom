@@ -4,7 +4,8 @@ import type { ReactElement } from "react";
 import { cn } from "@/lib/utils";
 
 // InputOTP is shadcn's Input OTP on Base UI's OTPField, so no input-otp package: a flex row over
-// the root, one slot per character, and no group part (a caller groups slots in plain divs).
+// the root, one slot per character (44px tall, 36px wide so eight fit a 361px column), and no
+// group part (a caller groups slots in plain divs).
 function InputOTP({ className, ...props }: OTPField.Root.Props): ReactElement {
   return (
     <OTPField.Root
@@ -26,7 +27,7 @@ function InputOTPSlot({ className, ...props }: OTPField.Input.Props): ReactEleme
       data-slot="input-otp-slot"
       className={(state) =>
         cn(
-          "size-11 rounded-lg border border-input bg-background text-center text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+          "h-[44px] w-[36px] rounded-lg border border-input bg-background text-center text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
           typeof className === "function" ? className(state) : className,
         )
       }

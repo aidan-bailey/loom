@@ -40,7 +40,7 @@ export function Bars({
   const top = Math.max(0.0001, current ?? 0, ...values);
   const height = (value: number): string => `${Math.max(5, (value / top) * 100)}%`;
   return (
-    <div aria-hidden="true" className="flex h-11 items-end gap-1">
+    <div aria-hidden="true" className="flex h-[44px] items-end gap-1">
       {values.map((value, i) => (
         <span
           key={i}

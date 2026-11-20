@@ -136,7 +136,7 @@ function Fleet(): ReactElement {
     if (key === "paused") {
       return (
         <Collapsible key={key}>
-          <CollapsibleTrigger className="mb-2 flex min-h-11 w-full items-center">
+          <CollapsibleTrigger className="mb-2 flex min-h-[44px] w-full items-center">
             <Heading title={title} count={list.length} attention={false} />
           </CollapsibleTrigger>
           <CollapsibleContent>

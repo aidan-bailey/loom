@@ -90,7 +90,7 @@ function Sections({
   if (shown.length <= 2) return null;
   return (
     <details className="rounded-xl border border-border bg-card px-3">
-      <summary className="flex min-h-11 items-center text-sm text-muted-foreground">
+      <summary className="flex min-h-[44px] items-center text-sm text-muted-foreground">
         sections
       </summary>
       {shown.map(({ heading, index }) => (
@@ -100,7 +100,7 @@ function Sections({
           onClick={() => {
             jump(index);
           }}
-          className={`flex min-h-11 w-full items-center text-left text-sm ${INDENT[heading.level] ?? "pl-0"}`}
+          className={`flex min-h-[44px] w-full items-center text-left text-sm ${INDENT[heading.level] ?? "pl-0"}`}
         >
           {heading.text}
         </button>
@@ -150,7 +150,7 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
       <p className="flex items-center gap-2">
         <a
           href={hrefFor("flow", { id: String(session.id) }, { plan })}
-          className="flex min-h-11 items-center text-muted-foreground"
+          className="flex min-h-[44px] items-center text-muted-foreground"
         >
           ‹ board
         </a>

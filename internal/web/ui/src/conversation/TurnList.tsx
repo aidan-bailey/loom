@@ -52,7 +52,7 @@ function Prompt({ turn }: { turn: Turn }): ReactElement {
       {folded ? (
         <button
           type="button"
-          className="min-h-11 text-[12.5px] text-muted-foreground"
+          className="min-h-[44px] text-[12.5px] text-muted-foreground"
           onClick={() => setOpen(true)}
         >
           {`▸ ${lines.length - FOLD_LINES} more lines`}
@@ -74,7 +74,7 @@ function Thinking(props: { item: ItemData; auto: boolean }): ReactElement {
   const first = text.split("\n").find((l) => l.trim() !== "") ?? "";
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="min-h-11 w-full text-left text-[12.5px] text-muted-foreground">
+      <CollapsibleTrigger className="min-h-[44px] w-full text-left text-[12.5px] text-muted-foreground">
         {`▸ thinking: ${first}`}
       </CollapsibleTrigger>
       <CollapsibleContent>
@@ -115,7 +115,7 @@ function StepRow(props: { step: Step; live: boolean; sessionId: number }): React
   if (linked) {
     return (
       <a
-        className={cn(grid, "min-h-11 items-center")}
+        className={cn(grid, "min-h-[44px] items-center")}
         href={hrefFor("agent", { id: String(props.sessionId), agent })}
       >
         {cells}
@@ -138,7 +138,7 @@ function Steps(props: {
   const hidden = total - steps.length;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="min-h-11 w-full text-left text-[12.5px] text-muted-foreground">
+      <CollapsibleTrigger className="min-h-[44px] w-full text-left text-[12.5px] text-muted-foreground">
         {`${total} ${total === 1 ? "step" : "steps"}`}
         {failed > 0 ? <span className="text-error">{` · ${failed} failed`}</span> : null}
       </CollapsibleTrigger>

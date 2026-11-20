@@ -115,7 +115,7 @@ function Gate({ gate, id }: { gate: FlowGate; id: string }): ReactElement {
       <span>{gate.text}</span>
     </>
   );
-  const className = "flex min-h-11 items-center gap-1.5 text-xs";
+  const className = "flex min-h-[44px] items-center gap-1.5 text-xs";
   return gate.job !== 0 ? (
     <a data-slot="gate" href={hrefFor("job", { id, job: String(gate.job) })} className={className}>
       {body}
@@ -159,7 +159,7 @@ function StepItem({
       {side !== "" && <span className="flex-none text-xs text-muted-foreground">{side}</span>}
     </>
   );
-  const headClass = "flex min-h-11 min-w-0 flex-1 items-center gap-2 text-sm";
+  const headClass = "flex min-h-[44px] min-w-0 flex-1 items-center gap-2 text-sm";
   return (
     <li
       data-slot="step"
@@ -246,7 +246,7 @@ function Findings({ row, flow }: { row: FlowStory; flow: Flow }): ReactElement {
 
 // Reads is the reads box: the plan's lines, each spec section the reading names and the changes.
 function Reads({ row, id, plan }: { row: FlowStory; id: string; plan: string }): ReactElement {
-  const link = "flex min-h-11 items-center text-turn";
+  const link = "flex min-h-[44px] items-center text-turn";
   return (
     <div className={BOX}>
       <p className={LEGEND}>reads</p>
@@ -315,7 +315,7 @@ export default function FlowStoryBody(props: PanelProps): ReactElement {
       <p className="flex items-center gap-2">
         <a
           href={hrefFor("flow", { id: String(session.id) }, { plan })}
-          className="flex min-h-11 items-center text-muted-foreground"
+          className="flex min-h-[44px] items-center text-muted-foreground"
         >
           ‹ board
         </a>

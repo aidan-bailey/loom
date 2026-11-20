@@ -152,7 +152,7 @@ export function SessionRow({
   return (
     <a
       href={sessionHref(session)}
-      className="block min-h-11 border-b border-border px-3.5 py-2.5 last:border-b-0"
+      className="block min-h-[44px] border-b border-border px-3.5 py-2.5 last:border-b-0"
     >
       <div className="flex items-center gap-2">
         <span

@@ -71,7 +71,7 @@ export function AddToHome({ onContinue }: { onContinue: () => void }): ReactElem
       <button
         type="button"
         onClick={choose}
-        className="min-h-11 self-start text-[16px] text-muted-foreground underline"
+        className="min-h-[44px] self-start text-[16px] text-muted-foreground underline"
       >
         Continue in the browser anyway
       </button>

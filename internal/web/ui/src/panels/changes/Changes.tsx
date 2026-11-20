@@ -126,7 +126,7 @@ function FileFold(props: {
   const copied = (file.status === "R" || file.status === "C") && file.old_path !== "";
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2 text-left">
+      <CollapsibleTrigger className="flex min-h-[44px] w-full items-center gap-2 text-left">
         <span className={cn("font-mono font-bold", statusTone(file.status))}>{file.status}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-mono">{name}</span>
