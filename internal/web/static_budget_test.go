@@ -195,7 +195,7 @@ func checkLazyViews(assets map[string]staticAsset) error {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody"} {
+	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody", "SettingsBody"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
 		for url := range assets {
@@ -234,7 +234,7 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		}
 		return assets
 	}
-	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js"}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js", "/assets/SettingsBody-s.js"}
 
 	for _, tc := range []struct {
 		name   string
@@ -254,6 +254,8 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		{"a preloaded flows chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowsBody-g.js">`, all...), "/assets/FlowsBody-g.js"},
 		{"no new-session chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js"), "NewSessionBody"},
 		{"a preloaded new-session chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/NewSessionBody-h.js">`, all...), "/assets/NewSessionBody-h.js"},
+		{"no settings chunk", build(entry, slices.DeleteFunc(slices.Clone(all), func(f string) bool { return strings.HasPrefix(f, "/assets/SettingsBody-") })...), "SettingsBody"},
+		{"a preloaded settings chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/SettingsBody-s.js">`, all...), "/assets/SettingsBody-s.js"},
 		{"a second job chunk", build(entry, append([]string{"/assets/JobBody-z.js"}, all...)...), "more than one"},
 		{"a preloaded chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...), "/assets/JobBody-b.js"},
 		{"a chunk named in the page's text", build(entry+`<script>load("MockupBody-c.js")</script>`, all...), "MockupBody"},
@@ -269,4 +271,33 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		})
 	}
 	require.ErrorContains(t, checkLazyViews(build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...)), "launch")
+}
+
+func TestCheckLazyViews_TheSettingsChunkIsRequiredAndKeptOutOfTheEntry(t *testing.T) {
+	assets := nextStaticAssets(t)
+	var chunk string
+	for url := range assets {
+		if strings.HasPrefix(url, "/assets/SettingsBody-") && strings.HasSuffix(url, ".js") {
+			chunk = url
+		}
+	}
+	require.NotEmpty(t, chunk, "the bundle has no SettingsBody chunk: the settings body is imported statically, or the bundle was not rebuilt")
+	require.NoError(t, checkLazyViews(assets))
+
+	without := map[string]staticAsset{}
+	named := map[string]staticAsset{}
+	for url, asset := range assets {
+		named[url] = asset
+		if url != chunk {
+			without[url] = asset
+		}
+	}
+	require.ErrorContains(t, checkLazyViews(without), "SettingsBody")
+
+	index := assets["/index.html"]
+	named["/index.html"] = staticAsset{
+		body:  append(append([]byte{}, index.body...), []byte(`<link rel="modulepreload" href="`+chunk+`">`)...),
+		ctype: index.ctype,
+	}
+	require.ErrorContains(t, checkLazyViews(named), chunk)
 }

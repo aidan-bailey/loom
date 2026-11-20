@@ -11,3 +11,4 @@ import "./mockup";
 import "./flow";
 import "./flows";
 import "./new";
+import "./settings";
