@@ -99,6 +99,13 @@ describe("ReplyBox", () => {
     expect(screen.getByText("Too long: a reply is at most 64 KiB.")).toBeInTheDocument();
   });
 
+  it("the limit and the send button read the trimmed reply, as the component hands it on", () => {
+    setup();
+    fireEvent.change(box(), { target: { value: `  ${"a".repeat(MAX_MESSAGE_BYTES)}  ` } });
+    expect(send()).toBeEnabled();
+    expect(screen.queryByText(/Too long/)).toBeNull();
+  });
+
   it("the limit counts UTF-8 bytes, not characters", () => {
     setup();
     fireEvent.change(box(), { target: { value: "é".repeat(32769) } });
