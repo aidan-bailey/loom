@@ -126,7 +126,7 @@ export default function FlowsBody(): ReactElement {
         {live.length === 0 ? (
           <p className="text-sm text-faint">No session&apos;s worktree holds a flow.</p>
         ) : (
-          live.map((l) => <Live key={l.session} live={l} />)
+          live.map((l) => <Live key={`${l.session}:${l.flow.plan}`} live={l} />)
         )}
       </div>
       {[...byRepo].map(([key, runs]) => (

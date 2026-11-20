@@ -98,8 +98,8 @@ describe("FlowsBody", () => {
     if (base === undefined) throw new Error("fixture has no live flow");
     flows.live = [
       ...(flows.live ?? []),
-      { ...base, flow: { ...base.flow, asks: "", status: "lost" } },
-      { ...base, flow: { ...base.flow, asks: "", unreadable: "bad plan" } },
+      { ...base, flow: { ...base.flow, plan: "lost.md", asks: "", status: "lost" } },
+      { ...base, flow: { ...base.flow, plan: "bad.md", asks: "", unreadable: "bad plan" } },
     ];
     show({ flows });
     const tones = Array.from(document.querySelectorAll("[data-tone]")).map((e) =>
@@ -246,9 +246,12 @@ describe("the past runs", () => {
   });
 
   it("the bars take the newest 5 priced runs, and skip a run with no price or no stories", () => {
-    show({ flows: { live: null, past: runs(7) } });
-    expect(heights(box("Personal-loom"))).toHaveLength(5);
-    expect(screen.getByText(/last 5 runs/)).toBeInTheDocument();
+    // Run i costs 2(i+1) over 2 stories: $1 a story for the newest, $7 for the oldest.
+    show({ flows: { live: null, past: runs(7, (i) => ({ usd: 2 * (i + 1), stories: 2 })) } });
+    const h = heights(box("Personal-loom"));
+    expect(h).toHaveLength(5);
+    [100, 80, 60, 40, 20].forEach((want, k) => expect(h[k]).toBeCloseTo(want, 1));
+    expect(screen.getByText("run cost per story, last 5 runs · median $3.00")).toBeInTheDocument();
     cleanup();
     show({
       flows: {
@@ -303,6 +306,7 @@ describe("the flows panel", () => {
 
   it("FlowsHead and FlowsBody both read through useFlows", () => {
     const reload = vi.fn();
+    vi.mocked(useFlows).mockClear();
     vi.mocked(useFlows).mockReturnValue({
       flows: fixtureFlows(),
       error: "",
@@ -315,7 +319,7 @@ describe("the flows panel", () => {
         <FlowsBody />
       </>,
     );
-    expect(vi.mocked(useFlows).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(vi.mocked(useFlows)).toHaveBeenCalledTimes(2);
     screen.getByRole("button", { name: "Read the flows again" }).click();
     expect(reload).toHaveBeenCalledTimes(1);
   });
