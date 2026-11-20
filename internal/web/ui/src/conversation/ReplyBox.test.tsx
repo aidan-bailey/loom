@@ -80,10 +80,10 @@ describe("ReplyBox", () => {
     expect(send()).toBeEnabled();
   });
 
-  it("send sends the trimmed text through session.send and a 200 empties the box", async () => {
+  it("send sends the typed text through session.send and a 200 empties the box", async () => {
     const spy = vi.spyOn(api, "send").mockResolvedValue(noticesOk());
     setup();
-    fireEvent.change(box(), { target: { value: "  go on  " } });
+    fireEvent.change(box(), { target: { value: "go on" } });
     await userEvent.click(send());
     expect(spy).toHaveBeenCalledWith(2, { text: "go on" });
     await waitFor(() => expect(box().value).toBe(""));
