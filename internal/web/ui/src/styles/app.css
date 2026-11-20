@@ -106,3 +106,13 @@
     }
   }
 }
+
+/* Base UI's Select and ScrollArea set this class on what scrolls and inject a <style> for it; the
+   CSP provider (disableStyleElements) suppresses that <style>, so the rules live here. */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
+}

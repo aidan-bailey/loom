@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -266,5 +267,17 @@ describe("no <style> element", () => {
     await screen.findByText("hello");
     await screen.findByRole("dialog", { name: "Kill fix-pane-cursor?" });
     expect(document.querySelectorAll("style").length).toBe(0);
+  });
+});
+
+// Vitest replaces a stylesheet's text with "" (also under ?raw), so the file is read from disk.
+const appCss = readFileSync("src/styles/app.css", "utf8");
+
+describe("the scrollbar rules", () => {
+  it("app.css carries the two .base-ui-disable-scrollbar rules Base UI no longer injects", () => {
+    expect(appCss).toMatch(/\.base-ui-disable-scrollbar\s*\{[^}]*scrollbar-width:\s*none/);
+    expect(appCss).toMatch(
+      /\.base-ui-disable-scrollbar::-webkit-scrollbar\s*\{[^}]*display:\s*none/,
+    );
   });
 });
