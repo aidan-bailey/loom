@@ -938,6 +938,55 @@ func TestRun_TreeMoved(t *testing.T) {
 	})
 }
 
+// A developer's commits are the story's whatever it reported, so its retry
+// starts from them without a tree-moved question (issue #2).
+func TestRun_AnAgentThatCommitsAndDoesNotFinish(t *testing.T) {
+	changes := Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
+	for _, c := range []struct {
+		name, agent, role string
+		report            Report
+		answers           map[string]string
+		next              string
+	}{
+		{"a developer that fails", "r-s1-dev1", "intermediate-dev", Report{Status: "failed", Why: "an API error"},
+			map[string]string{"failed:r-s1-dev1": "retry"}, "agent r-s1-dev2 intermediate-dev"},
+		{"a developer that is BLOCKED", "r-s1-dev1", "intermediate-dev", Report{Status: "BLOCKED"},
+			map[string]string{"blocked:r-s1-dev1": "Use the cache."}, "agent r-s1-dev2 intermediate-dev"},
+		{"a junior that is BLOCKED", "r-s1-dev1", "junior-dev", Report{Status: "BLOCKED"},
+			nil, "agent r-s1-dev2 intermediate-dev"},
+		{"a fixer that fails", "r-s1-fix1", "intermediate-dev", Report{Status: "failed", Why: "an API error"},
+			map[string]string{"failed:r-s1-fix1": "retry"}, "agent r-s1-fix2 intermediate-dev"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFake()
+			f.reports[c.agent] = c.report
+			f.commitsOn[c.agent] = true
+			if strings.Contains(c.agent, "fix") {
+				f.reports["r-s1-review1"] = changes
+			}
+			st := newState(story("1", c.role))
+			drive(t, st, f, c.answers) // a tree-moved question fails the test
+			require.Equal(t, Done, st.Status)
+			assert.Contains(t, f.submits(), c.next)
+		})
+	}
+}
+
+// A continue on a tree-moved question moves the head the engine recorded
+// for every later step, a replay's included, so a retry after it doesn't
+// park on the same two heads again (issue #2).
+func TestRun_AContinueHoldsAcrossARetry(t *testing.T) {
+	f := newFake()
+	f.head = 3 // someone committed before the run's first dispatch
+	f.premises = "plan_premises: p.md against the tree at h0\nStory 1 (plan:100): 1 premises, 1 flagged\n  plan:120  missing  a.go: no such file\n"
+	f.reports["r-premise1"] = Report{Status: "failed", Why: "an API error"}
+	f.reports["r-premise2"] = Report{Status: "DONE", Text: "plan:120 | HOLDS | - | a.go:1 |\n"}
+	st := newState(story("1", "intermediate-dev"))
+	drive(t, st, f, map[string]string{"tree:r-premise1": "continue", "failed:r-premise1": "retry"})
+	require.Equal(t, Done, st.Status)
+	assert.Contains(t, f.submits(), "agent r-premise2 premise-check")
+}
+
 // A gate run that leaves only the profile's generated files changed (a
 // test that rewrites a stale bindings file) gets them committed by the
 // engine, and a failed one runs once more before a fixer, so the next
