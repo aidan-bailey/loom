@@ -12,7 +12,10 @@ import (
 )
 
 // Version is the version of feedback.json this build reads and writes.
-const Version = 1
+// Version 2 added Thread.Issue and Thread.Closed: an older loom refuses the
+// file (ErrNewer) instead of dropping them on its next save. A version 1 file
+// loads as it is.
+const Version = 2
 
 // StoreFile is the inbox's file under <globalDir>/feedback.
 const StoreFile = "feedback.json"

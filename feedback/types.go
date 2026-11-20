@@ -41,9 +41,10 @@ const (
 type Status string
 
 const (
-	Open   Status = "open"
-	Fixing Status = "fixing"
-	Closed Status = "closed"
+	Open      Status = "open"
+	Fixing    Status = "fixing"
+	Published Status = "published" // linked to a GitHub issue, which the issue watcher fixes
+	Closed    Status = "closed"
 )
 
 // Session is who filed a note, as the daemon resolved the launch: never the
@@ -83,6 +84,25 @@ type Fix struct {
 	At        time.Time `json:"at"`
 }
 
+// Issue is a thread's link to its GitHub issue. Posted is the note the issue
+// or its comments cover up to, in thread order: the notes after it in
+// Thread.Notes (the order they joined, which differs from ID order when a
+// retried note joins after a newer one) are new.
+type Issue struct {
+	Repo   string    `json:"repo"`
+	Number int       `json:"number"`
+	URL    string    `json:"url"`
+	At     time.Time `json:"at"`
+	Posted NoteID    `json:"posted"`
+}
+
+// Closure is when and why a thread closed; a thread the owner closes with no
+// reason has an empty Reason.
+type Closure struct {
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason"`
+}
+
 // Thread is a group of notes about one problem.
 type Thread struct {
 	ID     ThreadID  `json:"id"`
@@ -91,6 +111,8 @@ type Thread struct {
 	Status Status    `json:"status"`
 	Notes  []NoteID  `json:"notes"`
 	Fix    Fix       `json:"fix,omitzero"`
+	Issue  Issue     `json:"issue,omitzero"`
+	Closed Closure   `json:"closed,omitzero"`
 	First  time.Time `json:"first"`
 	Last   time.Time `json:"last"`
 }
@@ -100,6 +122,9 @@ const (
 	MaxTitle = 120    // characters
 	MaxText  = 20_000 // bytes
 )
+
+// MaxCloseReason is the most bytes a close reason holds, on one line.
+const MaxCloseReason = 300
 
 // ValidateNote checks what an agent supplies: a known kind, a title of
 // 1–MaxTitle characters on one line, a text of 1–MaxText bytes. Both are

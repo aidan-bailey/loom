@@ -604,7 +604,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":""}}`
+Result: `{"value":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":"","IssueErrs":null}}`
 
 ### FileFeedback (request)
 
@@ -612,9 +612,15 @@ Params: `{"note":{"Kind":"","Title":"","Text":"","Launch":"","Effort":""},"req":
 
 Result: `{}`
 
+### PublishThread (request)
+
+Params: `{"thread":0,"issue":"","through":0,"req":0}`
+
+Result: `{}`
+
 ### CloseThread (request)
 
-Params: `{"thread":0,"req":0}`
+Params: `{"thread":0,"reason":"","req":0}`
 
 Result: `{}`
 
@@ -680,7 +686,7 @@ Result: `{}`
 
 ### FeedbackChanged
 
-`{"View":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":""}}`
+`{"View":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":"","IssueErrs":null}}`
 
 ### Reactivated
 

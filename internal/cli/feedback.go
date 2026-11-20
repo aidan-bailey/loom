@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -36,7 +38,7 @@ func newFeedbackCmd() *cobra.Command {
 		Use:   "feedback",
 		Short: "File and read notes about loom itself, which loom's session agents write",
 	}
-	cmd.AddCommand(newFeedbackAddCmd(), newFeedbackListCmd(), newFeedbackShowCmd(), newFeedbackFixCmd(), newFeedbackCloseCmd())
+	cmd.AddCommand(newFeedbackAddCmd(), newFeedbackListCmd(), newFeedbackShowCmd(), newFeedbackFixCmd(), newFeedbackPublishCmd(), newFeedbackCloseCmd(), newFeedbackScanCmd())
 	return cmd
 }
 
@@ -157,20 +159,9 @@ func rowID(r feedback.Row) string {
 	return "n" + strconv.Itoa(int(r.Note))
 }
 
-// rowStatus is a thread's status (fixing names its session) or a note's
-// grouping.
-func rowStatus(r feedback.Row) string {
-	switch {
-	case r.Thread == 0:
-		return string(r.Grouping)
-	case r.Status == feedback.Fixing && r.Fix.Title != "":
-		return "fixing " + r.Fix.Title
-	}
-	return string(r.Status)
-}
-
-// writeFeedbackList prints rows as a table, then the grouper's state and
-// the inbox's error when there are any.
+// writeFeedbackList prints rows as a table, then a line for each thread
+// whose last issue check failed, the grouper's state and the inbox's error
+// when there are any.
 func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, now time.Time) error {
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "No feedback.")
@@ -178,11 +169,14 @@ func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, no
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tKIND\tSESSIONS\tNOTES\tLAST\tSTATUS\tTITLE")
 		for _, r := range rows {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n", rowID(r), r.Kind, r.Sessions, r.Notes, since(r.Last, now), rowStatus(r), r.Title)
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n", rowID(r), r.Kind, r.Sessions, r.Notes, since(r.Last, now), feedback.StatusText(r), r.Title)
 		}
 		if err := tw.Flush(); err != nil {
 			return err
 		}
+	}
+	for _, t := range slices.Sorted(maps.Keys(v.IssueErrs)) {
+		fmt.Fprintf(w, "thread %d: issue check failed: %s\n", t, oneLineFields(v.IssueErrs[t]))
 	}
 	if v.Grouper != "" {
 		fmt.Fprintf(w, "grouper: %s\n", v.Grouper)
@@ -191,6 +185,11 @@ func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, no
 		fmt.Fprintf(w, "inbox: %s\n", v.Err)
 	}
 	return nil
+}
+
+// oneLineFields is s on one line, its runs of white space single spaces.
+func oneLineFields(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // parseRowID reads "3" as thread 3 and "n12" as note 12.
@@ -216,7 +215,7 @@ func parseThread(s string) (feedback.ThreadID, error) {
 	case err != nil:
 		return 0, err
 	case n != 0:
-		return 0, fmt.Errorf("%s is a note no thread holds yet: only a thread can be fixed or closed", s)
+		return 0, fmt.Errorf("%s is a note no thread holds yet: only a thread can be fixed, published or closed", s)
 	}
 	return t, nil
 }
@@ -233,7 +232,8 @@ func newFeedbackShowCmd() *cobra.Command {
 			}
 			loomErrors(c)
 			return withDaemon(c, func(d *client) error {
-				in := d.Feedback().Inbox
+				v := d.Feedback()
+				in := v.Inbox
 				out := c.OutOrStdout()
 				if n != 0 {
 					note, ok := in.Note(n)
@@ -247,19 +247,44 @@ func newFeedbackShowCmd() *cobra.Command {
 				if !ok {
 					return fmt.Errorf("thread %d doesn't exist", t)
 				}
-				fmt.Fprintf(out, "thread %d (%s, %s, %d sessions): %s\n", th.ID, th.Kind, th.Status, in.Sessions(th), th.Title)
-				if th.Fix.ID != 0 {
-					fmt.Fprintf(out, "fix session: %s in %s, started %s\n", th.Fix.Title, th.Fix.Workspace, th.Fix.At.Local().Format("2006-01-02 15:04"))
-				}
-				for _, id := range th.Notes {
-					if note, ok := in.Note(id); ok {
-						fmt.Fprintln(out)
-						writeNote(out, note)
-					}
-				}
+				writeThread(out, v, th)
 				return nil
 			})
 		},
+	}
+}
+
+// writeThread prints a thread: its header, its fix session, its issue link,
+// its closure and the issue poll's last error, each when it applies, then
+// every note.
+func writeThread(w io.Writer, v core.FeedbackView, th feedback.Thread) {
+	in := v.Inbox
+	fmt.Fprintf(w, "thread %d (%s, %s, %d sessions): %s\n", th.ID, th.Kind, th.Status, in.Sessions(th), th.Title)
+	if th.Fix.ID != 0 {
+		fmt.Fprintf(w, "fix session: %s in %s, started %s\n", th.Fix.Title, th.Fix.Workspace, th.Fix.At.Local().Format("2006-01-02 15:04"))
+	}
+	if th.Issue.Number != 0 {
+		fmt.Fprintf(w, "issue: %s, posted through n%d", th.Issue.URL, th.Issue.Posted)
+		if k := th.NewNotes(); k > 0 {
+			fmt.Fprintf(w, ", %d new", k)
+		}
+		fmt.Fprintln(w)
+	}
+	if th.Status == feedback.Closed {
+		fmt.Fprintf(w, "closed: %s", th.Closed.At.Local().Format("2006-01-02 15:04"))
+		if th.Closed.Reason != "" {
+			fmt.Fprintf(w, ": %s", th.Closed.Reason)
+		}
+		fmt.Fprintln(w)
+	}
+	if e := v.IssueErrs[th.ID]; e != "" {
+		fmt.Fprintf(w, "issue check failed: %s\n", oneLineFields(e))
+	}
+	for _, id := range th.Notes {
+		if note, ok := in.Note(id); ok {
+			fmt.Fprintln(w)
+			writeNote(w, note)
+		}
 	}
 }
 
@@ -341,10 +366,59 @@ func newFeedbackFixCmd() *cobra.Command {
 	return cmd
 }
 
+func newFeedbackPublishCmd() *cobra.Command {
+	var issue, through string
+	cmd := &cobra.Command{
+		Use:   "publish <thread> --issue <ref> --through <nN>",
+		Short: "Link a thread to the GitHub issue written about it",
+		Long: "Link a thread to its issue (--issue: the issue's URL or <owner>/<name>#<N>), whose text or comments cover " +
+			"the thread's notes up to --through, a note's ID as list shows it. Running it again for the same issue " +
+			"only moves --through forward.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			t, err := parseThread(args[0])
+			if err != nil {
+				return err
+			}
+			_, n, err := parseRowID(through)
+			switch {
+			case err != nil:
+				return fmt.Errorf("--through: %w", err)
+			case n == 0:
+				return fmt.Errorf("--through: %q is not a note: write n and its number", through)
+			}
+			repo, num, err := feedback.ParseIssueRef(issue)
+			if err != nil {
+				return err
+			}
+			loomErrors(c)
+			return withDaemon(c, func(d *client) error {
+				d.PublishThread(t, issue, n, feedbackReq)
+				r, err := d.awaitReply(feedbackReq)
+				switch {
+				case err != nil:
+					return err
+				case r.Err != nil:
+					return r.Err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "[loom] thread %d published as %s#%d\n", t, repo, num)
+				return nil
+			})
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&issue, "issue", "", "The issue: https://github.com/<owner>/<name>/issues/<N> or <owner>/<name>#<N>")
+	fl.StringVar(&through, "through", "", "The newest note the issue or its comments cover, as nN")
+	_ = cmd.MarkFlagRequired("issue")
+	_ = cmd.MarkFlagRequired("through")
+	return cmd
+}
+
 func newFeedbackCloseCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "close <thread>",
-		Short: "Close a thread: a problem that comes back opens a new one",
+	var reason string
+	cmd := &cobra.Command{
+		Use:   "close <thread> [--reason \"…\"]",
+		Short: "Close a thread, with a reason if you give one: a problem that comes back opens a new thread",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			t, err := parseThread(args[0])
@@ -353,7 +427,7 @@ func newFeedbackCloseCmd() *cobra.Command {
 			}
 			loomErrors(c)
 			return withDaemon(c, func(d *client) error {
-				d.CloseThread(t, feedbackReq)
+				d.CloseThread(t, reason, feedbackReq)
 				r, err := d.awaitReply(feedbackReq)
 				switch {
 				case err != nil:
@@ -366,4 +440,6 @@ func newFeedbackCloseCmd() *cobra.Command {
 			})
 		},
 	}
+	cmd.Flags().StringVar(&reason, "reason", "", "Why: one line of at most 300 bytes")
+	return cmd
 }

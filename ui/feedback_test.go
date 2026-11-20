@@ -76,3 +76,74 @@ func TestRenderFeedback_SaysWhenEmptyAndShowsTheInboxError(t *testing.T) {
 	assert.Contains(t, out, "inbox: feedback.json is from a newer loom")
 	assert.Contains(t, out, "No feedback yet. Sessions file it with loom feedback add.")
 }
+
+// fbPublished is fbView with thread 1 published through its first note, so
+// its second note is new.
+func fbPublished(t *testing.T, now time.Time) core.FeedbackView {
+	t.Helper()
+	v := fbView(t, now)
+	require.NoError(t, v.Inbox.Publish(1, "aidan-bailey/loom", 57, 1, now))
+	return v
+}
+
+func TestRenderFeedback_ShowsThePublishedStatusAndNewCount(t *testing.T) {
+	now := time.Now()
+	out := plainLines(RenderFeedback(120, 20, FeedbackData{View: fbPublished(t, now), Now: now}))
+	assert.Regexp(t, `^ ▸ 1 +bug +2 +2 +1h ago +published #57 \+1 new +loom job run: --after refuses`, out[3])
+	assert.Regexp(t, `^ +n3 +missing +1 +1 +1h ago +pending`, out[4])
+}
+
+func TestRenderFeedback_StatusTextForEveryRow(t *testing.T) {
+	now := time.Now()
+	v := fbView(t, now)
+	require.NoError(t, v.Inbox.SetFix(1, feedback.Fix{Title: "fb-1-x"}))
+	out := ansi.Strip(RenderFeedback(140, 20, FeedbackData{View: v, Now: now}))
+	assert.Contains(t, out, "fixing fb-1-x")
+	assert.Contains(t, out, "pending")
+
+	v = fbView(t, now)
+	require.NoError(t, v.Inbox.SetFix(1, feedback.Fix{}))
+	assert.Regexp(t, `1 +bug +2 +2 +1h ago +fixing +loom job`, plainLines(RenderFeedback(140, 20, FeedbackData{View: v, Now: now}))[3])
+
+	v = fbView(t, now)
+	v.Inbox.Fail(3, "boom", now.Add(time.Hour))
+	assert.Regexp(t, `n3 +missing +1 +1 +1h ago +ungrouped`, ansi.Strip(RenderFeedback(140, 20, FeedbackData{View: v, Now: now})))
+}
+
+func TestRenderFeedback_ExpandedPublishedRowShowsTheLinkAndThePollError(t *testing.T) {
+	now := time.Now()
+	v := fbPublished(t, now)
+	v.IssueErrs = map[feedback.ThreadID]string{1: "gh: auth\nretry"}
+	out := ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: v, Expanded: true, Now: now}))
+	link := "issue: https://github.com/aidan-bailey/loom/issues/57 · posted through n1"
+	assert.Contains(t, out, link)
+	assert.Contains(t, out, "issue check failed: gh: auth retry")
+	head := strings.Index(out, "n1 bug · builder")
+	assert.Less(t, strings.Index(out, link), head)
+	assert.Less(t, strings.Index(out, "issue check failed"), head)
+
+	v.IssueErrs = nil
+	out = ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: v, Expanded: true, Now: now}))
+	assert.Contains(t, out, "issue:")
+	assert.NotContains(t, out, "issue check failed")
+
+	v.IssueErrs = map[feedback.ThreadID]string{1: "gh: auth\nretry"}
+	for _, l := range plainLines(RenderFeedback(60, 30, FeedbackData{View: v, Expanded: true, Now: now})) {
+		assert.LessOrEqual(t, ansi.StringWidth(l), 60, l)
+	}
+}
+
+func TestRenderFeedback_CollapsedAndUnpublishedRowsShowNoLink(t *testing.T) {
+	now := time.Now()
+	v := fbPublished(t, now)
+	v.IssueErrs = map[feedback.ThreadID]string{1: "gh: auth"}
+	out := ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: v, Now: now}))
+	assert.NotContains(t, out, "issue:")
+	assert.NotContains(t, out, "issue check failed")
+
+	u := fbView(t, now)
+	u.IssueErrs = map[feedback.ThreadID]string{2: "gh: auth"}
+	out = ansi.Strip(RenderFeedback(140, 30, FeedbackData{View: u, Expanded: true, Now: now}))
+	assert.NotContains(t, out, "issue:")
+	assert.NotContains(t, out, "issue check failed")
+}

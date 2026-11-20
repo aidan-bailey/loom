@@ -14,7 +14,7 @@ func TestBuildRequest_OffersOnlyThreadsThatArentClosed(t *testing.T) {
 	in := Empty()
 	open, _ := in.OpenThread(in.Add(note(1, "open", 0)), "")
 	closed, _ := in.OpenThread(in.Add(note(1, "closed", 0)), "")
-	require.NoError(t, in.Close(closed))
+	require.NoError(t, in.Close(closed, "", t0))
 	n, _ := in.Note(in.Add(note(2, "new", 1)))
 	req, ids := BuildRequest(in, n)
 	assert.Equal(t, []ThreadID{open}, ids)
@@ -85,7 +85,7 @@ func TestApply(t *testing.T) {
 	assert.NotEqual(t, other, got, "a thread the request didn't offer")
 
 	in, open, _, n = setup()
-	require.NoError(t, in.Close(open))
+	require.NoError(t, in.Close(open, "", t0))
 	got, _ = Apply(&in, n, Answer{Thread: open}, []ThreadID{open})
 	th, _ = in.Thread(got)
 	assert.NotEqual(t, open, got, "a thread closed since the request")

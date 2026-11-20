@@ -19,6 +19,9 @@ type Row struct {
 	Notes    int       `json:"notes"`
 	Last     time.Time `json:"last"`
 	Fix      Fix       `json:"fix,omitzero"`
+	Issue    Issue     `json:"issue,omitzero"`
+	Closed   Closure   `json:"closed,omitzero"`
+	New      int       `json:"new,omitempty"` // a published thread's notes after Issue.Posted
 }
 
 // Rank is the list (spec §8): every thread not closed (with all, the
@@ -31,7 +34,8 @@ func Rank(in Inbox, all bool) []Row {
 			continue
 		}
 		rows = append(rows, Row{Thread: t.ID, Kind: t.Kind, Title: t.Title, Status: t.Status,
-			Sessions: in.Sessions(t), Notes: len(t.Notes), Last: t.Last, Fix: t.Fix})
+			Sessions: in.Sessions(t), Notes: len(t.Notes), Last: t.Last, Fix: t.Fix,
+			Issue: t.Issue, Closed: t.Closed, New: t.NewNotes()})
 	}
 	for _, n := range in.Notes {
 		if n.Thread == 0 {

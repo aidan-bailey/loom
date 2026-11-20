@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -32,18 +33,22 @@ type FeedbackNote struct {
 
 // FeedbackView is the inbox as published (FeedbackChanged, Core.Feedback):
 // a copy, the grouper's state ("" when it runs, else why not), why the
-// inbox refuses notes ("" when it doesn't), and the workspace a fix
-// session starts in by default (feedback.workspace, "" when unset).
+// inbox refuses notes ("" when it doesn't), the workspace a fix
+// session starts in by default (feedback.workspace, "" when unset), and
+// IssueErrs, the issue poll's last error for each published thread that
+// has one (nil when none has).
 type FeedbackView struct {
 	Inbox     feedback.Inbox
 	Grouper   string
 	Err       string
 	Workspace string
+	IssueErrs map[feedback.ThreadID]string
 }
 
 // Clone deep-copies v.
 func (v FeedbackView) Clone() FeedbackView {
 	v.Inbox = v.Inbox.Clone()
+	v.IssueErrs = maps.Clone(v.IssueErrs)
 	return v
 }
 
@@ -54,6 +59,11 @@ type feedbackState struct {
 	inbox     feedback.Inbox
 	loadErr   error // feedback.json failed to load: notes are refused
 	rev       uint64
+
+	// issueErrs is the issue poll's last error for each published thread
+	// whose check failed; it lives in memory only (feedback_issues.go).
+	issueErrs    map[feedback.ThreadID]string
+	issueChecked map[feedbackIssueKey]time.Time // when each published issue was last asked about
 
 	settings    advisor.Settings // the grouper's, resolved
 	settingsErr error
@@ -169,7 +179,24 @@ func (m *Model) grouperProgram() string {
 // grouper's state and the load error.
 func (m *Model) feedbackView() FeedbackView {
 	f := m.feedback
-	return FeedbackView{Inbox: f.inbox.Clone(), Grouper: m.grouperOff(), Err: errText(f.loadErr), Workspace: f.workspace}
+	return FeedbackView{Inbox: f.inbox.Clone(), Grouper: m.grouperOff(), Err: errText(f.loadErr), Workspace: f.workspace,
+		IssueErrs: m.feedbackIssueErrs()}
+}
+
+// feedbackIssueErrs copies the poll's errors of the threads that are
+// published now: one for a thread closed, or moved, since it failed is
+// stale. nil when no published thread has one.
+func (m *Model) feedbackIssueErrs() map[feedback.ThreadID]string {
+	var out map[feedback.ThreadID]string
+	for _, t := range m.feedback.inbox.Published() {
+		if e, ok := m.feedback.issueErrs[t.ID]; ok {
+			if out == nil {
+				out = map[feedback.ThreadID]string{}
+			}
+			out[t.ID] = e
+		}
+	}
+	return out
 }
 
 // Feedback is the inbox as it stands now (Core.Feedback; a client's replica

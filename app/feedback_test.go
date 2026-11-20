@@ -46,9 +46,10 @@ func feedbackHome(t *testing.T, v core.FeedbackView) *home {
 // feedbackWatch records the feedback requests the TUI sends.
 type feedbackWatch struct {
 	core.Core
-	fixes  []feedback.ThreadID
-	closes []feedback.ThreadID
-	reqs   []core.ReqID
+	fixes   []feedback.ThreadID
+	closes  []feedback.ThreadID
+	reasons []string
+	reqs    []core.ReqID
 }
 
 func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws, model, effort string, req core.ReqID) {
@@ -56,8 +57,9 @@ func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws, model, effort string,
 	w.reqs = append(w.reqs, req)
 }
 
-func (w *feedbackWatch) CloseThread(t feedback.ThreadID, req core.ReqID) {
+func (w *feedbackWatch) CloseThread(t feedback.ThreadID, reason string, req core.ReqID) {
 	w.closes = append(w.closes, t)
+	w.reasons = append(w.reasons, reason)
 	w.reqs = append(w.reqs, req)
 }
 
@@ -133,6 +135,7 @@ func TestFeedbackView_CloseAsksThenSends(t *testing.T) {
 	require.Equal(t, stateConfirm, m.state)
 	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
 	assert.Equal(t, []feedback.ThreadID{1}, w.closes)
+	assert.Equal(t, []string{""}, w.reasons, "the view closes with no reason")
 	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: core.ErrRefused})
 	assert.NotEmpty(t, m.errBox.String(), "a refusal reaches the user")
 }
@@ -206,4 +209,48 @@ func TestFeedbackView_DrawsInPlaceOfTheLayout(t *testing.T) {
 	assert.Contains(t, out, "Feedback · 1 open")
 	assert.Contains(t, out, "loom job run: --after refuses")
 	assert.Contains(t, out, "F/esc back · j/k move · enter notes · x fix · c close · q quit")
+}
+
+// publishedFeedback is testFeedback with thread 1 published through n1.
+func publishedFeedback(t *testing.T, ws string) core.FeedbackView {
+	t.Helper()
+	v := testFeedback(t, ws)
+	require.NoError(t, v.Inbox.Publish(1, "aidan-bailey/loom", 57, 1, time.Now()))
+	return v
+}
+
+func TestFeedbackView_FixRefusesAPublishedThread(t *testing.T) {
+	m := feedbackHome(t, publishedFeedback(t, "loom"))
+	w := watchFeedback(t, m)
+	assert.Nil(t, pressWork(t, m, "x"))
+	assert.Equal(t, stateDefault, m.state, "no confirm")
+	assert.Contains(t, m.errBox.String(), "thread 1 is published as aidan-bailey/loom#57; the issue watcher fixes it")
+	assert.Empty(t, w.fixes)
+	assert.Equal(t, viewFeedback, m.viewMode)
+}
+
+func TestFeedbackView_FixRefusalComesBeforeTheWorkspaceCheck(t *testing.T) {
+	m := feedbackHome(t, publishedFeedback(t, ""))
+	assert.Nil(t, pressWork(t, m, "x"))
+	assert.Contains(t, m.errBox.String(), "is published as")
+	assert.NotContains(t, m.errBox.String(), "set feedback.workspace")
+}
+
+func TestFeedbackView_CloseAPublishedThreadSendsNoReason(t *testing.T) {
+	m := feedbackHome(t, publishedFeedback(t, "loom"))
+	w := watchFeedback(t, m)
+	pressWork(t, m, "c")
+	require.Equal(t, stateConfirm, m.state)
+	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
+	assert.Equal(t, []feedback.ThreadID{1}, w.closes)
+	assert.Equal(t, []string{""}, w.reasons)
+}
+
+func TestFeedbackView_ContentShowsPublishedStatusAndLink(t *testing.T) {
+	m := feedbackHome(t, publishedFeedback(t, "loom"))
+	assert.Contains(t, ansi.Strip(m.feedbackContent()), "published #57 +1 new")
+	pressWork(t, m, "enter")
+	assert.Contains(t, ansi.Strip(m.feedbackContent()), "issue: https://github.com/aidan-bailey/loom/issues/57")
+	m.feedback.IssueErrs = map[feedback.ThreadID]string{1: "gh: auth"}
+	assert.Contains(t, ansi.Strip(m.feedbackContent()), "issue check failed: gh: auth")
 }

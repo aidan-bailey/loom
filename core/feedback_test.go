@@ -169,7 +169,7 @@ func TestFeedback_AnInboxThatFailedToLoadIsLeftAndRefuses(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, dir)
 	fbDir := filepath.Join(dir, feedbackDirName)
 	require.NoError(t, os.MkdirAll(fbDir, 0o700))
-	body := []byte(`{"version": 2}`)
+	body := []byte(`{"version": 3}`)
 	require.NoError(t, os.WriteFile(filepath.Join(fbDir, feedback.StoreFile), body, 0o600))
 	m := NewForTest(Options{})
 	modInst(t, m, "owner")
@@ -218,7 +218,7 @@ func TestGroup_AClosedThreadAnswerOpensANewThread(t *testing.T) {
 
 	fbGrouper(t, m, `{"thread":1,"title":"","why":"same"}`)
 	fbFile(t, m, "second") // its call is queued, not run
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	fbRunAll(t, m)
 	in := m.Feedback().Inbox
 	require.Len(t, in.Threads, 2, "the thread closed between the request and the answer")
@@ -329,9 +329,44 @@ func TestFixThread_Refusals(t *testing.T) {
 	m.Drain()
 	refused("a live fix session", 1, "a")
 
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	m.Drain()
 	refused("a closed thread", 1, "a")
+}
+
+func TestFixThread_RefusesAPublishedThread(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 6)
+	require.NoError(t, replies(m.Drain())[0].Err)
+
+	m.FixThread(1, "a", "", "", 7)
+	out := m.Drain()
+	rs := replies(out)
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "thread 1 is published as aidan-bailey/loom#57; the issue watcher fixes it")
+	assert.Empty(t, out.Jobs, "no start job")
+	assert.False(t, slices.ContainsFunc(m.Views(m.Workspaces()[0].ID), func(v InstanceView) bool { return v.Title == feedback.FixTitle(1, "t") }),
+		"a refusal starts nothing")
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Zero(t, th.Fix, "no fix recorded")
+}
+
+func TestFixThread_APublishedThreadWithALiveFixSessionIsRefusedAsPublished(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.FixThread(1, "a", "", "", 7)
+	require.NoError(t, replies(m.Drain())[0].Err)
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 8)
+	require.NoError(t, replies(m.Drain())[0].Err)
+
+	m.FixThread(1, "a", "", "", 9)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "the issue watcher fixes it", "the published refusal comes before the live-session one")
+	assert.NotContains(t, rs[0].Err.Error(), "is still there")
 }
 
 func TestFixThread_LaunchesWithTheModelAndEffortAsked(t *testing.T) {
@@ -393,7 +428,7 @@ func TestFixTitle_FitsCoresLimit(t *testing.T) {
 func TestCloseThread(t *testing.T) {
 	m, dir := fbModel(t, "")
 	fbThread(t, m, "t")
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
 	require.NoError(t, rs[0].Err)
@@ -401,11 +436,188 @@ func TestCloseThread(t *testing.T) {
 	assert.Equal(t, feedback.Closed, disk.Threads[0].Status, "saved")
 
 	for name, thread := range map[string]feedback.ThreadID{"again": 1, "unknown": 4} {
-		m.CloseThread(thread, 6)
+		m.CloseThread(thread, "", 6)
 		rs := replies(m.Drain())
 		require.Len(t, rs, 1, name)
 		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
 	}
+}
+
+func TestCloseThread_StoresTheReason(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	before := time.Now()
+	m.CloseThread(1, "issue #57 closed (completed)", 6)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Closed, th.Status)
+	assert.Equal(t, "issue #57 closed (completed)", th.Closed.Reason)
+	assert.WithinDuration(t, before, th.Closed.At, 5*time.Second)
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, "issue #57 closed (completed)", disk.Threads[0].Closed.Reason, "saved")
+}
+
+func TestCloseThread_ABadReasonIsRefusedAndChangesNothing(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	rev := m.feedback.rev
+	for name, tc := range map[string]struct{ reason, want string }{
+		"two lines": {"one\ntwo", "the close reason must be one line"},
+		"too long":  {strings.Repeat("x", feedback.MaxCloseReason+1), "at most 300"},
+	} {
+		m.CloseThread(1, tc.reason, 6)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1, name)
+		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
+		assert.ErrorContains(t, rs[0].Err, tc.want, name)
+	}
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Open, th.Status, "nothing closed")
+	assert.Equal(t, rev, m.feedback.rev, "no revision bump")
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, feedback.Open, disk.Threads[0].Status, "nothing saved")
+}
+
+func TestPublishThread_LinksTheThreadAndSaves(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	rev := m.feedback.rev
+	before := time.Now()
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+	assert.Equal(t, rev+1, m.feedback.rev, "clients see the change")
+
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Published, th.Status)
+	assert.Equal(t, "aidan-bailey/loom", th.Issue.Repo)
+	assert.Equal(t, 57, th.Issue.Number)
+	assert.Equal(t, feedback.IssueURL("aidan-bailey/loom", 57), th.Issue.URL)
+	assert.Equal(t, feedback.NoteID(1), th.Issue.Posted)
+	assert.WithinDuration(t, before, th.Issue.At, 5*time.Second)
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, feedback.Published, disk.Threads[0].Status, "saved")
+	assert.Equal(t, 57, disk.Threads[0].Issue.Number, "saved")
+}
+
+func TestPublishThread_ARetryWithTheSameIssueIsSafe(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	for _, issue := range []string{"aidan-bailey/loom#57", "https://github.com/aidan-bailey/loom/issues/57"} {
+		m.PublishThread(1, issue, 1, 7)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1, issue)
+		require.NoError(t, rs[0].Err, issue)
+	}
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Published, th.Status)
+	assert.Equal(t, 57, th.Issue.Number)
+	assert.Equal(t, "aidan-bailey/loom", th.Issue.Repo)
+}
+
+func TestPublishThread_AFixingThreadKeepsItsFix(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.FixThread(1, "a", "", "", 7)
+	fix := replies(m.Drain())[0].ID
+	require.NotZero(t, fix)
+
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 8)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Published, th.Status)
+	assert.Equal(t, uint64(fix), th.Fix.ID, "the fix record stays")
+}
+
+func TestPublishThread_Refusals(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	refused := func(name string, thread feedback.ThreadID, issue string, through feedback.NoteID, want string) {
+		t.Helper()
+		before, _ := m.Feedback().Inbox.Thread(1)
+		rev := m.feedback.rev
+		m.PublishThread(thread, issue, through, 7)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1, name)
+		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
+		assert.ErrorContains(t, rs[0].Err, want, name)
+		after, _ := m.Feedback().Inbox.Thread(1)
+		assert.Equal(t, before, after, "%s changes nothing", name)
+		assert.Equal(t, rev, m.feedback.rev, "%s bumps no revision", name)
+	}
+	refused("an unknown thread", 9, "aidan-bailey/loom#57", 1, "thread 9 doesn't exist")
+	refused("an unparseable issue", 1, "not an issue", 1, "issue reference not an issue")
+	refused("a note outside the thread", 1, "aidan-bailey/loom#57", 9, "note n9 is not in thread 1")
+
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 7)
+	require.NoError(t, replies(m.Drain())[0].Err)
+	refused("a different issue", 1, "aidan-bailey/loom#58", 1, "thread 1 is linked to aidan-bailey/loom#57")
+
+	m.CloseThread(1, "", 8)
+	require.NoError(t, replies(m.Drain())[0].Err)
+	refused("a closed thread", 1, "aidan-bailey/loom#57", 1, "thread 1 is already closed")
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, feedback.Closed, disk.Threads[0].Status)
+}
+
+func TestPublishThread_AFailedSaveKeepsNothing(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	rev := m.feedback.rev
+	fbDir := filepath.Join(dir, feedbackDirName)
+	require.NoError(t, os.RemoveAll(fbDir))
+	require.NoError(t, os.WriteFile(fbDir, []byte("a file in the folder's place"), 0o600))
+
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Open, th.Status, "rolled back")
+	assert.Zero(t, th.Issue, "rolled back")
+	assert.Equal(t, rev, m.feedback.rev)
+}
+
+func TestPublishThread_AnInboxThatIsNotLoadedRefuses(t *testing.T) {
+	m := NewForTest(Options{})
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "the feedback inbox is not loaded")
+}
+
+func TestPublishThread_AnInboxThatFailedToLoadRefusesAndIsLeftAlone(t *testing.T) {
+	withMod(t)
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	fbDir := filepath.Join(dir, feedbackDirName)
+	require.NoError(t, os.MkdirAll(fbDir, 0o700))
+	body := []byte(`{"version": 3}`)
+	require.NoError(t, os.WriteFile(filepath.Join(fbDir, feedback.StoreFile), body, 0o600))
+	m := NewForTest(Options{})
+	modInst(t, m, "owner")
+	m.bootFeedback()
+	m.Drain()
+	require.NotEmpty(t, m.Feedback().Err, "the inbox failed to load")
+
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 7)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "the feedback inbox is not loaded")
+	after, _ := os.ReadFile(filepath.Join(fbDir, feedback.StoreFile))
+	assert.Equal(t, body, after)
 }
 
 func TestFeedback_PublishesOnChange(t *testing.T) {

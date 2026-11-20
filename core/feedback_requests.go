@@ -67,16 +67,50 @@ func (m *Model) FileFeedback(note FeedbackNote, req ReqID) {
 	m.maybeGroupFeedback()
 }
 
-// CloseThread closes thread t. An unknown or closed thread, or a failed
-// save, is refused and changes nothing.
-func (m *Model) CloseThread(t feedback.ThreadID, req ReqID) {
+// PublishThread links thread t to the GitHub issue issue names (an issue URL
+// or <owner>/<name>#<N>) and marks it published, with the notes up to
+// through covered by that issue (spec §4.2). The same issue again only
+// advances how far it covers, so a retry is safe. An inbox that isn't
+// loaded, an unparseable issue, an unknown or closed thread, one linked to a
+// different issue, a note that isn't in the thread, and a failed save are
+// refused and change nothing.
+func (m *Model) PublishThread(t feedback.ThreadID, issue string, through feedback.NoteID, req ReqID) {
+	f := m.feedback
+	if f.dir == "" || f.loadErr != nil {
+		m.refuse(req, 0, errors.New("the feedback inbox is not loaded"))
+		return
+	}
+	repo, number, err := feedback.ParseIssueRef(issue)
+	if err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	prev := f.inbox.Clone()
+	if err := f.inbox.Publish(t, repo, number, through, time.Now()); err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	if err := m.saveFeedback(); err != nil {
+		f.inbox = prev
+		m.refuse(req, 0, err)
+		return
+	}
+	f.rev++
+	m.reply(req, Reply{})
+}
+
+// CloseThread closes thread t, storing reason with the closure (Inbox.Close
+// bounds it). An unknown or closed thread, a reason that is not one line of
+// at most feedback.MaxCloseReason bytes, or a failed save, is refused and
+// changes nothing.
+func (m *Model) CloseThread(t feedback.ThreadID, reason string, req ReqID) {
 	f := m.feedback
 	if f.dir == "" || f.loadErr != nil {
 		m.refuse(req, 0, errors.New("the feedback inbox is not loaded"))
 		return
 	}
 	prev := f.inbox.Clone()
-	if err := f.inbox.Close(t); err != nil {
+	if err := f.inbox.Close(t, reason, time.Now()); err != nil {
 		m.refuse(req, 0, err)
 		return
 	}
@@ -95,7 +129,8 @@ func (m *Model) CloseThread(t feedback.ThreadID, req ReqID) {
 // launched on model and effort when they are not "" (else the workspace's
 // own). The thread is marked fixing with the new instance as the Create is
 // made; the Reply and Started are the Create's. Refused: a model or effort
-// the Session Launch Options modal doesn't offer, an unknown or closed thread,
+// the Session Launch Options modal doesn't offer, an unknown, closed or
+// published thread (the issue watcher fixes a published one),
 // one whose fix session is still served, no workspace, one the model
 // doesn't serve, the checks a new session meets (CheckRoom, CheckWritable,
 // CheckNewTitle), a title the workspace holds, and blocked remote control.
@@ -115,6 +150,9 @@ func (m *Model) FixThread(t feedback.ThreadID, workspace, model, effort string, 
 		return
 	case th.Status == feedback.Closed:
 		m.refuse(req, 0, fmt.Errorf("thread %d is closed", t))
+		return
+	case th.Status == feedback.Published:
+		m.refuse(req, 0, feedback.PublishedFixError(th))
 		return
 	case th.Fix.ID != 0:
 		if v, live := m.View(InstanceID(th.Fix.ID)); live {

@@ -142,6 +142,12 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// time has come), one at a time (see maybeGroupFeedback).
 	m.maybeGroupFeedback()
 
+	// The published feedback threads' issues, on their own 5-minute
+	// cadence: a closed issue closes its threads (see
+	// maybeCheckFeedbackIssues). Nothing when no thread is published, or a
+	// poll is out.
+	m.maybeCheckFeedbackIssues()
+
 	// The stop classifier: a reread of its block when due, and the calls
 	// waiting for a free slot (see tickAttention).
 	m.tickAttention()

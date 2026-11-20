@@ -868,9 +868,22 @@ type FileFeedbackParams struct {
 type FileFeedbackResult struct {
 }
 
+// PublishThreadParams are PublishThread's parameters on the wire.
+type PublishThreadParams struct {
+	Thread  feedback.ThreadID `json:"thread"`
+	Issue   string            `json:"issue"`
+	Through feedback.NoteID   `json:"through"`
+	Req     core.ReqID        `json:"req"`
+}
+
+// PublishThreadResult is PublishThread's result on the wire; an error travels in the reply.
+type PublishThreadResult struct {
+}
+
 // CloseThreadParams are CloseThread's parameters on the wire.
 type CloseThreadParams struct {
 	Thread feedback.ThreadID `json:"thread"`
+	Reason string            `json:"reason"`
 	Req    core.ReqID        `json:"req"`
 }
 
@@ -1003,6 +1016,7 @@ var methods = []methodInfo{
 	{Name: "ReadAgent", Kind: kindRequest, Params: ReadAgentParams{}, Result: ReadAgentResult{}},
 	{Name: "Feedback", Kind: kindLocal, Params: FeedbackParams{}, Result: FeedbackResult{}},
 	{Name: "FileFeedback", Kind: kindRequest, Params: FileFeedbackParams{}, Result: FileFeedbackResult{}},
+	{Name: "PublishThread", Kind: kindRequest, Params: PublishThreadParams{}, Result: PublishThreadResult{}},
 	{Name: "CloseThread", Kind: kindRequest, Params: CloseThreadParams{}, Result: CloseThreadResult{}},
 	{Name: "FixThread", Kind: kindRequest, Params: FixThreadParams{}, Result: FixThreadResult{}},
 	{Name: "SetWatch", Kind: kindRequest, Params: SetWatchParams{}, Result: SetWatchResult{}},
@@ -1698,6 +1712,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.FileFeedback(p.Note, p.Req)
 		return FileFeedbackResult{}, nil, true
+	case "PublishThread":
+		var p PublishThreadParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.PublishThread(p.Thread, p.Issue, p.Through, p.Req)
+		return PublishThreadResult{}, nil, true
 	case "CloseThread":
 		var p CloseThreadParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1706,7 +1730,7 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
-		b.CloseThread(p.Thread, p.Req)
+		b.CloseThread(p.Thread, p.Reason, p.Req)
 		return CloseThreadResult{}, nil, true
 	case "FixThread":
 		var p FixThreadParams
@@ -2295,10 +2319,16 @@ func (c *Client) FileFeedback(note core.FeedbackNote, req core.ReqID) {
 	c.noteRefused(c.requestNoErr("FileFeedback", FileFeedbackParams{Note: note, Req: req}, &r), req)
 }
 
+// PublishThread is core.Core's PublishThread (request).
+func (c *Client) PublishThread(thread feedback.ThreadID, issue string, through feedback.NoteID, req core.ReqID) {
+	var r PublishThreadResult
+	c.noteRefused(c.requestNoErr("PublishThread", PublishThreadParams{Thread: thread, Issue: issue, Through: through, Req: req}, &r), req)
+}
+
 // CloseThread is core.Core's CloseThread (request).
-func (c *Client) CloseThread(thread feedback.ThreadID, req core.ReqID) {
+func (c *Client) CloseThread(thread feedback.ThreadID, reason string, req core.ReqID) {
 	var r CloseThreadResult
-	c.noteRefused(c.requestNoErr("CloseThread", CloseThreadParams{Thread: thread, Req: req}, &r), req)
+	c.noteRefused(c.requestNoErr("CloseThread", CloseThreadParams{Thread: thread, Reason: reason, Req: req}, &r), req)
 }
 
 // FixThread is core.Core's FixThread (request).
