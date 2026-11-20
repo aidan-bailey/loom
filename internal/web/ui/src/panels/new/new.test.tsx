@@ -243,6 +243,18 @@ describe("NewSessionBody", () => {
     expect(start()).toBeDisabled();
   });
 
+  it("Start session goes off when a snapshot no longer lists the chosen workspace", async () => {
+    const { user } = show([W1, W2]);
+    await user.type(title(), "fix");
+    expect(lastCall()?.slice(0, 2)).toEqual([1, true]);
+    expect(start()).toBeEnabled();
+
+    act(() => {
+      useFleet.setState({ snapshot: { ...fixtureSnapshot(), workspaces: [W2] } });
+    });
+    expect(start()).toBeDisabled();
+  });
+
   it("Launch options is closed at first and offers Account only when the defaults list accounts", async () => {
     const first = show([W1, W2]);
     expect(screen.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
