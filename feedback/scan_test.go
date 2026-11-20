@@ -96,3 +96,78 @@ func TestScan_AllowDropsAHitWhoseWholeMatchIsTheWord(t *testing.T) {
 	assert.Len(t, hits, 2, "a word inside a match drops nothing")
 	assert.Empty(t, allowed)
 }
+
+func TestScan_WorkspaceNamesAreWholeWordsInAnyCase(t *testing.T) {
+	terms := ScanTerms{Workspaces: []string{"polyoxide", "my-repo", ""}}
+	hits, _ := Scan("Polyoxide's tests failed in my-repo\npolyoxides, xpolyoxide, polyoxide_api, my-repository\n(POLYOXIDE)\n", terms, nil)
+	assert.Equal(t, []string{
+		"1:1 workspace: Polyoxide",
+		"1:29 workspace: my-repo",
+		"3:2 workspace: POLYOXIDE",
+	}, fmtHits(hits))
+}
+
+func TestScan_SessionTitlesAreWholeWordSequences(t *testing.T) {
+	terms := ScanTerms{Sessions: []string{"fix login bug"}}
+	hits, _ := Scan("I saw Fix  Login\tbug today\nfix login\nprefix login bug\nfix login bugs\nFIX LOGIN BUG.\n", terms, nil)
+	assert.Equal(t, []string{
+		"1:7 session: Fix  Login\tbug",
+		"5:1 session: FIX LOGIN BUG",
+	}, fmtHits(hits))
+}
+
+func TestScan_IdentityTermsAreWholeWordsAndAnEmailIsNotAlsoAnEmailHit(t *testing.T) {
+	terms := ScanTerms{Identity: []string{"alice", "fresco", "alice@example.com"}}
+	hits, _ := Scan("alice@example.com wrote from FRESCO\nalicex and xalice are other people\n", terms, nil)
+	assert.Equal(t, []string{
+		"1:1 identity: alice",
+		"1:1 identity: alice@example.com",
+		"1:30 identity: FRESCO",
+	}, fmtHits(hits))
+}
+
+func TestScan_TheThreadsTermsAreThreadHits(t *testing.T) {
+	terms := ScanTerms{
+		Thread:      []string{scanUUID, "/home/x/.claude/projects/p/s.jsonl", "me/secret-branch"},
+		ThreadNames: []string{"Deploy Nightly", "gone-ws"},
+	}
+	other := "11111111-2222-3333-4444-555555555555"
+	text := "session " + scanUUID + " other " + other + "\n" +
+		"at /home/x/.claude/projects/p/s.jsonl\n" +
+		"on branch me/secret-branch and deploy nightly in GONE-WS\n"
+	hits, _ := Scan(text, terms, nil)
+	assert.Equal(t, []string{
+		"1:9 thread: " + scanUUID,
+		"1:52 uuid: " + other,
+		"2:4 thread: /home/x/.claude/projects/p/s.jsonl",
+		"3:11 thread: me/secret-branch",
+		"3:32 thread: deploy nightly",
+		"3:50 thread: GONE-WS",
+	}, fmtHits(hits))
+}
+
+func TestScan_OneSpanIsOneHitOfTheFirstKindAndHitsComeInOrder(t *testing.T) {
+	terms := ScanTerms{Workspaces: []string{"shared", "beta"}, ThreadNames: []string{"shared"}, Identity: []string{"alice"}}
+	hits, _ := Scan("beta and alice and shared\nshared alice beta\n", terms, nil)
+	assert.Equal(t, []string{
+		"1:1 workspace: beta",
+		"1:10 identity: alice",
+		"1:20 thread: shared",
+		"2:1 thread: shared",
+		"2:8 identity: alice",
+		"2:14 workspace: beta",
+	}, fmtHits(hits))
+}
+
+func TestScan_AnEmptyTermMatchesNothing(t *testing.T) {
+	terms := ScanTerms{Workspaces: []string{"", "  "}, Sessions: []string{""}, Identity: []string{""}, Thread: []string{""}, ThreadNames: []string{" "}}
+	hits, _ := Scan("hello world\n\n", terms, nil)
+	assert.Empty(t, hits)
+}
+
+func TestScan_ATermWithInvalidUTF8DoesNotPanic(t *testing.T) {
+	terms := ScanTerms{Sessions: []string{"bad\xffname"}}
+	var hits []ScanHit
+	assert.NotPanics(t, func() { hits, _ = Scan("badname bad\xffname\n", terms, nil) })
+	assert.Equal(t, []string{"1:1 session: badname"}, fmtHits(hits), "the term is repaired, not dropped")
+}

@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -113,6 +114,11 @@ type finder struct {
 func scanFinders(terms ScanTerms) []finder {
 	var fs []finder
 	fs = append(fs, tokenFinders()...)
+	fs = append(fs, wordFinders(ScanThread, terms.Thread)...)
+	fs = append(fs, wordFinders(ScanThread, terms.ThreadNames)...)
+	fs = append(fs, wordFinders(ScanIdentity, terms.Identity)...)
+	fs = append(fs, wordFinders(ScanWorkspace, terms.Workspaces)...)
+	fs = append(fs, wordFinders(ScanSession, terms.Sessions)...)
 	fs = append(fs, patternFinder(ScanEmail, scanEmailRe), patternFinder(ScanUUID, scanUUIDRe))
 	return fs
 }
@@ -155,4 +161,61 @@ func patternFinder(kind ScanKind, re *regexp.Regexp) finder {
 		}
 		return out
 	}}
+}
+
+// wordRune reports whether r is part of a word: a letter, a digit or `_`.
+func wordRune(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// wordFinders is one finder of kind for each of terms that holds a word.
+func wordFinders(kind ScanKind, terms []string) []finder {
+	var out []finder
+	for _, t := range terms {
+		if f := wordFinder(t); f != nil {
+			out = append(out, finder{kind: kind, find: f})
+		}
+	}
+	return out
+}
+
+// wordFinder finds term, any case, with any run of whitespace between its
+// words, where it does not start or end inside a word: a term that begins
+// (ends) with a word character may not follow (precede) another. A term
+// with no word finds nothing.
+func wordFinder(term string) func(line string) []scanSpan {
+	words := strings.Fields(strings.ToValidUTF8(term, ""))
+	if len(words) == 0 {
+		return nil
+	}
+	first, _ := utf8.DecodeRuneInString(words[0])
+	last, _ := utf8.DecodeLastRuneInString(words[len(words)-1])
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = regexp.QuoteMeta(w)
+	}
+	re, err := regexp.Compile(`(?i)` + strings.Join(quoted, `\s+`))
+	if err != nil {
+		return nil
+	}
+	return func(line string) []scanSpan {
+		var out []scanSpan
+		for pos := 0; pos < len(line); {
+			loc := re.FindStringIndex(line[pos:])
+			if loc == nil {
+				break
+			}
+			s, e := pos+loc[0], pos+loc[1]
+			before, _ := utf8.DecodeLastRuneInString(line[:s])
+			after, _ := utf8.DecodeRuneInString(line[e:])
+			startOK := s == 0 || !wordRune(first) || !wordRune(before)
+			endOK := e == len(line) || !wordRune(last) || !wordRune(after)
+			if startOK && endOK {
+				out = append(out, scanSpan{start: s, end: e})
+				pos = e
+				continue
+			}
+			_, w := utf8.DecodeRuneInString(line[s:])
+			pos = s + w
+		}
+		return out
+	}
 }
