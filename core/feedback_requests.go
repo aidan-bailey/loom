@@ -129,7 +129,8 @@ func (m *Model) CloseThread(t feedback.ThreadID, reason string, req ReqID) {
 // launched on model and effort when they are not "" (else the workspace's
 // own). The thread is marked fixing with the new instance as the Create is
 // made; the Reply and Started are the Create's. Refused: a model or effort
-// the Session Launch Options modal doesn't offer, an unknown or closed thread,
+// the Session Launch Options modal doesn't offer, an unknown, closed or
+// published thread (the issue watcher fixes a published one),
 // one whose fix session is still served, no workspace, one the model
 // doesn't serve, the checks a new session meets (CheckRoom, CheckWritable,
 // CheckNewTitle), a title the workspace holds, and blocked remote control.
@@ -149,6 +150,9 @@ func (m *Model) FixThread(t feedback.ThreadID, workspace, model, effort string, 
 		return
 	case th.Status == feedback.Closed:
 		m.refuse(req, 0, fmt.Errorf("thread %d is closed", t))
+		return
+	case th.Status == feedback.Published:
+		m.refuse(req, 0, feedback.PublishedFixError(th))
 		return
 	case th.Fix.ID != 0:
 		if v, live := m.View(InstanceID(th.Fix.ID)); live {

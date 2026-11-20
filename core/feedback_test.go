@@ -334,6 +334,41 @@ func TestFixThread_Refusals(t *testing.T) {
 	refused("a closed thread", 1, "a")
 }
 
+func TestFixThread_RefusesAPublishedThread(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 6)
+	require.NoError(t, replies(m.Drain())[0].Err)
+
+	m.FixThread(1, "a", "", "", 7)
+	out := m.Drain()
+	rs := replies(out)
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "thread 1 is published as aidan-bailey/loom#57; the issue watcher fixes it")
+	assert.Empty(t, out.Jobs, "no start job")
+	assert.False(t, slices.ContainsFunc(m.Views(m.Workspaces()[0].ID), func(v InstanceView) bool { return v.Title == feedback.FixTitle(1, "t") }),
+		"a refusal starts nothing")
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Zero(t, th.Fix, "no fix recorded")
+}
+
+func TestFixThread_APublishedThreadWithALiveFixSessionIsRefusedAsPublished(t *testing.T) {
+	m, _ := fbModel(t, "")
+	fbThread(t, m, "t")
+	m.FixThread(1, "a", "", "", 7)
+	require.NoError(t, replies(m.Drain())[0].Err)
+	m.PublishThread(1, "aidan-bailey/loom#57", 1, 8)
+	require.NoError(t, replies(m.Drain())[0].Err)
+
+	m.FixThread(1, "a", "", "", 9)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.ErrorContains(t, rs[0].Err, "the issue watcher fixes it", "the published refusal comes before the live-session one")
+	assert.NotContains(t, rs[0].Err.Error(), "is still there")
+}
+
 func TestFixThread_LaunchesWithTheModelAndEffortAsked(t *testing.T) {
 	m, _ := fbModel(t, "")
 	fbThread(t, m, "t")
