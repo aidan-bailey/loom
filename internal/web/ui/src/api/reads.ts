@@ -5,7 +5,7 @@
 // and a read asked for meanwhile runs once when it lands.
 import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import type { AgentPage, JobLog, Patch, Turn, Turns, TurnsParams } from "./gen";
+import type { AgentPage, Flow, JobLog, Patch, Session, Turn, Turns, TurnsParams } from "./gen";
 import { OutcomeError, queryClient, unwrap } from "./queries";
 import { api } from "./request";
 
@@ -458,5 +458,100 @@ export function useJobLog({ session, job, live }: JobLogOptions): JobLogView {
     log: query.data,
     gone,
     error: gone === "" ? errorText(query.error, "Could not read the job's log.") : "",
+  };
+}
+
+// The reads of part 3's views (spec §26, Part 3 settlements 2 and 7): the flow board and
+// document, the host's flows and launch defaults, each read by the classic app's triggers
+// (internal/web/static/js/flow.mjs, flowdoc.mjs, flows.mjs and newsession.mjs) and none polled.
+
+/** How many boards keep their place: a ninth evicts the least recently opened. */
+export const KEEP_FLOWS = 8;
+
+const flowQueryKey = (session: number, plan: string): QueryKey => ["flow", session, plan];
+
+// The boards kept, least recently opened first.
+let keptFlows: QueryKey[] = [];
+
+function openFlow(session: number, plan: string): void {
+  keptFlows = keepRecent(keptFlows, flowQueryKey(session, plan), KEEP_FLOWS);
+}
+
+/** What a board is read again on: the JSON of the session's flow summaries, as classic keys it. */
+export function flowKey(session: Session): string {
+  return JSON.stringify(session.flows);
+}
+
+async function readFlow(session: number, plan: string): Promise<Flow> {
+  try {
+    return unwrap(await api.flow(session, { plan }));
+  } finally {
+    askedAgain(flowQueryKey(session, plan), () => reloadFlow(session, plan));
+  }
+}
+
+// reloadFlow reads the board: one read is in flight at a time, and a read asked for meanwhile
+// runs once when it lands.
+function reloadFlow(session: number, plan: string): void {
+  const key = flowQueryKey(session, plan);
+  if (inFlight(key)) {
+    again.add(hashOf(key));
+    return;
+  }
+  startRead(key, () => readFlow(session, plan), Infinity);
+}
+
+export interface FlowOptions {
+  session: number;
+  /** The flow's plan path; empty reads nothing. */
+  plan: string;
+  /** What `flowKey` answers for the session: a new one reads a held board again. */
+  key: string;
+}
+
+export interface FlowView {
+  flow: Flow | undefined;
+  /** Why the last read failed, "" for none; the board held stays. */
+  error: string;
+  /** No board is held and the read has neither landed nor failed. */
+  loading: boolean;
+}
+
+/**
+ * Reads a session's flow board on mount (a held board drawn first), and again whenever `key`
+ * changes (a change asked while a read is out runs once when it lands). Boards are held per session and plan, the
+ * last KEEP_FLOWS opened, and the query key is the session and plan only, so a re-priced run
+ * (a new `key`) never adds an entry. A plan that is not the one drawn never shows its board.
+ */
+export function useFlow({ session, plan, key }: FlowOptions): FlowView {
+  const query = useQuery<Flow>({
+    queryKey: flowQueryKey(session, plan),
+    queryFn: () => readFlow(session, plan),
+    enabled: plan !== "",
+    // A board is held past its observers; the disabled entry of an empty plan holds nothing and
+    // leaves with its observer.
+    gcTime: plan !== "" ? Infinity : 0,
+    retry: false,
+  });
+  useEffect(() => {
+    if (plan !== "") openFlow(session, plan);
+  }, [session, plan]);
+  // seen follows the options: a change of session or plan is a new query whose own observer
+  // reads it, and a mount is no change, so only a new key asks for a read of its own. A key
+  // that changes while the first read is out is asked all the same: reloadFlow queues it, and it
+  // runs once when that read lands, so a board opened mid-run is never left one step stale.
+  const seen = useRef({ session, plan, key });
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { session, plan, key };
+    if (plan === "" || was.session !== session || was.plan !== plan || was.key === key) return;
+    if (queryClient.getQueryState(flowQueryKey(session, plan)) !== undefined) {
+      reloadFlow(session, plan);
+    }
+  }, [session, plan, key]);
+  return {
+    flow: query.data,
+    error: errorText(query.error, "Could not read the flow."),
+    loading: plan !== "" && query.data === undefined && query.error === null,
   };
 }

@@ -2,21 +2,31 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtureJobLog, fixturePatch, fixtureTurns } from "@/fixtures";
-import type { AgentPage, JobLog, Outcome, Patch, Turn, Turns } from "./gen";
+import {
+  fixtureFlow,
+  fixtureJobLog,
+  fixturePatch,
+  fixtureSnapshot,
+  fixtureTurns,
+} from "@/fixtures";
+import type { AgentPage, Flow, JobLog, Outcome, Patch, Session, Turn, Turns } from "./gen";
 import { queryClient } from "./queries";
 import {
   appendLog,
+  flowKey,
   keepScroll,
   keptScroll,
+  KEEP_FLOWS,
   KEEP_JOBS,
   KEEP_SESSIONS,
   mergeTurns,
   MAX_LOG_CHARS,
+  useFlow,
   useHeldTurns,
   useJobLog,
   usePatch,
   useTurnPages,
+  type FlowOptions,
   type HeldLog,
   type HeldTurns,
   type JobLogOptions,
@@ -36,6 +46,8 @@ const spyOnLog = () =>
   vi.spyOn(api, "jobLog").mockRejectedValue(new Error("unexpected job log read"));
 let diffRead: ReturnType<typeof spyOnDiff>;
 let logRead: ReturnType<typeof spyOnLog>;
+const spyOnFlow = () => vi.spyOn(api, "flow").mockRejectedValue(new Error("unexpected flow read"));
+let flowRead: ReturnType<typeof spyOnFlow>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -43,6 +55,7 @@ beforeEach(() => {
   turnsRead = spyOnTurns();
   diffRead = spyOnDiff();
   logRead = spyOnLog();
+  flowRead = spyOnFlow();
 });
 
 afterEach(() => {
@@ -66,6 +79,7 @@ const refused = (status: number, message: string): Outcome<never> => ({
   status,
   message,
 });
+const timedOut = (message: string): Outcome<never> => ({ kind: "timeout", message });
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve: (value: T) => void = () => undefined;
@@ -838,5 +852,251 @@ describe("useJobLog", () => {
     expect(again.result.current.log).toBeUndefined();
     await settle();
     expect(logRead).toHaveBeenLastCalledWith(7, 214, undefined);
+  });
+});
+
+const PLAN = "docs/superpowers/plans/2026-11-09-flow-visualisation.md";
+
+const flowOptions = (extra: Partial<FlowOptions> = {}): FlowOptions => ({
+  session: 6,
+  plan: PLAN,
+  key: "k1",
+  ...extra,
+});
+
+function mountFlow(initial: FlowOptions) {
+  return renderHook((props: FlowOptions) => useFlow(props), {
+    initialProps: initial,
+    wrapper,
+  });
+}
+
+function boardTitled(title: string): Flow {
+  const board = fixtureFlow();
+  return { ...board, summary: { ...board.summary, title } };
+}
+
+function sessionSix(): Session {
+  const found = Object.values(fixtureSnapshot().sessions ?? {})
+    .flatMap((list) => list ?? [])
+    .find((s) => s.id === 6);
+  if (found === undefined) throw new Error("the fixture has no session 6");
+  return found;
+}
+
+describe("flowKey", () => {
+  it("is the JSON of every flow summary the session lists, and of none", () => {
+    const session = sessionSix();
+    const flows = session.flows ?? [];
+    expect(flows.length).toBeGreaterThan(1);
+    expect(flowKey(session)).toBe(JSON.stringify(flows));
+    expect(flowKey({ ...session, flows: null })).toBe("null");
+    const lastRepriced = flows.map((f, i) =>
+      i === flows.length - 1 ? { ...f, done: f.done + 1 } : f,
+    );
+    expect(flowKey({ ...session, flows: lastRepriced })).not.toBe(flowKey(session));
+  });
+});
+
+describe("useFlow", () => {
+  it("reads the board on mount, with no poll", async () => {
+    const board = fixtureFlow();
+    flowRead.mockResolvedValueOnce(ok(board));
+    const { result } = mountFlow(flowOptions());
+    expect(result.current).toMatchObject({ flow: undefined, loading: true, error: "" });
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(1);
+    expect(flowRead).toHaveBeenCalledWith(6, { plan: PLAN });
+    expect(result.current).toMatchObject({ flow: board, loading: false, error: "" });
+    await settle(60_000);
+    expect(flowRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the held board again when the key changes, in the one cache entry", async () => {
+    flowRead.mockResolvedValueOnce(ok(boardTitled("first")));
+    const view = mountFlow(flowOptions());
+    await settle();
+    flowRead.mockResolvedValueOnce(ok(boardTitled("second")));
+    view.rerender(flowOptions({ key: "k2" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    expect(view.result.current.flow?.summary.title).toBe("second");
+    view.rerender(flowOptions({ key: "k2" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    expect(queryClient.getQueryCache().findAll({ queryKey: ["flow"] })).toHaveLength(1);
+  });
+
+  it("queues one read for key changes asked while the first read is still out, run when it lands", async () => {
+    const first = deferred<Outcome<Flow>>();
+    flowRead.mockReturnValueOnce(first.promise);
+    const view = mountFlow(flowOptions());
+    await settle();
+    view.rerender(flowOptions({ key: "k2" }));
+    view.rerender(flowOptions({ key: "k3" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(1);
+    flowRead.mockResolvedValueOnce(ok(boardTitled("second")));
+    first.resolve(ok(boardTitled("first")));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    expect(view.result.current.flow?.summary.title).toBe("second");
+    await settle(60_000);
+    expect(flowRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps one read in flight and runs a key change asked meanwhile once, when it lands", async () => {
+    flowRead.mockResolvedValueOnce(ok(boardTitled("first")));
+    const view = mountFlow(flowOptions());
+    await settle();
+    const second = deferred<Outcome<Flow>>();
+    flowRead.mockReturnValueOnce(second.promise);
+    view.rerender(flowOptions({ key: "k2" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    view.rerender(flowOptions({ key: "k3" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    flowRead.mockResolvedValueOnce(ok(boardTitled("third")));
+    second.resolve(ok(boardTitled("second")));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(3);
+    expect(view.result.current.flow?.summary.title).toBe("third");
+    await settle(60_000);
+    expect(flowRead).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the held board on a failed read, says why, and clears the error on the next read", async () => {
+    const board = fixtureFlow();
+    flowRead.mockResolvedValueOnce(ok(board));
+    const view = mountFlow(flowOptions());
+    await settle();
+    flowRead.mockResolvedValueOnce(refused(409, "the worktree is busy"));
+    view.rerender(flowOptions({ key: "k2" }));
+    await settle();
+    expect(view.result.current).toMatchObject({
+      flow: board,
+      loading: false,
+      error: "the worktree is busy",
+    });
+    flowRead.mockResolvedValueOnce(ok(board));
+    view.rerender(flowOptions({ key: "k3" }));
+    await settle();
+    expect(view.result.current.error).toBe("");
+  });
+
+  it("does not read a failed read again on its own, even when loom could be asked again", async () => {
+    flowRead.mockResolvedValueOnce(timedOut("loom did not answer in time"));
+    const view = mountFlow(flowOptions());
+    await settle(60_000);
+    expect(flowRead).toHaveBeenCalledTimes(1);
+    expect(view.result.current).toMatchObject({
+      flow: undefined,
+      loading: false,
+      error: "loom did not answer in time",
+    });
+  });
+
+  it("reads again on a key change after a first read that failed", async () => {
+    flowRead.mockResolvedValueOnce(refused(409, "the worktree is busy"));
+    const view = mountFlow(flowOptions());
+    await settle();
+    expect(view.result.current).toMatchObject({
+      flow: undefined,
+      loading: false,
+      error: "the worktree is busy",
+    });
+    const board = fixtureFlow();
+    flowRead.mockResolvedValueOnce(ok(board));
+    view.rerender(flowOptions({ key: "k2" }));
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    expect(view.result.current).toMatchObject({ flow: board, error: "" });
+  });
+
+  it("reads nothing for an empty plan, and reads once a plan is given", async () => {
+    const view = mountFlow(flowOptions({ plan: "" }));
+    await settle();
+    expect(flowRead).not.toHaveBeenCalled();
+    expect(view.result.current).toEqual({ flow: undefined, error: "", loading: false });
+    view.rerender(flowOptions({ plan: "", key: "k2" }));
+    await settle();
+    expect(flowRead).not.toHaveBeenCalled();
+    flowRead.mockResolvedValueOnce(ok(fixtureFlow()));
+    view.rerender(flowOptions());
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(1);
+    expect(view.result.current.flow).toBeDefined();
+  });
+
+  it("holds no cache entry for an empty plan once its reader is gone", async () => {
+    const view = mountFlow(flowOptions({ plan: "" }));
+    await settle();
+    view.unmount();
+    await settle();
+    expect(queryClient.getQueryCache().findAll({ queryKey: ["flow"] })).toHaveLength(0);
+  });
+
+  it("draws a picked plan's own board or loading, never the previous plan's", async () => {
+    const other = "docs/superpowers/plans/2026-11-16-flow-plan-treatment-part-2-estimate.md";
+    flowRead.mockResolvedValueOnce(ok(boardTitled("plan a")));
+    const view = mountFlow(flowOptions());
+    await settle();
+    const pending = deferred<Outcome<Flow>>();
+    flowRead.mockReturnValueOnce(pending.promise);
+    view.rerender(flowOptions({ plan: other }));
+    await settle();
+    expect(flowRead).toHaveBeenLastCalledWith(6, { plan: other });
+    expect(view.result.current).toMatchObject({ flow: undefined, loading: true });
+    pending.resolve(ok(boardTitled("plan b")));
+    await settle();
+    expect(view.result.current.flow?.summary.title).toBe("plan b");
+    flowRead.mockResolvedValueOnce(ok(boardTitled("plan a")));
+    view.rerender(flowOptions());
+    expect(view.result.current.flow?.summary.title).toBe("plan a");
+    await settle();
+  });
+
+  it("draws the held board at once when a session is opened again, and reads it again", async () => {
+    flowRead.mockResolvedValueOnce(ok(boardTitled("held")));
+    const first = mountFlow(flowOptions());
+    await settle();
+    first.unmount();
+    await settle(10 * 60_000);
+    flowRead.mockResolvedValueOnce(ok(boardTitled("fresh")));
+    const again = mountFlow(flowOptions());
+    expect(again.result.current.flow?.summary.title).toBe("held");
+    await settle();
+    expect(flowRead).toHaveBeenCalledTimes(2);
+    expect(again.result.current.flow?.summary.title).toBe("fresh");
+  });
+
+  it("keeps the boards of the last KEEP_FLOWS sessions and evicts the least recently opened", async () => {
+    const open = async (session: number): Promise<void> => {
+      flowRead.mockResolvedValueOnce(ok(boardTitled(`session ${session}`)));
+      const view = mountFlow(flowOptions({ session }));
+      await settle();
+      view.unmount();
+    };
+    for (let session = 1; session <= KEEP_FLOWS + 1; session++) await open(session);
+    await settle(10 * 60_000);
+    flowRead.mockResolvedValue(ok(fixtureFlow()));
+    const two = mountFlow(flowOptions({ session: 2 }));
+    expect(two.result.current.flow?.summary.title).toBe("session 2");
+    const one = mountFlow(flowOptions({ session: 1 }));
+    expect(one.result.current).toMatchObject({ flow: undefined, loading: true });
+    await settle();
+  });
+
+  it("drops the boards with the cache when the pairing is revoked", async () => {
+    flowRead.mockResolvedValueOnce(ok(fixtureFlow()));
+    const view = mountFlow(flowOptions());
+    await settle();
+    view.unmount();
+    queryClient.clear();
+    flowRead.mockResolvedValueOnce(ok(fixtureFlow()));
+    const again = mountFlow(flowOptions());
+    expect(again.result.current.flow).toBeUndefined();
+    await settle();
   });
 });
