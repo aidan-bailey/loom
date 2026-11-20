@@ -32,7 +32,7 @@ const (
 	fbSessionsW = 4
 	fbNotesW    = 5
 	fbLastW     = 8
-	fbStatusW   = 20
+	fbStatusW   = 24
 )
 
 // fbNoteLines is how many lines of a note's text an expanded row shows.
@@ -73,7 +73,7 @@ func RenderFeedback(width, height int, d FeedbackData) string {
 		}
 		lines = append(lines, fbRow(r, titleW, d.Now, i == sel))
 		if i == sel && d.Expanded {
-			lines = append(lines, fbNotes(v.Inbox, r, width, d.Now)...)
+			lines = append(lines, fbNotes(v.Inbox, r, v.IssueErrs, width, d.Now)...)
 		}
 	}
 	out = append(out, workWindow(lines, selLine, height-len(out))...)
@@ -107,15 +107,11 @@ func fbRow(r feedback.Row, titleW int, now time.Time, selected bool) string {
 		marker = " ▸ "
 	}
 	id := "n" + strconv.Itoa(int(r.Note))
-	status := string(r.Grouping)
 	if r.Thread != 0 {
-		id, status = strconv.Itoa(int(r.Thread)), string(r.Status)
-		if r.Status == feedback.Fixing && r.Fix.Title != "" {
-			status = "fixing " + r.Fix.Title
-		}
+		id = strconv.Itoa(int(r.Thread))
 	}
 	line := fbCells(marker, id, string(r.Kind), strconv.Itoa(r.Sessions), strconv.Itoa(r.Notes),
-		workAgo(now.Sub(r.Last)), CleanText(status), CleanText(r.Title), titleW)
+		workAgo(now.Sub(r.Last)), CleanText(feedback.StatusText(r)), CleanText(r.Title), titleW)
 	if selected {
 		return workSelectedStyle.Render(line)
 	}
@@ -123,13 +119,21 @@ func fbRow(r feedback.Row, titleW int, now time.Time, selected bool) string {
 }
 
 // fbNotes are an expanded row's notes: a thread's every note, or the
-// note itself.
-func fbNotes(in feedback.Inbox, r feedback.Row, width int, now time.Time) []string {
+// note itself. A published thread's come after its issue's link, how far the
+// issue is posted and the issue poll's last error (errs, by thread).
+func fbNotes(in feedback.Inbox, r feedback.Row, errs map[feedback.ThreadID]string, width int, now time.Time) []string {
 	ids := []feedback.NoteID{r.Note}
 	if t, ok := in.Thread(r.Thread); ok && r.Thread != 0 {
 		ids = t.Notes
 	}
 	var out []string
+	if r.Issue.Number != 0 {
+		link := fmt.Sprintf("issue: %s · posted through n%d", r.Issue.URL, r.Issue.Posted)
+		out = append(out, "      "+workDimStyle.Render(ansi.Truncate(CleanText(link), max(0, width-6), "…")))
+		if e := errs[r.Thread]; e != "" {
+			out = append(out, "      "+workErrStyle.Render(ansi.Truncate(CleanText("issue check failed: "+e), max(0, width-6), "…")))
+		}
+	}
 	for _, id := range ids {
 		n, ok := in.Note(id)
 		if !ok {
