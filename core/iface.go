@@ -197,8 +197,11 @@ type Core interface {
 	// own) are the launch's, as `loom session new` takes them.
 	// CloseThread's reason ("" for none, else one line of at most
 	// feedback.MaxCloseReason bytes) is stored with the closed thread.
+	// PublishThread's issue is an issue URL or <owner>/<name>#<N>; it links
+	// the thread to that issue and marks it published.
 	Feedback() FeedbackView // rpc:local
 	FileFeedback(note FeedbackNote, req ReqID)
+	PublishThread(thread feedback.ThreadID, issue string, through feedback.NoteID, req ReqID)
 	CloseThread(thread feedback.ThreadID, reason string, req ReqID)
 	FixThread(thread feedback.ThreadID, workspace, model, effort string, req ReqID)
 

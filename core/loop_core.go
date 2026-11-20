@@ -276,6 +276,11 @@ func (l *Loop) FileFeedback(note FeedbackNote, req ReqID) {
 	l.do(func(m *Model) { m.FileFeedback(note, req) })
 }
 
+// PublishThread runs Model.PublishThread on the loop.
+func (l *Loop) PublishThread(thread feedback.ThreadID, issue string, through feedback.NoteID, req ReqID) {
+	l.do(func(m *Model) { m.PublishThread(thread, issue, through, req) })
+}
+
 // CloseThread runs Model.CloseThread on the loop.
 func (l *Loop) CloseThread(thread feedback.ThreadID, reason string, req ReqID) {
 	l.do(func(m *Model) { m.CloseThread(thread, reason, req) })

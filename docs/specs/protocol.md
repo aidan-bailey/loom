@@ -612,6 +612,12 @@ Params: `{"note":{"Kind":"","Title":"","Text":"","Launch":"","Effort":""},"req":
 
 Result: `{}`
 
+### PublishThread (request)
+
+Params: `{"thread":0,"issue":"","through":0,"req":0}`
+
+Result: `{}`
+
 ### CloseThread (request)
 
 Params: `{"thread":0,"reason":"","req":0}`

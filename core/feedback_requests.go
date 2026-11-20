@@ -67,6 +67,38 @@ func (m *Model) FileFeedback(note FeedbackNote, req ReqID) {
 	m.maybeGroupFeedback()
 }
 
+// PublishThread links thread t to the GitHub issue issue names (an issue URL
+// or <owner>/<name>#<N>) and marks it published, with the notes up to
+// through covered by that issue (spec §4.2). The same issue again only
+// advances how far it covers, so a retry is safe. An inbox that isn't
+// loaded, an unparseable issue, an unknown or closed thread, one linked to a
+// different issue, a note that isn't in the thread, and a failed save are
+// refused and change nothing.
+func (m *Model) PublishThread(t feedback.ThreadID, issue string, through feedback.NoteID, req ReqID) {
+	f := m.feedback
+	if f.dir == "" || f.loadErr != nil {
+		m.refuse(req, 0, errors.New("the feedback inbox is not loaded"))
+		return
+	}
+	repo, number, err := feedback.ParseIssueRef(issue)
+	if err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	prev := f.inbox.Clone()
+	if err := f.inbox.Publish(t, repo, number, through, time.Now()); err != nil {
+		m.refuse(req, 0, err)
+		return
+	}
+	if err := m.saveFeedback(); err != nil {
+		f.inbox = prev
+		m.refuse(req, 0, err)
+		return
+	}
+	f.rev++
+	m.reply(req, Reply{})
+}
+
 // CloseThread closes thread t, storing reason with the closure (Inbox.Close
 // bounds it). An unknown or closed thread, a reason that is not one line of
 // at most feedback.MaxCloseReason bytes, or a failed save, is refused and
