@@ -1,7 +1,9 @@
 package feedback
 
 import (
+	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -117,6 +119,7 @@ func scanFinders(terms ScanTerms) []finder {
 	fs = append(fs, wordFinders(ScanThread, terms.Thread)...)
 	fs = append(fs, wordFinders(ScanThread, terms.ThreadNames)...)
 	fs = append(fs, wordFinders(ScanIdentity, terms.Identity)...)
+	fs = append(fs, privatePathFinder(terms.Private), genericPathFinder())
 	fs = append(fs, wordFinders(ScanWorkspace, terms.Workspaces)...)
 	fs = append(fs, wordFinders(ScanSession, terms.Sessions)...)
 	fs = append(fs, patternFinder(ScanEmail, scanEmailRe), patternFinder(ScanUUID, scanUUIDRe))
@@ -218,4 +221,124 @@ func wordFinder(term string) func(line string) []scanSpan {
 		}
 		return out
 	}
+}
+
+// exemptRoots are the first components of an absolute path that is no
+// secret: system directories and scratch.
+var exemptRoots = map[string]bool{"tmp": true, "dev": true, "proc": true, "usr": true, "etc": true, "bin": true}
+
+// scanPathRe finds a path token: an absolute path or a `~/` path, up to a
+// space, a quote, a bracket or a separator the text puts around paths.
+var scanPathRe = regexp.MustCompile("~?/[^\\s\"'`<>()\\[\\]{}|,;]+")
+
+// pathStartOK reports whether a path token may start at line[i]. It fails
+// closed: a path is a hit unless the character before it shows it is part of
+// a longer token, which is a letter or a digit, `.`, `/` or `>` (`<repo>/x`,
+// `a/b`, `./x`, `a//b`). Anything else (a space, a bracket, a quote, `=`,
+// `*`, `_`, an em dash, `@`, `\`, `!`, `#`) leaves it a path.
+func pathStartOK(line string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(line[:i])
+	return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '/' || r == '>')
+}
+
+// pathTokenEnd is where the path token at line[start:] ends, without the
+// punctuation that ends a sentence or closes emphasis.
+func pathTokenEnd(line string, start int) int {
+	loc := scanPathRe.FindStringIndex(line[start:])
+	if loc == nil || loc[0] != 0 {
+		return start
+	}
+	return start + len(strings.TrimRight(line[start:start+loc[1]], ".:!?…*"))
+}
+
+// privateAbsolute reports whether the path token tok is a secret by shape:
+// a `~/` path outside ~/.loom and ~/.claude, or an absolute path of two or
+// more components that does not start in an exempt directory or with `//`.
+func privateAbsolute(tok string) bool {
+	if rest, ok := strings.CutPrefix(tok, "~/"); ok {
+		for _, dir := range []string{".loom", ".claude"} {
+			if rest == dir || strings.HasPrefix(rest, dir+"/") {
+				return false
+			}
+		}
+		return rest != ""
+	}
+	if !strings.HasPrefix(tok, "/") || strings.HasPrefix(tok, "//") {
+		return false
+	}
+	var parts []string
+	for p := range strings.SplitSeq(tok, "/") {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return len(parts) >= 2 && !exemptRoots[parts[0]]
+}
+
+// genericPathFinder finds the paths privateAbsolute calls secret. A token
+// that opens with three or more slashes is a URL with an empty authority
+// (`file:///srv/x`): its path starts at the last slash. Two slashes open a
+// URL's host or a comment, and are no path.
+func genericPathFinder() finder {
+	return finder{kind: ScanPath, find: func(line string) []scanSpan {
+		var out []scanSpan
+		for _, loc := range scanPathRe.FindAllStringIndex(line, -1) {
+			s := loc[0]
+			if !pathStartOK(line, s) {
+				continue
+			}
+			if slashes := len(line[s:]) - len(strings.TrimLeft(line[s:], "/")); slashes >= 3 {
+				s += slashes - 1
+			}
+			e := pathTokenEnd(line, s)
+			if privateAbsolute(line[s:e]) {
+				out = append(out, scanSpan{start: s, end: e})
+			}
+		}
+		return out
+	}}
+}
+
+// pathWordByte reports whether b continues a directory's name: a letter, a
+// digit, `_`, `-` or a byte of a multi-byte character.
+func pathWordByte(b byte) bool {
+	return b == '_' || b == '-' || b >= 0x80 || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// privatePathFinder finds each of prefixes, cleaned, wherever it stands in
+// a line, so long as the next character does not continue its last
+// component; the match runs to the end of the path token. A prefix that
+// is empty, relative or the root is no term.
+func privatePathFinder(prefixes []string) finder {
+	var usable []string
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+		if p = filepath.Clean(p); filepath.IsAbs(p) && p != "/" && !slices.Contains(usable, p) {
+			usable = append(usable, p)
+		}
+	}
+	return finder{kind: ScanPath, find: func(line string) []scanSpan {
+		var out []scanSpan
+		for _, p := range usable {
+			for from := 0; from < len(line); {
+				i := strings.Index(line[from:], p)
+				if i < 0 {
+					break
+				}
+				s := from + i
+				after := s + len(p)
+				from = s + 1
+				if after < len(line) && pathWordByte(line[after]) {
+					continue
+				}
+				out = append(out, scanSpan{start: s, end: max(pathTokenEnd(line, s), after)})
+			}
+		}
+		return out
+	}}
 }

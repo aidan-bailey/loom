@@ -171,3 +171,113 @@ func TestScan_ATermWithInvalidUTF8DoesNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() { hits, _ = Scan("badname bad\xffname\n", terms, nil) })
 	assert.Equal(t, []string{"1:1 session: badname"}, fmtHits(hits), "the term is repaired, not dropped")
 }
+
+func TestScan_PrivatePrefixesAreHitsInEverySpellingGiven(t *testing.T) {
+	terms := ScanTerms{Private: []string{"/tmp/ws-link", "/tmp/ws-real/", "/home/alice", "", "/", "relative/dir"}}
+	text := "see /tmp/ws-link/core/x.go for it\n" +
+		"and (/tmp/ws-real/sub) too\n" +
+		"at /tmp/ws-link.\n" +
+		"/tmp/ws-link2/x and /tmp/other/x\n" +
+		"$HOME is /home/alice, ok\n" +
+		"file:///tmp/ws-link/x\n" +
+		"a / b relative/dir/x\n"
+	hits, _ := Scan(text, terms, nil)
+	assert.Equal(t, []string{
+		"1:5 path: /tmp/ws-link/core/x.go",
+		"2:6 path: /tmp/ws-real/sub",
+		"3:4 path: /tmp/ws-link",
+		"5:10 path: /home/alice",
+		"6:8 path: /tmp/ws-link/x",
+	}, fmtHits(hits))
+}
+
+func TestScan_AnyOtherAbsolutePathIsAHit(t *testing.T) {
+	hits, _ := Scan("run /srv/data/x now\n(`/home/bob/y`)\nroot=/var/lib/thing\nkey:/opt/app/conf\n(/home/bob/z)\n", ScanTerms{}, nil)
+	assert.Equal(t, []string{
+		"1:5 path: /srv/data/x",
+		"2:3 path: /home/bob/y",
+		"3:6 path: /var/lib/thing",
+		"4:5 path: /opt/app/conf",
+		"5:2 path: /home/bob/z",
+	}, fmtHits(hits))
+
+	// A path is a hit unless the character before it shows it is part of a
+	// longer token: markdown marks, a dash, an at sign, a backslash and a
+	// file URL's empty authority all leave it a path.
+	for name, text := range map[string]string{
+		"after emphasis stars": "**/srv/data/x**",
+		"after an em dash":     "\u2014/srv/data/x",
+		"after an at sign":     "@/srv/data/x",
+		"after a backslash":    `\/srv/data/x`,
+		"after a bang":         "!/srv/data/x",
+		"after a hash":         "#/srv/data/x",
+		"after an underscore":  "_/srv/data/x",
+		"after a dash":         "--root-/srv/data/x",
+		"in a file URL":        "file:///srv/data/x",
+	} {
+		hits, _ := Scan(text, ScanTerms{}, nil)
+		if assert.Len(t, hits, 1, name) {
+			assert.Equal(t, ScanPath, hits[0].Kind, name)
+			assert.Equal(t, "/srv/data/x", hits[0].Match, name)
+		}
+	}
+
+	for name, text := range map[string]string{
+		"/tmp":                "/tmp/a/b",
+		"/dev":                "/dev/null/x",
+		"/proc":               "/proc/1/status",
+		"/usr":                "/usr/local/bin/x",
+		"/etc":                "/etc/hosts",
+		"/bin":                "/bin/sh",
+		"one component":       "see /only here",
+		"a URL":               "https://github.com/aidan-bailey/loom/issues/57",
+		"another scheme":      "ssh://host/x/y",
+		"a placeholder path":  "<repo>/core/x.go",
+		"a relative path":     "core/x.go",
+		"and/or":              "and/or",
+		"dot-relative":        "./a/b and ../a/b",
+		"a long relative":     "a/b/c",
+		"a command":           "go test ./...",
+		"a comment marker":    "// a comment",
+		"a doc comment":       "/// docs",
+		"a URL with a host":   "file://host/srv/data/x",
+		"a URL after a word":  "see https://host/srv/data/x",
+		"a path after a word": "x/srv/data/x",
+		"an angle-bracketed":  "<repo>/srv/data/x",
+		"a bare slash":        "a / b",
+	} {
+		hits, _ := Scan(text, ScanTerms{}, nil)
+		assert.Empty(t, hits, name)
+	}
+}
+
+func TestScan_HomeShorthandPathsAreHitsOutsideLoomAndClaudeDirs(t *testing.T) {
+	hits, _ := Scan("cat ~/src/x\n~/.config/y\n~/.loomx/y\n~/.claudeish\n", ScanTerms{}, nil)
+	assert.Equal(t, []string{
+		"1:5 path: ~/src/x",
+		"2:1 path: ~/.config/y",
+		"3:1 path: ~/.loomx/y",
+		"4:1 path: ~/.claudeish",
+	}, fmtHits(hits))
+
+	for name, text := range map[string]string{
+		"loom state":      "~/.loom/state.json",
+		"claude settings": "~/.claude/settings.json",
+		"the loom dir":    "~/.loom",
+		"the claude dir":  "~/.claude",
+		"the placeholder": "run it in ~/ and see",
+		"inside a word":   "x~/y",
+	} {
+		hits, _ := Scan(text, ScanTerms{}, nil)
+		assert.Empty(t, hits, name)
+	}
+}
+
+func TestScan_APathThatAThreadNamesIsAThreadHit(t *testing.T) {
+	terms := ScanTerms{Thread: []string{"/srv/data/transcript.jsonl"}, Private: []string{"/srv/data"}}
+	hits, _ := Scan("at /srv/data/transcript.jsonl and /srv/data/other\n", terms, nil)
+	assert.Equal(t, []string{
+		"1:4 thread: /srv/data/transcript.jsonl",
+		"1:35 path: /srv/data/other",
+	}, fmtHits(hits))
+}
