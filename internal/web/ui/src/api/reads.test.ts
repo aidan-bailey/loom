@@ -6,6 +6,7 @@ import {
   fixtureFlow,
   fixtureFlowDoc,
   fixtureFlows,
+  fixtureLaunchDefaults,
   fixtureJobLog,
   fixturePatch,
   fixtureSnapshot,
@@ -17,6 +18,7 @@ import type {
   FlowDoc,
   Flows,
   JobLog,
+  LaunchDefaults,
   Outcome,
   Patch,
   Session,
@@ -39,6 +41,7 @@ import {
   useFlows,
   useHeldTurns,
   useJobLog,
+  useLaunchDefaults,
   usePatch,
   useTurnPages,
   type FlowDocOptions,
@@ -70,6 +73,9 @@ let flowDocRead: ReturnType<typeof spyOnFlowDoc>;
 const spyOnFlows = () =>
   vi.spyOn(api, "flows").mockRejectedValue(new Error("unexpected flows read"));
 let flowsRead: ReturnType<typeof spyOnFlows>;
+const spyOnDefaults = () =>
+  vi.spyOn(api, "launchDefaults").mockRejectedValue(new Error("unexpected launch defaults read"));
+let defaultsRead: ReturnType<typeof spyOnDefaults>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -80,6 +86,7 @@ beforeEach(() => {
   flowRead = spyOnFlow();
   flowDocRead = spyOnFlowDoc();
   flowsRead = spyOnFlows();
+  defaultsRead = spyOnDefaults();
 });
 
 afterEach(() => {
@@ -1373,5 +1380,149 @@ describe("useFlows", () => {
     expect(flowsRead).toHaveBeenCalledTimes(2);
     await settle(60_000);
     expect(flowsRead).toHaveBeenCalledTimes(2);
+  });
+});
+
+interface DefaultsProps {
+  workspace: number | undefined;
+  live: boolean;
+}
+
+function mountDefaults(initial: DefaultsProps) {
+  return renderHook((props: DefaultsProps) => useLaunchDefaults(props.workspace, props.live), {
+    initialProps: initial,
+    wrapper,
+  });
+}
+
+const defaultsFor = (model: string): LaunchDefaults => ({ ...fixtureLaunchDefaults(), model });
+
+describe("useLaunchDefaults", () => {
+  it("waits for the stream, then reads the workspace's defaults once", async () => {
+    const defaults = fixtureLaunchDefaults();
+    const view = mountDefaults({ workspace: 3, live: false });
+    await settle();
+    expect(defaultsRead).not.toHaveBeenCalled();
+    expect(view.result.current).toMatchObject({ defaults: undefined, loading: true, error: "" });
+    defaultsRead.mockResolvedValueOnce(ok(defaults));
+    view.rerender({ workspace: 3, live: true });
+    await settle();
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+    expect(defaultsRead).toHaveBeenCalledWith({ workspace: "3" });
+    expect(view.result.current).toMatchObject({ defaults, loading: false, error: "" });
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads nothing without a workspace", async () => {
+    const view = mountDefaults({ workspace: undefined, live: true });
+    await settle();
+    expect(defaultsRead).not.toHaveBeenCalled();
+    expect(view.result.current).toMatchObject({ defaults: undefined, loading: false, error: "" });
+  });
+
+  it("does not read again when the stream comes back", async () => {
+    const defaults = fixtureLaunchDefaults();
+    defaultsRead.mockResolvedValueOnce(ok(defaults));
+    const view = mountDefaults({ workspace: 3, live: true });
+    await settle();
+    view.rerender({ workspace: 3, live: false });
+    await settle();
+    expect(view.result.current.defaults).toEqual(defaults);
+    view.rerender({ workspace: 3, live: true });
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+    expect(view.result.current.defaults).toEqual(defaults);
+  });
+
+  it("holds the answer for the page's lifetime, across a remount", async () => {
+    defaultsRead.mockResolvedValueOnce(ok(defaultsFor("held")));
+    const first = mountDefaults({ workspace: 3, live: true });
+    await settle();
+    first.unmount();
+    await settle(10 * 60_000);
+    const again = mountDefaults({ workspace: 3, live: true });
+    expect(again.result.current.defaults?.model).toBe("held");
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads once for each workspace, and a workspace seen before reads nothing", async () => {
+    defaultsRead.mockResolvedValueOnce(ok(defaultsFor("three")));
+    const view = mountDefaults({ workspace: 3, live: true });
+    await settle();
+    defaultsRead.mockResolvedValueOnce(ok(defaultsFor("four")));
+    view.rerender({ workspace: 4, live: true });
+    await settle();
+    expect(defaultsRead).toHaveBeenCalledTimes(2);
+    expect(defaultsRead).toHaveBeenLastCalledWith({ workspace: "4" });
+    expect(view.result.current.defaults?.model).toBe("four");
+    view.rerender({ workspace: 3, live: true });
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(2);
+    expect(view.result.current.defaults?.model).toBe("three");
+  });
+
+  it("does not read a failed read again on its own, even when loom could be asked again", async () => {
+    defaultsRead.mockResolvedValueOnce({
+      kind: "failed",
+      status: 0,
+      message: "loom is unreachable",
+    });
+    const view = mountDefaults({ workspace: 3, live: true });
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+    expect(view.result.current).toMatchObject({
+      defaults: undefined,
+      loading: false,
+      error: "loom is unreachable",
+    });
+  });
+
+  it("holds no cache entry for an undefined workspace once its reader is gone", async () => {
+    const view = mountDefaults({ workspace: undefined, live: true });
+    await settle();
+    view.unmount();
+    await settle();
+    expect(queryClient.getQueryCache().findAll({ queryKey: ["launch-defaults"] })).toHaveLength(0);
+  });
+
+  it("says why a read failed and reads again only on retry", async () => {
+    defaultsRead.mockResolvedValueOnce(refused(400, "workspace: no such workspace"));
+    const view = mountDefaults({ workspace: 3, live: true });
+    await settle();
+    expect(view.result.current).toMatchObject({
+      defaults: undefined,
+      loading: false,
+      error: "workspace: no such workspace",
+    });
+    await settle(60_000);
+    expect(defaultsRead).toHaveBeenCalledTimes(1);
+    const pending = deferred<Outcome<LaunchDefaults>>();
+    defaultsRead.mockReturnValueOnce(pending.promise);
+    act(() => {
+      view.result.current.retry();
+      view.result.current.retry();
+    });
+    await settle();
+    expect(defaultsRead).toHaveBeenCalledTimes(2);
+    expect(view.result.current).toMatchObject({ loading: true, error: "" });
+    pending.resolve(ok(fixtureLaunchDefaults()));
+    await settle();
+    expect(view.result.current).toMatchObject({ loading: false, error: "" });
+    expect(view.result.current.defaults).toEqual(fixtureLaunchDefaults());
+  });
+
+  it("drops the defaults with the cache when the pairing is revoked", async () => {
+    defaultsRead.mockResolvedValueOnce(ok(fixtureLaunchDefaults()));
+    const view = mountDefaults({ workspace: 3, live: true });
+    await settle();
+    view.unmount();
+    queryClient.clear();
+    defaultsRead.mockResolvedValueOnce(ok(fixtureLaunchDefaults()));
+    const again = mountDefaults({ workspace: 3, live: true });
+    expect(again.result.current.defaults).toBeUndefined();
+    await settle();
+    expect(defaultsRead).toHaveBeenCalledTimes(2);
   });
 });

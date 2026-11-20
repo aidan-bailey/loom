@@ -11,6 +11,7 @@ import type {
   FlowDoc,
   Flows,
   JobLog,
+  LaunchDefaults,
   Patch,
   Session,
   Turn,
@@ -665,5 +666,60 @@ export function useFlows(): FlowsView {
     error: errorText(query.error, "Could not read the host's flows."),
     loading: query.data === undefined && query.error === null,
     reload: reloadFlows,
+  };
+}
+
+const defaultsKey = (workspace: number | undefined): QueryKey => [
+  "launch-defaults",
+  workspace ?? null,
+];
+
+async function readDefaults(workspace: number): Promise<LaunchDefaults> {
+  return unwrap(await api.launchDefaults({ workspace: String(workspace) }));
+}
+
+export interface LaunchDefaultsView {
+  defaults: LaunchDefaults | undefined;
+  /** Why the read failed, "" for none. */
+  error: string;
+  /** A workspace is given and its defaults have neither landed nor failed (the stream may be down). */
+  loading: boolean;
+  /** Reads the defaults again after a failure; startRead joins a read already out rather than repeating it. */
+  retry: () => void;
+}
+
+/**
+ * Reads a workspace's launch defaults once the stream is `live`, and holds the answer for the
+ * page's lifetime: it is never read again on its own, so a stream that comes back or a remount
+ * keeps the picks made on it (`retry` reads again after a failure). A failed read is read again
+ * by the observer only when the stream comes back or the screen is opened again. No workspace
+ * reads nothing.
+ */
+export function useLaunchDefaults(
+  workspace: number | undefined,
+  live: boolean,
+): LaunchDefaultsView {
+  const query = useQuery<LaunchDefaults>({
+    queryKey: defaultsKey(workspace),
+    queryFn: async () => {
+      if (workspace === undefined) throw new Error("no workspace to read the defaults of");
+      return readDefaults(workspace);
+    },
+    enabled: workspace !== undefined && live,
+    staleTime: Infinity,
+    // An answer is held for the page's lifetime; the disabled entry of no workspace holds nothing
+    // and leaves with its observer.
+    gcTime: workspace !== undefined ? Infinity : 0,
+    retry: false,
+  });
+  const retry = useCallback(() => {
+    if (workspace === undefined) return;
+    startRead(defaultsKey(workspace), () => readDefaults(workspace), Infinity);
+  }, [workspace]);
+  return {
+    defaults: query.data,
+    error: errorText(query.error, "Could not load the launch defaults."),
+    loading: workspace !== undefined && query.data === undefined && query.error === null,
+    retry,
   };
 }
