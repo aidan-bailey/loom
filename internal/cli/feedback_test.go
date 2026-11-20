@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,7 +145,7 @@ func TestFeedbackClose_ClosesAndRefusesTwice(t *testing.T) {
 	_, _, err = runFeedback(t, "close", "1")
 	assert.ErrorContains(t, err, "thread 1 is already closed")
 	_, _, err = runFeedback(t, "close", "n4")
-	assert.ErrorContains(t, err, "only a thread can be fixed or closed")
+	assert.ErrorContains(t, err, "only a thread can be fixed, published or closed")
 }
 
 func TestFeedbackFix_StartsTheSession(t *testing.T) {
@@ -190,4 +191,118 @@ func TestFeedbackFix_LaunchesOnTheModelAndEffortAsked(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, v.Program, "--model 'opus'")
 	assert.Contains(t, v.Program, "--effort high")
+}
+
+func TestFeedbackPublish_LinksTheThreadAndListShowsIt(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	serveDaemon(t, "true")
+	const want = "[loom] thread 1 published as aidan-bailey/loom#57\n"
+	out, _, err := runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#57", "--through", "n2")
+	require.NoError(t, err)
+	assert.Equal(t, want, out)
+
+	out, _, err = runFeedback(t, "list")
+	require.NoError(t, err)
+	assert.Regexp(t, `(?m)^1 +bug +2 +2 +\S+ +published #57 +loom job run: --after refuses another session's job$`, out)
+
+	out, _, err = runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#57", "--through", "n2")
+	require.NoError(t, err, "a retry")
+	assert.Equal(t, want, out)
+
+	out, _, err = runFeedback(t, "publish", "1", "--issue", "https://github.com/aidan-bailey/loom/issues/57", "--through", "n1")
+	require.NoError(t, err, "the URL form of the same issue")
+	assert.Equal(t, want, out)
+	out, _, err = runFeedback(t, "list")
+	require.NoError(t, err)
+	assert.Regexp(t, `(?m)^1 +bug +2 +2 +\S+ +published #57 +loom job`, out)
+	assert.NotContains(t, out, " new")
+}
+
+func TestFeedbackPublish_ShowsNotesPastThroughAsNew(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	serveDaemon(t, "true")
+	_, _, err := runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#57", "--through", "n1")
+	require.NoError(t, err)
+	out, _, err := runFeedback(t, "list")
+	require.NoError(t, err)
+	assert.Regexp(t, `(?m)^1 +bug +2 +2 +\S+ +published #57 \+1 new +loom job`, out)
+}
+
+func TestFeedbackPublish_RefusalsAreTheModels(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	serveDaemon(t, "true")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"1", "--issue", "aidan-bailey/loom#57", "--through", "n4"}, "note n4 is not in thread 1"},
+		{[]string{"2", "--issue", "aidan-bailey/loom#57", "--through", "n3"}, "thread 2 is already closed"},
+		{[]string{"9", "--issue", "aidan-bailey/loom#57", "--through", "n1"}, "thread 9 doesn't exist"},
+	} {
+		out, _, err := runFeedback(t, append([]string{"publish"}, c.args...)...)
+		assert.ErrorContains(t, err, c.want)
+		assert.Empty(t, out)
+	}
+	_, _, err := runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#57", "--through", "n1")
+	require.NoError(t, err)
+	out, _, err := runFeedback(t, "publish", "1", "--issue", "aidan-bailey/loom#58", "--through", "n1")
+	assert.ErrorContains(t, err, "thread 1 is linked to aidan-bailey/loom#57")
+	assert.Empty(t, out)
+}
+
+func TestFeedbackPublish_ChecksItsArgumentsBeforeTheDaemon(t *testing.T) {
+	isolateWorkspaces(t)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"1", "--issue", "not-a-ref", "--through", "n1"}, "issue reference not-a-ref: want https://github.com/<owner>/<name>/issues/<N> or <owner>/<name>#<N>"},
+		{[]string{"1", "--issue", "aidan-bailey/loom#57"}, `required flag(s) "through" not set`},
+		{[]string{"1", "--through", "n1"}, `"issue"`},
+		{[]string{"n4", "--issue", "aidan-bailey/loom#57", "--through", "n1"}, "only a thread can be fixed, published or closed"},
+		{[]string{"1", "--issue", "aidan-bailey/loom#57", "--through", "1"}, `--through: "1" is not a note`},
+	} {
+		_, _, err := runFeedback(t, append([]string{"publish"}, c.args...)...)
+		assert.ErrorContains(t, err, c.want, c.args)
+	}
+}
+
+func TestFeedbackClose_StoresTheReason(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	serveDaemon(t, "true")
+	out, _, err := runFeedback(t, "close", "1", "--reason", "fixed in 0.16")
+	require.NoError(t, err)
+	assert.Equal(t, "Closed thread 1\n", out)
+
+	out, _, err = runFeedback(t, "list", "--all", "--json")
+	require.NoError(t, err)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	var found bool
+	for _, r := range rows {
+		if r["thread"] == float64(1) {
+			found = true
+			assert.Equal(t, "fixed in 0.16", r["closed"].(map[string]any)["reason"])
+		}
+	}
+	assert.True(t, found, out)
+
+	_, _, err = runFeedback(t, "close", "1")
+	assert.ErrorContains(t, err, "thread 1 is already closed")
+}
+
+func TestFeedbackClose_TheModelChecksTheReason(t *testing.T) {
+	isolateWorkspaces(t)
+	seedInbox(t)
+	serveDaemon(t, "true")
+	_, _, err := runFeedback(t, "close", "1", "--reason", strings.Repeat("x", 301))
+	assert.ErrorContains(t, err, "the close reason is 301 bytes: at most 300")
+	_, _, err = runFeedback(t, "close", "1", "--reason", "a\nb")
+	assert.ErrorContains(t, err, "the close reason must be one line")
+	_, _, err = runFeedback(t, "close", "1", "--reason", strings.Repeat("x", 300))
+	assert.NoError(t, err, "the refusals left thread 1 open")
 }
