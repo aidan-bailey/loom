@@ -32,6 +32,11 @@ const (
 	// limit (usage-limit hold spec §3): resumable, like TURN_CAP, once it
 	// resets; AgentRecord.Limit says which and when.
 	AgentUsageLimit = "USAGE_LIMIT"
+	// AgentAPIError is a run whose job ended on an error from the API that
+	// is not a usage limit (an overload, a Cloudflare 403, a dropped
+	// connection): no broken agent, so it is resumable, and the engine
+	// resumes it on its own up to APIRetries times before it asks.
+	AgentAPIError = "API_ERROR"
 )
 
 // AgentRecord is one `loom flow agent run` and every job after it on its

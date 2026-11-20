@@ -42,6 +42,16 @@ type runFX struct {
 	mu        sync.Mutex // logf's: the engine's tracks log at once (parallel pairs spec §5.3)
 }
 
+// apiRetryPause is how long the engine's resume of an agent run that ended
+// on an API error waits before it is queued: the Cloudflare 403s of
+// 2026-11-13 came in bursts, in which the next attempt failed within
+// seconds. The engine resumes such a run flowrun.APIRetries times before it
+// asks the manager.
+const apiRetryPause = 3 * time.Minute
+
+// apiRetrySleep is time.Sleep, replaced in tests.
+var apiRetrySleep = time.Sleep
+
 // logf writes one line to the engine's log.
 func (fx *runFX) logf(format string, args ...any) {
 	fx.mu.Lock()
@@ -174,7 +184,11 @@ func (fx *runFX) Resume(name, text string) (flowrun.Report, error) {
 	}
 	if run.Current().Answer != text {
 		if !resumable(run.Status) {
-			return flowrun.Report{}, fmt.Errorf("agent run %s is %s, and only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT is resumed", name, run.Status)
+			return flowrun.Report{}, fmt.Errorf("agent run %s is %s, and only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP, USAGE_LIMIT or API_ERROR is resumed", name, run.Status)
+		}
+		if run.Status == flowrun.AgentAPIError {
+			fx.logf("resume %s in %s: %s", name, apiRetryPause, run.Why)
+			apiRetrySleep(apiRetryPause)
 		}
 		fx.logf("resume %s", name)
 		err := fx.daemon(func(d *client) error {

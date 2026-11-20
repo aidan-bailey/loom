@@ -1495,6 +1495,89 @@ func TestRun_AUsageLimitReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) 
 	}
 }
 
+// apiError is an agent run that ended on an error from the API, as four
+// Cloudflare 403s ended runs of 2026-11-13 (the 2026-11-20 retro).
+var apiError = Report{Status: AgentAPIError, Why: "it ended with an error result: Failed to authenticate. API Error: 403 Attention Required! | Cloudflare (API 403)"}
+
+// An API error is no broken agent: the engine resumes its session on its
+// own, up to APIRetries times, before it asks the manager; any other
+// failure still asks at once.
+func TestRun_AnAPIError(t *testing.T) {
+	t.Run("a resume that works asks nothing", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = apiError
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		drive(t, st, f, nil)
+		assert.Equal(t, Done, st.Status)
+		got := f.resumesOf("r-s1-dev1")
+		require.Len(t, got, 1, "the same run is resumed")
+		assert.Contains(t, got[0], "403 Attention Required! | Cloudflare", "its text says what stopped it")
+		assert.NotContains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "no fresh attempt")
+		assert.Empty(t, st.Answers, "nothing was asked")
+		assert.Contains(t, st.Notes, "r-s1-dev1: the API failed, resuming it (retry 1 of 2): "+apiError.Why)
+	})
+	t.Run("one that keeps failing asks after its retries", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = apiError
+		f.resumes["r-s1-review1"] = []Report{apiError, apiError}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "failed:r-s1-review1", st.Question.Key)
+		assert.Equal(t, KindAgentFailed, st.Question.Kind)
+		assert.Contains(t, st.Question.Text, "403 Attention Required! | Cloudflare")
+		got := f.resumesOf("r-s1-review1")
+		require.Len(t, got, APIRetries)
+		assert.NotEqual(t, got[0], got[1], "each retry's text is its own, so a follow never takes one for another")
+	})
+	t.Run("any other failure asks at once", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = Report{Status: AgentFailed, Why: "it ended with no result"}
+		st := newState(story("1", "intermediate-dev", "vouched"))
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "failed:r-s1-dev1", st.Question.Key)
+		assert.Empty(t, f.resumesOf("r-s1-dev1"), "a broken agent is not resumed")
+	})
+}
+
+// apiErrorScript is a run whose developer ends on an API error twice before
+// its second resume works, and whose reviewer once.
+func apiErrorScript() (*State, *fakeFX) {
+	f := newFake()
+	f.reports["r-s1-dev1"] = apiError
+	f.resumes["r-s1-dev1"] = []Report{apiError, {Status: "DONE", Text: "STATUS: DONE"}}
+	f.reports["r-s1-review1"] = apiError
+	return newState(story("1", "intermediate-dev", "vouched")), f
+}
+
+func TestRun_AnAPIErrorReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) {
+	st, f := apiErrorScript()
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	want := slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1"))
+	require.Len(t, f.resumesOf("r-s1-dev1"), 2)
+	notes := st.Notes
+	for k := 1; k <= f.saves; k++ {
+		t.Run(fmt.Sprintf("a crash at save %d", k), func(t *testing.T) {
+			st, f := apiErrorScript()
+			f.failAt = k
+			err := runSettled(st, f)
+			for err != nil {
+				require.ErrorIs(t, err, errCrash)
+				st = clone(f.saved)
+				if f.saved == nil {
+					st, _ = apiErrorScript()
+				}
+				err = runSettled(st, f)
+			}
+			require.Equal(t, Done, st.Status)
+			assert.Equal(t, want, slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1")), "nothing submitted or resumed twice")
+			assert.Equal(t, notes, st.Notes)
+		})
+	}
+}
+
 // A laned story's developer runs in its lane at its partner's base, and its
 // commits are picked onto the head its partner left (parallel pairs spec §5.5).
 func TestRun_ALaneRunsBesideItsPartnerAndIsPicked(t *testing.T) {
