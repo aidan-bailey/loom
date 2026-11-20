@@ -440,6 +440,47 @@ describe("SettingsBody: the pause row", () => {
     expect(screen.queryByRole("button", { name: "Resume now" })).toBeNull();
   });
 
+  it("holds Paused until past the longest timer delay and ends at the true end", () => {
+    const MAX_DELAY = 2_147_483_647;
+    vi.useRealTimers();
+    vi.useFakeTimers({ now: NOW });
+    // Fake timers accept any delay, a browser fires one past MAX_DELAY at once; so the delays asked
+    // for are what pins the cap.
+    const asked: number[] = [];
+    const armed = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      asked.push(delay ?? 0);
+      return armed(handler, delay, ...args);
+    }) as typeof setTimeout;
+    try {
+      live({ device: pausedFor(MAX_DELAY + 60_000) });
+      render(<SettingsBody />);
+      expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+      const delays = (): number[] => asked;
+      expect(delays()).toContain(MAX_DELAY);
+      expect(Math.max(...delays())).toBe(MAX_DELAY);
+
+      // The first timer is capped at MAX_DELAY; its redraw arms the rest.
+      act(() => {
+        vi.advanceTimersByTime(MAX_DELAY);
+      });
+      expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+      expect(delays()).toContain(60_000);
+
+      act(() => {
+        vi.advanceTimersByTime(59_000);
+      });
+      expect(screen.getByText(/^Paused until \d/)).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(screen.getByText("Not paused")).toBeInTheDocument();
+    } finally {
+      globalThis.setTimeout = armed;
+    }
+  });
+
   it("says Not paused for a pause that ended before the screen opened", () => {
     live({ device: pausedFor(-60_000) });
     render(<SettingsBody />);
