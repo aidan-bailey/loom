@@ -319,3 +319,152 @@ describe("Changes: the files", () => {
     expect(diff).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Changes: an open file", () => {
+  const same = { normalizer: (s: string) => s };
+
+  // open clicks the file row's trigger and returns it.
+  function open(name: RegExp): HTMLElement {
+    const trigger = row(name);
+    fireEvent.click(trigger);
+    return trigger;
+  }
+
+  async function drawPatch(patch: Patch) {
+    diff.mockResolvedValue(ok(patch));
+    const view = draw(show());
+    await settle();
+    return view;
+  }
+
+  // A lone file starts open, so a test of one file's content reads it without a click.
+  const hunkOf = (header: string, lines: string[] | null, cut: number[] | null = []) => ({
+    header,
+    lines,
+    cut,
+  });
+
+  it("opening a file draws its hunk header and lines", async () => {
+    await drawPatch(fixturePatch());
+    open(/pane\.go/);
+    const ranges = screen.getByText("@@ -88,9 +88,12 @@");
+    expect(ranges.classList.contains("text-turn")).toBe(true);
+    expect(screen.getByText("func (p *Pane) View() string {")).toBeTruthy();
+    expect(screen.getByText("+\tif p.cursorVisible() {", same)).toBeTruthy();
+    expect(screen.getByText("-\tp.drawCursor(frame)", same)).toBeTruthy();
+  });
+
+  it("an added line, a removed line and a context line have their own rows", async () => {
+    await drawPatch(fixturePatch());
+    open(/pane\.go/);
+    const added = screen.getByText("+\tif p.cursorVisible() {", same);
+    const removed = screen.getByText("-\tp.drawCursor(frame)", same);
+    const context = screen.getByText("  \tframe := p.render()", same);
+    expect(added.classList.contains("bg-diff-add")).toBe(true);
+    expect(added.classList.contains("bg-diff-del")).toBe(false);
+    expect(removed.classList.contains("bg-diff-del")).toBe(true);
+    expect(removed.classList.contains("bg-diff-add")).toBe(false);
+    expect(context.classList.contains("bg-diff-add")).toBe(false);
+    expect(context.classList.contains("bg-diff-del")).toBe(false);
+  });
+
+  it('a "no newline" marker is muted', async () => {
+    await drawPatch(
+      patchOf({ hunks: [hunkOf("@@ -1 +1 @@", ["+a", "\\ No newline at end of file"])] }),
+    );
+    const marker = screen.getByText("\\ No newline at end of file", same);
+    expect(marker.classList.contains("text-muted-foreground")).toBe(true);
+    expect(marker.classList.contains("bg-diff-add")).toBe(false);
+    expect(marker.classList.contains("bg-diff-del")).toBe(false);
+  });
+
+  it("a header that is not a hunk range is drawn whole", async () => {
+    await drawPatch(patchOf({ hunks: [hunkOf("not a range", ["+a"])] }));
+    expect(screen.getByText("not a range")).toBeTruthy();
+  });
+
+  it("a cut line ends in a mark", async () => {
+    const view = await drawPatch(patchOf({ hunks: [hunkOf("@@ -1 +1 @@", ["+a", "+b"], [1])] }));
+    const a = screen.getByText("+a", same);
+    const b = screen.getByText("+b", same);
+    expect(within(b).getByText("…")).toBeTruthy();
+    expect(within(a).queryByText("…")).toBeNull();
+    view.unmount();
+    queryClient.clear();
+
+    await drawPatch(patchOf({ hunks: [hunkOf("@@ -1 +1 @@", ["+a", "+b"], null)] }));
+    expect(screen.queryByText("…")).toBeNull();
+  });
+
+  it("an empty line keeps its row", async () => {
+    const view = await drawPatch(patchOf({ hunks: [hunkOf("@@ -1 +1 @@", [""])] }));
+    // the header's row and the empty line's
+    expect(view.container.querySelectorAll(".min-h-5")).toHaveLength(2);
+  });
+
+  it("a deleted file draws its removed lines", async () => {
+    await drawPatch(fixturePatch());
+    open(/legacy\.go/);
+    expect(screen.getByText("-package ui", same)).toBeTruthy();
+    expect(screen.getByText("-// legacy is gone.", same)).toBeTruthy();
+  });
+
+  it("a file too long to show says how many lines", async () => {
+    const view = await drawPatch(fixturePatch());
+    open(/tables_gen\.go/);
+    expect(screen.getByText("Too long to show here (5200 changed lines).")).toBeTruthy();
+    view.unmount();
+    queryClient.clear();
+
+    await drawPatch(patchOf({ omitted: "lines", added: 5200, removed: 7 }));
+    expect(screen.getByText("Too long to show here (5207 changed lines).")).toBeTruthy();
+  });
+
+  it("a file the diff budget cut says so", async () => {
+    await drawPatch(patchOf({ omitted: "budget" }));
+    expect(screen.getByText("Not shown: the diff is over 1 MiB.")).toBeTruthy();
+  });
+
+  it("an omitted reason from a newer daemon is drawn as sent", async () => {
+    await drawPatch(patchOf({ omitted: "huge" as File["omitted"] }));
+    expect(screen.getByText("Not shown (huge).")).toBeTruthy();
+    expect(screen.queryByText("No text changes.")).toBeNull();
+  });
+
+  it("a binary file says so", async () => {
+    await drawPatch(fixturePatch());
+    open(/cursor\.png/);
+    expect(screen.getByText("Binary file.")).toBeTruthy();
+  });
+
+  it("an omitted reason beats a binary flag", async () => {
+    await drawPatch(patchOf({ binary: true, omitted: "lines", added: 9 }));
+    expect(screen.getByText("Too long to show here (9 changed lines).")).toBeTruthy();
+    expect(screen.queryByText("Binary file.")).toBeNull();
+  });
+
+  it("a text file with no hunks says there are no text changes, for an empty and a null list", async () => {
+    const view = await drawPatch(patchOf({ hunks: [] }));
+    expect(screen.getByText("No text changes.")).toBeTruthy();
+    view.unmount();
+    queryClient.clear();
+
+    await drawPatch(patchOf({ hunks: null }));
+    expect(screen.getByText("No text changes.")).toBeTruthy();
+  });
+
+  it("a lone file's hunks are drawn on the first load", async () => {
+    const pane = fixturePatch().files?.[0];
+    if (pane === undefined) throw new Error("the canned patch holds no file");
+    await drawPatch({ base: "a1b2c3d4e5f6", files: [pane] });
+    expect(screen.getByText("@@ -88,9 +88,12 @@")).toBeTruthy();
+  });
+
+  it("diff lines are drawn as text, never as markup", async () => {
+    const line = "+<b>bold</b><img src=x>";
+    const view = await drawPatch(patchOf({ hunks: [hunkOf("@@ -1 +1 @@", [line])] }));
+    const shown = screen.getByText(line, same);
+    expect(shown.textContent).toBe(line);
+    expect(view.container.querySelector("b, img")).toBeNull();
+  });
+});

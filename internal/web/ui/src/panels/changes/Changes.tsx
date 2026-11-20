@@ -2,7 +2,7 @@
 // file with its hunks, and the reply box. Every line of a diff is drawn as a text node.
 import { useState, type ReactElement } from "react";
 
-import type { File, Patch, Session } from "@/api/gen";
+import type { File, Hunk, Patch, Session } from "@/api/gen";
 import { usePatch } from "@/api/reads";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -44,9 +44,76 @@ function Counts(props: { added: number; removed: number }): ReactElement {
   );
 }
 
+// reasonFor is why a file has no hunks to draw, "" when it has some. The daemon's own bounds
+// (5,000 lines a file, 1 MiB in all) come as `omitted`; a value from a newer daemon is drawn as sent.
+function reasonFor(file: File): string {
+  if (file.omitted === "lines") {
+    return `Too long to show here (${file.added + file.removed} changed lines).`;
+  }
+  if (file.omitted === "budget") return "Not shown: the diff is over 1 MiB.";
+  // `omitted` is typed to the values this build knows; a newer daemon may send another.
+  const other: string = file.omitted;
+  if (other !== "") return `Not shown (${other}).`;
+  if (file.binary) return "Binary file.";
+  if ((file.hunks ?? []).length === 0) return "No text changes.";
+  return "";
+}
+
+// lineTone is a diff line's row class by its first character.
+function lineTone(line: string): string {
+  switch (line[0]) {
+    case "+":
+      return "bg-diff-add";
+    case "-":
+      return "bg-diff-del";
+    case "\\":
+      return "text-muted-foreground";
+    default:
+      return "";
+  }
+}
+
+const ROW = "min-h-5 whitespace-pre px-2";
+
+function HunkView(props: { hunk: Hunk }): ReactElement {
+  const { hunk } = props;
+  const header = /^(@@[^@]*@@)(.*)$/.exec(hunk.header);
+  const cut = new Set(hunk.cut ?? []);
+  return (
+    <>
+      <div className={ROW}>
+        {header === null ? (
+          hunk.header
+        ) : (
+          <>
+            <span className="text-turn">{header[1]}</span>
+            <span className="text-muted-foreground">{header[2]}</span>
+          </>
+        )}
+      </div>
+      {(hunk.lines ?? []).map((line, i) => (
+        <div key={i} className={cn(ROW, lineTone(line))}>
+          {line}
+          {cut.has(i) ? <span className="text-muted-foreground">…</span> : null}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function FileBody(props: { file: File }): ReactElement {
-  void props;
-  return <></>;
+  const { file } = props;
+  const reason = reasonFor(file);
+  if (reason !== "") return <p className="px-1 py-2 text-xs text-muted-foreground">{reason}</p>;
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-card font-mono text-[12px] leading-5">
+      <div className="w-max min-w-full">
+        {(file.hunks ?? []).map((hunk, i) => (
+          <HunkView key={i} hunk={hunk} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function FileFold(props: {
