@@ -1,9 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/commands";
-import type { Device, Notice, Outcome, Snapshot } from "@/api/gen";
+import type { Device, Notice, Outcome, QuickReplies, Snapshot } from "@/api/gen";
 import { api } from "@/api/request";
 import { askConfirm } from "@/app/ConfirmSheet";
 import { panelFor } from "@/app/panels";
@@ -444,5 +444,135 @@ describe("SettingsBody: the pause row", () => {
     live({ device: pausedFor(-60_000) });
     render(<SettingsBody />);
     expect(screen.getByText("Not paused")).toBeInTheDocument();
+  });
+});
+
+const repliesBox = (): HTMLTextAreaElement =>
+  screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Quick replies" });
+
+describe("SettingsBody: Quick replies", () => {
+  it("shows the stored list, one a line, with the classic note", () => {
+    live({ quick_replies: ["ok", "later"] });
+    render(<SettingsBody />);
+    expect(repliesBox()).toHaveValue("ok\nlater");
+    expect(
+      screen.getByText(
+        "One a line, at most 12. Every paired phone offers them above its reply box.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an empty box for no stored list", () => {
+    live({ quick_replies: null });
+    render(<SettingsBody />);
+    expect(repliesBox()).toHaveValue("");
+  });
+
+  it("follows the stored list until typed in, then keeps the draft over a new stored list", () => {
+    live({ quick_replies: ["ok", "later"] });
+    render(<SettingsBody />);
+
+    act(() => useFleet.getState().apply("quick_replies", { quick_replies: ["x", "y"] }));
+    expect(repliesBox()).toHaveValue("x\ny");
+
+    fireEvent.change(repliesBox(), { target: { value: "mine" } });
+    expect(repliesBox()).toHaveValue("mine");
+
+    act(() => useFleet.getState().apply("quick_replies", { quick_replies: ["z"] }));
+    expect(repliesBox()).toHaveValue("mine");
+  });
+
+  it("leaves Save off until the person has typed, and on after", () => {
+    live();
+    render(<SettingsBody />);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset to defaults" })).toBeEnabled();
+
+    fireEvent.change(repliesBox(), { target: { value: "ok" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("saves the lines trimmed with the blanks dropped, then shows the stored list again", async () => {
+    const put = vi
+      .spyOn(api, "putQuickReplies")
+      .mockResolvedValue(ok<QuickReplies>({ quick_replies: ["ok", "later"] }));
+    live({ quick_replies: ["old"] });
+    render(<SettingsBody />);
+
+    fireEvent.change(repliesBox(), { target: { value: "  ok  \n\n later\n   \n" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith({ replies: ["ok", "later"] });
+    await waitFor(() => expect(repliesBox()).toHaveValue("ok\nlater"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("resets to the defaults the daemon answers, sending no list", async () => {
+    const put = vi
+      .spyOn(api, "putQuickReplies")
+      .mockResolvedValue(ok<QuickReplies>({ quick_replies: ["yes", "continue"] }));
+    live({ quick_replies: ["old"] });
+    render(<SettingsBody />);
+
+    fireEvent.change(repliesBox(), { target: { value: "typed" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reset to defaults" }));
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0]?.[0]).toStrictEqual({});
+    await waitFor(() => expect(repliesBox()).toHaveValue("yes\ncontinue"));
+  });
+
+  it("keeps the typed text, and Save on, when the daemon refuses the list", async () => {
+    vi.spyOn(api, "putQuickReplies").mockResolvedValue({
+      kind: "refused",
+      status: 400,
+      message: "at most 12 quick replies",
+    });
+    live({ quick_replies: ["old"] });
+    render(<SettingsBody />);
+
+    fireEvent.change(repliesBox(), { target: { value: "one\ntwo" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "at most 12 quick replies", type: "error" }),
+      ),
+    );
+    await waitFor(() => expect(repliesBox()).toBeEnabled());
+    expect(repliesBox()).toHaveValue("one\ntwo");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("holds the box and both buttons while a save is in flight", async () => {
+    const write = deferred<Outcome<QuickReplies>>();
+    const put = vi.spyOn(api, "putQuickReplies").mockReturnValue(write.promise);
+    live();
+    render(<SettingsBody />);
+    const user = userEvent.setup();
+
+    fireEvent.change(repliesBox(), { target: { value: "one" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(repliesBox()).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset to defaults" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Reset to defaults" }));
+    expect(put).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      write.resolve(ok<QuickReplies>({ quick_replies: ["one"] }));
+      await write.promise;
+    });
+    expect(repliesBox()).toBeEnabled();
+  });
+
+  it("is off while the snapshot is stale", () => {
+    live();
+    useFleet.setState({ stale: true, link: "offline" });
+    render(<SettingsBody />);
+    expect(repliesBox()).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset to defaults" })).toBeDisabled();
   });
 });

@@ -14,6 +14,7 @@ import {
 } from "@/app/commands";
 import { usePushStatus } from "@/app/push";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ago } from "@/panels/fleet/SessionRow";
 import { useFleet } from "@/store/fleet";
@@ -219,11 +220,60 @@ function Notifications({ device }: { device: Device }): ReactElement {
   );
 }
 
+// replyLines is the editor's replies: one a line, each trimmed, blank lines dropped. The daemon
+// trims again, drops a duplicate after its first and refuses more than 12.
+function replyLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+// QuickReplies edits the list every paired phone offers above its reply box. The box shows the
+// stored list until the person types, then the draft; the command's onSaved, which it calls only
+// after a 200, clears the draft, so a refused list stays in the box for another try.
+function QuickReplies({ stored }: { stored: string[] | null }): ReactElement {
+  const ctx = useCommandContext();
+  const save = commandOf("quickReplies.save");
+  const busy = useCommandBusy(save, ctx, { replies: null });
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (stored ?? []).join("\n");
+  const saved = (): void => setDraft(null);
+
+  return (
+    <Section title="Quick replies">
+      <p className={NOTE}>
+        One a line, at most 12. Every paired phone offers them above its reply box.
+      </p>
+      <Textarea
+        aria-label="Quick replies"
+        value={shown}
+        disabled={busy || !commandEnabled(save, ctx)}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <div className="flex gap-2">
+        <CommandButton
+          id="quickReplies.save"
+          args={{ replies: null, onSaved: saved }}
+          label="Reset to defaults"
+          variant="secondary"
+        />
+        <CommandButton
+          id="quickReplies.save"
+          args={{ replies: replyLines(shown), onSaved: saved }}
+          disabled={draft === null}
+        />
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsBody(): ReactElement {
   const device = useFleet((s) => s.snapshot?.device);
   const host = useFleet((s) => s.snapshot?.host ?? "");
   const build = useFleet((s) => s.snapshot?.build ?? "");
   const notices = useFleet((s) => s.snapshot?.notices ?? null);
+  const replies = useFleet((s) => s.snapshot?.quick_replies ?? null);
 
   if (device === undefined) {
     return <p className="px-4 py-6 text-muted-foreground">Loading…</p>;
@@ -243,6 +293,7 @@ export default function SettingsBody(): ReactElement {
   return (
     <div className="flex flex-col pb-8">
       <Notifications device={device} />
+      <QuickReplies stored={replies} />
       <Section title="This phone">
         <Row label="Paired as">
           <span className="min-w-0 truncate">{device.name}</span>
