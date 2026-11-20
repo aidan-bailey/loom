@@ -142,3 +142,14 @@ func (f flagRef) onAny(root *cobra.Command) bool {
 	}
 	return false
 }
+
+// The loom context names `fix`, `publish` and `close` as the user's, spelled
+// as the commands, and `publish` is a real subcommand.
+func TestLoomContext_NamesFeedbackPublish(t *testing.T) {
+	b, err := os.ReadFile("../../session/loom_context_shared.md")
+	require.NoError(t, err)
+	for _, span := range []string{"`loom feedback fix`", "`loom feedback publish`", "`loom feedback close`"} {
+		assert.Contains(t, string(b), span)
+	}
+	assert.NotNil(t, subcommandNamed(newFeedbackCmd(), "publish"))
+}

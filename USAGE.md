@@ -1044,10 +1044,11 @@ The daemon records which session filed it (title, workspace, branch, subagent), 
 loom feedback list [--all] [--json]   # threads and loose notes, most-reported first
 loom feedback show 3                  # a thread with every note; show n12 for one note
 loom feedback fix 3 [-w loom] [--model opus] [--effort high]  # start a session that fixes it, prompted with every note
-loom feedback close 3
+loom feedback publish 3 --issue aidan-bailey/loom#57 --through n12  # link the thread to an issue the loom-feedback watcher fixes
+loom feedback close 3 [--reason "…"]
 ```
 
-`fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would; `--model` and `--effort` override those two, with the values `session new` takes. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix` and `close` are yours. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
+`fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would; `--model` and `--effort` override those two, with the values `session new` takes. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix`, `publish` and `close` are yours. `publish` links a thread to a GitHub issue you wrote (`--issue` takes the issue's URL or `owner/name#N`, `--through nN` is the newest note the issue or its comments cover; running it again with the same issue only moves `--through` forward, and a thread never relinks to another issue); the thread then shows `published #N`, plus ` +k new` for notes that arrived after `--through`, and the daemon closes it when the issue closes, with the reason `issue #N closed (completed)` or `(not planned)`. `show` prints the link, the reason and the last failed issue check, and `list` prints a line per failed check after its table. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
 
 ```json
 {
@@ -1241,7 +1242,7 @@ loom [command]
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
-| `feedback` | File, list, show, fix and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
+| `feedback` | File, list, show, fix, publish and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
 | `watch` | Switch the issue watcher on or off for a workspace, show what it knows, or print what its next tick would do (see below, and [Watch Labelled Issues](#watch-labelled-issues-the-issue-watcher)); a client of the daemon too |
 | `flow` | The agent flow's tools: plans, profiles, gates and the git guard (see below, and [Supervised Plans](#supervised-plans-the-agent-flow)); runs without the daemon |
 
@@ -1300,10 +1301,11 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | Command | Description |
 |---------|-------------|
 | `feedback add --kind <bug\|friction\|missing\|docs> --title <t> (--text <x> \| --file <f>)` | File a note from inside a session loom launched (it reads `$LOOM_LAUNCH`, and the effort from `$CLAUDE_EFFORT`); prints `[loom] feedback n12 filed`. Refused outside a session, and for a title over 120 characters or a text over 20,000 bytes |
-| `feedback list [--all] [--json]` | The threads that aren't closed and the notes no thread holds, by how many sessions reported each, then the latest note; `--all` adds closed threads |
-| `feedback show <thread \| nN>` | A thread with every note in full, or one note |
+| `feedback list [--all] [--json]` | The threads that aren't closed and the notes no thread holds, by how many sessions reported each, then the latest note; `--all` adds closed threads. A published thread's status reads `published #N`, plus ` +k new`; a line per failed issue check follows the table |
+| `feedback show <thread \| nN>` | A thread with every note in full, or one note; a published or closed thread also shows its issue link, its close reason and the last failed issue check |
 | `feedback fix <thread> [-w <workspace>] [--model M] [--effort E]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there); `--model` and `--effort` take `session new`'s values, else the workspace's own |
-| `feedback close <thread>` | Close a thread |
+| `feedback publish <thread> --issue <ref> --through <nN>` | Link the thread to its GitHub issue and mark it published; `--issue` is `https://github.com/<owner>/<name>/issues/<N>` or `<owner>/<name>#<N>`, both flags are required; prints `[loom] thread <T> published as <repo>#<N>` |
+| `feedback close <thread> [--reason "…"]` | Close a thread; the reason is one line of at most 300 bytes |
 
 ### Watch Subcommands
 
