@@ -51,7 +51,7 @@ export function flowChip(flow: FlowSummary): string {
   return parts.join(" · ");
 }
 
-function flowTone(flow: FlowSummary): "docs" | "attention" | "error" {
+export function flowTone(flow: FlowSummary): "docs" | "attention" | "error" {
   if (flow.asks !== "") return "attention";
   if (flow.status === "lost" || flow.unreadable !== "") return "error";
   return "docs";
