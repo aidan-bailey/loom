@@ -256,10 +256,11 @@ func (c *cannedLoom) fixture(name string) ([]byte, error) {
 	return out, nil
 }
 
-var relTime = regexp.MustCompile(`^now(?:([+-])(\S+))?$`)
+var relTime = regexp.MustCompile(`^now([+-])(\S+)$`)
 
-// fillTimes replaces every string of the form now[±duration] in v with the
-// RFC 3339 time it names, counted from now.
+// fillTimes replaces every string of the form now+duration or now-duration in
+// v with the RFC 3339 time it names, counted from now. A bare "now" is left
+// alone: it is a contract value (a flow stage's state), not a time.
 func fillTimes(v any, now time.Time) (any, error) {
 	switch t := v.(type) {
 	case map[string]any:
@@ -283,18 +284,14 @@ func fillTimes(v any, now time.Time) (any, error) {
 		if m == nil {
 			return t, nil
 		}
-		at := now
-		if m[1] != "" {
-			d, err := time.ParseDuration(m[2])
-			if err != nil {
-				return nil, fmt.Errorf("time %q: %w", t, err)
-			}
-			if m[1] == "-" {
-				d = -d
-			}
-			at = now.Add(d)
+		d, err := time.ParseDuration(m[2])
+		if err != nil {
+			return nil, fmt.Errorf("time %q: %w", t, err)
 		}
-		return at.UTC().Format(time.RFC3339), nil
+		if m[1] == "-" {
+			d = -d
+		}
+		return now.Add(d).UTC().Format(time.RFC3339), nil
 	}
 	return v, nil
 }

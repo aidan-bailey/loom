@@ -61,12 +61,9 @@ function show(
   return render(<FlowBody sessionId={6} params={{ id: "6" }} search={opts.search ?? {}} />);
 }
 
-// board is the canned board; a test changes what it needs. The fixture's run stage is in state
-// "now", which fillTimes reads as a time and fills in, so it is put back here.
+// board is the canned board; a test changes what it needs.
 function board(over: (flow: Flow) => void = () => undefined): Flow {
   const flow = fixtureFlow();
-  const run = flow.stages?.find((s) => s.name === "run");
-  if (run !== undefined) run.state = "now";
   over(flow);
   return flow;
 }

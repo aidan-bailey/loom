@@ -1,5 +1,5 @@
 // The canned loom's fixtures (tools/webshot/fixture: the snapshot, the turns, the diff, the job
-// log, a flow's board and document, the host's flows and the launch defaults) for the tests: their relative times ("now-2m", "now+1h40m") filled as tools/webshot's
+// log, a flow's board and document, the host's flows and the launch defaults) for the tests: their relative times ("now-2m", "now+1h40m"; a bare "now" is not one) filled as tools/webshot's
 // fillTimes fills them, so the same fixtures feed Vitest and the screenshots.
 import type {
   Flow,
@@ -22,7 +22,7 @@ import launchDefaultsJson from "../../../../tools/webshot/fixture/launch-default
 import snapshotJson from "../../../../tools/webshot/fixture/snapshot.json";
 import turnsJson from "../../../../tools/webshot/fixture/turns.json";
 
-const RELATIVE = /^now(?:([+-])(\S+))?$/;
+const RELATIVE = /^now([+-])(\S+)$/;
 const DURATION = /^(?:\d+(?:\.\d+)?(?:ms|h|m|s))+$/;
 const PART = /(\d+(?:\.\d+)?)(ms|h|m|s)/g;
 const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
@@ -36,17 +36,15 @@ function durationMs(text: string): number {
   return total;
 }
 
-/** Replaces every string of the form now[+-duration] in value with the RFC 3339 time it names. */
+/**
+ * Replaces every string of the form now+duration or now-duration in value with the RFC 3339 time
+ * it names. A bare "now" is left alone: it is a contract value (a flow stage's state), not a time.
+ */
 export function fillTimes(value: unknown, now: number): unknown {
   if (typeof value === "string") {
     const m = value.match(RELATIVE);
     if (m === null) return value;
-    const sign = m[1];
-    const span = m[2];
-    const at =
-      sign === undefined || span === undefined
-        ? now
-        : now + (sign === "-" ? -1 : 1) * durationMs(span);
+    const at = now + (m[1] === "-" ? -1 : 1) * durationMs(m[2] ?? "");
     return new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z");
   }
   if (Array.isArray(value)) return (value as unknown[]).map((v) => fillTimes(v, now));

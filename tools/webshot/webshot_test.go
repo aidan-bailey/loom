@@ -160,7 +160,7 @@ func TestFillTimes_CountsFromNow(t *testing.T) {
 	}, now)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{
-		"a": "2026-11-03T10:00:00Z", "b": []any{"2026-11-03T09:58:00Z", "2026-11-03T11:40:00Z"}, "c": "nowhere", "d": 3.0,
+		"a": "now", "b": []any{"2026-11-03T09:58:00Z", "2026-11-03T11:40:00Z"}, "c": "nowhere", "d": 3.0,
 	}, v)
 	_, err = fillTimes("now-2x", now)
 	assert.Error(t, err, "a duration that does not parse fails, never passes through")

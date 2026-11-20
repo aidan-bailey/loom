@@ -279,8 +279,8 @@ describe("the typed fixtures", () => {
 describe("fillTimes", () => {
   const now = Date.parse("2026-11-18T12:00:00Z");
 
-  it("fills now, and now plus or minus a duration, as RFC 3339", () => {
-    expect(fillTimes("now", now)).toBe("2026-11-18T12:00:00Z");
+  it("fills now plus or minus a duration as RFC 3339, and leaves a bare now alone", () => {
+    expect(fillTimes("now", now)).toBe("now");
     expect(fillTimes("now-2m10s", now)).toBe("2026-11-18T11:57:50Z");
     expect(fillTimes("now+1h40m", now)).toBe("2026-11-18T13:40:00Z");
     expect(fillTimes("now-72h", now)).toBe("2026-11-15T12:00:00Z");
@@ -461,7 +461,7 @@ describe("the part 3 loaders", () => {
 
   it("the loaders fill every relative time and return a fresh copy", () => {
     for (const value of [fixtureFlow(), fixtureFlows()]) {
-      expect(JSON.stringify(value)).not.toContain('"now');
+      expect(JSON.stringify(value)).not.toMatch(/"now[+-]/);
     }
     expect(fixtureFlow().start).toBe("2026-11-18T10:48:00Z");
     const board = fixtureFlow();
