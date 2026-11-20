@@ -264,13 +264,15 @@ export function Info({ session }: { session: Session }): ReactElement {
   }, [timing]);
   const now = clock();
   return (
-    <div className="flex flex-col gap-4 px-4 pb-6">
+    <div className="flex flex-col">
       <SubLine session={session} />
-      <Tiles session={session} now={now} />
-      <Agents session={session} />
-      <Jobs session={session} now={now} />
-      <Actions session={session} />
-      <ReplyBox session={session} />
+      <div className="flex flex-col gap-4 px-4 pb-6">
+        <Tiles session={session} now={now} />
+        <Agents session={session} />
+        <Jobs session={session} now={now} />
+        <Actions session={session} />
+        <ReplyBox session={session} />
+      </div>
     </div>
   );
 }
