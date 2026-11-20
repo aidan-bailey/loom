@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/aidan-bailey/loom/core"
@@ -66,11 +67,7 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 		"flow-doc.json":        &flowDocJSON{},
 	} {
 		t.Run(name, func(t *testing.T) {
-			raw, err := os.ReadFile(filepath.Join(dir, name))
-			require.NoError(t, err)
-			dec := json.NewDecoder(bytes.NewReader(raw))
-			dec.DisallowUnknownFields()
-			require.NoError(t, dec.Decode(into))
+			readFixture(t, name, into)
 		})
 	}
 	page, err := os.ReadFile(filepath.Join(dir, "mockup.html"))
@@ -146,10 +143,11 @@ func TestWebshotFixture_TheMarkdownTreeIsWhatBuildTreeMakes(t *testing.T) {
 func TestWebshotFixture_TheDiffsFilesAreOfStatusesAndOmissionsTheLayerSends(t *testing.T) {
 	var patch patchJSON
 	readFixture(t, "diff.json", &patch)
+	u := unions()
 	deleted, lines := false, false
 	for _, f := range patch.Files {
-		require.Contains(t, []string{"A", "M", "D", "R", "C"}, string(f.Status), f.Path)
-		require.Contains(t, []string{"", "lines", "budget"}, string(f.Omitted), f.Path)
+		require.Contains(t, u[reflect.TypeFor[fileStatus]()].values, string(f.Status), f.Path)
+		require.Contains(t, u[reflect.TypeFor[fileOmitted]()].values, string(f.Omitted), f.Path)
 		deleted = deleted || f.Status == "D"
 		lines = lines || f.Omitted == "lines"
 	}
