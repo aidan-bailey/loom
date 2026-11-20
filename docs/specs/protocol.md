@@ -614,7 +614,7 @@ Result: `{}`
 
 ### CloseThread (request)
 
-Params: `{"thread":0,"req":0}`
+Params: `{"thread":0,"reason":"","req":0}`
 
 Result: `{}`
 

@@ -353,7 +353,7 @@ func newFeedbackCloseCmd() *cobra.Command {
 			}
 			loomErrors(c)
 			return withDaemon(c, func(d *client) error {
-				d.CloseThread(t, feedbackReq)
+				d.CloseThread(t, "", feedbackReq)
 				r, err := d.awaitReply(feedbackReq)
 				switch {
 				case err != nil:

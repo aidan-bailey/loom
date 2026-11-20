@@ -871,6 +871,7 @@ type FileFeedbackResult struct {
 // CloseThreadParams are CloseThread's parameters on the wire.
 type CloseThreadParams struct {
 	Thread feedback.ThreadID `json:"thread"`
+	Reason string            `json:"reason"`
 	Req    core.ReqID        `json:"req"`
 }
 
@@ -1706,7 +1707,7 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
-		b.CloseThread(p.Thread, p.Req)
+		b.CloseThread(p.Thread, p.Reason, p.Req)
 		return CloseThreadResult{}, nil, true
 	case "FixThread":
 		var p FixThreadParams
@@ -2296,9 +2297,9 @@ func (c *Client) FileFeedback(note core.FeedbackNote, req core.ReqID) {
 }
 
 // CloseThread is core.Core's CloseThread (request).
-func (c *Client) CloseThread(thread feedback.ThreadID, req core.ReqID) {
+func (c *Client) CloseThread(thread feedback.ThreadID, reason string, req core.ReqID) {
 	var r CloseThreadResult
-	c.noteRefused(c.requestNoErr("CloseThread", CloseThreadParams{Thread: thread, Req: req}, &r), req)
+	c.noteRefused(c.requestNoErr("CloseThread", CloseThreadParams{Thread: thread, Reason: reason, Req: req}, &r), req)
 }
 
 // FixThread is core.Core's FixThread (request).

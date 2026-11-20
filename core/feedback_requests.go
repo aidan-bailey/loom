@@ -67,16 +67,18 @@ func (m *Model) FileFeedback(note FeedbackNote, req ReqID) {
 	m.maybeGroupFeedback()
 }
 
-// CloseThread closes thread t. An unknown or closed thread, or a failed
-// save, is refused and changes nothing.
-func (m *Model) CloseThread(t feedback.ThreadID, req ReqID) {
+// CloseThread closes thread t, storing reason with the closure (Inbox.Close
+// bounds it). An unknown or closed thread, a reason that is not one line of
+// at most feedback.MaxCloseReason bytes, or a failed save, is refused and
+// changes nothing.
+func (m *Model) CloseThread(t feedback.ThreadID, reason string, req ReqID) {
 	f := m.feedback
 	if f.dir == "" || f.loadErr != nil {
 		m.refuse(req, 0, errors.New("the feedback inbox is not loaded"))
 		return
 	}
 	prev := f.inbox.Clone()
-	if err := f.inbox.Close(t, "", time.Now()); err != nil {
+	if err := f.inbox.Close(t, reason, time.Now()); err != nil {
 		m.refuse(req, 0, err)
 		return
 	}

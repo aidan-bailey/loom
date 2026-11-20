@@ -46,9 +46,10 @@ func feedbackHome(t *testing.T, v core.FeedbackView) *home {
 // feedbackWatch records the feedback requests the TUI sends.
 type feedbackWatch struct {
 	core.Core
-	fixes  []feedback.ThreadID
-	closes []feedback.ThreadID
-	reqs   []core.ReqID
+	fixes   []feedback.ThreadID
+	closes  []feedback.ThreadID
+	reasons []string
+	reqs    []core.ReqID
 }
 
 func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws, model, effort string, req core.ReqID) {
@@ -56,8 +57,9 @@ func (w *feedbackWatch) FixThread(t feedback.ThreadID, ws, model, effort string,
 	w.reqs = append(w.reqs, req)
 }
 
-func (w *feedbackWatch) CloseThread(t feedback.ThreadID, req core.ReqID) {
+func (w *feedbackWatch) CloseThread(t feedback.ThreadID, reason string, req core.ReqID) {
 	w.closes = append(w.closes, t)
+	w.reasons = append(w.reasons, reason)
 	w.reqs = append(w.reqs, req)
 }
 
@@ -133,6 +135,7 @@ func TestFeedbackView_CloseAsksThenSends(t *testing.T) {
 	require.Equal(t, stateConfirm, m.state)
 	_, _ = handleStateConfirmKey(m, keyFor(t, "y"))
 	assert.Equal(t, []feedback.ThreadID{1}, w.closes)
+	assert.Equal(t, []string{""}, w.reasons, "the view closes with no reason")
 	_ = m.applyCoreEvent(core.Reply{Req: w.reqs[0], Err: core.ErrRefused})
 	assert.NotEmpty(t, m.errBox.String(), "a refusal reaches the user")
 }

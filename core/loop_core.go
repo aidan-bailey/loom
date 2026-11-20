@@ -277,8 +277,8 @@ func (l *Loop) FileFeedback(note FeedbackNote, req ReqID) {
 }
 
 // CloseThread runs Model.CloseThread on the loop.
-func (l *Loop) CloseThread(thread feedback.ThreadID, req ReqID) {
-	l.do(func(m *Model) { m.CloseThread(thread, req) })
+func (l *Loop) CloseThread(thread feedback.ThreadID, reason string, req ReqID) {
+	l.do(func(m *Model) { m.CloseThread(thread, reason, req) })
 }
 
 // FixThread runs Model.FixThread on the loop.

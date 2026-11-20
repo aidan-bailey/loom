@@ -218,7 +218,7 @@ func TestGroup_AClosedThreadAnswerOpensANewThread(t *testing.T) {
 
 	fbGrouper(t, m, `{"thread":1,"title":"","why":"same"}`)
 	fbFile(t, m, "second") // its call is queued, not run
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	fbRunAll(t, m)
 	in := m.Feedback().Inbox
 	require.Len(t, in.Threads, 2, "the thread closed between the request and the answer")
@@ -329,7 +329,7 @@ func TestFixThread_Refusals(t *testing.T) {
 	m.Drain()
 	refused("a live fix session", 1, "a")
 
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	m.Drain()
 	refused("a closed thread", 1, "a")
 }
@@ -393,7 +393,7 @@ func TestFixTitle_FitsCoresLimit(t *testing.T) {
 func TestCloseThread(t *testing.T) {
 	m, dir := fbModel(t, "")
 	fbThread(t, m, "t")
-	m.CloseThread(1, 6)
+	m.CloseThread(1, "", 6)
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
 	require.NoError(t, rs[0].Err)
@@ -401,11 +401,51 @@ func TestCloseThread(t *testing.T) {
 	assert.Equal(t, feedback.Closed, disk.Threads[0].Status, "saved")
 
 	for name, thread := range map[string]feedback.ThreadID{"again": 1, "unknown": 4} {
-		m.CloseThread(thread, 6)
+		m.CloseThread(thread, "", 6)
 		rs := replies(m.Drain())
 		require.Len(t, rs, 1, name)
 		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
 	}
+}
+
+func TestCloseThread_StoresTheReason(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	before := time.Now()
+	m.CloseThread(1, "issue #57 closed (completed)", 6)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	require.NoError(t, rs[0].Err)
+
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Closed, th.Status)
+	assert.Equal(t, "issue #57 closed (completed)", th.Closed.Reason)
+	assert.WithinDuration(t, before, th.Closed.At, 5*time.Second)
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, "issue #57 closed (completed)", disk.Threads[0].Closed.Reason, "saved")
+}
+
+func TestCloseThread_ABadReasonIsRefusedAndChangesNothing(t *testing.T) {
+	m, dir := fbModel(t, "")
+	fbThread(t, m, "t")
+	rev := m.feedback.rev
+	for name, tc := range map[string]struct{ reason, want string }{
+		"two lines": {"one\ntwo", "the close reason must be one line"},
+		"too long":  {strings.Repeat("x", feedback.MaxCloseReason+1), "at most 300"},
+	} {
+		m.CloseThread(1, tc.reason, 6)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1, name)
+		assert.ErrorIs(t, rs[0].Err, ErrRefused, name)
+		assert.ErrorContains(t, rs[0].Err, tc.want, name)
+	}
+	th, _ := m.Feedback().Inbox.Thread(1)
+	assert.Equal(t, feedback.Open, th.Status, "nothing closed")
+	assert.Equal(t, rev, m.feedback.rev, "no revision bump")
+	disk, err := feedback.Load(filepath.Join(dir, feedbackDirName))
+	require.NoError(t, err)
+	assert.Equal(t, feedback.Open, disk.Threads[0].Status, "nothing saved")
 }
 
 func TestFeedback_PublishesOnChange(t *testing.T) {

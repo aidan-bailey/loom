@@ -167,7 +167,7 @@ func (m *home) askCloseThread() tea.Cmd {
 	}
 	t := r.Thread
 	return m.confirmTask(fmt.Sprintf("Close thread %d (%s)?", t, ui.CleanText(r.Title)), overlay.ConfirmationTask{Sync: func() {
-		m.core.CloseThread(t, m.opReq("close", fmt.Sprintf("thread %d", t)))
+		m.core.CloseThread(t, "", m.opReq("close", fmt.Sprintf("thread %d", t)))
 	}})
 }
 
