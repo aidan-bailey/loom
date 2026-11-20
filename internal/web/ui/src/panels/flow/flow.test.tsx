@@ -339,6 +339,17 @@ describe("FlowBody boxes", () => {
     expect(items[4]?.tagName).toBe("SPAN");
   });
 
+  it("the stage strip: draws the five stages in order whatever order the board lists them", () => {
+    show({ flow: board((f) => f.stages?.reverse()) });
+    expect(stageLinks().map((el) => el.textContent)).toEqual([
+      "design ✓",
+      "spec ✓",
+      "draft ✓",
+      "run 2/5",
+      "record",
+    ]);
+  });
+
   it("the stage strip: a stage the board lacks is to come, and an unknown state draws its raw state in neutral styling", () => {
     const view = show({ flow: board((f) => (f.stages = null)) });
     const items = stageLinks();
