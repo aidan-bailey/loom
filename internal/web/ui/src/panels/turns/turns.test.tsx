@@ -8,12 +8,16 @@ import { queryClient } from "@/api/queries";
 import { keptScroll } from "@/api/reads";
 import { api } from "@/api/request";
 import "@/commands";
+import { definePanel, panelFor, type PanelProps } from "@/app/panels";
 import { deferred, makeSession, resetFleet, seed } from "@/commands/testkit";
 import { fixtureTurns } from "@/fixtures";
 import { readSeen } from "@/fleet/seen";
+import { FactStrip } from "@/session/FactStrip";
+import { SessionHead } from "@/session/SessionHead";
 import { useSession } from "@/store/fleet";
 
 import { Conversation } from "./Conversation";
+import "./index";
 
 const NOW = Date.parse("2026-11-19T12:00:00Z");
 
@@ -439,5 +443,66 @@ describe("Conversation's seen time", () => {
     vi.setSystemTime(NOW + 60_000);
     view.unmount();
     expect(readSeen()["1"]).toBe(NOW + 60_000);
+  });
+});
+
+describe("the turns panel", () => {
+  const props: PanelProps = { sessionId: 1, params: { id: "1" }, search: {} };
+
+  function showBody() {
+    const panel = panelFor("turns");
+    if (panel === undefined) throw new Error("the turns panel is not registered");
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <panel.Body {...props} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("is registered as the contract says", () => {
+    const panel = panelFor("turns");
+    expect(panel?.id).toBe("turns");
+    expect(panel?.tab).toEqual({ order: 1, label: "conversation" });
+    expect(panel?.Head).toBe(SessionHead);
+    expect(panel?.Strip).toBe(FactStrip);
+    expect(panel?.title(props)).toBe("Conversation");
+    expect(panel?.appliesTo?.(makeSession({ claude: true }))).toBe(true);
+    expect(panel?.appliesTo?.(makeSession({ claude: false }))).toBe(false);
+  });
+
+  it("draws This session is gone. for a session the snapshot does not list", () => {
+    seed([makeSession({ id: 2 })]);
+    showBody();
+    expect(screen.getByText("This session is gone.")).toBeTruthy();
+    expect(turnsRead).not.toHaveBeenCalled();
+  });
+
+  it("draws the conversation of a Claude session", async () => {
+    seed([sessionNow()]);
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    showBody();
+    await settle();
+    expect(screen.getByText("prompt 2")).toBeTruthy();
+    expect(turnsRead).toHaveBeenCalledTimes(1);
+    expect(turnsRead).toHaveBeenCalledWith(1, {});
+  });
+
+  it("draws no conversation and reads no turns for a session that does not run Claude, and says so while info is not registered", async () => {
+    seed([makeSession({ id: 1, claude: false })]);
+    showBody();
+    await settle();
+    expect(screen.getByText("This session is gone.")).toBeTruthy();
+    expect(turnsRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Reply" })).toBeNull();
+  });
+
+  it("draws the info panel's body for a session that does not run Claude", async () => {
+    definePanel({ id: "info", title: () => "Info", Body: () => <p>stub info</p> });
+    seed([makeSession({ id: 1, claude: false })]);
+    showBody();
+    await settle();
+    expect(screen.getByText("stub info")).toBeTruthy();
+    expect(turnsRead).not.toHaveBeenCalled();
+    expect(screen.queryByText("This session is gone.")).toBeNull();
   });
 });
