@@ -129,8 +129,8 @@ function FileFold(props: {
       <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2 text-left">
         <span className={cn("font-mono font-bold", statusTone(file.status))}>{file.status}</span>
         <span className="min-w-0 flex-1">
-          <span className="font-mono">{name}</span>{" "}
-          <span className="truncate text-xs text-muted-foreground">
+          <span className="block truncate font-mono">{name}</span>
+          <span className="block truncate text-xs text-muted-foreground">
             {copied ? `from ${file.old_path}` : dir}
           </span>
         </span>
