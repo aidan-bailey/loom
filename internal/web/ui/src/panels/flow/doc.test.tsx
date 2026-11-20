@@ -1,6 +1,6 @@
 import { render, screen, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import type { FlowDoc, MdNode, Session } from "@/api/gen";
 import { useFlowDoc } from "@/api/reads";
@@ -214,5 +214,136 @@ describe("FlowDocBody", () => {
     show({ doc, error: "loom answered 500" });
     expect(screen.getByRole("alert")).toHaveTextContent("loom answered 500");
     expect(screen.getByText(doc.path)).toBeInTheDocument();
+  });
+});
+
+describe("the jump", () => {
+  let scrollTo: MockInstance<typeof window.scrollTo>;
+  let headerEl: HTMLElement;
+  let headingTop: (index: number) => number;
+
+  beforeEach(() => {
+    scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    Object.defineProperty(window, "scrollY", { value: 100, configurable: true });
+    headerEl = document.createElement("header");
+    headerEl.setAttribute("data-slot", "header");
+    document.body.appendChild(headerEl);
+    headingTop = (index) => 1000 + 100 * index;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const rect = { top: 0, height: 0 };
+      if (this === headerEl) rect.height = 120;
+      const headings = Array.from(document.querySelectorAll("h3, h4"));
+      const at = headings.indexOf(this);
+      if (at >= 0) rect.top = headingTop(at);
+      return rect as DOMRect;
+    });
+  });
+
+  afterEach(() => {
+    headerEl.remove();
+    Reflect.deleteProperty(window, "scrollY");
+  });
+
+  it("at §2 lands the second numbered section just below the header", () => {
+    show({ search: { at: "§2" } });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 4 + 100 - 120 });
+  });
+
+  it("a section number is not a prefix of another", () => {
+    const view = show({ search: { at: "§1" } });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 3 + 100 - 120 });
+    view.unmount();
+    scrollTo.mockClear();
+
+    show({
+      doc: docOf(heading("10. Ten", 3, 5), heading("1. One", 3, 9), heading("Last", 3, 12)),
+      search: { at: "§1" },
+    });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 1 + 100 - 120 });
+  });
+
+  it("at a source line lands the last heading at or above it", () => {
+    const cases: [string, number][] = [
+      ["130", 4],
+      ["62", 3],
+      ["5", 0],
+      ["190", 5],
+    ];
+    for (const [at, index] of cases) {
+      scrollTo.mockClear();
+      const view = show({ search: { at } });
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * index + 100 - 120 });
+      view.unmount();
+    }
+  });
+
+  it("an at that matches no heading leaves the page where it is", () => {
+    for (const at of ["§9", "abc", "0", ""]) {
+      const view = show({ search: { at } });
+      view.unmount();
+    }
+    const bare = show({
+      doc: docOf({ t: "p", c: [{ t: "text", v: "no headings" }] }),
+      search: { at: "§1" },
+    });
+    bare.unmount();
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("the jump runs once per document and at, and again for a new at", () => {
+    const view = show({ search: { at: "§2" } });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    const draw = (at: string) => (
+      <FlowDocBody sessionId={6} params={{ id: "6", doc: "spec" }} search={{ at }} />
+    );
+    view.rerender(draw("§2"));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    view.rerender(draw("§3"));
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+  });
+
+  it("a heading never lands above the top of the page", () => {
+    Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+    headingTop = () => 10;
+    show({ search: { at: "§2" } });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+  });
+
+  it("the sections index's buttons jump to their own heading", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const first = show({});
+    expect(scrollTo).not.toHaveBeenCalled();
+    await user.click(screen.getByText("sections"));
+    await user.click(screen.getByRole("button", { name: "3. Costs" }));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+    await user.click(screen.getByRole("button", { name: "Problem" }));
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 1 + 100 - 120 });
+    first.unmount();
+    scrollTo.mockClear();
+
+    const at = show({ search: { at: "§2" } });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    scrollTo.mockClear();
+    await user.click(screen.getByText("sections"));
+    await user.click(screen.getByRole("button", { name: "3. Costs" }));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+    at.unmount();
+    scrollTo.mockClear();
+
+    // A level-4 heading shifts the position among the buttons, not among the headings.
+    show({
+      doc: docOf(heading("A", 1, 1), heading("B", 2, 2), heading("C", 4, 3), heading("D", 3, 4)),
+    });
+    await user.click(screen.getByText("sections"));
+    await user.click(screen.getByRole("button", { name: "D" }));
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 3 + 100 - 120 });
   });
 });

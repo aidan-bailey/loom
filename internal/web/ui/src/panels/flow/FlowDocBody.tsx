@@ -1,7 +1,7 @@
 // The flow document view (a chunk of its own): one flow document over useFlowDoc, a port of the
 // classic document view. It draws the gone, empty, loading and error states, the way back to the
 // board, the document's name and path, an index of its sections, its text and the cut note.
-import { useMemo, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 
 import type { MdNode } from "@/api/gen";
 import { useFlowDoc } from "@/api/reads";
@@ -51,6 +51,28 @@ function headings(blocks: (MdNode | null)[]): Heading[] {
   return found;
 }
 
+// targetOf is the index among all the headings of the one `at` names, -1 for none: a section
+// ("§2", the first heading numbered 2) or a source line (the last heading at or above it).
+function targetOf(all: Heading[], at: string): number {
+  if (at === "") return -1;
+  const section = /^§\s*([\d.]+)/.exec(at);
+  if (section !== null) {
+    const n = (section[1] ?? "").replace(/\.$/, "");
+    return all.findIndex((h) => {
+      const text = h.text.trim();
+      return (
+        text === n ||
+        text.startsWith(`${n}.`) ||
+        text.startsWith(`${n} `) ||
+        text.startsWith(`§${n}`)
+      );
+    });
+  }
+  const line = Number(at);
+  if (!Number.isFinite(line) || line <= 0) return -1;
+  return all.findLastIndex((h) => h.line !== 0 && h.line <= line);
+}
+
 // Indent is a heading's whole class string by its level.
 const INDENT: Record<number, string> = { 1: "pl-0", 2: "pl-3", 3: "pl-6" };
 
@@ -95,6 +117,25 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
   const name = props.params.doc ?? "";
   const { doc, error } = useFlowDoc({ session: props.sessionId ?? 0, plan, doc: name });
   const all = useMemo(() => headings(doc?.blocks ?? []), [doc]);
+  const body = useRef<HTMLDivElement>(null);
+  const at = props.search.at ?? "";
+
+  // jump scrolls the index'th heading just below the pinned header: Markdown draws every heading
+  // as an h3 or an h4, in document order.
+  const jump = useCallback((index: number): void => {
+    const el = body.current?.querySelectorAll("h3, h4")[index];
+    if (el === undefined) return;
+    const header = document.querySelector('[data-slot="header"]');
+    const below = header?.getBoundingClientRect().height ?? 0;
+    window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - below) });
+  }, []);
+
+  // A held document opens at `at`, once for each document and `at`.
+  useEffect(() => {
+    if (doc === undefined) return;
+    const target = targetOf(all, at);
+    if (target >= 0) jump(target);
+  }, [doc, all, at, jump]);
 
   if (session === undefined) return <NoSession />;
   if (plan === "") {
@@ -104,10 +145,6 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
       </p>
     );
   }
-  // jump is the sections index's jump; the next task replaces this no-op.
-  const jump = (index: number): void => {
-    void index;
-  };
   return (
     <section className="flex flex-col gap-3 px-4 pb-6">
       <p className="flex items-center gap-2">
@@ -133,7 +170,7 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
         <>
           <p className="font-mono text-xs break-all text-faint">{doc.path}</p>
           <Sections all={all} jump={jump} />
-          <div>
+          <div ref={body}>
             <Markdown blocks={doc.blocks ?? []} />
           </div>
           {doc.cut && <p className="text-xs text-faint">The document was cut short.</p>}
