@@ -74,7 +74,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
         )}
       </div>
       <Frame session={session} again={again} />
-      <div className="px-4 py-2">
+      <div className="px-4 py-2 empty:hidden">
         <ReplyBox session={session} />
       </div>
     </section>
