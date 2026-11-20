@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -172,6 +174,9 @@ func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, no
 			return err
 		}
 	}
+	for _, t := range slices.Sorted(maps.Keys(v.IssueErrs)) {
+		fmt.Fprintf(w, "thread %d: issue check failed: %s\n", t, oneLineFields(v.IssueErrs[t]))
+	}
 	if v.Grouper != "" {
 		fmt.Fprintf(w, "grouper: %s\n", v.Grouper)
 	}
@@ -179,6 +184,11 @@ func writeFeedbackList(w io.Writer, v core.FeedbackView, rows []feedback.Row, no
 		fmt.Fprintf(w, "inbox: %s\n", v.Err)
 	}
 	return nil
+}
+
+// oneLineFields is s on one line, its runs of white space single spaces.
+func oneLineFields(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // parseRowID reads "3" as thread 3 and "n12" as note 12.
@@ -221,7 +231,8 @@ func newFeedbackShowCmd() *cobra.Command {
 			}
 			loomErrors(c)
 			return withDaemon(c, func(d *client) error {
-				in := d.Feedback().Inbox
+				v := d.Feedback()
+				in := v.Inbox
 				out := c.OutOrStdout()
 				if n != 0 {
 					note, ok := in.Note(n)
@@ -235,19 +246,44 @@ func newFeedbackShowCmd() *cobra.Command {
 				if !ok {
 					return fmt.Errorf("thread %d doesn't exist", t)
 				}
-				fmt.Fprintf(out, "thread %d (%s, %s, %d sessions): %s\n", th.ID, th.Kind, th.Status, in.Sessions(th), th.Title)
-				if th.Fix.ID != 0 {
-					fmt.Fprintf(out, "fix session: %s in %s, started %s\n", th.Fix.Title, th.Fix.Workspace, th.Fix.At.Local().Format("2006-01-02 15:04"))
-				}
-				for _, id := range th.Notes {
-					if note, ok := in.Note(id); ok {
-						fmt.Fprintln(out)
-						writeNote(out, note)
-					}
-				}
+				writeThread(out, v, th)
 				return nil
 			})
 		},
+	}
+}
+
+// writeThread prints a thread: its header, its fix session, its issue link,
+// its closure and the issue poll's last error, each when it applies, then
+// every note.
+func writeThread(w io.Writer, v core.FeedbackView, th feedback.Thread) {
+	in := v.Inbox
+	fmt.Fprintf(w, "thread %d (%s, %s, %d sessions): %s\n", th.ID, th.Kind, th.Status, in.Sessions(th), th.Title)
+	if th.Fix.ID != 0 {
+		fmt.Fprintf(w, "fix session: %s in %s, started %s\n", th.Fix.Title, th.Fix.Workspace, th.Fix.At.Local().Format("2006-01-02 15:04"))
+	}
+	if th.Issue.Number != 0 {
+		fmt.Fprintf(w, "issue: %s, posted through n%d", th.Issue.URL, th.Issue.Posted)
+		if k := th.NewNotes(); k > 0 {
+			fmt.Fprintf(w, ", %d new", k)
+		}
+		fmt.Fprintln(w)
+	}
+	if th.Status == feedback.Closed {
+		fmt.Fprintf(w, "closed: %s", th.Closed.At.Local().Format("2006-01-02 15:04"))
+		if th.Closed.Reason != "" {
+			fmt.Fprintf(w, ": %s", th.Closed.Reason)
+		}
+		fmt.Fprintln(w)
+	}
+	if e := v.IssueErrs[th.ID]; e != "" {
+		fmt.Fprintf(w, "issue check failed: %s\n", oneLineFields(e))
+	}
+	for _, id := range th.Notes {
+		if note, ok := in.Note(id); ok {
+			fmt.Fprintln(w)
+			writeNote(w, note)
+		}
 	}
 }
 
