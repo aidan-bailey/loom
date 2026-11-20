@@ -1,6 +1,6 @@
 ---
 name: plan-reviewer
-description: Reviews one story's plan text in /flow:draft before the plan is committed (its tests and Fails without lines, copies of code that exists, the repo's rules) and escalates tasks that invent risky logic to flow:risk-reviewer; also re-checks a fixed story's diff. Read-only. Sonnet at high by the owner's instruction (2026-11-13). Pins set by the owner; change only on their instruction.
+description: Not dispatched since 2026-11-20 (the owner, from that day's retro): flow:risk-reviewer alone is /flow:draft's plan review. It reviewed one story's plan text (its tests and Fails without lines, copies of code that exists, the repo's rules) and escalated risky tasks. Read-only. Sonnet at high by the owner's instruction (2026-11-13). Pins set by the owner; change only on their instruction.
 model: sonnet
 effort: high
 tools: Bash, Read, SendMessage

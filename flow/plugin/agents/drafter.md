@@ -265,10 +265,11 @@ atomicity; concurrency (locks, tasks, channels, ordering); calls to outside
 services (timeouts, retries, limits); bounds (caps, overflow, pagination);
 or auth and tenancy, as `- Task <x.y>: <what it invents, in one clause>`,
 or the single line `none`. A task that only moves code, renames, rewires
-imports, or calls existing code for these is not on it. The plan review
-reads only the stories whose file lists a task, or whose code holds a
-landmine marker; the run reviews every other story in full. When you are
-unsure whether a task belongs, list it. A fix job rewrites the file only
+imports, or calls existing code for these is not on it. The plan review,
+`flow:risk-reviewer`, reads only the tasks your file lists and those whose
+code holds a landmine marker: nothing else reviews your story's code before
+the run, which reviews every story in full. When you are unsure whether a
+task belongs, list it. A fix job rewrites the file only
 when its fixes add or remove such a task.
 
 On a fix job, fix each finding you were given, and what your fixes make false
