@@ -3,6 +3,7 @@ package feedback
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -41,4 +42,36 @@ func IssueURL(repo string, number int) string {
 // session for a published thread: the issue watcher fixes it.
 func PublishedFixError(t Thread) error {
 	return fmt.Errorf("thread %d is published as %s#%d; the issue watcher fixes it", t.ID, t.Issue.Repo, t.Issue.Number)
+}
+
+// NewNotes is how many of a published thread's notes joined after
+// Issue.Posted, in Thread.Notes order; 0 for a thread that is not published.
+func (t Thread) NewNotes() int {
+	if t.Status != Published {
+		return 0
+	}
+	return len(t.Notes) - 1 - slices.Index(t.Notes, t.Issue.Posted)
+}
+
+// StatusText is a row's status as both clients show it: a note's grouping;
+// a thread's `open`, `fixing <fix title>` (bare `fixing` with no title),
+// `published #<N>` plus ` +<k> new` when k > 0, or `closed`.
+func StatusText(r Row) string {
+	if r.Thread == 0 {
+		return string(r.Grouping)
+	}
+	switch r.Status {
+	case Fixing:
+		if r.Fix.Title != "" {
+			return "fixing " + r.Fix.Title
+		}
+		return "fixing"
+	case Published:
+		s := fmt.Sprintf("published #%d", r.Issue.Number)
+		if r.New > 0 {
+			s += fmt.Sprintf(" +%d new", r.New)
+		}
+		return s
+	}
+	return string(r.Status)
 }
