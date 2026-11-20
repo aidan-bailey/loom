@@ -405,14 +405,14 @@ The work view covers the whole host, across every workspace. Mouse input is drop
 
 ### Feedback View (after pressing `F`)
 
-The feedback view covers the whole host. Its rows are the threads that aren't closed and the notes no thread holds yet (`n12`), most-reported first; the header says when the grouper is off and why. Mouse input is dropped, and offline `x` and `c` are refused.
+The feedback view covers the whole host. Its rows are the threads that aren't closed and the notes no thread holds yet (`n12`), most-reported first. A row's status reads `open`, `fixing`, or `published #N` (plus ` +k new` for notes that joined after the issue was posted). Published threads stay listed, and stay counted in the header's `Feedback · N open` and the status line's `F feedback N`, until their issue closes: a published thread is open work. The header says when the grouper is off and why. Mouse input is dropped, and offline `x` and `c` are refused.
 
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Move the selection |
-| `Enter` | Show or hide the selected row's notes: who filed each, on what model and effort, the loom build, its title and its text's first lines |
-| `x` | Start a fix session for the selected thread in `feedback.workspace`, after a confirmation; the view leaves for focus, where the new session attaches |
-| `c` | Close the selected thread, after a confirmation |
+| `Enter` | Show or hide the selected row's notes: who filed each, on what model and effort, the loom build, its title and its text's first lines. On a published row it also shows the issue URL, how far the issue is posted and the last failed issue check |
+| `x` | Start a fix session for the selected thread in `feedback.workspace`, after a confirmation; the view leaves for focus, where the new session attaches. Refused on a published thread, which the issue watcher fixes |
+| `c` | Close the selected thread with no reason, after a confirmation |
 | `F` / `Esc` | Return to the mode the view came from |
 
 ### Name Entry Mode (after pressing `n` or `N`)

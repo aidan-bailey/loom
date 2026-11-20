@@ -139,12 +139,21 @@ func (m *home) selectedThread() (feedback.Row, bool) {
 }
 
 // askFixThread is x: a confirm for starting the selected thread's fix
-// session in feedback.workspace. The thread is taken now, by its ID; the
+// session in feedback.workspace, refused for a published thread (the issue
+// watcher fixes it). The thread is taken now, by its ID; the
 // model re-validates it. On yes the view leaves for focus first, so the
 // start's inline attach lands there.
 func (m *home) askFixThread() tea.Cmd {
 	r, ok := m.selectedThread()
 	if !ok {
+		return nil
+	}
+	th, found := m.feedback.Inbox.Thread(r.Thread)
+	if !found {
+		return nil
+	}
+	if th.Status == feedback.Published {
+		m.errBox.SetInfo(feedback.PublishedFixError(th).Error())
 		return nil
 	}
 	ws := m.feedback.Workspace
