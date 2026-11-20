@@ -146,7 +146,11 @@ class Tree:
         if path not in self._cache:
             try:
                 if self.rev:
-                    text = self._git("show", f"{self.rev}:{path}")
+                    # Bytes, decoded as the working tree's reader does: a binary file (an image a
+                    # generated glob covers) is not UTF-8, and a strict decode would end the run.
+                    text = subprocess.run(
+                        ["git", "-C", str(self.root), "show", f"{self.rev}:{path}"], capture_output=True, check=True
+                    ).stdout.decode(errors="replace")
                 else:
                     text = (self.root / path).read_text(errors="replace")
                 self._cache[path] = text.splitlines()
