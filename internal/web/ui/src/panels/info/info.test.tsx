@@ -1,14 +1,18 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Job, Session, Snapshot } from "@/api/gen";
 import { api } from "@/api/request";
+import { panelFor, type PanelProps } from "@/app/panels";
 import "@/commands";
+import "@/panels";
 import { noticesOk } from "@/commands/testkit";
 import { toastManager } from "@/components/ui/toast";
 import { fixtureSnapshot } from "@/fixtures";
 import { readSeen } from "@/fleet/seen";
+import { SessionHead } from "@/session/SessionHead";
 import { useFleet } from "@/store/fleet";
 
 import { Info } from "./Info";
@@ -378,5 +382,48 @@ describe("Info: the actions, the reply box and the clock", () => {
       vi.advanceTimersByTime(5000);
     });
     expect(screen.getByText("job 214 · exit 0 · 4m ago")).toBeTruthy();
+  });
+});
+
+describe("the info panel", () => {
+  const props = (sessionId: number): PanelProps => ({
+    sessionId,
+    params: { id: String(sessionId) },
+    search: {},
+  });
+  const body = (id: number): ReactElement => {
+    const panel = panelFor("info");
+    if (panel === undefined) throw new Error("the info panel is not registered");
+    return <panel.Body {...props(id)} />;
+  };
+
+  it("is registered as the info tab, with a session head and no strip", () => {
+    const panel = panelFor("info");
+    expect(panel).toBeDefined();
+    expect(panel?.tab).toEqual({ order: 3, label: "info" });
+    expect(panel?.Head).toBe(SessionHead);
+    expect(panel?.Strip).toBeUndefined();
+    expect(panel?.appliesTo).toBeUndefined();
+    expect(panel?.title({ sessionId: 1, params: { id: "1" }, search: {} })).toBe("Info");
+  });
+
+  it("draws the session's info for a session the snapshot lists", () => {
+    show(1);
+    render(body(1));
+    expect(screen.getByRole("heading", { name: "Agents 2" })).toBeTruthy();
+  });
+
+  it("says the session is gone for one the snapshot does not list", () => {
+    show(1);
+    render(body(99));
+    expect(screen.getByRole("status").textContent).toBe("This session is gone.");
+    expect(screen.queryByRole("heading", { name: /Agents/ })).toBeNull();
+  });
+
+  it("works for a session that does not run Claude", () => {
+    show(3);
+    render(body(3));
+    expect(screen.getByText(/working/)).toBeTruthy();
+    expect(screen.queryByText("default")).toBeNull();
   });
 });

@@ -3,3 +3,4 @@
 // A route with no panel registered draws the placeholder.
 import "./fleet";
 import "./turns";
+import "./info";
