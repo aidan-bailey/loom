@@ -169,7 +169,7 @@ func TestFeedback_AnInboxThatFailedToLoadIsLeftAndRefuses(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, dir)
 	fbDir := filepath.Join(dir, feedbackDirName)
 	require.NoError(t, os.MkdirAll(fbDir, 0o700))
-	body := []byte(`{"version": 2}`)
+	body := []byte(`{"version": 3}`)
 	require.NoError(t, os.WriteFile(filepath.Join(fbDir, feedback.StoreFile), body, 0o600))
 	m := NewForTest(Options{})
 	modInst(t, m, "owner")
