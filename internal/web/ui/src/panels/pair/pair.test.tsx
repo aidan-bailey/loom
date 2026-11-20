@@ -164,6 +164,7 @@ describe("Pair", () => {
     await user.click(screen.getByRole("button", { name: "Pair" }));
     const busy = await screen.findByRole<HTMLButtonElement>("button", { name: "Pairing…" });
     expect(busy.disabled).toBe(true);
+    await user.click(firstSlot());
     await user.keyboard("{Enter}");
     expect(pair).toHaveBeenCalledTimes(1);
     await act(async () => {
