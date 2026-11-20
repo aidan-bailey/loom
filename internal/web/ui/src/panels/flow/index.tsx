@@ -1,6 +1,7 @@
-// The flow panel: the last tab (order 5) of a session that has flows, with an amber dot while any of them
-// asks. Its body is a lazy chunk, so a first launch never loads the board. This module imports
-// nothing from ./parts: that file would be pulled out of the lazy chunk into the entry script.
+// The flow panel: the last tab (order 5) of a session that has flows, with an amber dot while any
+// of them asks. Its body is a lazy chunk, so a first launch never loads the board. This module
+// imports nothing from ./parts: that file would be pulled out of the lazy chunk into the entry
+// script.
 import { lazy, type ReactElement } from "react";
 
 import type { Session } from "@/api/gen";
