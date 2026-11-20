@@ -187,18 +187,14 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 }
 
 // checkLazyViews is whether the job and mockup screens are chunks of their own that index.html
-// does not load: one file per name, named by neither its URL nor its file name in the page, and
-// not among the first load's files.
+// does not load: one file per name, whose file name index.html's text (a script, a modulepreload
+// link or anything else) does not hold.
 func checkLazyViews(assets map[string]staticAsset) error {
 	index, ok := assets["/index.html"]
 	if !ok {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	files, err := firstLoadFiles(page)
-	if err != nil {
-		return err
-	}
 	for _, name := range []string{"JobBody", "MockupBody"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
@@ -215,8 +211,8 @@ func checkLazyViews(assets map[string]staticAsset) error {
 			return fmt.Errorf("the bundle has more than one lazy chunk for %s: %s", name, strings.Join(chunks, ", "))
 		}
 		url := chunks[0]
-		if strings.Contains(page, url) || strings.Contains(page, strings.TrimPrefix(url, "/assets/")) || slices.Contains(files, url) {
-			return fmt.Errorf("index.html names the lazy chunk %s: it would load on every launch", url)
+		if strings.Contains(page, strings.TrimPrefix(url, "/assets/")) {
+			return fmt.Errorf("index.html must not name or preload the lazy chunk %s: it would load on every launch", url)
 		}
 	}
 	return nil
