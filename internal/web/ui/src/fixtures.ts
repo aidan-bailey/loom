@@ -1,5 +1,6 @@
 // The canned loom's fixtures (tools/webshot/fixture: the snapshot, the turns, the diff, the job
-// log, a flow's board and document, the host's flows and the launch defaults) for the tests: their relative times ("now-2m", "now+1h40m"; a bare "now" is not one) filled as tools/webshot's
+// log, a flow's board and document, the host's flows and the launch defaults) for the tests: their
+// relative times ("now-2m", "now+1h40m"; a bare "now" is not one) filled as tools/webshot's
 // fillTimes fills them, so the same fixtures feed Vitest and the screenshots.
 import type {
   Flow,
