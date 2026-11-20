@@ -579,6 +579,80 @@ func TestPickScreens(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestScreens_PairIsShotUnpairedAndAddToHomeAsABrowserTab(t *testing.T) {
+	two, err := pickScreens("pair,add-to-home")
+	require.NoError(t, err)
+	assert.Equal(t, []screen{{"pair", "#pair"}, {"add-to-home", ""}}, two)
+	assert.Equal(t, screenMode{unpaired: true}, modeOf(two[0]))
+	assert.Equal(t, screenMode{browserTab: true}, modeOf(two[1]))
+	seen := map[string]bool{}
+	for _, sc := range screens {
+		assert.False(t, seen[sc.name], "the screen name %s is repeated", sc.name)
+		seen[sc.name] = true
+		if sc.name != "pair" && sc.name != "add-to-home" {
+			assert.Equal(t, screenMode{}, modeOf(sc), "%s has a mode", sc.name)
+		}
+	}
+}
+
+func TestCanned_AnUnpairedLoomAnswersEveryAPIRequest401AsAuthedDoes(t *testing.T) {
+	c, srv := cannedForTest(t)
+	code, _ := get(t, srv.URL+"/api/v1/sessions/1/turns")
+	assert.Equal(t, http.StatusOK, code, "the paired loom is as it was")
+
+	c.unpaired = true
+	for _, rq := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/stream"},
+		{http.MethodGet, "/api/v1/sessions/1/turns"},
+		{http.MethodGet, "/api/v1/push-key"},
+		{http.MethodPost, "/api/v1/pair"},
+	} {
+		var res *http.Response
+		var err error
+		if rq.method == http.MethodPost {
+			res, err = http.Post(srv.URL+rq.path, "application/json", strings.NewReader("{}"))
+		} else {
+			res, err = http.Get(srv.URL + rq.path)
+		}
+		require.NoError(t, err, rq.path)
+		body, err := io.ReadAll(res.Body)
+		res.Body.Close()
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, res.StatusCode, rq.path)
+		assert.Equal(t, "application/json", res.Header.Get("Content-Type"), rq.path)
+		var got map[string]string
+		require.NoError(t, json.Unmarshal(body, &got), rq.path)
+		assert.Equal(t, map[string]string{"error": "this phone is not paired"}, got, rq.path)
+	}
+	assert.Empty(t, c.takeMisses(), "a refusal is not a miss")
+
+	code, body := get(t, srv.URL+"/")
+	assert.Equal(t, http.StatusOK, code)
+	assert.Contains(t, body, `content="`+cannedBuild+`"`)
+}
+
+func TestEmulation_ABrowserTabIsNotStandalone(t *testing.T) {
+	d := devices[defaultDevice]
+	app, tab := emulation(d, true), emulation(d, false)
+	require.Equal(t, len(app), len(tab))
+	var appSrc, tabSrc string
+	for i := range app {
+		require.Equal(t, app[i].method, tab[i].method)
+		switch app[i].method {
+		case "Page.addScriptToEvaluateOnNewDocument":
+			appSrc = app[i].params.(map[string]any)["source"].(string)
+			tabSrc = tab[i].params.(map[string]any)["source"].(string)
+		case "Emulation.setUserAgentOverride":
+			assert.Equal(t, d.userAgent, app[i].params.(map[string]any)["userAgent"])
+			assert.Equal(t, d.userAgent, tab[i].params.(map[string]any)["userAgent"])
+		}
+	}
+	assert.Contains(t, appSrc, "get: () => true")
+	assert.NotContains(t, appSrc, "get: () => false")
+	assert.Contains(t, tabSrc, "get: () => false")
+	assert.NotContains(t, tabSrc, "get: () => true")
+}
+
 // TestRun_RendersEveryScreenInARealBrowser drives Chromium end to end. It
 // runs only with LOOM_WEBSHOT_BROWSER set (to a binary, or "1" for the one on
 // PATH), since CI has no browser.

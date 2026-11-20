@@ -56,7 +56,9 @@ type screen struct{ name, hash string }
 // and actions; "agent" is the screen of session 1's running subagent (recon,
 // the one its conversation links to); "job" is session 1's running job.
 // The flow screens are session 6's flow (a run parked on story 3): its
-// board, story 1's row, its spec, and the host's Flows screen.
+// board, story 1's row, its spec, and the host's Flows screen. "pair" is shot
+// with every /api/ request answered 401 (an unpaired device), "add-to-home"
+// as an iPhone browser tab (not standalone).
 var screens = []screen{
 	{"fleet", ""},
 	{"conversation", "#s/1"},
@@ -73,7 +75,21 @@ var screens = []screen{
 	{"flows", "#flows"},
 	{"new", "#new"},
 	{"settings", "#settings"},
+	{"pair", "#pair"},
+	{"add-to-home", ""},
 }
+
+// screenMode is how a screen's tab and canned loom differ from the Home
+// Screen app on a paired loom.
+type screenMode struct{ unpaired, browserTab bool }
+
+var screenModes = map[string]screenMode{
+	"pair":        {unpaired: true},
+	"add-to-home": {browserTab: true},
+}
+
+// modeOf is the mode of a screen: the zero value for one that has none.
+func modeOf(sc screen) screenMode { return screenModes[sc.name] }
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -145,6 +161,22 @@ func run(args []string) error {
 	defer srv.Close()
 	origin := "http://" + ln.Addr().String() + "/"
 
+	// A screen shot unpaired is served by a loom of its own, which refuses
+	// every /api/ request as an unpaired device is refused.
+	unpairedLoom, err := newCannedLoom(dir)
+	if err != nil {
+		return fmt.Errorf("app %q: %w", *app, err)
+	}
+	unpairedLoom.unpaired = true
+	uln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	usrv := &http.Server{Handler: unpairedLoom, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = usrv.Serve(uln) }()
+	defer usrv.Close()
+	unpairedOrigin := "http://" + uln.Addr().String() + "/"
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	b, err := launchBrowser(ctx, bin)
@@ -152,7 +184,7 @@ func run(args []string) error {
 		return err
 	}
 	defer b.close()
-	pg, err := b.openPage(ctx, d)
+	pg, err := b.openPage(ctx, d, true)
 	if err != nil {
 		return err
 	}
@@ -168,11 +200,16 @@ func run(args []string) error {
 	for _, sc := range todo {
 		file := filepath.Join(*out, sc.name+".png")
 		// Each screen gets a tab of its own (see page.close).
-		tab, err := b.openPage(ctx, d)
+		mode := modeOf(sc)
+		tab, err := b.openPage(ctx, d, !mode.browserTab)
 		if err != nil {
 			return fmt.Errorf("%s: %w", sc.name, err)
 		}
-		problems, err := shoot(ctx, tab, loom, d, bar, sc, origin, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
+		l, o := loom, origin
+		if mode.unpaired {
+			l, o = unpairedLoom, unpairedOrigin
+		}
+		problems, err := shoot(ctx, tab, l, d, bar, sc, o, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
 		tab.close(ctx)
 		if err != nil {
 			return fmt.Errorf("%s: %w", sc.name, err)
@@ -407,12 +444,13 @@ type page struct {
 	targetID string
 }
 
-// openPage opens a tab and makes it the device's Home Screen app: its
+// openPage opens a tab and makes it the device's Home Screen app, or with
+// standalone false an ordinary browser tab: its
 // viewport, pixel ratio, touch, user agent and safe-area insets, with
 // navigator.standalone set as iOS sets it (Chromium ignores an emulated
 // display-mode), and with service workers bypassed so every load is the
 // files on disk.
-func (b *browser) openPage(ctx context.Context, d device) (*page, error) {
+func (b *browser) openPage(ctx context.Context, d device, standalone bool) (*page, error) {
 	var t struct {
 		TargetID string `json:"targetId"`
 	}
@@ -428,7 +466,7 @@ func (b *browser) openPage(ctx context.Context, d device) (*page, error) {
 		return nil, err
 	}
 	p := &page{b: b, session: a.SessionID, targetID: t.TargetID}
-	for _, s := range emulation(d) {
+	for _, s := range emulation(d, standalone) {
 		if err := b.cdp.call(ctx, p.session, s.method, s.params, nil); err != nil {
 			p.close(ctx)
 			return nil, err
@@ -451,8 +489,9 @@ type cdpStep struct {
 	params any
 }
 
-// emulation is the calls that make a tab the device's Home Screen app.
-func emulation(d device) []cdpStep {
+// emulation is the calls that make a tab the device's Home Screen app, or
+// with standalone false its browser tab: the same but for navigator.standalone.
+func emulation(d device, standalone bool) []cdpStep {
 	return []cdpStep{
 		{"Page.enable", nil},
 		{"Runtime.enable", nil},
@@ -472,7 +511,7 @@ func emulation(d device) []cdpStep {
 		{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": "iPhone"}},
 		{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
 		{"Page.addScriptToEvaluateOnNewDocument", map[string]any{
-			"source": `Object.defineProperty(Navigator.prototype, "standalone", {get: () => true, configurable: true});`,
+			"source": fmt.Sprintf(`Object.defineProperty(Navigator.prototype, "standalone", {get: () => %t, configurable: true});`, standalone),
 		}},
 	}
 }

@@ -53,6 +53,10 @@ type cannedLoom struct {
 	// not accumulate them.
 	onMiss func(route string)
 
+	// unpaired, when set before the loom serves, makes it answer every path
+	// under /api/ as the web layer answers an unpaired device: 401, no miss.
+	unpaired bool
+
 	mu     sync.Mutex
 	misses []string // API routes the fixture has no answer for
 }
@@ -72,6 +76,8 @@ func newCannedAPI() *cannedLoom { return &cannedLoom{now: time.Now} }
 func (c *cannedLoom) apiHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch p := r.URL.Path; {
+		case c.unpaired && strings.HasPrefix(p, "/api/"):
+			refuseUnpaired(w)
 		case p == "/api/v1/stream" && r.Method == http.MethodGet:
 			c.stream(w, r)
 		case strings.HasPrefix(p, "/api/"):
@@ -85,6 +91,8 @@ func (c *cannedLoom) apiHandler() http.Handler {
 func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	switch {
+	case c.unpaired && strings.HasPrefix(p, "/api/"):
+		refuseUnpaired(w)
 	case p == "/api/v1/stream" && r.Method == http.MethodGet:
 		c.stream(w, r)
 	case strings.HasPrefix(p, "/api/"):
@@ -92,6 +100,17 @@ func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		c.file(w, p)
 	}
+}
+
+// unpairedText is what the web layer's authed answers a request that names no
+// device (internal/web/auth.go).
+const unpairedText = "this phone is not paired"
+
+// refuseUnpaired answers 401 as authed does, and records nothing.
+func refuseUnpaired(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = io.WriteString(w, `{"error":"`+unpairedText+`"}`)
 }
 
 // mockupCSP is the policy the web layer serves a mockup under
