@@ -115,7 +115,7 @@ function Gate({ gate, id }: { gate: FlowGate; id: string }): ReactElement {
       <span>{gate.text}</span>
     </>
   );
-  const className = "flex min-h-11 items-center text-xs";
+  const className = "flex min-h-11 items-center gap-1.5 text-xs";
   return gate.job !== 0 ? (
     <a data-slot="gate" href={hrefFor("job", { id, job: String(gate.job) })} className={className}>
       {body}

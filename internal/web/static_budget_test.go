@@ -186,8 +186,8 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 	require.ErrorContains(t, checkFirstLoad(assets, firstLoadBudget), "/index.html")
 }
 
-// checkLazyViews is whether the job and mockup screens and the flow board are chunks of their
-// own that index.html does not load: one file per name, whose file name index.html's text (a
+// checkLazyViews is whether the job and mockup screens, the flow board and the flow story and
+// document views are chunks of their own that index.html does not load: one file per name, whose file name index.html's text (a
 // script, a modulepreload link or anything else) does not hold.
 func checkLazyViews(assets map[string]staticAsset) error {
 	index, ok := assets["/index.html"]
@@ -195,7 +195,7 @@ func checkLazyViews(assets map[string]staticAsset) error {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	for _, name := range []string{"JobBody", "MockupBody", "FlowBody"} {
+	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
 		for url := range assets {
@@ -234,7 +234,7 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		}
 		return assets
 	}
-	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js"}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js"}
 
 	for _, tc := range []struct {
 		name   string
@@ -246,6 +246,10 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		{"no job chunk", build(entry, "/assets/index-a.js", "/assets/MockupBody-c.js"), "JobBody"},
 		{"no flow chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js"), "FlowBody"},
 		{"a preloaded flow chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowBody-d.js">`, all...), "/assets/FlowBody-d.js"},
+		{"no flow story chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowDocBody-f.js"), "FlowStoryBody"},
+		{"no flow document chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js"), "FlowDocBody"},
+		{"a preloaded flow story chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowStoryBody-e.js">`, all...), "/assets/FlowStoryBody-e.js"},
+		{"a preloaded flow document chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowDocBody-f.js">`, all...), "/assets/FlowDocBody-f.js"},
 		{"a second job chunk", build(entry, append([]string{"/assets/JobBody-z.js"}, all...)...), "more than one"},
 		{"a preloaded chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...), "/assets/JobBody-b.js"},
 		{"a chunk named in the page's text", build(entry+`<script>load("MockupBody-c.js")</script>`, all...), "MockupBody"},
