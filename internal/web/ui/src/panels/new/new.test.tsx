@@ -6,11 +6,14 @@ import "@/commands";
 import type { LaunchDefaults, Workspace } from "@/api/gen";
 import { useLaunchDefaults } from "@/api/reads";
 import { api } from "@/api/request";
+import { panelFor } from "@/app/panels";
+import { PanelHost } from "@/app/shell";
 import { resetFleet, spyOnAdd } from "@/commands/testkit";
 import { fixtureSnapshot } from "@/fixtures";
 import { useFleet } from "@/store/fleet";
 import { usePending } from "@/store/pending";
 
+import { NewHead, newPanel } from "./index";
 import NewSessionBody from "./NewSessionBody";
 
 vi.mock("@/api/reads", async (original) => ({
@@ -382,5 +385,27 @@ describe("NewSessionBody", () => {
     expect(start()).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the new panel", () => {
+  it("registers the new panel with its head and a lazy body", () => {
+    const panel = panelFor("new");
+    expect(panel).toBe(newPanel);
+    expect(panel?.Head).toBe(NewHead);
+    expect(panel?.title({ sessionId: undefined, params: {}, search: {} })).toBe("New session");
+    expect(panel?.tab).toBeUndefined();
+  });
+
+  it('NewHead is "New session" with a way back to the fleet', () => {
+    render(<NewHead />);
+    expect(screen.getByRole("heading").textContent).toBe("New session");
+    expect(screen.getByRole("link").getAttribute("href")).toBe("#/");
+  });
+
+  it("draws the form through PanelHost once its chunk loads", async () => {
+    load([W1]);
+    render(<PanelHost panel="new" props={{ sessionId: undefined, params: {}, search: {} }} />);
+    expect(await screen.findByRole("combobox", { name: "Workspace" })).toBeInTheDocument();
   });
 });

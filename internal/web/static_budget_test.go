@@ -195,7 +195,7 @@ func checkLazyViews(assets map[string]staticAsset) error {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody"} {
+	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
 		for url := range assets {
@@ -234,7 +234,7 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		}
 		return assets
 	}
-	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js"}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js"}
 
 	for _, tc := range []struct {
 		name   string
@@ -252,6 +252,8 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		{"a preloaded flow document chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowDocBody-f.js">`, all...), "/assets/FlowDocBody-f.js"},
 		{"no flows chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js"), "FlowsBody"},
 		{"a preloaded flows chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/FlowsBody-g.js">`, all...), "/assets/FlowsBody-g.js"},
+		{"no new-session chunk", build(entry, "/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js"), "NewSessionBody"},
+		{"a preloaded new-session chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/NewSessionBody-h.js">`, all...), "/assets/NewSessionBody-h.js"},
 		{"a second job chunk", build(entry, append([]string{"/assets/JobBody-z.js"}, all...)...), "more than one"},
 		{"a preloaded chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...), "/assets/JobBody-b.js"},
 		{"a chunk named in the page's text", build(entry+`<script>load("MockupBody-c.js")</script>`, all...), "MockupBody"},
