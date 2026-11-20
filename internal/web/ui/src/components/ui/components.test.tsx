@@ -15,7 +15,9 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "./drawer";
+import { Input } from "./input";
 import { Skeleton } from "./skeleton";
+import { Switch } from "./switch";
 import { Textarea } from "./textarea";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
 import { Toaster, toastManager } from "./toast";
@@ -279,5 +281,74 @@ describe("the scrollbar rules", () => {
     expect(appCss).toMatch(
       /\.base-ui-disable-scrollbar::-webkit-scrollbar\s*\{[^}]*display:\s*none/,
     );
+  });
+});
+
+describe("Input", () => {
+  it("Input: a plain input that takes its props, at 16px with a 44px floor, and a caller's class wins", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    render(<Input placeholder="title" onChange={fn} />);
+    const input = screen.getByPlaceholderText("title");
+    expect(input.tagName).toBe("INPUT");
+    expect(input).toHaveAttribute("data-slot", "input");
+    expect(input.className).toContain("text-[16px]");
+    expect(input.className).toContain("min-h-11");
+    await user.type(input, "hi");
+    expect(input).toHaveValue("hi");
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    render(<Input className="min-h-14" placeholder="tall" type="password" id="pw" />);
+    const tall = screen.getByPlaceholderText("tall");
+    expect(tall.className).toContain("min-h-14");
+    expect(tall.className).not.toContain("min-h-11");
+    expect(tall).toHaveAttribute("type", "password");
+    expect(tall).toHaveAttribute("id", "pw");
+  });
+});
+
+describe("Switch", () => {
+  it("Switch: a click turns it on, reports the new value, and a controlled one shows the value it is given", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    const fn2 = vi.fn();
+    render(
+      <>
+        <Switch aria-label="Needs you" defaultChecked={false} onCheckedChange={fn} />
+        <Switch aria-label="Finished" checked={false} onCheckedChange={fn2} />
+      </>,
+    );
+    const uncontrolled = screen.getByRole("switch", { name: "Needs you" });
+    expect(uncontrolled).toHaveAttribute("aria-checked", "false");
+    await user.click(uncontrolled);
+    expect(uncontrolled).toHaveAttribute("aria-checked", "true");
+    expect(fn.mock.calls[0]?.[0]).toBe(true);
+    await user.click(uncontrolled);
+    expect(uncontrolled).toHaveAttribute("aria-checked", "false");
+    expect(fn.mock.calls[1]?.[0]).toBe(false);
+
+    const controlled = screen.getByRole("switch", { name: "Finished" });
+    await user.click(controlled);
+    expect(fn2.mock.calls[0]?.[0]).toBe(true);
+    expect(controlled).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("Switch: a disabled one takes no click, and its hit area reaches 44px", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    render(
+      <>
+        <Switch disabled onCheckedChange={fn} aria-label="Off" />
+        <Switch aria-label="On" />
+      </>,
+    );
+    const off = screen.getByRole("switch", { name: "Off" });
+    await user.click(off);
+    expect(fn).not.toHaveBeenCalled();
+    expect(off).toHaveAttribute("aria-checked", "false");
+    const on = screen.getByRole("switch", { name: "On" });
+    expect(on.className).toContain("after:min-h-11");
+    expect(on.className).toContain("after:min-w-11");
+    expect(on).toHaveAttribute("data-slot", "switch");
   });
 });
