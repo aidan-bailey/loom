@@ -306,7 +306,10 @@ describe("no <style> element", () => {
 });
 
 // Vitest replaces a stylesheet's text with "" (also under ?raw), so the file is read from disk.
-const appCss = readFileSync(resolve(fileURLToPath(import.meta.url), "../../../styles/app.css"), "utf8");
+const appCss = readFileSync(
+  resolve(fileURLToPath(import.meta.url), "../../../styles/app.css"),
+  "utf8",
+);
 
 describe("the scrollbar rules", () => {
   it("app.css carries the two .base-ui-disable-scrollbar rules Base UI no longer injects", () => {
