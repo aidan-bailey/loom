@@ -4,12 +4,13 @@ import { createElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fixtureFlow,
+  fixtureFlowDoc,
   fixtureJobLog,
   fixturePatch,
   fixtureSnapshot,
   fixtureTurns,
 } from "@/fixtures";
-import type { AgentPage, Flow, JobLog, Outcome, Patch, Session, Turn, Turns } from "./gen";
+import type { AgentPage, Flow, FlowDoc, JobLog, Outcome, Patch, Session, Turn, Turns } from "./gen";
 import { queryClient } from "./queries";
 import {
   appendLog,
@@ -22,10 +23,12 @@ import {
   mergeTurns,
   MAX_LOG_CHARS,
   useFlow,
+  useFlowDoc,
   useHeldTurns,
   useJobLog,
   usePatch,
   useTurnPages,
+  type FlowDocOptions,
   type FlowOptions,
   type HeldLog,
   type HeldTurns,
@@ -48,6 +51,9 @@ let diffRead: ReturnType<typeof spyOnDiff>;
 let logRead: ReturnType<typeof spyOnLog>;
 const spyOnFlow = () => vi.spyOn(api, "flow").mockRejectedValue(new Error("unexpected flow read"));
 let flowRead: ReturnType<typeof spyOnFlow>;
+const spyOnFlowDoc = () =>
+  vi.spyOn(api, "flowDoc").mockRejectedValue(new Error("unexpected flow document read"));
+let flowDocRead: ReturnType<typeof spyOnFlowDoc>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -56,6 +62,7 @@ beforeEach(() => {
   diffRead = spyOnDiff();
   logRead = spyOnLog();
   flowRead = spyOnFlow();
+  flowDocRead = spyOnFlowDoc();
 });
 
 afterEach(() => {
@@ -1098,5 +1105,110 @@ describe("useFlow", () => {
     const again = mountFlow(flowOptions());
     expect(again.result.current.flow).toBeUndefined();
     await settle();
+  });
+});
+
+const docOptions = (extra: Partial<FlowDocOptions> = {}): FlowDocOptions => ({
+  session: 6,
+  plan: PLAN,
+  doc: "spec",
+  ...extra,
+});
+
+interface DocCase {
+  name: string;
+  change: Partial<FlowDocOptions>;
+  session: number;
+  plan: string;
+  doc: string;
+}
+
+function mountDoc(initial: FlowDocOptions) {
+  return renderHook((props: FlowDocOptions) => useFlowDoc(props), {
+    initialProps: initial,
+    wrapper,
+  });
+}
+
+describe("useFlowDoc", () => {
+  it("reads the document on mount, with no poll", async () => {
+    const doc = fixtureFlowDoc();
+    flowDocRead.mockResolvedValueOnce(ok(doc));
+    const { result } = mountDoc(docOptions());
+    expect(result.current).toMatchObject({ doc: undefined, loading: true, error: "" });
+    await settle();
+    expect(flowDocRead).toHaveBeenCalledTimes(1);
+    expect(flowDocRead).toHaveBeenCalledWith(6, { plan: PLAN, doc: "spec" });
+    expect(result.current).toMatchObject({ doc, loading: false, error: "" });
+    await settle(60_000);
+    expect(flowDocRead).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<DocCase>([
+    { name: "session", change: { session: 7 }, session: 7, plan: PLAN, doc: "spec" },
+    {
+      name: "plan",
+      change: { plan: "docs/superpowers/plans/other.md" },
+      session: 6,
+      plan: "docs/superpowers/plans/other.md",
+      doc: "spec",
+    },
+    { name: "document", change: { doc: "plan" }, session: 6, plan: PLAN, doc: "plan" },
+  ])("reads again when the $name changes, and not when nothing does", async (c) => {
+    flowDocRead.mockResolvedValue(ok(fixtureFlowDoc()));
+    const view = mountDoc(docOptions());
+    await settle();
+    view.rerender(docOptions());
+    await settle();
+    expect(flowDocRead).toHaveBeenCalledTimes(1);
+    view.rerender(docOptions(c.change));
+    await settle();
+    expect(flowDocRead).toHaveBeenCalledTimes(2);
+    expect(flowDocRead).toHaveBeenLastCalledWith(c.session, { plan: c.plan, doc: c.doc });
+  });
+
+  it.each<{ name: string; empty: Partial<FlowDocOptions> }>([
+    { name: "plan", empty: { plan: "" } },
+    { name: "document", empty: { doc: "" } },
+  ])("reads nothing for an empty $name", async (c) => {
+    const view = mountDoc(docOptions(c.empty));
+    await settle();
+    expect(flowDocRead).not.toHaveBeenCalled();
+    expect(view.result.current).toEqual({ doc: undefined, error: "", loading: false });
+  });
+
+  it("draws the document asked for or loading, never the previous one", async () => {
+    flowDocRead.mockResolvedValueOnce(ok(fixtureFlowDoc()));
+    const view = mountDoc(docOptions());
+    await settle();
+    const pending = deferred<Outcome<FlowDoc>>();
+    flowDocRead.mockReturnValueOnce(pending.promise);
+    view.rerender(docOptions({ doc: "plan" }));
+    await settle();
+    expect(view.result.current).toMatchObject({ doc: undefined, loading: true });
+    const next = { ...fixtureFlowDoc(), path: "docs/superpowers/plans/x.md" };
+    pending.resolve(ok(next));
+    await settle();
+    expect(view.result.current.doc).toEqual(next);
+  });
+
+  it("says why a read failed", async () => {
+    flowDocRead.mockResolvedValueOnce(refused(404, "no such document"));
+    const { result } = mountDoc(docOptions());
+    await settle();
+    expect(result.current).toEqual({ doc: undefined, error: "no such document", loading: false });
+  });
+
+  it("does not keep a document once its reader is gone", async () => {
+    flowDocRead.mockResolvedValueOnce(ok(fixtureFlowDoc()));
+    const first = mountDoc(docOptions());
+    await settle();
+    first.unmount();
+    await settle();
+    flowDocRead.mockResolvedValueOnce(ok(fixtureFlowDoc()));
+    const again = mountDoc(docOptions());
+    expect(again.result.current).toMatchObject({ doc: undefined, loading: true });
+    await settle();
+    expect(flowDocRead).toHaveBeenCalledTimes(2);
   });
 });

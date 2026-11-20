@@ -5,7 +5,17 @@
 // and a read asked for meanwhile runs once when it lands.
 import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import type { AgentPage, Flow, JobLog, Patch, Session, Turn, Turns, TurnsParams } from "./gen";
+import type {
+  AgentPage,
+  Flow,
+  FlowDoc,
+  JobLog,
+  Patch,
+  Session,
+  Turn,
+  Turns,
+  TurnsParams,
+} from "./gen";
 import { OutcomeError, queryClient, unwrap } from "./queries";
 import { api } from "./request";
 
@@ -553,5 +563,42 @@ export function useFlow({ session, plan, key }: FlowOptions): FlowView {
     flow: query.data,
     error: errorText(query.error, "Could not read the flow."),
     loading: plan !== "" && query.data === undefined && query.error === null,
+  };
+}
+
+export interface FlowDocOptions {
+  session: number;
+  /** The flow's plan path; empty reads nothing. */
+  plan: string;
+  /** The document's name (`spec`, `plan`, `report:<id>`); empty reads nothing. */
+  doc: string;
+}
+
+export interface FlowDocView {
+  doc: FlowDoc | undefined;
+  /** Why the read failed, "" for none. */
+  error: string;
+  /** The read has neither landed nor failed. */
+  loading: boolean;
+}
+
+/**
+ * Reads a flow document on mount and whenever the session, plan or document changes, never
+ * polled. The query is keyed by all three and leaves the cache with its last reader, so a view
+ * draws the document it asked for or loading, never the previous one.
+ */
+export function useFlowDoc({ session, plan, doc }: FlowDocOptions): FlowDocView {
+  const enabled = plan !== "" && doc !== "";
+  const query = useQuery<FlowDoc>({
+    queryKey: ["flow-doc", session, plan, doc],
+    queryFn: async () => unwrap(await api.flowDoc(session, { plan, doc })),
+    enabled,
+    gcTime: 0,
+    retry: false,
+  });
+  return {
+    doc: query.data,
+    error: errorText(query.error, "Could not read the document."),
+    loading: enabled && query.data === undefined && query.error === null,
   };
 }
