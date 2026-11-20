@@ -248,17 +248,14 @@ describe("SessionRow", () => {
     const text = container.textContent ?? "";
     expect(text).toBe("flow-old3d");
   });
-});
-
-describe("the fleet row's NEW mark", () => {
-  const snapshot = fixtureSnapshot(NOW);
-  const byId = (id: number): Session => allSessions(snapshot).find((s) => s.id === id) as Session;
 
   it("draws NEW after the title only when fresh", () => {
     load(snapshot);
     const session = byId(7);
     const { rerender } = render(<SessionRow session={session} usage={[]} fresh />);
-    expect(screen.getByText("NEW")).toBeInTheDocument();
+    const mark = screen.getByText("NEW");
+    const title = screen.getByText(session.title);
+    expect(title.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     rerender(<SessionRow session={session} usage={[]} />);
     expect(screen.queryByText("NEW")).toBeNull();
