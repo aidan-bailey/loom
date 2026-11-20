@@ -4,6 +4,7 @@ import type { PanelProps } from "@/app/panels";
 import { hrefFor, useRoute } from "@/app/routes";
 import { ContextRow } from "@/app/shell";
 import { useSession } from "@/store/fleet";
+import { useIsPending } from "@/store/pending";
 
 // SessionHead is a session's context row: the way back to the fleet, its title and, when Remote
 // Control is on, a link to the session in Claude. The link is a plain anchor, never a command: it
@@ -12,7 +13,10 @@ import { useSession } from "@/store/fleet";
 export function SessionHead(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
   const route = useRoute();
-  if (session === undefined) return <ContextRow back={hrefFor("fleet")} title="" />;
+  const pending = useIsPending(props.sessionId);
+  if (session === undefined) {
+    return <ContextRow back={hrefFor("fleet")} title={pending ? "Loading…" : ""} />;
+  }
   // The conversation's needs-you box has its own Open in Claude button.
   const boxed = route.panel === "turns" && session.claude && session.group === "needs_you";
   const actions =

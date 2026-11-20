@@ -17,6 +17,7 @@ import { TurnList } from "@/conversation/TurnList";
 import { ago } from "@/panels/fleet/SessionRow";
 import { NoSession } from "@/session/NoSession";
 import { useSession } from "@/store/fleet";
+import { useIsPending } from "@/store/pending";
 
 // The hash the app was at before the current one, from the hashchange events: when it is this
 // session's conversation, the way back is history.back(), which returns to the conversation's
@@ -45,7 +46,10 @@ export function AgentHead(props: PanelProps): ReactElement {
   const id = props.sessionId ?? 0;
   const session = useSession(props.sessionId);
   const agent = useHeldTurns(id, props.params.agent)?.agent;
-  if (session === undefined) return <ContextRow back={hrefFor("fleet")} title="" />;
+  const pending = useIsPending(props.sessionId);
+  if (session === undefined) {
+    return <ContextRow back={hrefFor("fleet")} title={pending ? "Loading…" : ""} />;
+  }
   const title =
     [agent?.description, agent?.type].find((t) => t !== undefined && t !== "") ?? "subagent";
   const onBack = (e: MouseEvent<HTMLAnchorElement>): void => {

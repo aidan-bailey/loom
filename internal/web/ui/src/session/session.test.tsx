@@ -5,6 +5,7 @@ import type { Pr, Session, Snapshot, Usage } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
+import { usePending } from "@/store/pending";
 
 import { checksText, groupGlyph, parityText } from "./facts";
 import { FactStrip } from "./FactStrip";
@@ -304,5 +305,64 @@ describe("FactStrip", () => {
     working();
     const gone = render(<FactStrip sessionId={8} params={{ id: "8" }} search={{}} />);
     expect(gone.container).toBeEmptyDOMElement();
+  });
+});
+
+describe("pending session", () => {
+  afterEach(() => {
+    usePending.getState().clear();
+  });
+
+  const head = { sessionId: 9, params: { id: "9" }, search: {} };
+
+  it("SessionHead titles a pending session Loading…", () => {
+    load();
+    usePending.setState({ id: 9 });
+    render(<SessionHead sessionId={9} params={{ id: "9" }} search={{}} />);
+    expect(screen.getByRole("heading").textContent).toBe("Loading…");
+    expect(screen.getByRole("link").getAttribute("href")).toBe("#/");
+  });
+
+  it("SessionHead keeps an empty title for an unlisted session that is not pending, and for another session's pending id", () => {
+    load();
+    const first = render(<SessionHead {...head} />);
+    expect(usePending.getState().id).toBeNull();
+    expect(screen.getByRole("heading").textContent).toBe("");
+    first.unmount();
+    usePending.setState({ id: 8 });
+    render(<SessionHead {...head} />);
+    expect(screen.getByRole("heading").textContent).toBe("");
+  });
+
+  it("SessionHead keeps a listed session's title while its id is pending", () => {
+    load({ title: "listed" });
+    usePending.setState({ id: 7 });
+    render(<SessionHead sessionId={7} params={{ id: "7" }} search={{}} />);
+    expect(screen.getByRole("heading").textContent).toBe("listed");
+  });
+
+  it("NoSession says Loading… for the route's pending session", () => {
+    load();
+    window.history.replaceState(null, "", "#/s/9");
+    usePending.setState({ id: 9 });
+    render(<NoSession />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+    expect(screen.queryByText("This session is gone.")).not.toBeInTheDocument();
+  });
+
+  it("NoSession still says gone for an unpending session, another session's pending id, and a route with no session", () => {
+    load();
+    const cases: [number | null, string][] = [
+      [null, "#/s/9"],
+      [8, "#/s/9"],
+      [9, "#/"],
+    ];
+    for (const [id, hash] of cases) {
+      window.history.replaceState(null, "", hash);
+      usePending.setState({ id });
+      const view = render(<NoSession />);
+      expect(screen.getByRole("status")).toHaveTextContent("This session is gone.");
+      view.unmount();
+    }
   });
 });

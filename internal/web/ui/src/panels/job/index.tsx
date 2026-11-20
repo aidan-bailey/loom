@@ -6,12 +6,16 @@ import { definePanel, type PanelProps } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
 import { ContextRow } from "@/app/shell";
 import { useSession } from "@/store/fleet";
+import { useIsPending } from "@/store/pending";
 
 // JobHead is the job screen's context row: the way back to the session's info and the job's
 // description, else its command, else `job <n>`.
 export function JobHead(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <ContextRow back={hrefFor("fleet")} title="" />;
+  const pending = useIsPending(props.sessionId);
+  if (session === undefined) {
+    return <ContextRow back={hrefFor("fleet")} title={pending ? "Loading…" : ""} />;
+  }
   const n = props.params.job ?? "";
   const job = (session.jobs ?? []).find((j) => j.id === Number(n));
   const title = [job?.description, job?.command].find((t) => t !== undefined && t !== "");

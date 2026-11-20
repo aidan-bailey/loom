@@ -12,6 +12,7 @@ import { fixtureSnapshot, fixtureTurns } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
 import "@/panels";
 import { useFleet } from "@/store/fleet";
+import { usePending } from "@/store/pending";
 
 import { Agent, AgentHead, AgentStrip } from "./Agent";
 
@@ -131,6 +132,25 @@ describe("AgentHead", () => {
   it("draws the fleet as the way back, with no title, for a session the snapshot does not list", () => {
     render(<AgentHead {...props(99)} />, { wrapper });
     expect(screen.getByRole("link").getAttribute("href")).toBe("#/");
+    expect(screen.getByRole("heading").textContent).toBe("");
+  });
+});
+
+describe("pending session", () => {
+  afterEach(() => {
+    usePending.getState().clear();
+  });
+
+  it("AgentHead titles a pending unlisted session Loading… and keeps its way back to the fleet", () => {
+    usePending.setState({ id: 99 });
+    render(<AgentHead {...props(99)} />, { wrapper });
+    expect(screen.getByRole("heading").textContent).toBe("Loading…");
+    expect(screen.getByRole("link").getAttribute("href")).toBe("#/");
+  });
+
+  it("AgentHead keeps its empty title for an unlisted session that is not pending", () => {
+    expect(usePending.getState().id).toBeNull();
+    render(<AgentHead {...props(99)} />, { wrapper });
     expect(screen.getByRole("heading").textContent).toBe("");
   });
 });

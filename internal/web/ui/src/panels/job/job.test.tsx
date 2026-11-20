@@ -13,6 +13,7 @@ import { PanelHost } from "@/app/shell";
 import { makeJob, makeSession, noticesOk, resetFleet, seed } from "@/commands/testkit";
 import { fixtureJobLog } from "@/fixtures";
 import { useFleet } from "@/store/fleet";
+import { usePending } from "@/store/pending";
 
 import { JobHead } from "./index";
 import JobBody from "./JobBody";
@@ -454,5 +455,31 @@ describe("the job panel", () => {
       />,
     );
     expect(await screen.findByText(/job 214 · running/)).toBeInTheDocument();
+  });
+});
+
+describe("pending session", () => {
+  afterEach(() => {
+    usePending.getState().clear();
+  });
+
+  const head = { sessionId: 9, params: { id: "9", job: "214" }, search: {} };
+
+  it("JobHead titles a pending unlisted session Loading…", () => {
+    seed([makeSession({ id: 1 })]);
+    usePending.setState({ id: 9 });
+    render(<JobHead {...head} />);
+    expect(screen.getByRole("heading").textContent).toBe("Loading…");
+    expect(screen.getByRole("link").getAttribute("href")).toBe("#/");
+  });
+
+  it("JobHead keeps its empty title for an unlisted session that is not pending, and for another session's pending id", () => {
+    seed([makeSession({ id: 1 })]);
+    const first = render(<JobHead {...head} />);
+    expect(screen.getByRole("heading").textContent).toBe("");
+    first.unmount();
+    usePending.setState({ id: 8 });
+    render(<JobHead {...head} />);
+    expect(screen.getByRole("heading").textContent).toBe("");
   });
 });
