@@ -23,7 +23,14 @@ func isolateWorkspaces(t *testing.T) {
 // gitRepo is a fresh git repository.
 func gitRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	return gitRepoIn(t, t.TempDir())
+}
+
+// gitRepoIn is a fresh git repository at dir, which it creates when it is
+// not there yet.
+func gitRepoIn(t *testing.T, dir string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput()
 	require.NoError(t, err, string(out))
 	return dir

@@ -38,7 +38,7 @@ func newFeedbackCmd() *cobra.Command {
 		Use:   "feedback",
 		Short: "File and read notes about loom itself, which loom's session agents write",
 	}
-	cmd.AddCommand(newFeedbackAddCmd(), newFeedbackListCmd(), newFeedbackShowCmd(), newFeedbackFixCmd(), newFeedbackPublishCmd(), newFeedbackCloseCmd())
+	cmd.AddCommand(newFeedbackAddCmd(), newFeedbackListCmd(), newFeedbackShowCmd(), newFeedbackFixCmd(), newFeedbackPublishCmd(), newFeedbackCloseCmd(), newFeedbackScanCmd())
 	return cmd
 }
 

@@ -1,14 +1,24 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/feedback"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/spf13/cobra"
 )
 
 // scanMinTitle is the fewest characters a session title needs to be a term:
@@ -144,4 +154,197 @@ func appendUnique(list []string, add ...string) []string {
 		}
 	}
 	return list
+}
+
+const (
+	// scanMaxBytes bounds the draft: a larger input is refused, not cut, so
+	// no tail goes unscanned.
+	scanMaxBytes = 1 << 20
+	// scanExitHit and scanExitError are the exit codes of a draft with a hit
+	// and of any failure; a clean draft exits 0.
+	scanExitHit   = 1
+	scanExitError = 2
+	// scanGitWait bounds `git config user.email`.
+	scanGitWait = 5 * time.Second
+)
+
+func newFeedbackScanCmd() *cobra.Command {
+	var thread string
+	var allow []string
+	cmd := &cobra.Command{
+		Use:   "scan <file|-> [--thread <T>] [--allow <word>]…",
+		Short: "Check a draft for text private to this host before it is posted",
+		Long: "Read a draft from a file or standard input and report, as <line>:<col> <kind>: <match>, every " +
+			"absolute path, credential, email, UUID and name that is private to this host: the home directory, the " +
+			"user and host names, the accounts, every workspace and session but the one the current directory " +
+			"belongs to, and with --thread the thread's notes' sessions, transcripts, branches and filers. " +
+			"--allow drops the hits whose whole match is that word and prints them as allowed. Exit 0 with no hit, " +
+			"1 with a hit, 2 on any error, a missing daemon included.",
+		Args: func(c *cobra.Command, args []string) error {
+			return scanUsage(cobra.ExactArgs(1)(c, args))
+		},
+		RunE: func(c *cobra.Command, args []string) error {
+			hit, err := scanDraft(c, args[0], thread, allow)
+			switch {
+			case err != nil:
+				return &ExitError{Code: scanExitError, Msg: err.Error()}
+			case hit:
+				return &ExitError{Code: scanExitHit}
+			}
+			return nil
+		},
+	}
+	loomErrors(cmd)
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return scanUsage(err) })
+	fl := cmd.Flags()
+	fl.StringVar(&thread, "thread", "", "Also look for the names this thread's notes carry")
+	fl.StringArrayVar(&allow, "allow", nil, "Drop the hits whose match is this word (repeatable)")
+	return cmd
+}
+
+// scanUsage is a usage error as the exit-2 error every failure of scan is.
+func scanUsage(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ExitError{Code: scanExitError, Msg: err.Error()}
+}
+
+// scanDraft scans src ("-" is standard input) and prints what it found:
+// the hits, then the allowed ones. It reports whether there was a hit. The
+// draft, the flags and the thread's number are read before the daemon is
+// joined.
+func scanDraft(c *cobra.Command, src, thread string, allow []string) (bool, error) {
+	text, err := readScanInput(c.InOrStdin(), src)
+	if err != nil {
+		return false, err
+	}
+	var t feedback.ThreadID
+	if thread != "" {
+		if t, err = parseThread(thread); err != nil {
+			return false, fmt.Errorf("--thread: %w", err)
+		}
+	}
+	var hits, dropped []feedback.ScanHit
+	err = withDaemon(c, func(d *client) error {
+		in, err := gatherScanInputs(c.Context(), d, t)
+		if err != nil {
+			return err
+		}
+		hits, dropped = feedback.Scan(text, buildScanTerms(in), allow)
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	out := c.OutOrStdout()
+	for _, h := range hits {
+		fmt.Fprintf(out, "%d:%d %s: %s\n", h.Line, h.Col, h.Kind, h.Match)
+	}
+	for _, h := range dropped {
+		fmt.Fprintf(out, "allowed %d:%d %s: %s\n", h.Line, h.Col, h.Kind, h.Match)
+	}
+	return len(hits) > 0, nil
+}
+
+// readScanInput reads the draft: the file src, or stdin for "-". More than
+// scanMaxBytes is an error.
+func readScanInput(stdin io.Reader, src string) (string, error) {
+	r := stdin
+	if src != "-" {
+		f, err := os.Open(src)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		r = f
+	}
+	b, err := io.ReadAll(io.LimitReader(r, scanMaxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", src, err)
+	}
+	if len(b) > scanMaxBytes {
+		return "", fmt.Errorf("%s is over %d bytes: scan a shorter draft", src, scanMaxBytes)
+	}
+	return string(b), nil
+}
+
+// gatherScanInputs asks the host and the daemon what is private: the home
+// directory, $USER (else the account's user name), the host name, git's
+// user.email, the served workspaces with their sessions' titles (and the
+// titles their storage preserves unread), the
+// accounts and, for a non-zero thread, its notes. Any answer it can't get
+// is an error: a scan with a term missing would pass a draft it should
+// not.
+func gatherScanInputs(ctx context.Context, d *client, thread feedback.ThreadID) (scanInputs, error) {
+	var in scanInputs
+	var err error
+	if in.Home, err = os.UserHomeDir(); err != nil {
+		return in, fmt.Errorf("home directory: %w", err)
+	}
+	if in.User = os.Getenv("USER"); in.User == "" {
+		u, err := user.Current()
+		if err != nil {
+			return in, fmt.Errorf("user name: %w", err)
+		}
+		in.User = u.Username
+	}
+	if in.Host, err = os.Hostname(); err != nil {
+		return in, fmt.Errorf("host name: %w", err)
+	}
+	if in.Cwd, err = os.Getwd(); err != nil {
+		return in, fmt.Errorf("working directory: %w", err)
+	}
+	if in.Email, err = gitEmail(ctx, in.Cwd); err != nil {
+		return in, fmt.Errorf("git config user.email: %w", err)
+	}
+	for _, v := range d.Workspaces() {
+		// A workspace whose saved state did not load keeps some titles only in
+		// PreservedTitles: they are terms too.
+		w := scanWorkspace{Name: v.Name, RepoPath: v.RepoPath, Titles: slices.Clone(v.PreservedTitles)}
+		for _, iv := range d.Views(v.ID) {
+			if !iv.IsWorkspaceTerminal {
+				w.Titles = append(w.Titles, iv.Title)
+			}
+		}
+		in.Workspaces = append(in.Workspaces, w)
+	}
+	in.Accounts = []scanAccount{{Name: account.DefaultName, Email: d.RCAuthFor(account.DefaultName).Identity.Email}}
+	for _, name := range d.AccountNames().Names {
+		if name != account.DefaultName {
+			in.Accounts = append(in.Accounts, scanAccount{Name: name, Email: d.RCAuthFor(name).Identity.Email})
+		}
+	}
+	if thread != 0 {
+		inbox := d.Feedback().Inbox
+		th, ok := inbox.Thread(thread)
+		if !ok {
+			return in, fmt.Errorf("thread %d doesn't exist", thread)
+		}
+		for _, id := range th.Notes {
+			if n, ok := inbox.Note(id); ok {
+				in.Notes = append(in.Notes, n)
+			}
+		}
+	}
+	return in, nil
+}
+
+// gitEmail is `git config user.email` in dir: "" when git has none set
+// (exit status 1), an error when it can't be asked.
+func gitEmail(ctx context.Context, dir string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, scanGitWait)
+	defer cancel()
+	out, err := internalexec.GitCommand(ctx, dir, "config", "user.email").Output()
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

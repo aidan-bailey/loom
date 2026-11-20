@@ -31,14 +31,21 @@ func runFeedback(t *testing.T, args ...string) (stdout, stderr string, err error
 	return out.String(), errOut.String(), err
 }
 
+// writeInbox writes in to the isolated global dir before the daemon boots,
+// with the grouper off, so nothing moves.
+func writeInbox(t *testing.T, in feedback.Inbox) {
+	t.Helper()
+	global := os.Getenv(config.EnvGlobalDir)
+	require.NotEmpty(t, global, "isolateWorkspaces first")
+	require.NoError(t, os.WriteFile(filepath.Join(global, config.ConfigFileName), []byte(`{"feedback":{"grouper":{"enabled":false}}}`), 0o600))
+	require.NoError(t, feedback.Save(filepath.Join(global, "feedback"), in))
+}
+
 // seedInbox writes an inbox to the isolated global dir before the daemon
 // boots: thread 1 (two notes from two sessions), thread 2 (closed), and
 // note 4, which no thread holds. The grouper is off, so nothing moves.
 func seedInbox(t *testing.T) feedback.Inbox {
 	t.Helper()
-	global := os.Getenv(config.EnvGlobalDir)
-	require.NotEmpty(t, global, "isolateWorkspaces first")
-	require.NoError(t, os.WriteFile(filepath.Join(global, config.ConfigFileName), []byte(`{"feedback":{"grouper":{"enabled":false}}}`), 0o600))
 	at := time.Now().Add(-time.Hour).Round(0)
 	in := feedback.Empty()
 	n1 := in.Add(feedback.Note{Kind: feedback.KindBug, Title: "--after refused", Text: "loom job run --after 3 said no such job",
@@ -51,7 +58,7 @@ func seedInbox(t *testing.T) feedback.Inbox {
 	require.NoError(t, err)
 	require.NoError(t, in.Close(t2, "", at))
 	in.Add(feedback.Note{Kind: feedback.KindMissing, Title: "a loose note", Text: "y", From: feedback.Session{ID: 3, Title: "s3"}, At: at})
-	require.NoError(t, feedback.Save(filepath.Join(global, "feedback"), in))
+	writeInbox(t, in)
 	return in
 }
 
