@@ -52,18 +52,18 @@ A run:
 
 1. **Preflight.** Issues are enabled, the label and `needs-human` exist, and `loom watch status -w loom` says on. Each missing piece is reported with the command that fixes it (`gh repo edit --enable-issues`, `gh label create …`, `loom watch on -w loom`); the skill changes no repository setting. With issues disabled or the label missing, it stops after the report; with the watcher off, it continues and says that published issues will wait.
 2. **Escalations.** Open `loom-feedback` issues carrying `needs-human` are listed first, each with the watcher's escalation comment, so the owner sees what is stuck before adding more.
-3. **Published threads with new notes.** For each thread with notes past `Issue.Posted` in thread order (`list`'s ` +k new`), it first reads the issue's comments (`gh issue view <N> -R <repo> --json comments`): when every new note's `Feedback note nN` line is already there, an earlier run posted the comment and failed to link it, so it only advances the link. Otherwise it drafts one comment covering the new notes (§3.1), scans it (`loom feedback scan --thread T`, §3.2), shows it, and on the owner's approval posts it (`gh issue comment`) and advances the link (`loom feedback publish T --issue <repo>#<N> --through nN`, `nN` the last new note in thread order). The owner's comment nudges the session if its PR is open.
+3. **Published threads with new notes.** For each thread with notes past `Issue.Posted` in thread order (`list`'s ` +k new`), it first reads the issue (`gh issue view <N> -R <repo> --json state,body,comments`). When it is `CLOSED` it posts nothing and offers a new issue naming it (`Regression of #N`, §7). When every new note's `Feedback note nN` line is already in its body or in a comment the owner's account wrote (`viewerDidAuthor`: anyone can comment on a public issue), an earlier run posted the comment and failed to link it, so it only advances the link. Otherwise it drafts one comment covering the new notes (§3.1), scans it (`loom feedback scan --thread T`, §3.2), shows it, and on the owner's approval posts it (`gh issue comment`) and advances the link (`loom feedback publish T --issue <repo>#<N> --through nN`, `nN` the last new note in thread order). The owner's comment nudges the session if its PR is open.
 4. **Open threads,** in `loom feedback list`'s ranked order. For each: `loom feedback show T`, then a quick check of whether `origin/main` already fixes it (`git log --grep`, reading the code the notes name). A check that can't settle it says "unknown"; the skill never guesses a fix exists. It then asks the owner one question per thread (`AskUserQuestion`, the draft issue in the option's preview):
    - **Publish:** §2.1.
    - **Close as no-fix**, with a one-line reason (already fixed in `<commit>`, not a loom bug, won't fix): `loom feedback close T --reason "…"`.
-   - **Fold into #M:** an open `loom-feedback` issue covers it; a scrubbed comment on #M (as in step 3, the comment check and `scan --thread T` included), then `loom feedback publish T --issue <repo>#M --through nN`. `publish` takes only a URL or `<owner>/<name>#<N>`, never a bare `#M`.
+   - **Fold into #M:** an open `loom-feedback` issue covers it; a scrubbed comment on #M (as in step 3, the comment check and `scan --thread T` included, ending with `Feedback thread T`), then `loom feedback publish T --issue <repo>#M --through nN`. `publish` takes only a URL or `<owner>/<name>#<N>`, never a bare `#M`.
    - **Skip:** left open for a later run.
 5. **Ungrouped notes** (`nN` rows) are listed, not reviewed: publishing takes a thread, and the grouper retries them.
 6. **Summary:** what was published (issue URLs), closed (reasons), folded and skipped.
 
 ### 2.1 Publishing
 
-1. **Recover a lost link first:** `gh issue list --label <label> --state all --search "\"Feedback thread T\" in:body"`. A hit means an earlier run created the issue and failed to link it: link it (`publish`) and go on.
+1. **Recover a lost link first:** look for `Feedback thread T` as the last line of a `<label>` issue's body (`gh issue list --label <label> --state all --search "\"Feedback thread T\" in:body"`, then the exact line checked) and as a line of a comment the owner's account wrote on an open one (a fold). A hit means an earlier run posted and failed to link: link it through the last `Feedback note nN` line it names (`publish`), then step 3's check covers later notes. A closed hit is never linked (§7); two or more hits stop the thread for the owner.
 2. Draft the issue (§3.1), scan it (`loom feedback scan --thread T`, §3.2), and show it. The owner approves, edits or declines.
 3. `gh issue create --label <label> --title … --body-file <scratch>` (the scratch file outside the worktree), then `loom feedback publish T --issue <url> --through nN`, `nN` the last note, in thread order, the draft covers.
 
@@ -78,9 +78,10 @@ An issue is a rewrite, never a paste:
 - **Title:** `<loom command or area>: <the problem>`, at most 100 characters.
 - **What happened**, **Expected**, **Repro**: commands spelled with placeholders (`<repo>`, `<worktree>`, `<session>`, `~/`) in place of real paths and names; loom's own output quoted only where it shows the problem.
 - **Reported by** the number of sessions and notes, and the loom build (version and commit) each ran.
+- **Above the last line,** one `Feedback note nN` line per note the issue covers, in thread order: a lost link is recovered through the last of them (§2.1).
 - **Last line:** `Feedback thread T`. The session reads the raw notes from it (§6.2), and the skill recovers a lost link by it (§2.1).
 
-A comment has the same sections for the notes it covers and ends with one `Feedback note nN` line per note.
+A comment has the same sections for the notes it covers and ends with one `Feedback note nN` line per note; a fold's comment then ends with `Feedback thread T`.
 
 Never in a draft:
 
@@ -123,7 +124,7 @@ Each hit prints as `<line>:<col> <kind>: <match>`. Exit 0 with none, 1 with any,
 "closed": {"at": "…", "reason": "issue #57 closed (completed)"}
 ```
 
-`posted` is the note ID the issue or its comments cover up to, in thread order: the notes after it in `Thread.Notes` (the order they joined, which differs from ID order when a retried note joins after a newer one) are new, and those before it are covered. The status `published` sits between `open`/`fixing` and `closed`. `feedback.json` goes to version 2: an older loom then serves the inbox read-only (the existing newer-version rule) instead of dropping `issue` and `closed` on its next save. A version 1 file loads as before.
+`posted` is the note ID the issue or its comments cover up to, in thread order: the notes after it in `Thread.Notes` (the order they joined, which differs from ID order when a retried note joins after a newer one) are new, and those before it are covered. The status `published` sits between `open`/`fixing` and `closed`. `feedback.json` goes to version 2: an older loom then refuses the inbox (the existing newer-version rule: it shows the load error and files no note) instead of dropping `issue` and `closed` on its next save. Every save writes version 2. A version 1 file loads as before.
 
 ### 4.2 The wire
 
