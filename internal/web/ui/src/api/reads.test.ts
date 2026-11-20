@@ -1,16 +1,28 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
-import { createElement, type ReactElement, type ReactNode } from "react";
+import { createElement, StrictMode, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fixtureFlow,
   fixtureFlowDoc,
+  fixtureFlows,
   fixtureJobLog,
   fixturePatch,
   fixtureSnapshot,
   fixtureTurns,
 } from "@/fixtures";
-import type { AgentPage, Flow, FlowDoc, JobLog, Outcome, Patch, Session, Turn, Turns } from "./gen";
+import type {
+  AgentPage,
+  Flow,
+  FlowDoc,
+  Flows,
+  JobLog,
+  Outcome,
+  Patch,
+  Session,
+  Turn,
+  Turns,
+} from "./gen";
 import { queryClient } from "./queries";
 import {
   appendLog,
@@ -24,6 +36,7 @@ import {
   MAX_LOG_CHARS,
   useFlow,
   useFlowDoc,
+  useFlows,
   useHeldTurns,
   useJobLog,
   usePatch,
@@ -54,6 +67,9 @@ let flowRead: ReturnType<typeof spyOnFlow>;
 const spyOnFlowDoc = () =>
   vi.spyOn(api, "flowDoc").mockRejectedValue(new Error("unexpected flow document read"));
 let flowDocRead: ReturnType<typeof spyOnFlowDoc>;
+const spyOnFlows = () =>
+  vi.spyOn(api, "flows").mockRejectedValue(new Error("unexpected flows read"));
+let flowsRead: ReturnType<typeof spyOnFlows>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -63,6 +79,7 @@ beforeEach(() => {
   logRead = spyOnLog();
   flowRead = spyOnFlow();
   flowDocRead = spyOnFlowDoc();
+  flowsRead = spyOnFlows();
 });
 
 afterEach(() => {
@@ -1210,5 +1227,151 @@ describe("useFlowDoc", () => {
     expect(again.result.current).toMatchObject({ doc: undefined, loading: true });
     await settle();
     expect(flowDocRead).toHaveBeenCalledTimes(2);
+  });
+});
+
+function mountFlows() {
+  return renderHook(() => useFlows(), { wrapper });
+}
+
+// The app mounts under StrictMode (main.tsx), whose second mount effect runs while the first
+// caller's read is out.
+function strictWrapper({ children }: { children: ReactNode }): ReactElement {
+  return createElement(StrictMode, null, wrapper({ children }));
+}
+
+// Head and body are the two callers the host's flows screen has: both call useFlows.
+function mountBoth() {
+  return renderHook(() => ({ head: useFlows(), body: useFlows() }), { wrapper });
+}
+
+describe("useFlows", () => {
+  it("reads the host's flows on mount, with no poll", async () => {
+    const flows = fixtureFlows();
+    flowsRead.mockResolvedValueOnce(ok(flows));
+    const { result } = mountFlows();
+    expect(result.current).toMatchObject({ flows: undefined, loading: true, error: "" });
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+    expect(result.current).toMatchObject({ flows, loading: false, error: "" });
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends one read for callers that mount together and for one that mounts later", async () => {
+    flowsRead.mockResolvedValueOnce(ok(fixtureFlows()));
+    const both = mountBoth();
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+    expect(both.result.current.head.flows).toBeDefined();
+    expect(both.result.current.body.flows).toBe(both.result.current.head.flows);
+    const later = mountFlows();
+    expect(later.result.current.flows).toBe(both.result.current.head.flows);
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends one read when the app mounts under StrictMode", async () => {
+    flowsRead.mockResolvedValueOnce(ok(fixtureFlows()));
+    const { result } = renderHook(() => useFlows(), { wrapper: strictWrapper });
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+    expect(result.current.flows).toBeDefined();
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches for every caller on reload", async () => {
+    flowsRead.mockResolvedValueOnce(ok(fixtureFlows()));
+    const both = mountBoth();
+    await settle();
+    const updated: Flows = { ...fixtureFlows(), live: [] };
+    flowsRead.mockResolvedValueOnce(ok(updated));
+    act(() => {
+      both.result.current.head.reload();
+    });
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(2);
+    expect(both.result.current.body.flows).toEqual(updated);
+    expect(both.result.current.head.flows).toEqual(updated);
+  });
+
+  it("draws the held answer at once when opened again, and reads again", async () => {
+    const first = fixtureFlows();
+    flowsRead.mockResolvedValueOnce(ok(first));
+    const view = mountBoth();
+    await settle();
+    view.unmount();
+    await settle();
+    flowsRead.mockResolvedValueOnce(ok({ ...first, live: [] }));
+    const again = mountBoth();
+    expect(again.result.current.head.flows).toEqual(first);
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(2);
+    expect(again.result.current.head.flows?.live).toEqual([]);
+  });
+
+  it("keeps the held answer on a failed read, says why, and clears the error on the next", async () => {
+    const flows = fixtureFlows();
+    flowsRead.mockResolvedValueOnce(ok(flows));
+    const { result } = mountFlows();
+    await settle();
+    flowsRead.mockResolvedValueOnce(timedOut("loom did not answer in time"));
+    act(() => {
+      result.current.reload();
+    });
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(2);
+    expect(result.current).toMatchObject({
+      flows,
+      loading: false,
+      error: "loom did not answer in time",
+    });
+    flowsRead.mockResolvedValueOnce(ok(flows));
+    act(() => {
+      result.current.reload();
+    });
+    await settle();
+    expect(result.current.error).toBe("");
+  });
+
+  it("says why a first read failed, and loads again on reload", async () => {
+    flowsRead.mockResolvedValueOnce(timedOut("loom did not answer in time"));
+    const { result } = mountFlows();
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+    expect(result.current).toMatchObject({
+      flows: undefined,
+      loading: false,
+      error: "loom did not answer in time",
+    });
+    const pending = deferred<Outcome<Flows>>();
+    flowsRead.mockReturnValueOnce(pending.promise);
+    act(() => {
+      result.current.reload();
+    });
+    await settle();
+    expect(result.current).toMatchObject({ loading: true, error: "" });
+    pending.resolve(ok(fixtureFlows()));
+    await settle();
+    expect(result.current).toMatchObject({ loading: false, error: "" });
+    expect(result.current.flows).toBeDefined();
+  });
+
+  it("keeps one read in flight and runs a reload asked meanwhile once, when it lands", async () => {
+    const first = deferred<Outcome<Flows>>();
+    flowsRead.mockReturnValueOnce(first.promise);
+    const { result } = mountFlows();
+    await settle();
+    act(() => {
+      result.current.reload();
+    });
+    expect(flowsRead).toHaveBeenCalledTimes(1);
+    flowsRead.mockResolvedValueOnce(ok(fixtureFlows()));
+    first.resolve(ok(fixtureFlows()));
+    await settle();
+    expect(flowsRead).toHaveBeenCalledTimes(2);
+    await settle(60_000);
+    expect(flowsRead).toHaveBeenCalledTimes(2);
   });
 });

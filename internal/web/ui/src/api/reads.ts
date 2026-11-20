@@ -9,6 +9,7 @@ import type {
   AgentPage,
   Flow,
   FlowDoc,
+  Flows,
   JobLog,
   Patch,
   Session,
@@ -600,5 +601,69 @@ export function useFlowDoc({ session, plan, doc }: FlowDocOptions): FlowDocView 
     doc: query.data,
     error: errorText(query.error, "Could not read the document."),
     loading: enabled && query.data === undefined && query.error === null,
+  };
+}
+
+const flowsKey: QueryKey = ["flows"];
+
+// How many components read the host's flows now. The query's observers only watch (they are
+// disabled): the first caller to mount asks for the read, and a caller that mounts while another
+// is mounted (FlowsHead beside FlowsBody) sends none, so a screen with two callers reads once.
+let flowsReaders = 0;
+
+async function readFlows(): Promise<Flows> {
+  try {
+    return unwrap(await api.flows());
+  } finally {
+    askedAgain(flowsKey, reloadFlows);
+  }
+}
+
+// reloadFlows reads the host's flows: one read is in flight at a time, and a read asked for
+// meanwhile runs once when it lands.
+function reloadFlows(): void {
+  if (inFlight(flowsKey)) {
+    again.add(hashOf(flowsKey));
+    return;
+  }
+  startRead(flowsKey, readFlows, DEFAULT_GC);
+}
+
+export interface FlowsView {
+  flows: Flows | undefined;
+  /** Why the last read failed, "" for none; the answer held stays. */
+  error: string;
+  /** No answer is held and the read has neither landed nor failed. */
+  loading: boolean;
+  /** Reads the host's flows again, for every caller. */
+  reload: () => void;
+}
+
+/**
+ * Reads the host's flows when the first caller mounts and on `reload`, never polled. Every
+ * caller shares one query, so FlowsHead's reload redraws FlowsBody, and the answer of the last
+ * visit, when it is within the 5 minutes the cache keeps it, is drawn at once while the next
+ * read runs.
+ */
+export function useFlows(): FlowsView {
+  const query = useQuery<Flows>({
+    queryKey: flowsKey,
+    queryFn: readFlows,
+    // The observer only watches: every read goes through startRead, which is never retried.
+    enabled: false,
+  });
+  useEffect(() => {
+    const first = flowsReaders === 0;
+    flowsReaders++;
+    if (first && !inFlight(flowsKey)) reloadFlows();
+    return () => {
+      flowsReaders--;
+    };
+  }, []);
+  return {
+    flows: query.data,
+    error: errorText(query.error, "Could not read the host's flows."),
+    loading: query.data === undefined && query.error === null,
+    reload: reloadFlows,
   };
 }
