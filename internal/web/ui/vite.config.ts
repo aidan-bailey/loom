@@ -98,9 +98,19 @@ export default defineConfig({
     manifest: false,
     rolldownOptions: {
       output: {
-        // The code every chunk shares (React, the router, Base UI) is named for what it is, not
-        // for whichever of the app's modules the bundler happened to put beside it.
-        codeSplitting: { groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }] },
+        // Only the framework every screen needs (React, the router, the query cache) is named
+        // "vendor". A catch-all over node_modules would also pull a package only a lazy screen
+        // uses (Base UI's Select, for the new-session form) into the chunk index.html loads at
+        // launch; left out of the group, that code stays in its lazy chunk, or in one only lazy
+        // chunks share, and the first load does not pay for it.
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor",
+              test: /[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:react|react-dom|scheduler|@tanstack[\\/][^\\/]+)[\\/]/,
+            },
+          ],
+        },
       },
     },
   },
