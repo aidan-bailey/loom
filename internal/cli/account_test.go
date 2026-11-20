@@ -300,6 +300,15 @@ func TestAccountList_ShowsAccountDirMissing(t *testing.T) {
 	require.NoError(t, err)
 	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
+	// The add's own usage round may still be probing the dir: removing it
+	// under the probe fails the probe with a fork/exec error instead of
+	// the missing dir the list should report.
+	require.Eventually(t, func() bool {
+		_ = fx.d.client.FlushForTest()
+		fx.d.client.Sync()
+		u, _ := fx.d.client.AccountUsage("max-2")
+		return u.Available
+	}, 5*time.Second, 10*time.Millisecond, "fixture: the add's round lands")
 	require.NoError(t, os.RemoveAll(acct.Dir))
 
 	out, err := runAccount(t, "", "list")
