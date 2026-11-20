@@ -12,8 +12,12 @@ interface JobArgs {
   job: number;
 }
 
+// JobAction is a verb the jobs route takes; typed, so a misspelt one fails the typecheck rather than
+// answering 404.
+type JobAction = "start" | "park" | "unpark" | "pause" | "resume";
+
 // control asks the daemon for `action` on the job; `what` names it in a toast.
-async function control(ctx: CommandContext, job: number, action: string, what: string) {
+async function control(ctx: CommandContext, job: number, action: JobAction, what: string) {
   showOutcome(await api.jobControl(requireSession(ctx).id, job, action), what);
 }
 
