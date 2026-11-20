@@ -12,6 +12,7 @@ The inbox loom's session agents write to ([spec](../docs/superpowers/specs/2026-
 - `store.go` — `Load` and `Save`.
 - `group.go`, `prompt.md` — the grouper: `Request`/`BuildRequest`, `Schema`, `Answer`/`ParseAnswer`, `Apply`, `SystemPrompt`, and `Resolve` (the `feedback.grouper` block through `advisor.ResolveBlock`: on, `haiku`, `low`).
 - `fix.go` — `FixTitle` (`fb-<T>-<slug>`, at most 32 cells) and `FixPrompt`.
+- `scan.go` — `Scan`, `ScanTerms`, `ScanHit` and the `Scan…` kinds: the scanner `loom feedback scan` runs over a draft. Pure: the caller (`internal/cli/feedback_scan.go`) finds the host's private names and paths.
 - `calllog.go` — `CallRecord` and `AppendCall`.
 
 ## On disk
@@ -31,3 +32,7 @@ A thread is `open`, `fixing` once a fix session was started for it (`Fix` names 
 ## The fix session
 
 `FixPrompt` holds the thread's title and kind, every note's text, session, workspace, loom build and transcript, and opens with: check whether the base branch already fixes it (reporters may run an older daemon); if not, reproduce it and propose a fix before building it.
+
+## Scanning a draft
+
+`Scan(text, terms, allow)` reports, line by line, each span of `text` that is a credential (`token`), an email, a UUID, a path (`Private` prefixes at any position, any other absolute path of two or more components outside `/tmp`, `/dev`, `/proc`, `/usr`, `/etc` and `/bin`, a `~/` path outside `~/.loom/` and `~/.claude/`), or a name from `terms` (`Workspaces`, `Sessions`, `Identity`, `Thread` and `ThreadNames`, whole words in any case; a term of several words matches across any run of whitespace). A span that two kinds find is one hit, of the first kind in the order `token`, `thread`, `identity`, `path`, `workspace`, `session`, `email`, `uuid`. Lines and columns are 1-based and columns count characters. A hit whose whole match equals a word in `allow` (any case) comes back in `allowed`. The scanner asks nobody anything: `loom feedback scan` builds the terms from the daemon's workspaces, sessions and accounts, `$HOME`, `$USER`, the host name and `git config user.email`, and leaves the own workspace's names out (never its path).

@@ -1046,6 +1046,7 @@ loom feedback show 3                  # a thread with every note; show n12 for o
 loom feedback fix 3 [-w loom] [--model opus] [--effort high]  # start a session that fixes it, prompted with every note
 loom feedback publish 3 --issue aidan-bailey/loom#57 --through n12  # link the thread to an issue the loom-feedback watcher fixes
 loom feedback close 3 [--reason "…"]
+loom feedback scan draft.md [--thread 3] [--allow word]  # check a draft for private text; exit 0 clean, 1 hit, 2 error
 ```
 
 `fix` starts a session titled `fb-<thread>-<slug>` in the workspace you name, else `feedback.workspace`, with the workspace's default launch options, as `loom session new` would; `--model` and `--effort` override those two, with the values `session new` takes. Its prompt holds every note and asks it to check first whether the base branch already fixes the problem, since a daemon often runs an older build than your branch. The thread shows `fixing` with the session until you close it. Agents may run `add`, `list` and `show`; `fix`, `publish` and `close` are yours. `publish` links a thread to a GitHub issue you wrote (`--issue` takes the issue's URL or `owner/name#N`, `--through nN` is the newest note the issue or its comments cover; running it again with the same issue only moves `--through` forward, and a thread never relinks to another issue); the thread then shows `published #N`, plus ` +k new` for notes that arrived after `--through`, and the daemon closes it when the issue closes, with the reason `issue #N closed (completed)` or `(not planned)`. `show` prints the link, the reason and the last failed issue check, and `list` prints a line per failed check after its table. Everything is under `~/.loom/feedback/`: `feedback.json`, and `grouper.jsonl`, one line per grouping call (the model, tokens, cost, the answer or the error). A `feedback.json` the daemon cannot read is left untouched and notes are refused. Set the block in the global `config.json`:
@@ -1060,6 +1061,8 @@ loom feedback close 3 [--reason "…"]
 ```
 
 `grouper` takes the scheduler agent's fields and bounds (`wait_seconds` aside). A failed call leaves the note ungrouped, shown as its own row and retried 10 minutes later; three failed calls in a row pause the grouper until the daemon restarts or the block changes. With the grouper off, notes stay ungrouped rows.
+
+`scan` is the backstop for text that leaves the machine: `/feedback-triage` runs it on every issue draft, and the issue watcher's sessions on every PR body and comment. It reads a file or `-` (standard input; at most 1 MiB) and prints each hit as `<line>:<col> <kind>: <match>`. The kinds: `path` (a path under `$HOME` or a served workspace's repository, in its raw and canonical spelling; any other absolute path of two or more components outside `/tmp`, `/dev`, `/proc`, `/usr`, `/etc` and `/bin`; a `~/` path outside `~/.loom/` and `~/.claude/`), `workspace` and `session` (another workspace's name or repository directory, and its sessions' titles of four characters or more, as whole words in any case), `identity` (`$USER`, the host name, `git config user.email`, each account's name and email), `thread` (with `--thread`: the thread's notes' Claude session IDs, transcript paths and branches, and their filers' session titles and workspace names), `email`, `uuid` and `token` (GitHub, Slack, AWS and `sk-` keys, private-key headers). The own workspace is the served workspace whose repository holds the current directory; its name, its repository's base name and its sessions' titles are not hits, though a path into its repository is. `--allow <word>` (repeatable) drops the hits whose whole match is that word, any case, and prints them as `allowed <line>:<col> <kind>: <match>`. The exit status is 0 with no hit, 1 with a hit and 2 on any error: no daemon (it asks the daemon which names to look for, so it never passes a draft unchecked), an unreadable or oversized draft, an unknown thread, a bad flag.
 
 ### Stopped Turns That Ask for You
 
@@ -1242,7 +1245,7 @@ loom [command]
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 | `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 | `job` | Submit, follow, list and cancel jobs in the host's work queue (see below, and [The Work Queue](#the-work-queue)); a client of the daemon too |
-| `feedback` | File, list, show, fix, publish and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); a client of the daemon too |
+| `feedback` | File, list, show, fix, publish and close notes about loom that its session agents write (see below, and [Feedback from Sessions](#feedback-from-sessions)); `feedback scan` checks a draft for private text before it is posted; a client of the daemon too |
 | `watch` | Switch the issue watcher on or off for a workspace, show what it knows, or print what its next tick would do (see below, and [Watch Labelled Issues](#watch-labelled-issues-the-issue-watcher)); a client of the daemon too |
 | `flow` | The agent flow's tools: plans, profiles, gates and the git guard (see below, and [Supervised Plans](#supervised-plans-the-agent-flow)); runs without the daemon |
 
@@ -1306,6 +1309,7 @@ A job's command follows `--`. The claim flags are `--cpus <n>`, `--mem <gb>`, `-
 | `feedback fix <thread> [-w <workspace>] [--model M] [--effort E]` | Start the thread's fix session and return once it runs (refused while its last fix session is still there); `--model` and `--effort` take `session new`'s values, else the workspace's own |
 | `feedback publish <thread> --issue <ref> --through <nN>` | Link the thread to its GitHub issue and mark it published; `--issue` is `https://github.com/<owner>/<name>/issues/<N>` or `<owner>/<name>#<N>`, both flags are required; prints `[loom] thread <T> published as <repo>#<N>` |
 | `feedback close <thread> [--reason "…"]` | Close a thread; the reason is one line of at most 300 bytes |
+| `feedback scan <file\|-> [--thread <T>] [--allow <word>]…` | Report the private text in a draft (paths, names of other workspaces and sessions, identity, emails, UUIDs, credentials, and with `--thread` the thread's notes' sessions, transcripts, branches and filers) as `<line>:<col> <kind>: <match>`; `--allow` drops a word and prints it as `allowed …`. Exit 0 clean, 1 with a hit, 2 on any error, a missing daemon included; at most 1 MiB |
 
 ### Watch Subcommands
 
