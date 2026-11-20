@@ -3,11 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Flow, FlowStep, FlowStory, Session } from "@/api/gen";
 import { flowKey, useFlow } from "@/api/reads";
+import { panelFor } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { PanelHost } from "@/app/shell";
 import { fixtureFlow, fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
 import { resetFleet, seed } from "@/commands/testkit";
+import "@/panels";
+import { SessionHead } from "@/session/SessionHead";
 
+import { flowStoryPanel } from "./index";
 import FlowStoryBody from "./FlowStoryBody";
 
 vi.mock("@/api/reads", async (original) => ({
@@ -474,5 +479,28 @@ describe("FlowStoryBody findings and reads", () => {
     expect(items[0]).toHaveTextContent("gates1");
     expect(items[1]).toHaveTextContent("review1");
     expect(items[1]?.getAttribute("data-outcome")).toBe("running");
+  });
+});
+
+describe("the flowStory panel", () => {
+  it("the panel is registered under its id, with the session's head and no tab", () => {
+    expect(panelFor("flowStory")).toBe(flowStoryPanel);
+    expect(flowStoryPanel.Head).toBe(SessionHead);
+    expect(flowStoryPanel.tab).toBeUndefined();
+    expect(flowStoryPanel.appliesTo).toBeUndefined();
+  });
+
+  it("the panel draws its view through PanelHost once its chunk loads", async () => {
+    seed([session6()]);
+    vi.mocked(useFlow).mockReturnValue({ flow: fixtureFlow(), error: "", loading: false });
+    window.history.replaceState(null, "", "#/s/6/flow/1");
+    render(
+      <PanelHost
+        panel="flowStory"
+        props={{ sessionId: 6, params: { id: "6", story: "1" }, search: {} }}
+      />,
+    );
+    expect(await screen.findByText("Story 1")).toBeInTheDocument();
+    expect(screen.getByText("steps")).toBeInTheDocument();
   });
 });

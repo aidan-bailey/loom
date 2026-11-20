@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 
 import type { FlowDoc, MdNode, Session } from "@/api/gen";
 import { useFlowDoc } from "@/api/reads";
+import { panelFor } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { PanelHost } from "@/app/shell";
 import { resetFleet, seed } from "@/commands/testkit";
 import { fixtureFlowDoc, fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import "@/panels";
+import { SessionHead } from "@/session/SessionHead";
 
+import { flowDocPanel } from "./index";
 import FlowDocBody from "./FlowDocBody";
 
 vi.mock("@/api/reads", async (original) => ({
@@ -345,5 +350,29 @@ describe("the jump", () => {
     await user.click(screen.getByText("sections"));
     await user.click(screen.getByRole("button", { name: "D" }));
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 3 + 100 - 120 });
+  });
+});
+
+describe("the flowDoc panel", () => {
+  it("the panel is registered under its id, with the session's head and no tab", () => {
+    expect(panelFor("flowDoc")).toBe(flowDocPanel);
+    expect(flowDocPanel.Head).toBe(SessionHead);
+    expect(flowDocPanel.tab).toBeUndefined();
+    expect(flowDocPanel.appliesTo).toBeUndefined();
+  });
+
+  it("the panel draws its view through PanelHost once its chunk loads", async () => {
+    const doc = fixtureFlowDoc();
+    seed([session6()]);
+    vi.mocked(useFlowDoc).mockReturnValue({ doc, error: "", loading: false });
+    window.history.replaceState(null, "", "#/s/6/flow/doc/spec");
+    render(
+      <PanelHost
+        panel="flowDoc"
+        props={{ sessionId: 6, params: { id: "6", doc: "spec" }, search: {} }}
+      />,
+    );
+    expect(await screen.findByText("spec")).toBeInTheDocument();
+    expect(screen.getByText(doc.path)).toBeInTheDocument();
   });
 });

@@ -20,6 +20,8 @@ export function FlowMark({ session }: { session: Session }): ReactElement | null
 }
 
 const FlowBody = lazy(() => import("./FlowBody"));
+const FlowStoryBody = lazy(() => import("./FlowStoryBody"));
+const FlowDocBody = lazy(() => import("./FlowDocBody"));
 
 export const flowPanel = definePanel({
   id: "flow",
@@ -28,4 +30,18 @@ export const flowPanel = definePanel({
   tab: { order: 5, label: "flow", Mark: FlowMark },
   Head: SessionHead,
   Body: FlowBody,
+});
+
+export const flowStoryPanel = definePanel({
+  id: "flowStory",
+  title: () => "Flow row",
+  Head: SessionHead,
+  Body: FlowStoryBody,
+});
+
+export const flowDocPanel = definePanel({
+  id: "flowDoc",
+  title: () => "Flow document",
+  Head: SessionHead,
+  Body: FlowDocBody,
 });
