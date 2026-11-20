@@ -1,7 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Flows, FlowSummary } from "@/api/gen";
+import type { Flows, FlowSummary, PastRun } from "@/api/gen";
 import { useFlows } from "@/api/reads";
 import { hrefFor } from "@/app/routes";
 import { fixtureFlows } from "@/fixtures";
@@ -129,5 +129,155 @@ describe("FlowsBody", () => {
       ).toHaveLength(0);
       view.unmount();
     }
+  });
+});
+
+const KEY = "-tb-Source-Personal-loom";
+const iso = (hoursAgo: number): string => new Date(NOW - hoursAgo * 3600_000).toISOString();
+
+function run(over: Partial<PastRun> = {}): PastRun {
+  return {
+    key: KEY,
+    file: "r.md",
+    stem: "2026-01-01-r",
+    plan: "p.md",
+    stories: 2,
+    ended: "done",
+    end: iso(1),
+    usd: 4,
+    unreadable: "",
+    ...over,
+  };
+}
+
+// runs makes n runs of one repo, newest first, named r0, r1, …
+function runs(n: number, over: (i: number) => Partial<PastRun> = () => ({})): PastRun[] {
+  return Array.from({ length: n }, (_, i) =>
+    run({ stem: `2026-01-01-r${i}`, end: iso(i + 1), ...over(i) }),
+  );
+}
+
+const legends = (): string[] => screen.queryAllByText(/^past · /).map((e) => e.textContent ?? "");
+
+function box(name: string): HTMLElement {
+  const legend = screen.getByText(`past · ${name}`);
+  const el = legend.parentElement;
+  if (el === null) throw new Error("no box");
+  return el;
+}
+
+const heights = (el: HTMLElement): number[] =>
+  Array.from(el.querySelectorAll<HTMLElement>('[data-slot="bar"]')).map((b) =>
+    parseFloat(b.style.height),
+  );
+
+describe("the past runs", () => {
+  it("one past box for each repo, in first-seen order, named by the part after -Source-", () => {
+    const flows = fixtureFlows();
+    const view = show({ flows });
+    expect(legends()).toEqual(["past · Personal-loom", "past · Academia-kermit"]);
+    view.unmount();
+    show({ flows: { ...flows, past: [...(flows.past ?? [])].reverse() } });
+    expect(legends()).toEqual(["past · Academia-kermit", "past · Personal-loom"]);
+    cleanup();
+    show({ flows: { live: null, past: [run({ key: "-tb-elsewhere" })] } });
+    expect(legends()).toEqual(["past · tb-elsewhere"]);
+  });
+
+  it("a run's row: its stem without the date, then stories, cost, how it ended and its age", () => {
+    show({ flows: fixtureFlows() });
+    const rows = (el: HTMLElement): string[] =>
+      Array.from(el.querySelectorAll("div.min-h-11")).map((r) => r.textContent ?? "");
+    expect(rows(box("Personal-loom"))).toEqual([
+      "pwa-conversation-first4 st · $10.08 · stopped · 3d",
+      "work-scheduler6 st · $14.20 · done · 5d",
+      "loom-pwa9 st · $31.77 · supervised · 17d",
+    ]);
+    expect(rows(box("Academia-kermit"))).toEqual([
+      "per-query-index-build23 st · $58.40 · supervised · 18d",
+    ]);
+  });
+
+  it("a run with no cost or no end leaves that part out, and an unreadable run says only that", () => {
+    show({
+      flows: {
+        live: null,
+        past: [
+          run({ stem: "2026-01-01-a", usd: null, end: "" }),
+          run({ stem: "2026-01-01-b", unreadable: "bad record" }),
+        ],
+      },
+    });
+    expect(screen.getByText("2 st · done")).toBeInTheDocument();
+    const bad = screen.getByText("unreadable");
+    expect(bad).toHaveClass("text-error");
+    expect(bad.parentElement).not.toHaveTextContent("st");
+    expect(bad.parentElement).not.toHaveTextContent("$");
+  });
+
+  it("8 runs are shown and the rest are counted", () => {
+    const rowsOf = (): number => document.querySelectorAll("div.min-h-11").length;
+    show({ flows: { live: null, past: runs(10) } });
+    expect(rowsOf()).toBe(8);
+    expect(screen.getByText("and 2 more")).toBeInTheDocument();
+    cleanup();
+    show({ flows: { live: null, past: runs(8) } });
+    expect(rowsOf()).toBe(8);
+    expect(screen.queryByText(/^and /)).toBeNull();
+    cleanup();
+    show({ flows: { live: null, past: runs(9) } });
+    expect(screen.getByText("and 1 more")).toBeInTheDocument();
+  });
+
+  it("the bars: the last 5 priced runs, oldest first, with their median", () => {
+    show({ flows: fixtureFlows() });
+    const h = heights(box("Personal-loom"));
+    expect(h).toHaveLength(3);
+    expect(h[0]).toBeCloseTo(100, 1);
+    expect(h[1]).toBeCloseTo(67.04, 1);
+    expect(h[2]).toBeCloseTo(71.39, 1);
+    expect(heights(box("Academia-kermit"))).toHaveLength(0);
+    expect(screen.getByText("run cost per story, last 3 runs · median $2.52")).toBeInTheDocument();
+  });
+
+  it("the bars take the newest 5 priced runs, and skip a run with no price or no stories", () => {
+    show({ flows: { live: null, past: runs(7) } });
+    expect(heights(box("Personal-loom"))).toHaveLength(5);
+    expect(screen.getByText(/last 5 runs/)).toBeInTheDocument();
+    cleanup();
+    show({
+      flows: {
+        live: null,
+        past: runs(4, (i) => (i === 0 ? { usd: null } : i === 1 ? { stories: 0 } : {})),
+      },
+    });
+    expect(heights(box("Personal-loom"))).toHaveLength(2);
+    expect(screen.getByText(/last 2 runs/)).toBeInTheDocument();
+    cleanup();
+    show({ flows: { live: null, past: runs(3, (i) => (i === 0 ? {} : { usd: null })) } });
+    expect(heights(box("Personal-loom"))).toHaveLength(0);
+    expect(screen.queryByText(/run cost per story/)).toBeNull();
+  });
+
+  it("the bars are drawn from every run, not only the 8 shown", () => {
+    show({
+      flows: {
+        live: null,
+        past: runs(10, (i) => (i < 8 ? { usd: null } : { usd: i === 8 ? 2 : 6, stories: 2 })),
+      },
+    });
+    expect(heights(box("Personal-loom"))).toHaveLength(2);
+    expect(screen.getByText("run cost per story, last 2 runs · median $2.00")).toBeInTheDocument();
+  });
+
+  it("no run records says so", () => {
+    for (const past of [[], null]) {
+      const view = show({ flows: { ...fixtureFlows(), past } });
+      expect(screen.getByText("No run records yet.")).toBeInTheDocument();
+      expect(legends()).toEqual([]);
+      view.unmount();
+    }
+    show({ flows: fixtureFlows() });
+    expect(screen.queryByText("No run records yet.")).toBeNull();
   });
 });
