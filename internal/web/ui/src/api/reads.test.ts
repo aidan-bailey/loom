@@ -1216,6 +1216,18 @@ describe("useFlowDoc", () => {
     expect(view.result.current.doc).toEqual(next);
   });
 
+  it("does not read a failed read again on its own, even when loom could be asked again", async () => {
+    flowDocRead.mockResolvedValueOnce(timedOut("loom did not answer in time"));
+    const { result } = mountDoc(docOptions());
+    await settle(60_000);
+    expect(flowDocRead).toHaveBeenCalledTimes(1);
+    expect(result.current).toEqual({
+      doc: undefined,
+      error: "loom did not answer in time",
+      loading: false,
+    });
+  });
+
   it("says why a read failed", async () => {
     flowDocRead.mockResolvedValueOnce(refused(404, "no such document"));
     const { result } = mountDoc(docOptions());
