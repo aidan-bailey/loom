@@ -206,7 +206,7 @@ describe("FlowStoryBody", () => {
 
   it("a running row's time runs to now and moves with the clock", () => {
     const four = show({ story: "4" });
-    expect(facts(four)).toBe("junior-dev · light · vouched · 2m 0s");
+    expect(facts(four)).toBe("junior-dev · light · full · 2m 0s");
     four.unmount();
     const final = show({ story: "F" });
     expect(facts(final)).toBe("20m 0s");
@@ -215,11 +215,11 @@ describe("FlowStoryBody", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(NOW);
     const ticking = show({ story: "4" });
-    expect(facts(ticking)).toBe("junior-dev · light · vouched · 2m 0s");
+    expect(facts(ticking)).toBe("junior-dev · light · full · 2m 0s");
     act(() => {
       vi.advanceTimersByTime(30_000);
     });
-    expect(facts(ticking)).toBe("junior-dev · light · vouched · 2m 30s");
+    expect(facts(ticking)).toBe("junior-dev · light · full · 2m 30s");
   });
 });
 
