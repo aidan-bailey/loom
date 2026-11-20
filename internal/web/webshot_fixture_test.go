@@ -13,9 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// relativeTime matches a JSON string that is a time relative to now: "now",
-// "now-12m" or "now+1h40m", matched whole.
-var relativeTime = regexp.MustCompile(`"now(?:[+-][0-9a-z.]+)?"`)
+// relativeTime matches a JSON string that is a time relative to now with a signed
+// duration: "now-12m" or "now+1h40m", matched whole. A bare "now" is a value of its own
+// (the flow stage state) and decodes unchanged.
+var relativeTime = regexp.MustCompile(`"now[+-][0-9a-z.]+"`)
 
 // readFixture decodes a fixture of tools/webshot/fixture as the layer's own
 // type. A relative time ("now-12m") is filled with one fixed time first, so a
