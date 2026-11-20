@@ -109,11 +109,9 @@ describe("Pair", () => {
     const user = userEvent.setup();
     render(<Pair />);
     await type(user, "K7QM2XP");
-    expect((screen.getByRole("button", { name: "Pair" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Pair" }).disabled).toBe(true);
     await user.keyboard("A");
-    expect((screen.getByRole("button", { name: "Pair" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Pair" }).disabled).toBe(false);
   });
 
   it("Pair: typing drops what the alphabet lacks, so a mistyped O never reaches the daemon", async () => {
@@ -132,9 +130,7 @@ describe("Pair", () => {
     await user.click(firstSlot());
     await user.paste("k7qm-2xpa9");
     expect(slotValues().join("")).toBe("K7QM2XPA");
-    expect((screen.getByRole("button", { name: "Pair" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Pair" }).disabled).toBe(false);
   });
 
   it("Pair: filling the eight slots sends nothing until Pair is pressed", async () => {
@@ -166,16 +162,16 @@ describe("Pair", () => {
     render(<Pair />);
     await type(user, "K7QM2XPA");
     await user.click(screen.getByRole("button", { name: "Pair" }));
-    const busy = await screen.findByRole("button", { name: "Pairing…" });
-    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    const busy = await screen.findByRole<HTMLButtonElement>("button", { name: "Pairing…" });
+    expect(busy.disabled).toBe(true);
     await user.keyboard("{Enter}");
     expect(pair).toHaveBeenCalledTimes(1);
     await act(async () => {
       held.resolve({ kind: "refused", status: 400, message: "that code is not valid" });
       await held.promise;
     });
-    const back = await screen.findByRole("button", { name: "Pair" });
-    expect((back as HTMLButtonElement).disabled).toBe(false);
+    const back = await screen.findByRole<HTMLButtonElement>("button", { name: "Pair" });
+    expect(back.disabled).toBe(false);
     expect(slotValues().join("")).toBe("K7QM2XPA");
   });
 
