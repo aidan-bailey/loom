@@ -14,7 +14,7 @@ function Switch({
       data-slot="switch"
       className={(state) =>
         cn(
-          "relative inline-flex h-[26px] w-11 shrink-0 items-center rounded-full bg-input p-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-checked:bg-primary data-unchecked:bg-input after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-11 after:w-full after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
+          "relative inline-flex h-[26px] w-11 shrink-0 items-center rounded-full bg-input p-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 data-checked:bg-primary data-unchecked:bg-input after:absolute after:top-1/2 after:left-1/2 after:h-full after:min-h-11 after:w-full after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
           typeof className === "function" ? className(state) : className,
         )
       }

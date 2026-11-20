@@ -377,6 +377,9 @@ describe("Switch", () => {
     await user.click(off);
     expect(fn).not.toHaveBeenCalled();
     expect(off).toHaveAttribute("aria-checked", "false");
+    // Switch.Root is a span, so only data-disabled (not :disabled) can dim it.
+    expect(off.className).toContain("data-disabled:opacity-50");
+    expect(off.className).not.toContain(" disabled:opacity-50");
     const on = screen.getByRole("switch", { name: "On" });
     expect(on.className).toContain("after:min-h-11");
     expect(on.className).toContain("after:min-w-11");
