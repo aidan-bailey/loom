@@ -315,6 +315,14 @@ describe("Asks", () => {
       expect(answerButton()).toBeDisabled();
     });
 
+    it("an Other of exactly 64 KiB plus a trailing space says Too long and turns Answer off", async () => {
+      setup([question]);
+      await userEvent.click(radio(o0));
+      fireEvent.change(other(Q1), { target: { value: `${"a".repeat(MAX_MESSAGE_BYTES)} ` } });
+      expect(screen.getByText("Too long: an answer is at most 64 KiB.")).toBeInTheDocument();
+      expect(answerButton()).toBeDisabled();
+    });
+
     it("Chat about this sends the sheet's text and nothing when the sheet is cancelled", async () => {
       const spy = vi.spyOn(api, "answer").mockResolvedValue(noticesOk());
       setup([question]);

@@ -216,7 +216,7 @@ function QuestionAsk({ ask, off }: { ask: Ask; off: boolean }): ReactElement {
           id="ask.answer"
           args={{ ask: ask.id, body: body ?? {} }}
           label="Answer"
-          disabled={ask.answering || body === null}
+          disabled={ask.answering || body === null || tooLong}
         />
         <CommandButton
           id="ask.chat"
