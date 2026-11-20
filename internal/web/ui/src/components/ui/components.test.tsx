@@ -282,6 +282,25 @@ describe("no <style> element", () => {
     await screen.findByRole("dialog", { name: "Kill fix-pane-cursor?" });
     expect(document.querySelectorAll("style").length).toBe(0);
   });
+
+  it("No Select, Switch, Input or InputOTP injects a <style> element, even with the Select open under the CSP provider", async () => {
+    const user = userEvent.setup();
+    expect(document.querySelectorAll("style").length).toBe(0);
+    render(
+      <>
+        <Input aria-label="title" />
+        <Switch defaultChecked aria-label="on" />
+        <InputOTP length={2}>
+          <InputOTPSlot />
+          <InputOTPSlot aria-label="Character 2 of 2" />
+        </InputOTP>
+        <SampleSelect value="a" onValueChange={vi.fn()} />
+      </>,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Pick" }));
+    await screen.findByRole("listbox");
+    expect(document.querySelectorAll("style").length).toBe(0);
+  });
 });
 
 // Vitest replaces a stylesheet's text with "" (also under ?raw), so the file is read from disk.
