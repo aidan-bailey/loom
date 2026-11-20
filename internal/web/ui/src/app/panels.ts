@@ -3,8 +3,8 @@ import type { ComponentType } from "react";
 import type { Session } from "@/api/gen";
 
 // PanelId names every screen of the classic app (spec §22); a panel is
-// registered under one of these, and a route no panel is registered for
-// draws the placeholder.
+// registered under one of these, and every id has one (app/panels.test.ts
+// pins it).
 export type PanelId =
   | "fleet"
   | "turns"

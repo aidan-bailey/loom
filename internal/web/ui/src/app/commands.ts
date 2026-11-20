@@ -181,9 +181,11 @@ export async function runCommand<A>(
   }
 }
 
-// app.backToClassic is the switch back to the classic app, drawn by every
-// placeholder. It is offline: the cookie is set and the worker's update may
-// fail, in which case the switch comes with the next launch.
+// app.backToClassic is the switch back to the classic app, drawn under the
+// splash on every route (so it works with the daemon down and nothing saved)
+// and in Settings. It is offline for that reason: the cookie is set and the
+// worker's update may fail, in which case the switch comes with the next
+// launch.
 defineCommand({
   id: "app.backToClassic",
   title: "Back to classic",
