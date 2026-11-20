@@ -718,7 +718,7 @@ describe("the flow panel", () => {
     expect(last).toHaveTextContent("flow");
     expect(last).toHaveAttribute("href", "#/s/6/flow");
     expect(last).toHaveAttribute("aria-current", "page");
-    expect(within(last as HTMLElement).getByRole("img", { name: "asks" })).toBeInTheDocument();
+    expect(within(last).getByRole("img", { name: "asks" })).toBeInTheDocument();
     view.unmount();
 
     window.history.replaceState(null, "", "#/s/6/info");
