@@ -72,7 +72,7 @@ func TestRepoWatchConfig_PromptsRender(t *testing.T) {
 		`authorAssociation == "MEMBER"`,
 		`authorAssociation == "COLLABORATOR"`,
 		"never read or act on a comment from anyone else",
-		"loom feedback scan --thread T",
+		"loom feedback scan` with `--thread T` for every",
 	}
 	for _, c := range []struct {
 		path string
