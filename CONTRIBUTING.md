@@ -17,8 +17,10 @@ The Go version is the `go` directive in `go.mod`. A Nix flake (`flake.nix`) prov
 # Build (CGO is off for builds)
 CGO_ENABLED=0 go build -o loom
 
-# Run the tests; CGO off, since go test otherwise wants gcc
-CGO_ENABLED=0 go test ./...
+# Run the tests; CGO off, since go test otherwise wants gcc. internal/cli runs
+# about 10 minutes, past go test's default timeout on a small job claim, so
+# give it 30 as CI does
+CGO_ENABLED=0 go test -timeout 30m ./...
 
 # One package's tests
 CGO_ENABLED=0 go test -v ./config
