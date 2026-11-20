@@ -17,9 +17,9 @@ import (
 )
 
 // fixtureFiles is the canned loom's data, in the JSON the web layer serves.
-// A string "now", "now-2m" or "now+1h40m" (a Go duration) is a time relative
+// A string "now-2m" or "now+1h40m" (a signed Go duration) is a time relative
 // to the moment it is served, so ages and countdowns read the same on every
-// run.
+// run; a bare "now" is left as it is.
 //
 //go:embed fixture/*.json fixture/*.html
 var fixtureFiles embed.FS
