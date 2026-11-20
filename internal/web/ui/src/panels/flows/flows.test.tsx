@@ -1,13 +1,18 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Flows, FlowSummary, PastRun } from "@/api/gen";
 import { useFlows } from "@/api/reads";
+import { panelFor } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { PanelHost } from "@/app/shell";
 import { fixtureFlows } from "@/fixtures";
 
+import "@/panels";
 import { flowTone } from "../fleet/SessionRow";
 import FlowsBody from "./FlowsBody";
+import { FlowsHead, flowsPanel } from "./index";
 
 vi.mock("@/api/reads", async (original) => ({
   ...(await original<typeof import("@/api/reads")>()),
@@ -279,5 +284,57 @@ describe("the past runs", () => {
     }
     show({ flows: fixtureFlows() });
     expect(screen.queryByText("No run records yet.")).toBeNull();
+  });
+});
+
+describe("the flows panel", () => {
+  it("FlowsHead: a way back to the fleet, the title, and a button that reads the flows again", async () => {
+    const reload = vi.fn();
+    vi.mocked(useFlows).mockReturnValue({ flows: undefined, error: "", loading: true, reload });
+    render(<FlowsHead />);
+    expect(screen.getByRole("link", { name: "‹ fleet" })).toHaveAttribute("href", hrefFor("fleet"));
+    expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Read the flows again" });
+    expect(button).toHaveClass("min-h-11");
+    expect(button).toHaveClass("min-w-11");
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(button);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("FlowsHead and FlowsBody both read through useFlows", () => {
+    const reload = vi.fn();
+    vi.mocked(useFlows).mockReturnValue({
+      flows: fixtureFlows(),
+      error: "",
+      loading: false,
+      reload,
+    });
+    render(
+      <>
+        <FlowsHead />
+        <FlowsBody />
+      </>,
+    );
+    expect(vi.mocked(useFlows).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(vi.mocked(useFlows).mock.results.every((r) => r.value.reload === reload)).toBe(true);
+  });
+
+  it("the panel is registered under flows with its head, a lazy body and no tab", () => {
+    expect(panelFor("flows")).toBe(flowsPanel);
+    expect(flowsPanel.Head).toBe(FlowsHead);
+    expect(flowsPanel.tab).toBeUndefined();
+    expect(flowsPanel.appliesTo).toBeUndefined();
+  });
+
+  it("the flows panel draws its body through PanelHost once its chunk loads", async () => {
+    vi.mocked(useFlows).mockReturnValue({
+      flows: fixtureFlows(),
+      error: "",
+      loading: false,
+      reload: vi.fn(),
+    });
+    render(<PanelHost panel="flows" props={{ sessionId: undefined, params: {}, search: {} }} />);
+    await screen.findByText("flow-run");
+    expect(screen.getByText("live")).toBeInTheDocument();
   });
 });

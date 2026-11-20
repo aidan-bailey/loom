@@ -9,3 +9,4 @@ import "./agent";
 import "./job";
 import "./mockup";
 import "./flow";
+import "./flows";
