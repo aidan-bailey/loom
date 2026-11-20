@@ -469,6 +469,7 @@ describe("the part 3 loaders", () => {
     expect(fixtureFlow().summary.title).not.toBe("changed");
     const flows = fixtureFlows();
     const first = flows.live?.[0];
+    expect(first).toBeDefined();
     if (first !== undefined) first.flow.title = "changed";
     expect(fixtureFlows().live?.[0]?.flow.title).not.toBe("changed");
   });
