@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,7 +42,6 @@ type fakeFX struct {
 	head       int
 	dirty      bool
 	premises   string
-	markers    []string
 	strays     map[string][]string // DocsCheck's answer, by head
 	commitsOn  map[string]bool     // a run that commits though it doesn't report done
 	serviceErr error
@@ -265,7 +266,7 @@ func (f *fakeFX) Commits(base, head string) ([]string, error) {
 func (f *fakeFX) Conformance(story, _, head string) (Conformance, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return Conformance{Path: "/conformance/" + story + "-" + head, Markers: f.markers}, nil
+	return Conformance{Path: "/conformance/" + story + "-" + head}, nil
 }
 
 func (f *fakeFX) Premises(string) (string, error) {
@@ -358,9 +359,9 @@ func clone(st *State) *State {
 }
 
 // story is a plan's story with its plan lines n*100 to n*100+99.
-func story(id, developer, review string) Story {
+func story(id, developer string) Story {
 	n, _ := strconv.Atoi(id)
-	return Story{ID: id, Line: n * 100, End: n*100 + 99, Developer: developer, Tier: "deep", Review: review, Verify: "go test ./x"}
+	return Story{ID: id, Line: n * 100, End: n*100 + 99, Developer: developer, Tier: "deep", Verify: "go test ./x"}
 }
 
 func newState(stories ...Story) *State {
@@ -411,11 +412,11 @@ func (f *fakeFX) submits() []string {
 
 func TestRun_AStoryRunsDeveloperGatesReview(t *testing.T) {
 	f := newFake()
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, nil)
 	assert.Equal(t, Done, st.Status)
 	assert.Equal(t, []string{
-		"agent r-s1-dev1 intermediate-dev", "services", "gates r-s1-gates1", "agent r-s1-review1 story-reviewer",
+		"agent r-s1-dev1 intermediate-dev", "services", "gates r-s1-gates1", "agent r-s1-review1 code-quality-reviewer",
 		"services", "gates r-final-gates1", "agent r-final-review1 code-quality-reviewer",
 	}, f.calls)
 	row := st.Stories[0].Row
@@ -427,7 +428,7 @@ func TestRun_AStoryRunsDeveloperGatesReview(t *testing.T) {
 func TestRun_KeptMinorsReachTheFinalRound(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nVERDICT: APPROVED\nSTATUS: DONE"}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, nil)
 	assert.Contains(t, f.calls, "agent r-final-fix1 intermediate-dev")
 	assert.Contains(t, f.briefs["r-final-fix1"], "Minor a.go:3 tidy it")
@@ -438,7 +439,7 @@ func TestRun_KeptMinorsReachTheFinalRound(t *testing.T) {
 func TestRun_NeedsContextParksAndTheAnswerResumes(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which colour?"}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	require.NoError(t, runSettled(st, f))
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, Question{Key: "ctx:r-s1-dev1:1", Kind: KindNeedsContext, Story: "1", Text: "Which colour?", Paths: []string{"/reports/r-s1-dev1"}, At: "h0"}, *st.Question)
@@ -454,7 +455,7 @@ func TestRun_JuniorBlockedOrCappedGoesToAnIntermediate(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			f := newFake()
 			f.reports["r-s1-dev1"] = Report{Status: status}
-			st := newState(story("1", "junior-dev", "vouched"))
+			st := newState(story("1", "junior-dev"))
 			drive(t, st, f, nil)
 			assert.Equal(t, []string{"agent r-s1-dev1 junior-dev", "agent r-s1-dev2 intermediate-dev"}, f.submits()[:2])
 			assert.Contains(t, f.briefs["r-s1-dev2"], "/reports/r-s1-dev1", "the junior's report")
@@ -471,7 +472,7 @@ func TestRun_IntermediateTurnCapResumesOnceThenAsks(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-dev1"] = Report{Status: "TURN_CAP"}
 	f.resumes["r-s1-dev1"] = []Report{{Status: "TURN_CAP"}}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, map[string]string{"failed:r-s1-dev1": "retry"})
 	assert.Contains(t, f.calls, "resume r-s1-dev1 Continue from where you stopped.")
 	assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "a retry is a fresh agent of the same role")
@@ -482,7 +483,7 @@ func TestRun_IntermediateBlockedAsksThenDecidesThenSenior(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-dev1"] = Report{Status: "BLOCKED"}
 	f.reports["r-s1-dev2"] = Report{Status: "BLOCKED"}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, map[string]string{"blocked:r-s1-dev1": "Use the cache."})
 	sub := f.submits()
 	assert.Equal(t, []string{"agent r-s1-dev1 intermediate-dev", "agent r-s1-dev2 intermediate-dev", "agent r-s1-dev3 senior-dev"}, sub[:3])
@@ -498,7 +499,7 @@ func TestRun_IntermediateBlockedAsksThenDecidesThenSenior(t *testing.T) {
 func TestRun_DoneWithNoCommitsIsAFailure(t *testing.T) {
 	f := newFake()
 	f.noCommit["r-s1-dev1"] = true
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	require.NoError(t, runSettled(st, f))
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, KindAgentFailed, st.Question.Kind)
@@ -516,7 +517,7 @@ func TestRun_AFailedAgentRetriesWithTheDecision(t *testing.T) {
 	t.Run("a developer", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = failed
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-dev1": decision})
 		assert.Equal(t, Done, st.Status)
 		assert.Contains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "a decision is a retry of the same role")
@@ -526,21 +527,21 @@ func TestRun_AFailedAgentRetriesWithTheDecision(t *testing.T) {
 	t.Run("a developer done with no commits", func(t *testing.T) {
 		f := newFake()
 		f.noCommit["r-s1-dev1"] = true
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-dev1": decision})
 		assert.Contains(t, f.briefs["r-s1-dev2"], decision)
 	})
 	t.Run("a plain retry carries no decision", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = failed
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-dev1": "retry"})
 		assert.Equal(t, f.briefs["r-s1-dev1"], f.briefs["r-s1-dev2"])
 	})
 	t.Run("a reviewer", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = failed
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-review1": decision})
 		assert.Contains(t, f.briefs["r-s1-review2"], decision)
 	})
@@ -549,7 +550,7 @@ func TestRun_AFailedAgentRetriesWithTheDecision(t *testing.T) {
 		f.premises = "plan_premises: p.md against the tree at h0\nStory 1 (plan:100): 1 premises, 1 flagged\n  plan:120  missing  a.go: no such file\n"
 		f.reports["r-premise1"] = failed
 		f.reports["r-premise2"] = Report{Status: "DONE", Text: "plan:120 | HOLDS | - | a.go:1 |\n"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-premise1": decision})
 		assert.Contains(t, f.briefs["r-premise2"], decision)
 	})
@@ -560,7 +561,7 @@ func TestRun_AFixerDoneWithNoCommitsIsNoted(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 		f.noCommit["r-s1-fix1"] = true
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil) // any question fails the test
 		require.Equal(t, Done, st.Status)
 		assert.NotContains(t, f.submits(), "agent r-s1-fix2 intermediate-dev")
@@ -571,7 +572,7 @@ func TestRun_AFixerDoneWithNoCommitsIsNoted(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor b.go:2 two\nVERDICT: APPROVED\nSTATUS: DONE"}
 		f.noCommit["r-final-fix1"] = true
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		require.Equal(t, Done, st.Status)
 		assert.Contains(t, f.submits(), "gates r-final-gates2", "the round is still gated")
@@ -583,7 +584,7 @@ func TestRun_AFixerDoneWithNoCommitsIsNoted(t *testing.T) {
 func TestRun_LandminesRunAtXHighAndAFixAtItsPin(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-	s := story("1", "intermediate-dev", "full")
+	s := story("1", "intermediate-dev")
 	s.Landmines = []string{"os.RemoveAll("}
 	st := newState(s)
 	drive(t, st, f, nil)
@@ -596,7 +597,7 @@ func TestRun_GateFailures(t *testing.T) {
 	t.Run("a failure is fixed and the gates run again", func(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"] = failed
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		sub := f.submits()
 		assert.Equal(t, []string{"agent r-s1-dev1 intermediate-dev", "gates r-s1-gates1", "agent r-s1-fix1 intermediate-dev", "gates r-s1-gates2"}, sub[:4])
@@ -604,13 +605,13 @@ func TestRun_GateFailures(t *testing.T) {
 	})
 	for _, c := range []struct{ answer, want string }{
 		{"retry", "gates r-s1-gates3"},
-		{"accept", "agent r-s1-review1 story-reviewer"},
+		{"accept", "agent r-s1-review1 code-quality-reviewer"},
 		{"Skip the flaky test.", "agent r-s1-fix2 intermediate-dev"},
 	} {
 		t.Run("a second failure asks, answered "+c.answer, func(t *testing.T) {
 			f := newFake()
 			f.gates["r-s1-gates1"], f.gates["r-s1-gates2"] = failed, failed
-			st := newState(story("1", "intermediate-dev", "vouched"))
+			st := newState(story("1", "intermediate-dev"))
 			drive(t, st, f, map[string]string{"gates:r-s1-gates2": c.answer})
 			sub := f.submits()
 			assert.Equal(t, c.want, sub[4], "%v", sub)
@@ -619,7 +620,7 @@ func TestRun_GateFailures(t *testing.T) {
 	t.Run("an infra failure asks at once", func(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"] = GateResult{Ended: "infra", Table: "FAIL (infra)"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, "gates:r-s1-gates1", st.Question.Key)
@@ -629,7 +630,7 @@ func TestRun_GateFailures(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = Report{Status: "DONE"}
 		f.gates["r-s1-gates1"] = GateResult{Ended: "infra", Table: "FAIL (infra)"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, "gating", st.Stories[0].Row.Status)
@@ -638,7 +639,7 @@ func TestRun_GateFailures(t *testing.T) {
 	t.Run("a failing service is infra, and the gates aren't started", func(t *testing.T) {
 		f := newFake()
 		f.serviceErr = errors.New("db: exit 1")
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, "gates:r-s1-gates1", st.Question.Key)
@@ -661,7 +662,7 @@ func TestRun_AnAcceptedGateFailure(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"], f.gates["r-s1-gates2"], f.gates["r-s1-gates3"] = accepted, accepted, gates3
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-		return newState(story("1", "intermediate-dev", "vouched")), f
+		return newState(story("1", "intermediate-dev")), f
 	}
 	t.Run("failing only on accepted steps asks", func(t *testing.T) {
 		st, f := setup(GateResult{Ended: "failed", Failing: []GateStep{step("npm run lint")}, Table: "FAIL npm run lint"})
@@ -687,26 +688,36 @@ func TestRun_AnAcceptedGateFailure(t *testing.T) {
 	})
 }
 
-func TestRun_ReviewerChoice(t *testing.T) {
-	for _, c := range []struct {
-		name, review, devStatus string
-		markers                 []string
-		want                    string
-	}{
-		{"vouched", "vouched", "DONE", nil, "story-reviewer"},
-		{"full", "full", "DONE", nil, "code-quality-reviewer"},
-		{"vouched, done with concerns", "vouched", "DONE_WITH_CONCERNS", nil, "code-quality-reviewer"},
-		{"vouched, a marker in uncovered lines", "vouched", "DONE", []string{"os.RemoveAll("}, "code-quality-reviewer"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			f := newFake()
-			f.markers = c.markers
-			f.reports["r-s1-dev1"] = Report{Status: c.devStatus, Text: "STATUS: " + c.devStatus}
-			st := newState(story("1", "intermediate-dev", c.review))
-			drive(t, st, f, nil)
-			assert.Contains(t, f.calls, "agent r-s1-review1 "+c.want)
-		})
-	}
+// A run state an older build wrote, its stories carrying a review
+// ("vouched" while /flow:draft reviewed plans, until 2026-11-20), still
+// loads, and its stories not yet reviewed get the full review. The state
+// records no review's role, so this engine's file with each story's review
+// put back is the one an older build wrote, and the replay takes Story 1's
+// first review from its memo, by name, whatever role ran it.
+func TestRun_AnOlderBuildsVouchedStoriesGetTheFullReview(t *testing.T) {
+	f := newFake()
+	f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
+	st := newState(story("1", "intermediate-dev"), story("2", "intermediate-dev"))
+	require.NoError(t, runSettled(st, f))
+	require.Equal(t, "ctx:r-s2-dev1:1", st.Question.Key, "Story 1 is reviewed, and Story 2 not yet")
+
+	path := filepath.Join(t.TempDir(), "r.json")
+	require.NoError(t, Save(path, st))
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	older := strings.ReplaceAll(string(b), `"tier": "deep",`, `"tier": "deep", "review": "vouched",`)
+	require.Equal(t, 2, strings.Count(older, `"review": "vouched"`), "each story as an older build wrote it")
+	require.NoError(t, os.WriteFile(path, []byte(older), 0o600))
+
+	old, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, Parked, old.Status)
+	f.calls = nil
+	require.NoError(t, old.Answer("That one.", "m", FromSpec, ""))
+	drive(t, old, f, nil)
+	require.Equal(t, Done, old.Status)
+	assert.Contains(t, f.submits(), "agent r-s2-review1 code-quality-reviewer")
+	assert.NotContains(t, strings.Join(f.calls, "\n"), "r-s1-review1", "Story 1's review is neither run again nor followed")
 }
 
 func TestRun_FindingsRoutes(t *testing.T) {
@@ -714,7 +725,7 @@ func TestRun_FindingsRoutes(t *testing.T) {
 	t.Run("a Critical is fixed, gated and re-reviewed", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = critical
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		sub := f.submits()
 		assert.Equal(t, []string{"agent r-s1-fix1 intermediate-dev", "gates r-s1-gates2", "agent r-s1-review2 story-reviewer"}, sub[3:6])
@@ -726,21 +737,21 @@ func TestRun_FindingsRoutes(t *testing.T) {
 	t.Run("a fixer is not the story's developer", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = critical
-		st := newState(story("1", "junior-dev", "vouched"))
+		st := newState(story("1", "junior-dev"))
 		drive(t, st, f, nil)
 		assert.Equal(t, "junior-dev", st.Stories[0].Row.Developer)
 	})
 	t.Run("a design finding asks first", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important design a.go:3 decide it\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"design:1": "Return an error."})
 		assert.Contains(t, f.briefs["r-s1-fix1"], "Return an error.")
 	})
 	t.Run("still blocking after the fix asks, and accept moves on", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"], f.reports["r-s1-review2"] = critical, critical
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"unresolved:s1:1": "accept"})
 		assert.Equal(t, Done, st.Status)
 		assert.Contains(t, strings.Join(st.Notes, "\n"), "accepted 1 findings left open")
@@ -748,14 +759,14 @@ func TestRun_FindingsRoutes(t *testing.T) {
 	t.Run("a review without a verdict is a failure", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "looks fine\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-review1": "retry"})
-		assert.Contains(t, f.submits(), "agent r-s1-review2 story-reviewer")
+		assert.Contains(t, f.submits(), "agent r-s1-review2 code-quality-reviewer", "a retry is the same full review")
 	})
 	t.Run("a non-developer's BLOCKED is a failure", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "BLOCKED"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, KindAgentFailed, st.Question.Kind)
@@ -771,12 +782,12 @@ func TestRun_RestoriedRangesReachTheNextBriefs(t *testing.T) {
 	f.premises = "plan_premises: p.md against the tree at h0\nStory 3 (plan:300): 1 premises, 1 flagged\n  plan:310  missing  a.go: no such file\n"
 	f.reports["r-premise1"] = Report{Status: "DONE", Text: "plan:310 | MOVED | COSMETIC | a2.go:1 | use a2.go\n"}
 	f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
-	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"), story("3", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"), story("2", "intermediate-dev"), story("3", "intermediate-dev"))
 	require.NoError(t, runSettled(st, f))
 	require.Equal(t, "ctx:r-s2-dev1:1", st.Question.Key)
 	assert.Contains(t, f.briefs["r-s1-review1"], "plan lines 100-199")
 
-	fresh := []Story{story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"), story("3", "intermediate-dev", "vouched")}
+	fresh := []Story{story("1", "intermediate-dev"), story("2", "intermediate-dev"), story("3", "intermediate-dev")}
 	fresh[1].End += 34
 	fresh[2].Line, fresh[2].End = fresh[2].Line+34, fresh[2].End+34
 	_, err := st.Restory(fresh)
@@ -794,7 +805,7 @@ func TestRun_PlanLinesAreAskedOnce(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "PLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
 	f.reports["r-s1-review2"] = Report{Status: "DONE", Text: "PLAN: another one\nVERDICT: APPROVED\nSTATUS: DONE"}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, map[string]string{"plan:1": "Bound the loop at ten."})
 	assert.Contains(t, f.briefs["r-s1-fix1"], "Plan: its loop never ends")
 	assert.Contains(t, f.briefs["r-s1-fix1"], "Bound the loop at ten.")
@@ -808,7 +819,7 @@ func TestRun_ThePlanQuestionNamesItsReports(t *testing.T) {
 	t.Run("one review, and the Minor it kept", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nPLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		q := st.Question
@@ -820,7 +831,7 @@ func TestRun_ThePlanQuestionNamesItsReports(t *testing.T) {
 	t.Run("two Minors kept", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Minor a.go:3 tidy it\nFINDING: Minor b.go:4 and this\nPLAN: its loop never ends\nVERDICT: APPROVED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Contains(t, st.Question.Text, "They also kept 2 Minor findings, which the final round fixes; their reports have the FINDING lines.")
@@ -829,7 +840,7 @@ func TestRun_ThePlanQuestionNamesItsReports(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nPLAN: its loop never ends\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 		f.reports["r-s1-review2"] = Report{Status: "DONE", Text: "PLAN: another one\nVERDICT: APPROVED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		q := st.Question
@@ -841,7 +852,7 @@ func TestRun_ThePlanQuestionNamesItsReports(t *testing.T) {
 	t.Run("a re-review with no PLAN line adds no report", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nPLAN: its loop never ends\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, []string{"/reports/r-s1-review1"}, st.Question.Paths)
@@ -860,7 +871,7 @@ func TestRun_AnUnresolvedQuestionListsItsFindings(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFake()
 			f.reports[c.first], f.reports[c.second] = critical, still
-			st := newState(story("1", "intermediate-dev", "vouched"))
+			st := newState(story("1", "intermediate-dev"))
 			require.NoError(t, runSettled(st, f))
 			require.Equal(t, Parked, st.Status)
 			q := st.Question
@@ -880,7 +891,7 @@ func TestRun_Premises(t *testing.T) {
 		f := newFake()
 		f.premises = flagged
 		f.reports["r-premise1"] = Report{Status: "DONE", Text: "plan:120 | MOVED | COSMETIC | a2.go:1 | use a2.go\nplan:130 | HOLDS | - | b.go:4 |\n"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.Equal(t, "agent r-premise1 premise-check", f.submits()[0])
 		assert.Contains(t, f.briefs["r-premise1"], "plan:120  missing")
@@ -891,7 +902,7 @@ func TestRun_Premises(t *testing.T) {
 		f := newFake()
 		f.premises = flagged
 		f.reports["r-premise1"] = Report{Status: "DONE", Text: "plan:130 | STALE | DESIGN | b.go:4 | the type changed\n"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, KindPremiseDesign, st.Question.Kind)
@@ -907,7 +918,7 @@ func TestRun_TreeMoved(t *testing.T) {
 		t.Run(c.answer, func(t *testing.T) {
 			f := newFake()
 			f.head = 3 // someone committed before the run's first dispatch
-			st := newState(story("1", "intermediate-dev", "vouched"))
+			st := newState(story("1", "intermediate-dev"))
 			require.NoError(t, runSettled(st, f))
 			require.Equal(t, Parked, st.Status)
 			assert.Equal(t, Question{Key: "tree:r-s1-dev1", Kind: KindTreeMoved, Story: "1", At: "h0",
@@ -920,7 +931,7 @@ func TestRun_TreeMoved(t *testing.T) {
 	t.Run("a dirty tree", func(t *testing.T) {
 		f := newFake()
 		f.dirty = true
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Contains(t, st.Question.Text, "uncommitted changes")
@@ -941,10 +952,10 @@ func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
 	t.Run("a failed gate runs once more, with them committed, before a fixer", func(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
-		st := generated(story("1", "intermediate-dev", "vouched"))
+		st := generated(story("1", "intermediate-dev"))
 		drive(t, st, f, nil) // any question fails the test
 		require.Equal(t, Done, st.Status)
-		assert.Equal(t, []string{"agent r-s1-dev1 intermediate-dev", "gates r-s1-gates1", "gates r-s1-gates2", "agent r-s1-review1 story-reviewer",
+		assert.Equal(t, []string{"agent r-s1-dev1 intermediate-dev", "gates r-s1-gates1", "gates r-s1-gates2", "agent r-s1-review1 code-quality-reviewer",
 			"gates r-final-gates1", "agent r-final-review1 code-quality-reviewer"}, f.submits(), "no fixer")
 		assert.Contains(t, f.calls, "commit-generated r-s1-gates1 gen/*.ts,schema.json")
 		assert.Contains(t, st.Notes, "Story 1: r-s1-gates1 left gen/api.ts changed, which the engine committed as h2 and gated again")
@@ -956,7 +967,7 @@ func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
 	t.Run("a passed gate's are committed, and the gates don't run again", func(t *testing.T) {
 		f := newFake()
 		f.regen["r-s1-gates1"] = []string{"schema.json"}
-		st := generated(story("1", "intermediate-dev", "vouched"))
+		st := generated(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		require.Equal(t, Done, st.Status)
 		assert.NotContains(t, f.submits(), "gates r-s1-gates2")
@@ -967,7 +978,7 @@ func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
 		f.gates["r-s1-gates2"], f.regen["r-s1-gates2"] = failed, []string{"gen/api.ts"}
-		st := generated(story("1", "intermediate-dev", "vouched"))
+		st := generated(story("1", "intermediate-dev"))
 		drive(t, st, f, nil) // a gate-failure question fails the test: this is the first failure counted
 		require.Equal(t, Done, st.Status)
 		assert.Contains(t, f.submits(), "agent r-s1-fix1 intermediate-dev")
@@ -977,7 +988,7 @@ func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
 	t.Run("the final gates too", func(t *testing.T) {
 		f := newFake()
 		f.gates["r-final-gates1"], f.regen["r-final-gates1"] = failed, []string{"gen/api.ts"}
-		st := generated(story("1", "intermediate-dev", "vouched"))
+		st := generated(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		require.Equal(t, Done, st.Status)
 		assert.Contains(t, f.submits(), "gates r-final-gates2")
@@ -987,7 +998,7 @@ func TestRun_AGateThatRewritesOnlyGeneratedFiles(t *testing.T) {
 	t.Run("a run without generated globs leaves them to the tree check", func(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
-		st := newState(story("1", "intermediate-dev", "vouched")) // an older build's run, or a profile without any
+		st := newState(story("1", "intermediate-dev")) // an older build's run, or a profile without any
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, KindTreeMoved, st.Question.Kind)
@@ -1004,7 +1015,7 @@ func TestRun_ARestartAroundACommitOfGeneratedFilesCommitsOnce(t *testing.T) {
 		f := newFake()
 		f.gates["r-s1-gates1"], f.regen["r-s1-gates1"] = failed, []string{"gen/api.ts"}
 		f.regen["r-final-gates1"] = []string{"schema.json"}
-		st := newState(story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"), story("2", "intermediate-dev"))
 		st.Generated = []string{"gen/*.ts", "schema.json"}
 		return st, f
 	}
@@ -1039,7 +1050,7 @@ func TestRun_AnAnswerTakesTheManagersCommits(t *testing.T) {
 	parked := func(t *testing.T) (*State, *fakeFX) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Important design a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		require.Equal(t, KindDesignFinding, st.Question.Kind)
@@ -1067,7 +1078,7 @@ func TestRun_AnAnswerTakesTheManagersCommits(t *testing.T) {
 func TestRun_AFollowedAgentSkipsTheTreeCheck(t *testing.T) {
 	f := newFake()
 	f.started["r-s1-dev1"], f.roles["r-s1-dev1"], f.head = true, "intermediate-dev", 1 // its own commit moved HEAD
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, nil)
 	assert.Equal(t, "follow r-s1-dev1", f.calls[0])
 	assert.Zero(t, st.Stories[0].Row.Escalated)
@@ -1081,7 +1092,7 @@ func TestRun_FinalRoundBatchesWholeFiles(t *testing.T) {
 		text += fmt.Sprintf("FINDING: Minor f%d.go:1 tidy %d\n", i, i)
 	}
 	f.reports["r-final-review1"] = Report{Status: "DONE", Text: text + "VERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, nil)
 	first, second := f.briefs["r-final-fix1"], f.briefs["r-final-fix2"]
 	for _, in := range []string{"a.go:1 one", "a.go:9 three", "b.go:2 two", "f0.go:1 tidy 0", "f4.go:1 tidy 4"} {
@@ -1128,7 +1139,7 @@ func TestFixBatches(t *testing.T) {
 func TestRun_StopEndsStopped(t *testing.T) {
 	f := newFake()
 	f.reports["r-s1-dev1"] = Report{Status: "BLOCKED"}
-	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"), story("2", "intermediate-dev"))
 	drive(t, st, f, map[string]string{"blocked:r-s1-dev1": "stop"})
 	assert.Equal(t, Stopped, st.Status)
 	assert.NotEmpty(t, st.End)
@@ -1147,10 +1158,10 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("a pass with commits is checked, then gated", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\n**DOC:** USAGE.md its key\nLESSON: docs/claude/x.md a trap\nSTATUS: DONE"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.Equal(t, []string{
-			"agent r-s1-dev1 intermediate-dev", "services", "gates r-s1-gates1", "agent r-s1-review1 story-reviewer",
+			"agent r-s1-dev1 intermediate-dev", "services", "gates r-s1-gates1", "agent r-s1-review1 code-quality-reviewer",
 			"agent r-s1-docs1 doc-writer", "docs-check h1..h2", "services", "gates r-s1-gates2",
 			"services", "gates r-final-gates1", "agent r-final-review1 code-quality-reviewer",
 		}, f.calls)
@@ -1165,7 +1176,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("a pass with no commits runs neither", func(t *testing.T) {
 		f := newFake()
 		f.noCommit["r-s1-docs1"] = true
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.NotContains(t, strings.Join(f.calls, "\n"), "docs-check")
 		assert.NotContains(t, f.calls, "gates r-s1-gates2")
@@ -1175,7 +1186,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("the findings its fix rounds took reach its brief", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 guard it\nFINDING: Minor a.go:5 tidy\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		brief := f.briefs["r-s1-docs1"]
 		assert.Contains(t, brief, "- Critical a.go:3 guard it (/reports/r-s1-review1)")
@@ -1185,7 +1196,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("a stray asks, and accept gates it", func(t *testing.T) {
 		f := newFake()
 		f.strays["h2"] = []string{"main.go", "go.sum"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, Question{Key: "strays:r-s1-docs1", Kind: KindDocsStrayed, Story: "1", At: "h2",
@@ -1198,7 +1209,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("a decision on a stray runs a fresh pass to undo it", func(t *testing.T) {
 		f := newFake()
 		f.strays["h2"] = []string{"main.go"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"strays:r-s1-docs1": "Keep the docs, undo the code."})
 		brief := f.briefs["r-s1-docs2"]
 		assert.Contains(t, brief, "/reports/r-s1-docs1")
@@ -1211,7 +1222,7 @@ func TestRun_TheDocPass(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Important design a.go:7 the spec says three retries\nSTATUS: DONE"}
 		f.noCommit["r-s1-docs1"] = true
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.Contains(t, f.briefs["r-final-fix1"], "Important a.go:7 the spec says three retries")
 		assert.NotContains(t, f.briefs["r-final-fix1"], "(design)", "the spec already decided it")
@@ -1220,7 +1231,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	t.Run("a FINDING it can't read fails the pass, and its retry goes on from its commits", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Severe a.go:7 no\nSTATUS: DONE"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, "failed:r-s1-docs1", st.Question.Key)
@@ -1234,7 +1245,7 @@ func TestRun_TheDocPass(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-docs1"] = Report{Status: "TURN_CAP"}
 		f.commitsOn["r-s1-docs1"] = true
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-docs1": "retry"}) // a tree-moved question fails the test
 		assert.Contains(t, f.briefs["r-s1-docs2"], "/reports/r-s1-docs1")
 		assert.Contains(t, f.calls, "docs-check h1..h3")
@@ -1243,7 +1254,7 @@ func TestRun_TheDocPass(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "FINDING: Severe a.go:7 no\nSTATUS: DONE"}
 		f.strays["h3"] = []string{"main.go"}
-		st := docState(story("1", "intermediate-dev", "vouched"))
+		st := docState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"failed:r-s1-docs1": "retry", "strays:r-s1-docs2": "Undo it."})
 		brief := f.briefs["r-s1-docs3"]
 		assert.Contains(t, brief, "/reports/r-s1-docs1")
@@ -1252,7 +1263,7 @@ func TestRun_TheDocPass(t *testing.T) {
 	})
 	t.Run("a run without Docs has no pass", func(t *testing.T) {
 		f := newFake()
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		st.Blocks.DocWriter = "Doc paths: `*.md`"
 		drive(t, st, f, nil)
 		assert.NotContains(t, strings.Join(f.calls, "\n"), "doc-writer")
@@ -1275,7 +1286,7 @@ func script() (*State, *fakeFX, map[string]string) {
 	f.gates["r-final-gates2"] = GateResult{Ended: "passed", Free: 120 << 30}
 	f.reports["r-s2-review1"] = Report{Status: "failed", Why: "it ended with no result"}
 	f.strays["h6"] = []string{"main.go"}
-	st := newState(story("1", "intermediate-dev", "vouched"), story("2", "junior-dev", "full"))
+	st := newState(story("1", "intermediate-dev"), story("2", "junior-dev"))
 	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
 	return st, f, map[string]string{"ctx:r-s1-dev1:1": "That one.", "failed:r-s2-review1": "Read the conformance first.", "strays:r-s2-docs1": "accept"}
 }
@@ -1289,7 +1300,7 @@ func TestRun_EachAgentGetsItsScope(t *testing.T) {
 	f.reports["r-s1-review1"] = Report{Status: "DONE", Text: "FINDING: Critical a.go:3 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
 	f.reports["r-s1-docs1"] = Report{Status: "DONE", Text: "DOC: README.md the flag\nSTATUS: DONE"}
 	f.reports["r-final-review1"] = Report{Status: "DONE", Text: "FINDING: Important b.go:2 fix\nVERDICT: CHANGES_REQUESTED\nSTATUS: DONE"}
-	s := story("1", "intermediate-dev", "vouched")
+	s := story("1", "intermediate-dev")
 	s.Files = []string{"pkg/a.go"}
 	st := newState(s)
 	st.Docs, st.Blocks.DocWriter = true, "Doc paths (change only files these match): `*.md`"
@@ -1380,7 +1391,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 	t.Run("a reset within six hours retries with no question", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = limitAt("five_hour", 2*time.Hour)
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.Equal(t, Done, st.Status)
 		require.Len(t, f.resumesOf("r-s1-dev1"), 1, "the same run is resumed, and the queue holds it")
@@ -1392,7 +1403,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 	t.Run("exactly six hours still waits", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = limitAt("five_hour", LimitWaitWithin)
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, nil)
 		assert.Equal(t, Done, st.Status)
 	})
@@ -1407,7 +1418,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			f.reports["r-s1-review1"] = limitAt(tc.window, tc.in)
-			st := newState(story("1", "intermediate-dev", "vouched"))
+			st := newState(story("1", "intermediate-dev"))
 			require.NoError(t, runSettled(st, f))
 			require.Equal(t, Parked, st.Status)
 			assert.Equal(t, "limit:r-s1-review1:1", st.Question.Key)
@@ -1423,7 +1434,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 	t.Run("stop stops", func(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = limitAt("seven_day", 3*24*time.Hour)
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"limit:r-s1-dev1:1": "stop"})
 		assert.Equal(t, Stopped, st.Status)
 		assert.Empty(t, f.resumesOf("r-s1-dev1"))
@@ -1432,7 +1443,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = limitAt("five_hour", time.Hour)
 		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour)}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		assert.Equal(t, "limit:r-s1-dev1:2", st.Question.Key)
@@ -1444,7 +1455,7 @@ func TestRun_AUsageLimit(t *testing.T) {
 		f := newFake()
 		f.reports["r-s1-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which?"}
 		f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", time.Hour), limitAt("five_hour", 5*time.Hour)}
-		st := newState(story("1", "intermediate-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"))
 		drive(t, st, f, map[string]string{"ctx:r-s1-dev1:1": "That one."})
 		assert.Equal(t, Done, st.Status)
 		got := f.resumesOf("r-s1-dev1")
@@ -1460,7 +1471,7 @@ func limitScript() (*State, *fakeFX, map[string]string) {
 	f.reports["r-s1-dev1"] = limitAt("five_hour", time.Hour)
 	f.resumes["r-s1-dev1"] = []Report{limitAt("five_hour", 2*time.Hour), {Status: "DONE", Text: "STATUS: DONE"}}
 	f.reports["r-s1-review1"] = limitAt("seven_day", 48*time.Hour)
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	return st, f, map[string]string{"limit:r-s1-review1:1": "wait"}
 }
 
@@ -1495,11 +1506,94 @@ func TestRun_AUsageLimitReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) 
 	}
 }
 
+// apiError is an agent run that ended on an error from the API, as four
+// Cloudflare 403s ended runs of 2026-11-13 (the 2026-11-20 retro).
+var apiError = Report{Status: AgentAPIError, Why: "it ended with an error result: Failed to authenticate. API Error: 403 Attention Required! | Cloudflare (API 403)"}
+
+// An API error is no broken agent: the engine resumes its session on its
+// own, up to APIRetries times, before it asks the manager; any other
+// failure still asks at once.
+func TestRun_AnAPIError(t *testing.T) {
+	t.Run("a resume that works asks nothing", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = apiError
+		st := newState(story("1", "intermediate-dev"))
+		drive(t, st, f, nil)
+		assert.Equal(t, Done, st.Status)
+		got := f.resumesOf("r-s1-dev1")
+		require.Len(t, got, 1, "the same run is resumed")
+		assert.Contains(t, got[0], "403 Attention Required! | Cloudflare", "its text says what stopped it")
+		assert.NotContains(t, f.submits(), "agent r-s1-dev2 intermediate-dev", "no fresh attempt")
+		assert.Empty(t, st.Answers, "nothing was asked")
+		assert.Contains(t, st.Notes, "r-s1-dev1: the API failed, resuming it (retry 1 of 2): "+apiError.Why)
+	})
+	t.Run("one that keeps failing asks after its retries", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-review1"] = apiError
+		f.resumes["r-s1-review1"] = []Report{apiError, apiError}
+		st := newState(story("1", "intermediate-dev"))
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "failed:r-s1-review1", st.Question.Key)
+		assert.Equal(t, KindAgentFailed, st.Question.Kind)
+		assert.Contains(t, st.Question.Text, "403 Attention Required! | Cloudflare")
+		got := f.resumesOf("r-s1-review1")
+		require.Len(t, got, APIRetries)
+		assert.NotEqual(t, got[0], got[1], "each retry's text is its own, so a follow never takes one for another")
+	})
+	t.Run("any other failure asks at once", func(t *testing.T) {
+		f := newFake()
+		f.reports["r-s1-dev1"] = Report{Status: AgentFailed, Why: "it ended with no result"}
+		st := newState(story("1", "intermediate-dev"))
+		require.NoError(t, runSettled(st, f))
+		require.Equal(t, Parked, st.Status)
+		assert.Equal(t, "failed:r-s1-dev1", st.Question.Key)
+		assert.Empty(t, f.resumesOf("r-s1-dev1"), "a broken agent is not resumed")
+	})
+}
+
+// apiErrorScript is a run whose developer ends on an API error twice before
+// its second resume works, and whose reviewer once.
+func apiErrorScript() (*State, *fakeFX) {
+	f := newFake()
+	f.reports["r-s1-dev1"] = apiError
+	f.resumes["r-s1-dev1"] = []Report{apiError, {Status: "DONE", Text: "STATUS: DONE"}}
+	f.reports["r-s1-review1"] = apiError
+	return newState(story("1", "intermediate-dev")), f
+}
+
+func TestRun_AnAPIErrorReplaysTheSameWayAfterARestartAtEverySave(t *testing.T) {
+	st, f := apiErrorScript()
+	drive(t, st, f, nil)
+	require.Equal(t, Done, st.Status)
+	want := slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1"))
+	require.Len(t, f.resumesOf("r-s1-dev1"), 2)
+	notes := st.Notes
+	for k := 1; k <= f.saves; k++ {
+		t.Run(fmt.Sprintf("a crash at save %d", k), func(t *testing.T) {
+			st, f := apiErrorScript()
+			f.failAt = k
+			err := runSettled(st, f)
+			for err != nil {
+				require.ErrorIs(t, err, errCrash)
+				st = clone(f.saved)
+				if f.saved == nil {
+					st, _ = apiErrorScript()
+				}
+				err = runSettled(st, f)
+			}
+			require.Equal(t, Done, st.Status)
+			assert.Equal(t, want, slices.Concat(f.submits(), f.resumesOf("r-s1-dev1"), f.resumesOf("r-s1-review1")), "nothing submitted or resumed twice")
+			assert.Equal(t, notes, st.Notes)
+		})
+	}
+}
+
 // A laned story's developer runs in its lane at its partner's base, and its
 // commits are picked onto the head its partner left (parallel pairs spec §5.5).
 func TestRun_ALaneRunsBesideItsPartnerAndIsPicked(t *testing.T) {
 	f := newFake()
-	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")))
 	drive(t, st, f, nil)
 	require.Equal(t, Done, st.Status)
 	assert.Contains(t, f.calls, "lane r-s2 h0")
@@ -1525,7 +1619,7 @@ func TestRun_ALaneQuestionParksWhileItsPartnerWorks(t *testing.T) {
 	mainIn, laneGo, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	f.entered["r-s1-review1"], f.hold["r-s2-dev1"], f.hold["r-s1-review1"] = mainIn, laneGo, release
 	go func() { <-mainIn; close(laneGo) }()
-	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")))
 	e := newEngine(st, f)
 	require.NoError(t, e.start())
 	require.Equal(t, Parked, st.Status)
@@ -1546,7 +1640,7 @@ func TestRun_ALaneQuestionParksWhileItsPartnerWorks(t *testing.T) {
 func TestRun_ARunClosedBeforeItsLaneStartsMakesNoLane(t *testing.T) {
 	f := newFake()
 	f.head = 3 // a code commit: the first dispatch parks as tree-moved
-	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")))
 	require.NoError(t, runSettled(st, f))
 	require.Equal(t, Parked, st.Status)
 	assert.Equal(t, KindTreeMoved, st.Question.Kind)
@@ -1562,7 +1656,7 @@ func TestRun_AMainQuestionParksWhileTheLaneWorks(t *testing.T) {
 	laneIn, mainGo, laneGo := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	f.entered["r-s2-dev1"], f.hold["r-s1-dev1"], f.hold["r-s2-dev1"] = laneIn, mainGo, laneGo
 	go func() { <-laneIn; close(mainGo) }()
-	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+	st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")))
 	e := newEngine(st, f)
 	require.NoError(t, e.start())
 	require.Equal(t, Parked, st.Status)
@@ -1584,7 +1678,7 @@ func TestRun_ALaneThatDoesNotLand(t *testing.T) {
 		} else {
 			f.dirtyAfter["r-s2-dev1"] = true
 		}
-		st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")))
+		st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")))
 		require.NoError(t, runSettled(st, f))
 		require.Equal(t, Parked, st.Status)
 		require.Equal(t, KindLane, st.Question.Kind)
@@ -1630,7 +1724,7 @@ func TestRun_ALaneThatDoesNotLand(t *testing.T) {
 // In a chain, the next lane starts from the head after the pick (spec §5.5).
 func TestRun_AChainOfLanes(t *testing.T) {
 	f := newFake()
-	st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")), laned(story("3", "intermediate-dev", "vouched")))
+	st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")), laned(story("3", "intermediate-dev")))
 	drive(t, st, f, nil)
 	require.Equal(t, Done, st.Status)
 	assert.Contains(t, f.calls, "lane r-s2 h0")
@@ -1643,7 +1737,7 @@ func TestRun_AChainOfLanes(t *testing.T) {
 func TestRun_SpecAndPlanCommitsAreTaken(t *testing.T) {
 	f := newFake()
 	f.head, f.planOnly["h2"] = 2, true
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	drive(t, st, f, nil) // a tree-moved question fails the test
 	require.Equal(t, Done, st.Status)
 	assert.Contains(t, st.Notes, "took the spec and plan commits up to h2 before r-s1-dev1")
@@ -1654,7 +1748,7 @@ func TestRun_APairRestartedAtEverySaveSubmitsNothingTwice(t *testing.T) {
 	script := func() (*State, *fakeFX, map[string]string) {
 		f := newFake()
 		f.reports["r-s2-dev1"] = Report{Status: "NEEDS_CONTEXT", Question: "Which table?"}
-		st := newState(story("1", "intermediate-dev", "vouched"), laned(story("2", "intermediate-dev", "vouched")), story("3", "junior-dev", "vouched"))
+		st := newState(story("1", "intermediate-dev"), laned(story("2", "intermediate-dev")), story("3", "junior-dev"))
 		return st, f, map[string]string{"ctx:r-s2-dev1:1": "users"}
 	}
 	st, f, answers := script()

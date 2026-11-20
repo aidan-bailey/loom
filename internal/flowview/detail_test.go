@@ -46,9 +46,9 @@ func gateRec(t *testing.T, state, name string, verdict string, job sched.JobID) 
 func TestDetail_TheBoard(t *testing.T) {
 	repo, base, records, state := boardRepo(t)
 	st := runState("r", flowrun.Parked,
-		flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "full", Row: flowrun.Row{Status: "done", Commits: 7}},
-		flowrun.Story{ID: "2", Developer: "junior-dev", Tier: "light", Review: "vouched", Row: flowrun.Row{Status: "done", Commits: 4}},
-		flowrun.Story{ID: "3", Developer: "intermediate-dev", Tier: "deep", Review: "full", Row: flowrun.Row{Status: "developing"}})
+		flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "done", Commits: 7}},
+		flowrun.Story{ID: "2", Developer: "junior-dev", Tier: "light", Row: flowrun.Row{Status: "done", Commits: 4}},
+		flowrun.Story{ID: "3", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "developing"}})
 	st.Agents = []string{"r-premise1", "r-s1-dev1", "r-s1-fix1", "r-s1-review1", "r-s2-dev1", "r-s2-review1", "r-s3-dev1"}
 	st.Gates = []string{"r-s1-gates1", "r-s1-gates2", "r-s2-gates1"}
 	st.Question = &flowrun.Question{Key: "blocked:r-s3-dev1", Kind: flowrun.KindBlocked, Story: "3", Text: "r-s3-dev1 is BLOCKED"}
@@ -78,6 +78,9 @@ func TestDetail_TheBoard(t *testing.T) {
 	d, err := Detail(repo, base, records, planP)
 	require.NoError(t, err)
 	require.Len(t, d.Stories, 3)
+	for _, s := range d.Stories {
+		assert.Equal(t, "full", s.Review, "Story %s: full for every story, whichever role ran its first review", s.ID)
+	}
 	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellPassed, "docs": CellSkipped}, d.Stories[0].Cells)
 	assert.Equal(t, map[string]string{"dev": CellPassed, "gates": CellPassed, "review": CellPassed, "fix": CellSkipped, "docs": CellSkipped}, d.Stories[1].Cells)
 	assert.Equal(t, map[string]string{"dev": CellAsks, "gates": CellTodo, "review": CellTodo, "fix": CellTodo, "docs": CellTodo}, d.Stories[2].Cells)
@@ -107,8 +110,8 @@ func TestDetail_TheBoard(t *testing.T) {
 func TestDetail_TheDocCell(t *testing.T) {
 	repo, base, records, state := boardRepo(t)
 	st := runState("r", flowrun.Running,
-		flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "gating"}},
-		flowrun.Story{ID: "2", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "done"}})
+		flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "gating"}},
+		flowrun.Story{ID: "2", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "done"}})
 	st.Docs = true
 	st.Agents = []string{"r-s1-dev1", "r-s1-review1", "r-s1-docs1", "r-s2-dev1", "r-s2-review1"}
 	st.Gates = []string{"r-s1-gates1", "r-s1-gates2", "r-s2-gates1"}
@@ -143,7 +146,7 @@ func TestDetail_AGateFixLeavesTheReviewToCome(t *testing.T) {
 	t.Run("a story", func(t *testing.T) {
 		repo, base, records, state := boardRepo(t)
 		st := runState("r", flowrun.Running,
-			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "gating"}})
+			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "gating"}})
 		st.Docs = true
 		st.Agents = []string{"r-s1-dev1", "r-s1-fix1"}
 		st.Gates = []string{"r-s1-gates1", "r-s1-gates2"}
@@ -165,7 +168,7 @@ func TestDetail_AGateFixLeavesTheReviewToCome(t *testing.T) {
 	t.Run("the final round", func(t *testing.T) {
 		repo, base, records, state := boardRepo(t)
 		st := runState("r", flowrun.Running,
-			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Review: "vouched", Row: flowrun.Row{Status: "done"}})
+			flowrun.Story{ID: "1", Developer: "intermediate-dev", Tier: "deep", Row: flowrun.Row{Status: "done"}})
 		st.Agents = []string{"r-s1-dev1", "r-s1-review1", "r-final-fix1"}
 		st.Gates = []string{"r-s1-gates1", "r-final-gates1"}
 		for i, name := range st.Agents {

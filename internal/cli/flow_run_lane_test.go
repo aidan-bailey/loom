@@ -21,11 +21,16 @@ type keyedTools struct {
 
 func (k keyedTools) Key() (string, error) { return k.key, nil }
 
-// laneRepo is a repository with one commit, and a runFX on it.
+// laneRepo is a repository with one commit, and a runFX on it. The
+// repository names its own committer: Pick's cherry-pick runs with the
+// repository's config, and a host with no global identity (a CI runner)
+// fails it, which Pick reads as an empty pick.
 func laneRepo(t *testing.T) (string, *runFX) {
 	t.Helper()
 	repo := t.TempDir()
 	gitIn(t, repo, "init", "-q")
+	gitIn(t, repo, "config", "user.name", "t")
+	gitIn(t, repo, "config", "user.email", "t@t")
 	for _, f := range []string{"plan.md", "spec.md", "a.go", "b.go"} {
 		require.NoError(t, os.WriteFile(filepath.Join(repo, f), []byte("v1\n"), 0o600))
 	}

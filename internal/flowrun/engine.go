@@ -49,10 +49,11 @@ type Regenerated struct {
 	Paths []string `json:"paths,omitempty"`
 }
 
-// Conformance is loom flow conformance's output for a story.
+// Conformance is loom flow conformance's output for a story: the file its
+// first review's brief names. A state an older build saved may also hold
+// the markers it parsed for the vouched-story review, which decoding drops.
 type Conformance struct {
-	Path    string   `json:"path"`
-	Markers []string `json:"markers,omitempty"`
+	Path string `json:"path"`
 }
 
 // Scope is what an agent's package rules cover (package rules spec
@@ -134,6 +135,10 @@ func (c *PickConflict) Error() string {
 // an unknown one, asks the manager.
 const LimitWaitWithin = 6 * time.Hour
 
+// APIRetries is how many times the engine resumes an agent run that ended
+// on an API error (AgentAPIError) before it asks the manager.
+const APIRetries = 2
+
 var (
 	errParked  = errors.New("the run parked")
 	errStopped = errors.New("the manager stopped the run")
@@ -153,6 +158,8 @@ type engine struct {
 	seq     map[string]int // attempts at each name prefix, this pass
 	resumes map[string]int // resumes of each agent run, this pass
 	limits  map[string]int // usage limits each agent run stopped on, this pass
+	// apiErrors is the API errors each agent run ended on, this pass.
+	apiErrors map[string]int
 	// lastReset is the reset of the last usage limit each agent run stopped
 	// on, this pass.
 	lastReset map[string]time.Time
@@ -219,7 +226,7 @@ type pickResult struct {
 func Run(st *State, fx Effects) error { return newEngine(st, fx).start() }
 
 func newEngine(st *State, fx Effects) *engine {
-	e := &engine{st: st, fx: fx, seq: map[string]int{}, resumes: map[string]int{}, limits: map[string]int{},
+	e := &engine{st: st, fx: fx, seq: map[string]int{}, resumes: map[string]int{}, limits: map[string]int{}, apiErrors: map[string]int{},
 		lastReset: map[string]time.Time{}, final: Story{ID: finalStory}, accepted: map[string]map[string]string{},
 		over: make(chan struct{})}
 	e.main = &track{engine: e, head: st.Base}
@@ -517,43 +524,63 @@ func (e *track) resume(name, text string) (Report, error) {
 // starts the run again from its brief when it has none), with a text of
 // its own for each limit, so a follow after a restart never takes one
 // retry for another.
+//
+// An API error (AgentAPIError: an overload, a Cloudflare 403, a dropped
+// connection) is no broken agent either: it is resumed on its own, with a
+// note, up to APIRetries times, the CLI pausing before each; past them the
+// report goes back as it ended, and its caller asks the manager about it as
+// about any failure (the 2026-11-20 retro: four Cloudflare 403s each became
+// a question).
 func (e *track) outlast(name string, r Report) (Report, error) {
-	for r.Status == AgentUsageLimit {
-		e.limits[name]++
-		n := e.limits[name]
-		l := Limit{}
-		if r.Limit != nil {
-			l = *r.Limit
-		}
-		window := sched.WindowLabel(l.Window)
-		when := sched.ResetText(l.Resets, l.At)
-		// The same reset twice means the retry ran before it: the queue did
-		// not hold it (a daemon that keeps no hold), so a further retry would
-		// only be refused again, every few seconds until the reset.
-		again := !l.Resets.IsZero() && l.Resets.Equal(e.lastReset[name])
-		e.lastReset[name] = l.Resets
-		if !again && !l.Resets.IsZero() && l.Resets.Sub(l.At) <= LimitWaitWithin {
-			e.note("%s: usage limit (%s), waiting for the reset at %s", name, window, when)
-		} else {
-			text := fmt.Sprintf("%s stopped on the account's usage limit (%s limit, resets %s)", name, window, when)
-			if again {
-				text += ", again before that reset: the queue did not hold its retry"
+	for {
+		var text string
+		switch r.Status {
+		case AgentUsageLimit:
+			e.limits[name]++
+			n := e.limits[name]
+			l := Limit{}
+			if r.Limit != nil {
+				l = *r.Limit
 			}
-			a, err := e.ask(Question{Key: fmt.Sprintf("limit:%s:%d", name, n), Kind: KindUsageLimit, Text: text})
-			if err != nil {
-				return r, err
+			window := sched.WindowLabel(l.Window)
+			when := sched.ResetText(l.Resets, l.At)
+			// The same reset twice means the retry ran before it: the queue did
+			// not hold it (a daemon that keeps no hold), so a further retry would
+			// only be refused again, every few seconds until the reset.
+			again := !l.Resets.IsZero() && l.Resets.Equal(e.lastReset[name])
+			e.lastReset[name] = l.Resets
+			if !again && !l.Resets.IsZero() && l.Resets.Sub(l.At) <= LimitWaitWithin {
+				e.note("%s: usage limit (%s), waiting for the reset at %s", name, window, when)
+			} else {
+				text := fmt.Sprintf("%s stopped on the account's usage limit (%s limit, resets %s)", name, window, when)
+				if again {
+					text += ", again before that reset: the queue did not hold its retry"
+				}
+				a, err := e.ask(Question{Key: fmt.Sprintf("limit:%s:%d", name, n), Kind: KindUsageLimit, Text: text})
+				if err != nil {
+					return r, err
+				}
+				if a == WordStop {
+					return r, errStopped
+				}
 			}
-			if a == WordStop {
-				return r, errStopped
+			text = fmt.Sprintf("The usage limit that stopped you has reset (retry %d). Continue from where you stopped.", n)
+		case AgentAPIError:
+			e.apiErrors[name]++
+			n := e.apiErrors[name]
+			if n > APIRetries {
+				return r, nil
 			}
+			e.note("%s: the API failed, resuming it (retry %d of %d): %s", name, n, APIRetries, r.Why)
+			text = fmt.Sprintf("The API failed and stopped you (retry %d): %s. Continue from where you stopped.", n, r.Why)
+		default:
+			return r, nil
 		}
 		var err error
-		text := fmt.Sprintf("The usage limit that stopped you has reset (retry %d). Continue from where you stopped.", n)
 		if r, err = e.resumeOnce(name, text); err != nil {
 			return r, err
 		}
 	}
-	return r, nil
 }
 
 // resumeOnce is the report of name resumed with text, memoized.
@@ -1038,11 +1065,10 @@ func (e *track) story(s *Story, base string, dev Report, joined bool) error {
 	if err != nil {
 		return err
 	}
-	role := "story-reviewer"
-	if s.Review != "vouched" || dev.Status == "DONE_WITH_CONCERNS" || len(conf.Markers) > 0 {
-		role = "code-quality-reviewer"
-	}
-	rev, rep, err := e.review(p+"-review", role, ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path), e.storyScope(s, base))
+	// Every story's first review is the full one: /flow:draft no longer
+	// reviews a plan's code (2026-11-20). A run an older build started may
+	// hold a story-reviewer's: its memo is by name, so a replay takes it.
+	rev, rep, err := e.review(p+"-review", "code-quality-reviewer", ReviewBrief(e.st, s, base, e.head, conf.Path, dev.Path), e.storyScope(s, base))
 	if err != nil {
 		return err
 	}

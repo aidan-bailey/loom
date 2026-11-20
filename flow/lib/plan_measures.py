@@ -4,12 +4,15 @@
 A record the run engine wrote (`- Engine: loom flow run`) gives, per run, from its text alone:
 the draft session's flow copy and the run's (the `loom flow roster <hex>` of its Design stage line,
 and the last of its Definitions line); the plan's lines, the drafting's logged USD and the plan
-review's and the skeleton review's USD (`<n> plan lines`, `$<n> logged`, `plan review $<n>` and
-`skeleton review $<n>` in the Design stage line); its
+review's and the skeleton review's USD (`<n> plan lines`, `$<n> logged`, the plan review's
+`risk review $<n>` or `plan review $<n>`, and `skeleton review $<n>` in the Design stage line); its
 plan-code questions (`- Asked (unresolved-findings, Story N): Reviews of Story N found problems in
 the plan's own code`); what the fix rounds and re-reviews of those stories cost (every Cost by agent
-row named `…-s<N>-fix<k>`, or `…-s<N>-review<k>` with k >= 2, its USD column); and its stories and
-how many its Stories table marks vouched.
+row named `…-s<N>-fix<k>`, or `…-s<N>-review<k>` with k >= 2, its USD column); and its stories.
+
+The plan review's token says who reviewed: `risk review $<n>` is flow:risk-reviewer alone, the plan
+review since the owner removed flow:plan-reviewer on 2026-11-20 (`risk_only`), and `plan review $<n>`,
+in the Design stage lines of drafts before then, the two reviewers together.
 
 The table gives each run and the pooled figures the plan review's provenance entry judges: plan-code
 questions per 1,000 plan lines, drafting plus run USD per 1,000 plan lines and the review's USD per
@@ -30,7 +33,9 @@ DEFINITIONS_RE = re.compile(r"^- Definitions: (.*)$", re.M)
 ROSTER_RE = re.compile(r"loom flow roster ([0-9a-f]{12})")
 LOGGED_RE = re.compile(r"\$([0-9][0-9,]*(?:\.[0-9]+)?) logged")
 PLAN_LINES_RE = re.compile(r"([0-9][0-9,]*) plan lines")
-REVIEW_RE = re.compile(r"plan review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
+# The plan review's USD: `risk review $` flow:risk-reviewer's alone, `plan review $` (drafts before 2026-11-20) both reviewers'.
+RISK_REVIEW_RE = re.compile(r"risk review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
+PLAN_REVIEW_RE = re.compile(r"plan review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
 SKELETON_RE = re.compile(r"skeleton review \$([0-9][0-9,]*(?:\.[0-9]+)?)")
 ASKED_RE = re.compile(
     r"^- Asked \(unresolved-findings, Story ([^)]+)\): Reviews of Story \S+ found problems in the plan's own code", re.M
@@ -57,8 +62,9 @@ class RunMeasures:
     run_usd: float
     fix_usd: float
     stories: int
-    vouched: int
     review_usd: float | None
+    # Whether review_usd is flow:risk-reviewer's alone (`risk review $`), not both reviewers' (`plan review $`).
+    risk_only: bool = False
     skeleton_usd: float | None = None
     # The plan's approved Budget line, as the run's record copied it (plan treatment spec §6).
     budget_draft: float | None = None
@@ -122,7 +128,9 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
                 pass
     stories = table_rows(text, "Story")
     budget = BUDGET_RE.search(found(RECORD_BUDGET_RE, text) or "")
-    lines, logged, review = found(PLAN_LINES_RE, stage), found(LOGGED_RE, stage), found(REVIEW_RE, stage)
+    lines, logged = found(PLAN_LINES_RE, stage), found(LOGGED_RE, stage)
+    risk = found(RISK_REVIEW_RE, stage)
+    review = risk if risk is not None else found(PLAN_REVIEW_RE, stage)
     skeleton = found(SKELETON_RE, stage)
     return RunMeasures(
         name=name,
@@ -134,8 +142,8 @@ def measure(name: str, text: str, run_usd: float) -> RunMeasures | None:
         run_usd=run_usd,
         fix_usd=fix_usd,
         stories=len(stories),
-        vouched=sum(1 for row in stories if row.get("Review") == "vouched"),
         review_usd=number(review) if review else None,
+        risk_only=risk is not None,
         skeleton_usd=number(skeleton) if skeleton else None,
         budget_draft=number(budget.group(1)) if budget else None,
         budget_run=number(budget.group(2)) if budget else None,
@@ -228,13 +236,13 @@ def per_thousand(amount: float | None, lines: int | None) -> float | None:
 
 
 def row(name: str, draft_copy: str, run_copy: str, lines: int | None, questions: int, draft: float | None,
-        run: float, review: float | None, fix: float, stories: int, vouched: int, skeleton: str) -> str:
+        run: float, review: float | None, fix: float, stories: int, skeleton: str) -> str:
     rate = per_thousand(questions, lines)
     spend = per_thousand(None if draft is None else draft + run, lines)
     each = None if review is None or not stories else review / stories
     return (f"| {name} | {draft_copy} | {run_copy} | {'n/a' if lines is None else f'{lines:,}'} | {questions} | "
             f"{'n/a' if rate is None else f'{rate:.2f}'} | {usd(draft)} | {usd(run)} | {usd(spend)} | {usd(fix)} | "
-            f"{stories} | {vouched} | {usd(review)} | {usd(each)} | {skeleton} |")
+            f"{stories} | {usd(review)} | {usd(each)} | {skeleton} |")
 
 
 def table(runs: list[RunMeasures]) -> str:
@@ -242,16 +250,18 @@ def table(runs: list[RunMeasures]) -> str:
     lines = [
         "## Plan code", "",
         "Engine runs only. Plan-code questions are the run's \"found problems in the plan's own code\" questions, "
-        "and fix + re-review is what the fix rounds and re-reviews of their stories cost. Logged USD; a pooled "
+        "and fix + re-review is what the fix rounds and re-reviews of their stories cost. The plan review is "
+        "flow:risk-reviewer's alone where the Design stage line says `risk review $`, and flow:plan-reviewer's and "
+        "flow:risk-reviewer's together where it says `plan review $` (drafts before 2026-11-20). Logged USD; a pooled "
         "ratio uses only the runs with both its figures.", "",
         "| Run | Draft copy | Run copy | Plan lines | Plan-code questions | per 1,000 lines | Drafting | Run "
-        "| Drafting + run per 1,000 lines | Fix + re-review on them | Stories | Vouched | Plan review | per story "
+        "| Drafting + run per 1,000 lines | Fix + re-review on them | Stories | Plan review | per story "
         "| Skeleton review |",
-        "|---|---|---|" + "---:|" * 12,
+        "|---|---|---|" + "---:|" * 11,
     ]
     for r in runs:
         lines.append(row(r.name, r.draft_copy or "n/a", r.run_copy or "n/a", r.plan_lines, r.questions, r.draft_usd,
-                         r.run_usd, r.review_usd, r.fix_usd, r.stories, r.vouched, usd(r.skeleton_usd)))
+                         r.run_usd, r.review_usd, r.fix_usd, r.stories, usd(r.skeleton_usd)))
     sized = [r for r in runs if r.plan_lines]
     priced = [r for r in sized if r.draft_usd is not None]
     reviewed = [r for r in runs if r.review_usd is not None]
@@ -269,7 +279,7 @@ def table(runs: list[RunMeasures]) -> str:
         f"{'n/a' if pooled_lines is None else f'{pooled_lines:,}'} | {sum(r.questions for r in runs)} | "
         f"{'n/a' if rate is None else f'{rate:.2f}'} | {usd(sum(drafted) if drafted else None)} | "
         f"{usd(sum(r.run_usd for r in runs))} | {usd(spend)} | {usd(sum(r.fix_usd for r in runs))} | "
-        f"{sum(r.stories for r in runs)} | {sum(r.vouched for r in runs)} | "
+        f"{sum(r.stories for r in runs)} | "
         f"{usd(sum(r.review_usd or 0 for r in reviewed) if reviewed else None)} | {usd(each)} | {skeleton} |"
     )
     return "\n".join(lines)

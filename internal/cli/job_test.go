@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/sched"
@@ -317,11 +318,27 @@ func TestJobList_SaysWhenThereIsNothingToList(t *testing.T) {
 	assert.Equal(t, "admission paused: scheduler.cpus is 5000: it must be 1–1024\nNo running or queued jobs.\n", out.String())
 }
 
+// pinCaps writes this test's global config.json with the scheduler's caps
+// set, so a default claim (min(4, cpus), min(6, memory_gb)) reads the same
+// on any host: the cpus cap defaults to the host's cores less 2, which gave
+// a 4-core CI runner 2c where these tests print 4c. Call it after
+// isolateWorkspaces, which gives the test a global dir of its own.
+func pinCaps(t *testing.T) {
+	t.Helper()
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	c, err := config.ReadConfigFrom(dir)
+	require.NoError(t, err)
+	c.Mutate(func(c *config.Config) { c.Scheduler = &config.SchedulerSettings{CPUs: 8, MemoryGB: 16} })
+	require.NoError(t, config.SaveConfigTo(c, dir))
+}
+
 // A job claiming every cap holds the host: the next one queues behind it,
 // `list` says why it waits, and a cancel ends each (a queued job at once, a
 // running one when the daemon next settles it).
 func TestJobSubmit_QueuesBehindAnExclusiveJobAndListShowsWhy(t *testing.T) {
 	isolateWorkspaces(t)
+	pinCaps(t)
 	t.Setenv(claudemod.EnvLaunch, "")
 	d := serveDaemon(t, "true")
 
@@ -905,6 +922,7 @@ func TestJobRun_AnInterruptWithNoOwnerSaysSo(t *testing.T) {
 // not known.
 func TestJobWait_LosingTheDaemonSaysTheJobContinues(t *testing.T) {
 	isolateWorkspaces(t)
+	pinCaps(t)
 	t.Setenv(claudemod.EnvLaunch, "")
 	d := serveDaemon(t, "true")
 	_, _, err := runJob(t, "submit", "-d", "nap", "--no-notify", "--", "sh", "-c", "echo up; sleep 2")

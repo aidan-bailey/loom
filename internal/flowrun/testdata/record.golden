@@ -20,10 +20,10 @@ COST TABLES
 
 ## Stories
 
-| Story | Developer | Tier | Review | Form | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | intermediate-dev | deep | vouched | full | 3 | done | 0 | 0 | 1 | 1/0/1 | no | 1 | 1 |
-| 2 | intermediate-dev | deep | full | mechanical | 3 | done | 0 | 1 | 2 | 0/0/0 | no | 0 | 0 |
+| Story | Developer | Tier | Form | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | intermediate-dev | deep | full | 3 | done | 0 | 0 | 1 | 1/0/1 | no | 1 | 1 |
+| 2 | intermediate-dev | deep | mechanical | 3 | done | 0 | 1 | 2 | 0/0/0 | no | 0 | 0 |
 
 ## Notes
 

@@ -468,6 +468,7 @@ type agentResult struct {
 	CostUSD  float64
 	Turns    int
 	Limit    *flowrun.Limit // at flowrun.AgentUsageLimit; At is the caller's
+	Why      string         // at flowrun.AgentAPIError: what the error result says
 }
 
 // readResult reads an ended agent job's stream-json log: the session from
@@ -531,7 +532,15 @@ func readResult(log []byte) (agentResult, error) {
 			res.Status, res.Limit = flowrun.AgentUsageLimit, &flowrun.Limit{Window: l.Window, Resets: l.Resets}
 			return res, nil
 		}
-		return res, errorResult(result.Result, result.APIStatus, result.APIError)
+		why := errorResult(result.Result, result.APIStatus, result.APIError)
+		// An API error (an overload, a Cloudflare 403, a dropped connection)
+		// is no broken agent either: its session resumes, and the engine
+		// retries it on its own before it asks (flowrun.AgentAPIError).
+		if result.APIStatus != nil || result.APIError != "" {
+			res.Status, res.Why = flowrun.AgentAPIError, why.Error()
+			return res, nil
+		}
+		return res, why
 	}
 	status, question := statusLines(result.Result)
 	switch {

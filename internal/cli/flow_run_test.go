@@ -91,7 +91,7 @@ func (f fakeRunTools) Costs(run string) (string, error) {
 }
 
 func runStory(id, developer string) flowrun.Story {
-	return flowrun.Story{ID: id, Line: 10, End: 20, Developer: developer, Tier: "deep", Review: "vouched", Verify: "true"}
+	return flowrun.Story{ID: id, Line: 10, End: 20, Developer: developer, Tier: "deep", Verify: "true"}
 }
 
 // runFixture is agentFixture with the run engine's fakes: the roster's
@@ -203,7 +203,7 @@ func TestFlowRun_EndToEnd(t *testing.T) {
 	assert.Contains(t, text, "- Design stage: 1 session, 20 minutes")
 	assert.Contains(t, text, "- Manager: claude-fake m1")
 	assert.Contains(t, text, "COST of "+id)
-	assert.Contains(t, text, "| 1 | intermediate-dev | deep | vouched | full | 3 | done | 1 | 0 | 0 | 1/0/0 | no | 1 | 0 |")
+	assert.Contains(t, text, "| 1 | intermediate-dev | deep | full | 3 | done | 1 | 0 | 0 | 1/0/0 | no | 1 | 0 |")
 	assert.Contains(t, text, "- Questions: 1; answered from the spec: 0; by the owner: 1.")
 	assert.Contains(t, text, "- Asked (needs-context, Story 2): Which colour?\n  Answered by the owner: Blue.")
 	require.Len(t, st.Answers, 1)

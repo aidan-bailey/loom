@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Show which of a story's plan code landed as written, and what else changed.
 
-A supervised plan gives most of a story's code, and the plan's code is reviewed
-before it is committed. Once a developer has built the story, this script
-looks for each block the story adds, replaces with or creates in the files
-the story changed, at the story's last commit, and maps the story's diff onto
-the blocks it found. A story reviewer then reads only what the plan doesn't
-vouch for: blocks that didn't land as written, and changed lines no block
-covers.
+A supervised plan gives most of a story's code. Once a developer has built
+the story, this script looks for each block the story adds, replaces with or
+creates in the files the story changed, at the story's last commit, and maps
+the story's diff onto the blocks it found. The story's first review reads
+its output, which points at the code the plan didn't give: blocks that didn't
+land as written, and changed lines no block covers.
 
 A block matches line for line, ignoring indentation, or with all whitespace
 removed when rustfmt has rewrapped it. A long block that doesn't match whole
@@ -228,8 +227,8 @@ def main(argv: list[str]) -> int:
 
 
 def uncovered_markers(tree: "Tree", uncovered: list[tuple[str, list[int]]], markers: list[str]) -> list[str]:
-    """The profile's landmine markers an uncovered changed line holds, in the profile's order: a vouched
-    story with one gets the full review (flow in loom part 3b's engine reads the MARKERS line)."""
+    """The profile's landmine markers an uncovered changed line holds, in the profile's order: the MARKERS
+    line, which tells the story's review that code the plan didn't give touches a landmine."""
     found = set()
     for path, rest in uncovered:
         lines = tree.lines(path) or []

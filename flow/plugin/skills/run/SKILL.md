@@ -31,7 +31,9 @@ short.
    brief. An agent stopped on a usage limit that resets within six hours is
    retried by the engine itself; one further off, or with no reset known,
    asks `usage-limit`, which takes `wait` (the queue holds the retry until
-   the reset) or `stop`. When it left no report, the path to read is its
+   the reset) or `stop`. An agent stopped by an API error (an overload, a
+   Cloudflare 403) is resumed by the engine itself, twice, three minutes
+   apart, before it asks you as a failed agent. When it left no report, the path to read is its
    job's `output.log` (stream JSON; a `result` event, when there is one, holds
    its final message). A plan's laned story asks `lane` when its lane is
    left dirty or its commits don't apply: `retry` once you have fixed the

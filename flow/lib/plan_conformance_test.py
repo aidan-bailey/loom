@@ -169,7 +169,7 @@ class PlanConformanceTest(unittest.TestCase):
         self.assertNotIn("cargo test", out)
 
     def test_a_marker_in_an_uncovered_line_is_listed(self):
-        # loom flow run gives a vouched story the full review when one is there (flow in loom part 3b).
+        # The MARKERS line tells the story's review that code the plan didn't give touches a landmine.
         self.write({".claude/flow.toml": 'schema = 1\n[landmines]\nmarkers = ["first()", "glue()", "absent("]\n'})
         self.commit("markers")
         self.base = self.rev()

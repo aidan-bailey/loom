@@ -86,6 +86,14 @@ was deleted), show the raw key.
   start of its Commits range; when that fails, say the figure is unknown),
   and say so. Neither figure holds the design
   session's own cost.
+- **The same per story**: show design, run and their sum per story beside
+  each per-1,000-lines figure, and read a bar written per 1,000 lines
+  against both. A brief story carries its behaviour and tests but no code,
+  so a plan with brief stories has far fewer lines for the same work (the
+  2026-11-20 retro: 2,085 lines a story before the story forms, 1,011
+  after, at about the same drafting cost a story), and per 1,000 lines it
+  looks dearer and its defects denser than it is. Count a plan whose run
+  was stopped and run again once: its stories once, its design stage once.
 
 With `dry-run` as the argument, stop here: show the tables and this reading,
 and propose nothing.

@@ -274,6 +274,10 @@ func (d *client) settleAgent(dir, id string, v core.JobView, known bool) (*agent
 			run.Status, run.Limit, run.Why = res.Status, &l, limitWhy(&l)
 			break
 		}
+		if res.Status == flowrun.AgentAPIError {
+			run.Status, run.Why = res.Status, res.Why
+			break
+		}
 		run.Status, run.Report, run.Question = res.Status, res.Report, res.Question
 		if err := config.AtomicWriteFile(filepath.Join(dir, id, "report.md"), []byte(strings.TrimRight(res.Report, "\n")+"\n"), 0o600); err != nil {
 			run.Why = "report.md: " + err.Error()
@@ -288,7 +292,7 @@ func (d *client) settleAgent(dir, id string, v core.JobView, known bool) (*agent
 // printAgentEnd prints an ended run's line and exits as it ended.
 func printAgentEnd(out io.Writer, dir string, run *agentRun) error {
 	switch run.Status {
-	case agentFailed, flowrun.AgentUsageLimit:
+	case agentFailed, flowrun.AgentUsageLimit, flowrun.AgentAPIError:
 		fmt.Fprintf(out, "failed %s: %s\n", run.ID, run.Why)
 		return &ExitError{Code: 1}
 	case agentCancelled:
@@ -306,7 +310,7 @@ func printAgentEnd(out io.Writer, dir string, run *agentRun) error {
 func newFlowAgentAnswerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "answer ID < ANSWER",
-		Short: "Resume an agent run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT with an answer on stdin",
+		Short: "Resume an agent run at NEEDS_CONTEXT, BLOCKED, TURN_CAP, USAGE_LIMIT or API_ERROR with an answer on stdin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
@@ -339,14 +343,15 @@ func newFlowAgentAnswerCmd() *cobra.Command {
 
 // resumable reports whether a run at status takes an answer.
 func resumable(status string) bool {
-	return status == "NEEDS_CONTEXT" || status == "BLOCKED" || status == agentTurnCap || status == flowrun.AgentUsageLimit
+	return status == "NEEDS_CONTEXT" || status == "BLOCKED" || status == agentTurnCap || status == flowrun.AgentUsageLimit ||
+		status == flowrun.AgentAPIError
 }
 
 // answerArgv is the command that resumes run's session with answer. A run a
-// usage limit stopped before it had a session starts again from its brief
-// (usage-limit hold spec §3): there is nothing to resume.
+// usage limit or an API error stopped before it had a session starts again
+// from its brief (usage-limit hold spec §3): there is nothing to resume.
 func answerArgv(run *agentRun, root, answer string) ([]string, error) {
-	if run.Status == flowrun.AgentUsageLimit && run.Session == "" {
+	if (run.Status == flowrun.AgentUsageLimit || run.Status == flowrun.AgentAPIError) && run.Session == "" {
 		brief, err := os.ReadFile(run.Brief)
 		if err != nil {
 			return nil, &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %s has no session to resume, and its brief can't be read: %v", run.ID, err)}
@@ -373,7 +378,7 @@ func (d *client) answerAgent(out io.Writer, dir, id, root, answer string) error 
 		return &ExitError{Code: exitNotRun, Msg: fmt.Sprintf("loom flow agent: %v; the record is left as it is", err)}
 	}
 	if !resumable(run.Status) {
-		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP or USAGE_LIMIT takes an answer", id, run.Status)}
+		return &ExitError{Code: exitUsage, Msg: fmt.Sprintf("loom flow agent: %s is %s; only a run at NEEDS_CONTEXT, BLOCKED, TURN_CAP, USAGE_LIMIT or API_ERROR takes an answer", id, run.Status)}
 	}
 	argv, err := answerArgv(run, root, answer)
 	if err != nil {

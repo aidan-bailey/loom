@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/flow"
 	"github.com/aidan-bailey/loom/internal/flowrun"
 	"github.com/aidan-bailey/loom/sched"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,6 +43,7 @@ limited() {
 }
 case "$prompt" in
   *NOSESSION*) if [ ! -e "$FAKE_CLAUDE_LOG/nosession" ]; then touch "$FAKE_CLAUDE_LOG/nosession"; limited; exit 1; fi;;
+  *APIGONE*) if [ ! -e "$FAKE_CLAUDE_LOG/apigone" ]; then touch "$FAKE_CLAUDE_LOG/apigone"; printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":529,"num_turns":0,"total_cost_usd":0,"result":"Overloaded"}'; exit 1; fi;;
 esac
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-1","model":"claude-fake"}'
 result() { printf '%s\n' '{"type":"result","subtype":"success","is_error":'"$1"',"num_turns":3,"total_cost_usd":0.25,"session_id":"sess-1","result":"'"$2"'"}'; }
@@ -51,6 +55,7 @@ case "$prompt" in
   *NOSTATUS*) result false 'just words';;
   *MUTE*) result false 'x\nSTATUS: NEEDS_CONTEXT';;
   *LIMITED*) limited; exit 1;;
+  *APIERR*) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"num_turns":1,"total_cost_usd":0,"session_id":"sess-1","result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"}'; exit 1;;
   *SLOW*) sleep 30; result false 'late\nSTATUS: DONE';;
   *CAPPED*) printf '%s\n' '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"total_cost_usd":0.1,"session_id":"sess-1"}'; exit 1;;
   *ASK*) result false 'need one\n**STATUS: NEEDS_CONTEXT**\nQUESTION: ` + "`Which colour?`" + `';;
@@ -205,8 +210,10 @@ func TestFlowAgent_AJobWithoutAUsableReportFails(t *testing.T) {
 }
 
 // TestReadResult_AnErrorResultSaysWhatItSays pins that an error result's
-// text and API error reach the failure, as a usage limit's does (thread 19:
-// Claude Code 2.1.322's result event, subtype success with is_error).
+// text and API error reach the run's Why (thread 19: Claude Code 2.1.322's
+// result event, subtype success with is_error): an API error's as the
+// resumable API_ERROR (an overload or a Cloudflare 403 is no broken agent;
+// the 2026-11-20 retro), any other's as the failure.
 func TestReadResult_AnErrorResultSaysWhatItSays(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
 		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"num_turns":1,"total_cost_usd":0,"session_id":"s","result":"Rate limited"}`,
@@ -215,13 +222,57 @@ func TestReadResult_AnErrorResultSaysWhatItSays(t *testing.T) {
 			"it ended with an error result: Overloaded (API 529)"},
 		{`{"type":"result","subtype":"success","is_error":true,"api_error":"connection_failed","num_turns":1,"result":""}`,
 			"it ended with an error result (connection_failed)"},
-		{`{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":null,"num_turns":1}`,
-			"it ended with an error result"},
+		{`{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"num_turns":1,"session_id":"s","result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"}`,
+			"it ended with an error result: Failed to authenticate. API Error: 403 Attention Required! | Cloudflare (API 403)"},
 	} {
-		_, err := readResult([]byte(tc.line + "\n"))
-		require.Error(t, err)
-		assert.Equal(t, tc.want, err.Error())
+		res, err := readResult([]byte(tc.line + "\n"))
+		require.NoError(t, err, tc.line)
+		assert.Equal(t, flowrun.AgentAPIError, res.Status, tc.line)
+		assert.Equal(t, tc.want, res.Why, tc.line)
 	}
+	_, err := readResult([]byte(`{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":null,"num_turns":1}` + "\n"))
+	require.Error(t, err, "an error result with no API error is a failure")
+	assert.Equal(t, "it ended with an error result", err.Error())
+}
+
+// An agent that ended on an API error ends API_ERROR with the error as its
+// Why, and an answer resumes its session; with no session, the answer starts
+// it again from its brief.
+func TestFlowAgent_AnAPIErrorIsResumable(t *testing.T) {
+	_, _, logDir := agentFixture(t, "intermediate-dev")
+	_, _, err := runAgent(t, "APIERR work", "run", "intermediate-dev", "--name", "a1")
+	require.NoError(t, err)
+	out, _, err := runAgent(t, "", "wait", "a1", "60")
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Contains(t, out, "failed a1: it ended with an error result: Failed to authenticate. API Error: 403 Attention Required! | Cloudflare (API 403)")
+	dir, cleanup, err := agentDir()
+	require.NoError(t, err)
+	defer cleanup()
+	run, err := readAgentRun(agentPath(dir, "a1"))
+	require.NoError(t, err)
+	assert.Equal(t, flowrun.AgentAPIError, run.Status)
+
+	out, _, err = runAgent(t, "Continue.", "answer", "a1")
+	require.NoError(t, err, out)
+	out, _, err = runAgent(t, "", "wait", "a1", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done a1: DONE\n"), out)
+	b, err := os.ReadFile(filepath.Join(logDir, "1.args"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "--resume\nsess-1\n")
+
+	_, _, err = runAgent(t, "APIGONE work", "run", "intermediate-dev", "--name", "a2")
+	require.NoError(t, err)
+	_, _, _ = runAgent(t, "", "wait", "a2", "60")
+	out, _, err = runAgent(t, "Continue.", "answer", "a2")
+	require.NoError(t, err, out)
+	out, _, err = runAgent(t, "", "wait", "a2", "60")
+	require.NoError(t, err, out)
+	assert.True(t, strings.HasPrefix(out, "done a2: DONE\n"), out)
+	b, err = os.ReadFile(filepath.Join(logDir, "3.args"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "--resume", "no session to resume")
+	assert.Contains(t, string(b), "APIGONE work", "it starts again from its brief")
 }
 
 // A usage limit is a status of its own, not a failure: the window and the
@@ -281,6 +332,44 @@ func TestFlowAgent_AUsageLimitIsResumable(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(b), "--resume", "no session to resume")
 	assert.Contains(t, string(b), "NOSESSION work", "it starts again from its brief")
+}
+
+// The engine's resume of an agent run that ended on an API error waits
+// apiRetryPause before the resume is queued, once: a follow of the answer
+// already queued, and an answer to a question, are queued at once (the
+// 2026-11-20 retro).
+func TestRunFX_ResumePausesOnlyAfterAnAPIError(t *testing.T) {
+	var paused []time.Duration
+	old := apiRetrySleep
+	apiRetrySleep = func(d time.Duration) { paused = append(paused, d) }
+	t.Cleanup(func() { apiRetrySleep = old })
+	agentFixture(t, "intermediate-dev")
+	for name, brief := range map[string]string{"a1": "APIERR work", "q1": "ASK work"} {
+		_, _, err := runAgent(t, brief, "run", "intermediate-dev", "--name", name)
+		require.NoError(t, err)
+		_, _, _ = runAgent(t, "", "wait", name, "60")
+	}
+	dir, cleanup, err := agentDir()
+	require.NoError(t, err)
+	defer cleanup()
+	c := &cobra.Command{}
+	c.SetContext(context.Background())
+	fx := &runFX{c: c, root: os.Getenv(flow.EnvRoot), agents: dir, out: io.Discard}
+
+	r, err := fx.Resume("q1", "Blue.")
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", r.Status)
+	assert.Empty(t, paused, "an answer to a question is queued at once")
+
+	text := "The API failed and stopped you (retry 1): it ended with an error result. Continue from where you stopped."
+	r, err = fx.Resume("a1", text)
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", r.Status)
+	assert.Equal(t, []time.Duration{apiRetryPause}, paused, "the API error's resume waits first")
+	r, err = fx.Resume("a1", text)
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", r.Status)
+	assert.Len(t, paused, 1, "following the resume it already queued waits no more")
 }
 
 func TestFlowAgent_Refusals(t *testing.T) {

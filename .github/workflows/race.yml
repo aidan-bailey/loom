@@ -34,4 +34,6 @@ jobs:
       - name: Run tests with race detector
         env:
           CGO_ENABLED: '1'
-        run: go test -race -count=1 ./...
+        # internal/cli's suite runs about 10 minutes on its own (its flow-run and
+        # job tests drive a real daemon), past go test's default of 10m a package.
+        run: go test -race -count=1 -timeout 30m ./...

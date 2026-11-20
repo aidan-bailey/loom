@@ -1323,7 +1323,7 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 | `flow conf <key\|status\|show --for ROLE\|state\|drafts STEM\|vacuous FILE\|roster\|gates …\|docs-check --base B --head H\|doctor>` | The repo's flow key, profile and role blocks, its state and drafts directories, the gates to run, the roster ID, and the paths a doc pass changed that aren't docs |
 | `flow check-plan <plan>` | Check that a plan is ready for the supervised option |
 | `flow estimate <plan>` | Price a plan skeleton's stories by form (full, mechanical or brief), stage by stage, from the run records or the priors, and print the `**Budget:**` line the owner approves |
-| `flow plan-review [--select] <plan>` | The `**Plan review:**` line of a plan `/flow:draft` reviewed; with `--select`, which stories its review reads |
+| `flow plan-review --select <plan>` | Which stories `/flow:draft`'s plan review reads |
 | `flow packet`, `flow join`, `flow premises`, `flow conformance` | The drafting and review tools `/flow:draft` and the run engine run |
 | `flow costs session [<id>] [--since T] [--until T] [--plan P]`, `flow costs records [FILE …]`, `flow costs run <run>` | Token usage and API-price cost of a session's agents, totals over run records, or a `/flow:run` run's manager sessions and headless agent runs |
 | `flow doctor` | Check that a supervised run can start here (`flow conf doctor`) |

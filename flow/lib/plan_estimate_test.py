@@ -32,13 +32,19 @@ def skeleton(*forms):
     return "\n".join(lines + ["", MARKER]) + "\n"
 
 
-def record(draft, run, forms, skeleton_usd=None, review_usd=None, forms_draft=None):
-    """An engine run record: drafting and run USD, its stories' forms, and the Design stage line's segments."""
+def record(draft, run, forms, skeleton_usd=None, review_usd=None, forms_draft=None, risk_usd=None):
+    """An engine run record: drafting and run USD, its stories' forms, and the Design stage line's segments.
+
+    review_usd is a draft's `plan review $` from before 2026-11-20 (the plan and risk reviewers), risk_usd
+    its `risk review $` since (the risk reviewer alone).
+    """
     stage = f"/flow:draft session s, a to b UTC: ${draft:.2f} logged, ${draft:.2f} with estimated thinking; 1,000 plan lines, $1.00 per 1,000 lines"
     if skeleton_usd is not None:
         stage += f"; skeleton review ${skeleton_usd:.2f}"
     if review_usd is not None:
         stage += f"; plan review ${review_usd:.2f}"
+    if risk_usd is not None:
+        stage += f"; risk review ${risk_usd:.2f}"
     if forms_draft:
         stage += "; forms: " + ", ".join(f"{form} {n} {'story' if n == 1 else 'stories'} ${usd:.2f}" for form, (n, usd) in forms_draft.items())
     stage += "; loom flow roster aaaaaaaaaaaa."
@@ -95,19 +101,40 @@ class EstimateTest(unittest.TestCase):
         out = result.stdout
         self.assertIn("3 engine runs of this repo", out)
         self.assertIn("| 1 | full | $10.00 | $5.00 | $3.00 / $3.50 | $2.50 / $6.50 |", out)
-        # Stories $20, the skeleton review's prior $5.14 and the plan review's prior $2.37 for each of 2 full stories.
-        self.assertIn("Draft: $29.88 (stories $20.00, skeleton review $5.14, plan review $4.74 for 2 full stories)", out)
+        # Stories $20, the skeleton review's prior $5.14 and the plan review's prior $0.78 for each of 2 full stories.
+        self.assertIn("Draft: $26.70 (stories $20.00, skeleton review $5.14, plan review $1.56 for 2 full stories)", out)
         self.assertIn("Run: $10.00", out)
-        self.assertIn("**Budget:** draft $30; run $10 (estimate 2026-11-16)", out)
+        self.assertIn("skeleton review prior; plan review prior", out)
+        self.assertIn("**Budget:** draft $27; run $10 (estimate 2026-11-16)", out)
 
     def test_the_review_figures_come_from_the_records_once_three_hold_them(self):
         r = self.repo(skeleton(None))
-        r.records(r.key, *(record(36.0, 15.0, ["full"] * 3, skeleton_usd=3.0, review_usd=3.0) for _ in range(3)))
+        r.records(r.key, *(record(36.0, 15.0, ["full"] * 3, skeleton_usd=3.0, risk_usd=3.0) for _ in range(3)))
         out = r.run().stdout
-        # Drafting less both reviews is $30 over 3 stories; the plan review is $1 a full story.
+        # Drafting less both reviews is $30 over 3 stories; the risk review is $1 a full story.
         self.assertIn("| 1 | full | $10.00 | $5.00 |", out)
         self.assertIn("Draft: $14.00 (stories $10.00, skeleton review $3.00, plan review $1.00 for 1 full story)", out)
-        self.assertIn("skeleton review from 3 runs; plan review from 3 runs", out)
+        self.assertIn("skeleton review from 3 runs; risk review from 3 runs", out)
+
+    def test_the_plan_review_is_measured_only_from_the_risk_reviewers_records(self):
+        r = self.repo(skeleton(None))
+        # Three drafts from before 2026-11-20: their plan review also priced flow:plan-reviewer.
+        r.records(r.key, *(record(36.0, 15.0, ["full"] * 3, skeleton_usd=3.0, review_usd=3.0) for _ in range(3)))
+        out = r.run().stdout
+        # Their review still comes off their drafting ($30 over 3 stories), but prices nothing: the prior does.
+        self.assertIn("| 1 | full | $10.00 | $5.00 |", out)
+        self.assertIn("Draft: $13.78 (stories $10.00, skeleton review $3.00, plan review $0.78 for 1 full story)", out)
+        self.assertIn("skeleton review from 3 runs; plan review prior", out)
+        # Two of the risk reviewer's alone are fewer than min_runs.
+        r.records(r.key, *(record(34.5, 15.0, ["full"] * 3, skeleton_usd=3.0, risk_usd=1.5) for _ in range(2)))
+        out = r.run().stdout
+        self.assertIn("Draft: $13.78 (stories $10.00, skeleton review $3.00, plan review $0.78 for 1 full story)", out)
+        self.assertIn("skeleton review from 5 runs; plan review prior", out)
+        # A third: $4.50 over their 9 full stories, the older records left out.
+        r.records(r.key, record(34.5, 15.0, ["full"] * 3, skeleton_usd=3.0, risk_usd=1.5))
+        out = r.run().stdout
+        self.assertIn("Draft: $13.50 (stories $10.00, skeleton review $3.00, plan review $0.50 for 1 full story)", out)
+        self.assertIn("skeleton review from 6 runs; risk review from 3 runs", out)
 
     def test_a_form_uses_its_prior_until_three_stories_ran(self):
         r = self.repo(skeleton("mechanical"))

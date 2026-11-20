@@ -36,5 +36,6 @@ run = 1.3
 usd_per_plan = 5.14
 
 [plan_review]
-# A full story's plan review, from its first plan (A5, 2026-11-16, $33.18 over 14 stories, before --select).
-usd_per_full_story = 2.37
+# A full story's plan review, the risk reviewer alone (the owner, 2026-11-20): its $68.76 over the 88 stories of
+# the 8 plans the 2026-11-20 retro priced, most of them full. It was $2.37 from A5's first plan with both reviewers.
+usd_per_full_story = 0.78

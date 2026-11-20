@@ -23,8 +23,11 @@ which decisions are yours to make.
 
       import os, shutil
       plan = open("<plan path>").read().split("\n")
-      def L(a, b):  # plan lines a..b, inclusive
-          return "\n".join(plan[a - 1:b]) + "\n"
+      def L(a, b):  # plan lines a..b, inclusive, inside a block's fences
+          lines = plan[a - 1:b]
+          assert lines and not lines[0].lstrip().startswith("```") \
+              and not lines[-1].lstrip().startswith("```"), ("empty, or a fence at an end", a, b)
+          return "\n".join(lines) + "\n"
       def put(path, text):  # via a temp file, keeping the file's mode
           path = os.path.realpath(path); tmp = path + ".tmp"
           try:
@@ -49,7 +52,12 @@ which decisions are yours to make.
 
   Run it as `python3 - <<'EOF'` … `EOF`, quoted: an unquoted heredoc expands
   `$` and backticks inside the code it writes. An addition is an `edit` of
-  the line it goes beside. Then fix what doesn't fit with small edits, and
+  the line it goes beside. `L` refuses a range that starts or ends on a
+  fence line: a range one line too wide copies the plan's fence into the
+  file, where every gate can miss it (a stylesheet that opened with its
+  block's fence lost its first rule, 2026-11-18). When the text you copy
+  itself starts or ends with a fence (a Markdown file's code block), join
+  `plan[a - 1:b]` yourself. Then fix what doesn't fit with small edits, and
   type only what the plan elides or leaves to you.
 - Make every change with these helpers, small typed fixes included: never a
   bare `.replace`, a `sed -i`, a `cat >` or an `open(path, "w")`. A

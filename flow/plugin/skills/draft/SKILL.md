@@ -241,25 +241,24 @@ resumes it.
    `skip`, since the plan holds none of its code. It fails when a mechanical
    or brief story's risk file lists a task its Form reason doesn't name:
    take that to the owner as for a marker in step 3. Dispatch one
-   `flow:plan-reviewer` per story marked `review`, and write `skipped` in
-   each other story's Plan review
-   column of `STATE.md`: the run reviews a skipped story in full. Never review
-   a skipped story on a hunch: a review of every story cost more than the fix
-   rounds it saved (the owner, 2026-11-16). A reviewer's brief holds the
-   plan's path, the story's id and plan lines (its `line` and `end` in
-   `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>` and
-   the drafter's profile block. Write each report on arrival to
-   `D/findings/review-S<id>.md`. When it holds `ESCALATE` lines, dispatch one
-   `flow:risk-reviewer` for the story with the same brief and those lines,
-   and append its report to the same file. A report with no `COVERAGE` line,
-   or a reviewer that goes quiet, goes to a fresh reviewer with the same
-   brief; never message the quiet one. A `SPEC` finding is yours, as a
-   DESIGN verdict is. A finding you judge wrong is closed with your reason
-   written under it in the review file. A story's review is clean when no
-   Critical, Important or `SPEC` finding of its review or its risk review is
-   open; then `mkdir -p D/reviewed && cp D/reviewing/S<id>.md D/reviewed/S<id>.md`.
-   On a resume, a story whose row doesn't say `skipped` and that has no
-   review file is reviewed again.
+   `flow:risk-reviewer` per story marked `review`, and write `skipped` in
+   each other story's Plan review column of `STATE.md`. Never review a
+   skipped story on a hunch: a review of every story cost more than the fix
+   rounds it saved (the owner, 2026-11-16). The review is the risk
+   reviewer's alone, and the run reviews every story in full (the owner,
+   2026-11-20). A reviewer's brief holds the plan's
+   path, the story's id and plan lines (its `line` and `end` in
+   `loom flow check-plan --json $ARGUMENTS`), the spec's path, `<REV>`, the
+   drafter's profile block, the story's `--select` line (the landmine
+   markers its code holds and the tasks its risk file lists, or that it has
+   no risk file) and the risk file's path. Write each report on arrival to
+   `D/findings/review-S<id>.md`. A report with no `COVERAGE` line, or a
+   reviewer that goes quiet, goes to a fresh reviewer with the same brief;
+   never message the quiet one. A `SPEC` finding is yours, as a DESIGN
+   verdict is. A finding you judge wrong is closed with your reason written
+   under it in the review file. A story's review is clean when no Critical,
+   Important or `SPEC` finding of it is open. On a resume, a story whose row
+   doesn't say `skipped` and that has no review file is reviewed again.
 5. **Fix.** Read the findings, never the drafts.
    - Write each cross-story decision into the names contract. A design
      question the spec doesn't settle goes to the owner: write the answer into
@@ -304,13 +303,10 @@ resumes it.
      whose draft differs from its review copy
      (`cmp -s D/reviewing/S<id>.md D/S<id>.md` fails), whatever changed it:
      `mkdir -p D/rechecking && cp D/S<id>.md D/rechecking/S<id>.md`, then one
-     fresh `flow:plan-reviewer`, or a fresh `flow:risk-reviewer` when a risk
-     reviewer's finding was among those fixed (both when both). Its brief is
-     the review's plus the story's open review findings, the draft's path and
+     fresh `flow:risk-reviewer`. Its brief is the review's plus the story's
+     open review findings, the draft's path and
      "re-check: `diff -u D/reviewing/S<id>.md D/rechecking/S<id>.md`". Append
-     each report to `D/findings/review-S<id>.md`. When every Critical and
-     Important finding is FIXED and no new one is Critical or Important:
-     `cp D/rechecking/S<id>.md D/reviewed/S<id>.md`. There is no second
+     each report to `D/findings/review-S<id>.md`. There is no second
      re-check, and an open review finding doesn't go to the owner: the run
      reviews that story in full. On a resume, a story with a `D/rechecking/`
      copy and no re-check report in its review file is re-checked again.
@@ -326,20 +322,15 @@ resumes it.
      session id on `STATE.md`'s **Sessions** line, and add up the `USD` and
      `USD incl. est.` of each **Total** row, the `USD` of the
      skeleton-reviewer row for the skeleton review's cost, that of the
-     plan-reviewer and risk-reviewer rows for the plan review's, and each
+     risk-reviewer row for the plan review's, and each
      form's stories and USD in the `forms:` segments of the **Cost by form**
      sections (one session's segment as it stands). When the skeleton's head
      has a `**Budget:**` line, its draft figure is the draft's budget. Note
      the end time (`date -u +%FT%TZ`), the plan's line count
      (`wc -l < $ARGUMENTS`) and this session's flow copy
      (`loom flow conf roster`).
-   - Run `loom flow plan-review $ARGUMENTS`; on a failure, show its message
-     and stop. Its output is the `**Plan review:**` line: a deep story is
-     vouched only when its draft is byte-identical to its `D/reviewed/` copy,
-     so a skipped story goes under `full:`.
    - Write the Design stage line (below) into `STATE.md`'s **Design stage**
-     slot, and it and the Plan review line into the skeleton's head, directly
-     above `## Stories`. Then run
+     slot, and into the skeleton's head, directly above `## Stories`. Then run
      step 3's `loom flow join` and `loom flow check-plan` again, and fix what fails
      before the commit.
    - Commit the plan by pathspec, and nothing else, in the repo's commit
@@ -354,14 +345,13 @@ resumes it.
      re-check's line (`Seams re-check: <k> shared names changed, <n>
      findings, <m> wave jobs`, with `full recon` in place of the count when a
      fix changed the contract), which stories the
-     review read and which it skipped, which it vouched, its cost (the
-     plan-reviewer and risk-reviewer rows of
+     review read and which it skipped, its cost (the risk-reviewer row of
      `loom flow costs session`), and anything still open, and end
      with: run `/clear`, then `/flow:run <plan>`.
 
 The Design stage line is one physical line:
 
-`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; plan review $<plan-reviewer and risk-reviewer USD>; budget $<the Budget line's draft figure>; forms: <form> <n> stories $<USD>, …; <loom flow conf roster's output>.`
+`**Design stage:** /flow:draft session <ids>, <start> to <end> UTC: $<logged> logged, $<incl. est.> with estimated thinking; <n> plan lines, $<logged per 1,000 lines> per 1,000 lines; skeleton review $<skeleton-reviewer USD>; risk review $<risk-reviewer USD>; budget $<the Budget line's draft figure>; forms: <form> <n> stories $<USD>, …; <loom flow conf roster's output>.`
 
 It leaves out the design session's own cost, which the owner measures by
 hand, and `budget` when the skeleton has no Budget line. `forms:` lists each
@@ -393,7 +383,7 @@ set it off here; indented, the heredoc never terminates):
     | Story | Tier | Effort | Drafter | Deviations settled | Findings (premises, seams, review) | Plan review | Fixer |
     |---|---|---|---|---|---|---|---|
 
-    Plan review: pending, skipped, clean, findings, re-check, vouched or full.
+    Plan review: pending, skipped, clean, findings or re-check.
 
     ## Findings files
     - <D/findings/skeleton.md, premises.md, seams.md, review-S<id>.md, S<id>.md, seams-changed.md, seams-rerun.md or wave-S<id>.md: which agent (or the manager), and when>

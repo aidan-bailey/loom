@@ -1,6 +1,6 @@
 ---
 name: code-quality-reviewer
-description: Code-quality reviewer for the combined per-story review of a story nothing vouches for (review full), the review after spec compliance passes, and the final whole-implementation review. It judges whether a change is clean, tested and maintainable. Read-only. Pins set by the owner; change only on their instruction.
+description: Code-quality reviewer for every story's first review (the combined per-story review), the review after spec compliance passes, and the final whole-implementation review. It judges whether a change is clean, tested and maintainable. Read-only. Pins set by the owner; change only on their instruction.
 model: opus
 effort: high
 tools: Bash, Read, SendMessage

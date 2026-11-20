@@ -18,7 +18,9 @@ is their run USD over their stories. A mechanical or brief story is priced from 
 the records once they hold `min_stories` of them, else as estimates.toml's multiple of a full story's
 figure; with no records at all, a full story's figure is estimates.toml's `[full]`. The draft adds the
 skeleton review a plan and the plan review for each full story, from the records once `min_runs` of
-them hold one, else estimates.toml's priors.
+them hold one, else estimates.toml's priors. The plan review is measured only from the records whose
+Design stage line gives flow:risk-reviewer's alone (`risk review $`, the plan review since the owner
+removed flow:plan-reviewer on 2026-11-20): a draft's `plan review $` from before then priced both.
 
 Exit 0 with the estimate; 1, with the reason on stderr and nothing on stdout, when the plan can't be
 read, has no story list, gives a Form that isn't full, mechanical or brief, or its repo has no usable
@@ -131,14 +133,15 @@ def form_figures(runs: list[plan_measures.RunMeasures], priors: dict) -> tuple[d
 
 
 def review_figures(runs: list[plan_measures.RunMeasures], priors: dict) -> tuple[Figure, Figure]:
-    """The skeleton review a plan and the plan review a full story."""
+    """The skeleton review a plan and the plan review a full story, the latter from the risk reviewer's runs only."""
     min_runs = priors["estimate"]["min_runs"]
     skeletons = [run.skeleton_usd for run in runs if run.skeleton_usd is not None]
     skeleton = (Figure(sum(skeletons) / len(skeletons), f"skeleton review from {len(skeletons)} runs")
                 if len(skeletons) >= min_runs else Figure(priors["skeleton_review"]["usd_per_plan"], "skeleton review prior"))
-    reviewed = [run for run in runs if run.review_usd is not None]
+    # A `plan review $` figure also priced flow:plan-reviewer, which no draft runs since 2026-11-20.
+    reviewed = [run for run in runs if run.review_usd is not None and run.risk_only]
     full_stories = sum(run.forms_run.get("full", (0, 0.0))[0] for run in reviewed)
-    review = (Figure(sum(run.review_usd or 0.0 for run in reviewed) / full_stories, f"plan review from {len(reviewed)} runs")
+    review = (Figure(sum(run.review_usd or 0.0 for run in reviewed) / full_stories, f"risk review from {len(reviewed)} runs")
               if len(reviewed) >= min_runs and full_stories else
               Figure(priors["plan_review"]["usd_per_full_story"], "plan review prior"))
     return skeleton, review

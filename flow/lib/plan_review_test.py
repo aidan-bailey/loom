@@ -8,12 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-import plan_review  # noqa: E402
-
 SCRIPT = Path(__file__).with_name("plan_review.py")
-CHECK_PLAN = Path(__file__).with_name("check_plan.py")
 CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
@@ -70,12 +65,6 @@ class Repo:
             (self.drafts / "join.json").write_text(json.dumps({"stories": []}))
         self.env = {**CLEAN_ENV, "FLOW_HOME": str(self.root / "flow-home")}
 
-    def review(self, sid, text=None):
-        """Mark Story sid reviewed clean: a copy of its draft, or of `text`, under reviewed/."""
-        (self.drafts / "reviewed").mkdir(exist_ok=True)
-        body = text if text is not None else (self.drafts / f"S{sid}.md").read_text()
-        (self.drafts / "reviewed" / f"S{sid}.md").write_text(body)
-
     def risk(self, sid, text):
         """Write Story sid's drafter risk file, D/risk/S<id>.md."""
         (self.drafts / "risk").mkdir(exist_ok=True)
@@ -93,68 +82,23 @@ class PlanReviewTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         return Repo(tmp.name, stories, join, profile)
 
-    def test_a_deep_story_reviewed_byte_for_byte_is_vouched(self):
-        r = self.repo([("1", None), ("2", "deep (store)")])
-        r.review("1")
-        r.review("2")
-        result = r.run()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "**Plan review:** /flow:draft plan review; deep: 1, 2\n")
-
-    def test_a_one_byte_difference_or_no_copy_lists_a_deep_story_under_full(self):
-        r = self.repo([("1", None), ("2", None), ("3", None)])
-        r.review("1")
-        r.review("2", text=(r.drafts / "S2.md").read_text() + " ")
-        result = r.run()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "**Plan review:** /flow:draft plan review; deep: 1; full: 2, 3\n")
-
-    def test_a_light_story_is_never_vouched(self):
-        r = self.repo([("1", None), ("2", "light (docs)")])
-        r.review("1")
-        r.review("2")
-        result = r.run()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "**Plan review:** /flow:draft plan review; deep: 1; light: 2\n")
-
-    def test_an_empty_list_is_left_out(self):
+    def test_the_bare_form_is_a_usage_error_naming_select(self):
+        # It printed the **Plan review:** line before the owner removed it on 2026-11-20.
         r = self.repo([("1", None)])
-        result = r.run()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "**Plan review:** /flow:draft plan review; full: 1\n")
+        r.risk("1", "none\n")
+        for plan in (str(r.plan), str(r.root / "missing.md")):
+            with self.subTest(plan=plan):
+                result = subprocess.run([sys.executable, str(SCRIPT), plan], capture_output=True, text=True, env=r.env, cwd=r.root)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertIn("usage: plan_review.py --select PLAN", result.stderr)
+                self.assertIn("--select is required", result.stderr)
+        self.assertEqual(r.run(SCRIPT, "--select").returncode, 0, "the same plan with --select")
 
-    def test_a_missing_join_map_fails_with_nothing_on_stdout(self):
-        r = self.repo([("1", None)], join=False)
-        result = r.run()
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("join.json", result.stderr)
-
-    def test_a_missing_draft_fails_with_nothing_on_stdout(self):
-        r = self.repo([("1", None), ("2", None)])
-        (r.drafts / "S2.md").unlink()
-        result = r.run()
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("Story 2 has no draft", result.stderr)
-
-    def test_a_plan_with_no_story_fails(self):
+    def test_select_fails_on_a_plan_with_no_story(self):
         r = self.repo([])
-        result = r.run()
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "")
+        result = r.run(SCRIPT, "--select")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
         self.assertIn("no `## Story` section", result.stderr)
-
-    def test_its_line_passes_check_plan_and_vouches_exactly_the_deep_list(self):
-        r = self.repo([("1", None), ("2", "light"), ("3", None)])
-        r.review("1")
-        r.review("2")
-        line = r.run().stdout.strip()
-        r.plan.write_text(r.plan.read_text().replace("## Stories\n", f"{line}\n\n## Stories\n", 1))
-        result = r.run(CHECK_PLAN, "--json")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        reviews = {s["id"]: s["review"] for s in json.loads(result.stdout)["stories"]}
-        self.assertEqual(reviews, {"1": "vouched", "2": "full", "3": "full"})
 
     def test_select_skips_a_story_whose_risk_file_says_none_and_holds_no_marker(self):
         r = self.repo([("1", None, ["let rows = query(user_id = $1);"]), ("2", None), ("3", "light")], profile=PROFILE)
@@ -206,7 +150,7 @@ class PlanReviewTest(unittest.TestCase):
         self.assertEqual(skipped.returncode, 0, skipped.stderr)
         self.assertEqual(skipped.stdout, "Story 1: skip\n0 of 1 stories to review: none\n")
 
-    def test_select_fails_like_the_line_on_a_missing_draft_or_join_map(self):
+    def test_select_fails_on_a_missing_draft_or_join_map(self):
         r = self.repo([("1", None), ("2", None)])
         (r.drafts / "S2.md").unlink()
         result = r.run(SCRIPT, "--select")
@@ -274,21 +218,6 @@ class PlanReviewTest(unittest.TestCase):
         result = r.run(SCRIPT, "--select")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "Story 1: skip (mechanical)\nStory 2: skip (brief)\n0 of 2 stories to review: none\n")
-
-    def test_a_skipped_story_has_no_review_copy_so_the_line_lists_it_under_full(self):
-        r = self.repo([("1", None), ("2", None)])
-        r.risk("1", "- Task 1.1: writes the store\n")
-        r.risk("2", "none\n")
-        r.review("1")
-        result = r.run()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "**Plan review:** /flow:draft plan review; deep: 1; full: 2\n")
-
-    def test_line_joins_the_label_and_the_non_empty_lists(self):
-        self.assertEqual(
-            plan_review.line({"deep": ["1"], "light": [], "full": ["2", "3"]}),
-            "**Plan review:** /flow:draft plan review; deep: 1; full: 2, 3",
-        )
 
 
 if __name__ == "__main__":

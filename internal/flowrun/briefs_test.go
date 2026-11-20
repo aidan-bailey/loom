@@ -26,7 +26,7 @@ func golden(t *testing.T, name, got string) {
 }
 
 func briefState() (*State, *Story) {
-	st := newState(story("2", "intermediate-dev", "vouched"))
+	st := newState(story("2", "intermediate-dev"))
 	st.Blocks.Developer = "Prefix for every build and test command: none\nServices: none\nLandmine notes (deep stories only):\n    Never drop a stash.\n    Never run loom."
 	st.Blocks.Reviewer = "Prefix: none\nLandmine notes:\n    Never drop a stash."
 	st.Blocks.DocWriter = "Prefix for every check command: none\nDoc paths (change only files these match): `*.md`"

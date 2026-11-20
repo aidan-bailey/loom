@@ -30,7 +30,7 @@ func TestRecord(t *testing.T) {
 // The Package rules line (package rules spec §2.3) follows the Engine
 // line: absent when the record knows no agent run's rules.
 func TestRecord_PackageRulesLine(t *testing.T) {
-	st := newState(story("1", "intermediate-dev", "vouched"))
+	st := newState(story("1", "intermediate-dev"))
 	st.Status = Done
 	assert.NotContains(t, Record(st, RecordInputs{}), "Package rules")
 	assert.Contains(t, Record(st, RecordInputs{Rules: []AgentRules{{Name: "r-s1-dev1", Role: "intermediate-dev"}}}),

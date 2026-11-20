@@ -85,12 +85,13 @@ A record has four parts.
    `loom flow costs design <spec> --plan <plan>`; neither writes a record.
 3. **Stories**: one row per story, from the run's state:
 
-   | Story | Developer | Tier | Review | Form | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
-   |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+   | Story | Developer | Tier | Form | Commits | Status | Deviations | BLOCKED, up a tier | Escalated to manager | Review findings | Turn cap hit | Docs | Lessons |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-   **Tier** is the story's `deep` or `light`, **Review** its `vouched` or
-   `full` and **Form** its `full`, `mechanical` or `brief`, as `loom flow check-plan`
-   printed them; a record written before forms has no Form column, and
+   **Tier** is the story's `deep` or `light` and **Form** its `full`,
+   `mechanical` or `brief`, as `loom flow check-plan` printed them; a record
+   written before 2026-11-20 also has a **Review** column (`vouched` or
+   `full`), and one written before forms has no Form column, and
    `loom flow costs records` reads its stories as full. **Docs** and **Lessons** count the `DOC:` and `LESSON:` lines
    of the story's doc pass, `—` for a run without one. Under `/flow:run`, a
    laned story's **Developer** ends `(lane)`, and the notes say how many of
