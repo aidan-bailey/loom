@@ -28,7 +28,7 @@ vi.mock("@/app/ConfirmSheet", async (original) => ({
 
 const NOW = Date.parse("2026-11-19T12:00:00Z");
 const at = (ms: number): string => new Date(NOW - ms).toISOString();
-const noLog: JobLogView = { log: undefined, gone: "", error: "", loading: false };
+const noLog: JobLogView = { log: undefined, gone: "", error: "" };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });

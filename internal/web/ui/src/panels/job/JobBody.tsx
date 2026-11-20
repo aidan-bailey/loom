@@ -6,8 +6,7 @@ import type { Job, Session } from "@/api/gen";
 import { useJobLog } from "@/api/reads";
 import type { PanelProps } from "@/app/panels";
 import { CommandButton } from "@/app/CommandButton";
-import { ago } from "@/panels/fleet/SessionRow";
-import { elapsed, jobEnd, jobGlyph, jobTone } from "@/session/jobs";
+import { elapsed, endedParts, jobGlyph, jobTone, joinParts, waitingParts } from "@/session/jobs";
 import { NoSession } from "@/session/NoSession";
 import { useSession } from "@/store/fleet";
 
@@ -22,14 +21,10 @@ function clock(): number {
   return Date.now();
 }
 
-function joined(parts: string[]): string {
-  return parts.filter((p) => p !== "").join(" · ");
-}
-
 // stateText words a job's state: how long it has run, why it waits, or how and when it ended.
 function stateText(job: Job, now: number): string {
   if (job.state === "running") {
-    return joined([
+    return joinParts([
       "running",
       elapsed(Date.parse(job.started), now),
       job.paused && job.pause_reclaimed ? "paused" : "",
@@ -37,17 +32,12 @@ function stateText(job: Job, now: number): string {
       job.forced ? "forced" : "",
     ]);
   }
-  if (job.state === "queued" || job.state === "held") return joined([job.state, job.waiting]);
+  if (job.state === "queued" || job.state === "held") return joinParts(waitingParts(job));
   const ran =
     job.started !== "" && job.ended !== ""
       ? elapsed(Date.parse(job.started), Date.parse(job.ended))
       : "";
-  const age = job.ended === "" ? "" : ago(job.ended, now);
-  return joined([
-    jobEnd(job),
-    ran === "" ? "" : `ran ${ran}`,
-    age === "" ? "" : age === "now" ? age : `${age} ago`,
-  ]);
+  return joinParts(endedParts(job, now, ran === "" ? "" : `ran ${ran}`));
 }
 
 function Controls({ job }: { job: Job }): ReactElement | null {

@@ -286,14 +286,12 @@ describe("useTurnPages", () => {
     const { result } = mountTurns(options());
     expect(result.current.held).toBeUndefined();
     expect(result.current.landed).toBeUndefined();
-    expect(result.current.loading).toBe(true);
     await settle();
     expect(turnsRead).toHaveBeenCalledTimes(1);
     expect(turnsRead).toHaveBeenCalledWith(7, {});
     expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2, 3]);
     expect(result.current.held?.earlier).toBe(40);
     expect(result.current.landed).toBe("newest");
-    expect(result.current.loading).toBe(false);
     expect(result.current.error).toBe("");
   });
 
@@ -387,7 +385,6 @@ describe("useTurnPages", () => {
     await settle();
     expect(result.current.error).toBe("session is busy");
     expect(result.current.held?.turns.map((t) => t.id)).toEqual([1, 2]);
-    expect(result.current.loading).toBe(false);
     turnsRead.mockResolvedValueOnce(ok(page([2, 3])));
     act(() => {
       result.current.load("refresh");
@@ -566,12 +563,10 @@ describe("usePatch", () => {
     diffRead.mockResolvedValueOnce(ok(patch));
     const { result } = mountPatch(patchOptions());
     expect(result.current.patch).toBeUndefined();
-    expect(result.current.loading).toBe(true);
     await settle();
     expect(diffRead).toHaveBeenCalledTimes(1);
     expect(diffRead).toHaveBeenCalledWith(7);
     expect(result.current.patch).toEqual(patch);
-    expect(result.current.loading).toBe(false);
     expect(result.current.error).toBe("");
   });
 
@@ -699,14 +694,12 @@ describe("useJobLog", () => {
     logRead.mockResolvedValueOnce(ok(tail));
     const { result } = mountLog(logOptions());
     expect(result.current.log).toBeUndefined();
-    expect(result.current.loading).toBe(true);
     await settle();
     expect(logRead).toHaveBeenCalledTimes(1);
     expect(logRead).toHaveBeenCalledWith(7, 214, undefined);
     expect(result.current.log).toEqual({ text: tail.text, end: tail.end, cut: tail.cut });
     expect(result.current.gone).toBe("");
     expect(result.current.error).toBe("");
-    expect(result.current.loading).toBe(false);
   });
 
   it("draws the kept log first when a job is opened again, and reads after its end", async () => {

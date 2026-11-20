@@ -96,6 +96,13 @@ export default defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     manifest: false,
+    rolldownOptions: {
+      output: {
+        // The code every chunk shares (React, the router, Base UI) is named for what it is, not
+        // for whichever of the app's modules the bundler happened to put beside it.
+        codeSplitting: { groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }] },
+      },
+    },
   },
   server: {
     proxy: { "/api/v1": "http://127.0.0.1:5670" },

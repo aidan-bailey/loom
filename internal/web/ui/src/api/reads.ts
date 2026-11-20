@@ -87,6 +87,7 @@ export function appendLog(held: HeldLog | undefined, page: JobLog): HeldLog {
   }
   return next;
 }
+
 // The query cache's own default for a query nobody reads for a while (5 minutes), which a diff
 // keeps: only turn pages and job logs are kept longer.
 const DEFAULT_GC = 5 * 60 * 1000;
@@ -247,8 +248,6 @@ export interface TurnPages {
   landed: TurnsLoad | undefined;
   /** Why the last read failed, "" for none; the pages held stay. */
   error: string;
-  /** A read is in flight. */
-  loading: boolean;
   load: (kind: TurnsLoad) => void;
 }
 
@@ -278,7 +277,6 @@ export function useTurnPages({ session, agent, live }: TurnPagesOptions): TurnPa
     held: query.data?.held,
     landed: query.data?.landed,
     error: errorText(query.error, "Could not read the conversation."),
-    loading: query.isFetching,
     load,
   };
 }
@@ -295,6 +293,7 @@ export function useHeldTurns(session: number, agent: string | undefined): HeldTu
     () => queryClient.getQueryData<TurnsEntry>(turnsKey(session, agent))?.held,
   );
 }
+
 // How often a live session's diff is read again, as the classic app does.
 const DIFF_POLL = 10000;
 
@@ -331,8 +330,6 @@ export interface PatchView {
   patch: Patch | undefined;
   /** Why the last read failed, "" for none; the patch held stays. */
   error: string;
-  /** A read is in flight. */
-  loading: boolean;
   /** Reads the diff now. */
   reload: () => void;
 }
@@ -363,10 +360,10 @@ export function usePatch({ session, signature, live }: PatchOptions): PatchView 
   return {
     patch: query.data,
     error: errorText(query.error, "Could not read the diff."),
-    loading: query.isFetching,
     reload,
   };
 }
+
 // How often a live job's log is read again, as the classic app does.
 const LOG_POLL = 2000;
 
@@ -426,8 +423,6 @@ export interface JobLogView {
   gone: string;
   /** Why the last read failed, other than a 409, "" for none; the log held stays. */
   error: string;
-  /** A read is in flight. */
-  loading: boolean;
 }
 
 /**
@@ -463,6 +458,5 @@ export function useJobLog({ session, job, live }: JobLogOptions): JobLogView {
     log: query.data,
     gone,
     error: gone === "" ? errorText(query.error, "Could not read the job's log.") : "",
-    loading: query.isFetching,
   };
 }

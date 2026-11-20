@@ -61,6 +61,23 @@ export function jobEnd(job: Job): string {
   return job.state;
 }
 
+// joinParts joins the parts of a job's line with " · ", leaving out the empty ones.
+export function joinParts(parts: string[]): string {
+  return parts.filter((p) => p !== "").join(" · ");
+}
+
+// waitingParts is a queued or held job's state and why it waits.
+export function waitingParts(job: Job): string[] {
+  return [job.state, job.waiting];
+}
+
+// endedParts is how a finished job ended and, once it is known, how long ago; `ran` (how long it
+// ran) goes between them when given.
+export function endedParts(job: Job, now: number, ran: string = ""): string[] {
+  const age = job.ended === "" ? "" : ago(job.ended, now);
+  return [jobEnd(job), ran, age === "now" ? age : age === "" ? "" : `${age} ago`];
+}
+
 // jobLine is a job's sub-line: its id, then how long it has run, why it waits, or how and when it
 // ended.
 export function jobLine(job: Job, now: number): string {
@@ -68,11 +85,9 @@ export function jobLine(job: Job, now: number): string {
   if (job.state === "running") {
     parts.push(elapsed(Date.parse(job.started), now));
   } else if (job.state === "queued" || job.state === "held") {
-    parts.push(job.state, job.waiting);
+    parts.push(...waitingParts(job));
   } else {
-    parts.push(jobEnd(job));
-    const age = job.ended === "" ? "" : ago(job.ended, now);
-    if (age !== "") parts.push(age === "now" ? age : `${age} ago`);
+    parts.push(...endedParts(job, now));
   }
-  return parts.filter((p) => p !== "").join(" · ");
+  return joinParts(parts);
 }
