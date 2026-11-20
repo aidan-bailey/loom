@@ -7,9 +7,10 @@ import type { AgentPage, Outcome, Turns } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { useTurnPages } from "@/api/reads";
 import { api } from "@/api/request";
-import { definePanel } from "@/app/panels";
+import { definePanel, panelFor } from "@/app/panels";
 import { fixtureSnapshot, fixtureTurns } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import "@/panels";
 import { useFleet } from "@/store/fleet";
 
 import { Agent, AgentHead, AgentStrip } from "./Agent";
@@ -397,5 +398,18 @@ describe("the subagent's screen", () => {
     await settle();
     expect(screen.getByText("This session is gone.")).toBeTruthy();
     expect(turnsRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("the agent panel", () => {
+  it("is registered with a head, a strip and no tab", () => {
+    const panel = panelFor("agent");
+    expect(panel).toBeDefined();
+    expect(panel?.Head).toBe(AgentHead);
+    expect(panel?.Strip).toBe(AgentStrip);
+    expect(panel?.Body).toBe(Agent);
+    expect(panel?.tab).toBeUndefined();
+    expect(panel?.appliesTo).toBeUndefined();
+    expect(panel?.title(props(1))).toBe("Subagent");
   });
 });
