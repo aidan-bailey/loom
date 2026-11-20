@@ -604,7 +604,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":""}}`
+Result: `{"value":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":"","IssueErrs":null}}`
 
 ### FileFeedback (request)
 
@@ -686,7 +686,7 @@ Result: `{}`
 
 ### FeedbackChanged
 
-`{"View":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":""}}`
+`{"View":{"Inbox":{"version":0,"next_note":0,"next_thread":0,"notes":null,"threads":null},"Grouper":"","Err":"","Workspace":"","IssueErrs":null}}`
 
 ### Reactivated
 
