@@ -26,7 +26,7 @@ export function ago(iso: string, now: number = Date.now()): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-const usd = (v: number): string => `$${v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`;
+export const usd = (v: number): string => `$${v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`;
 
 /**
  * A flow's fleet chip: "flow 2/5 · reviewing · $4.71" during a run, "asks" while parked, "lost"
