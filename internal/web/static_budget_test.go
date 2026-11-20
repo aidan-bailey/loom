@@ -187,8 +187,9 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 }
 
 // checkLazyViews is whether the job and mockup screens, the flow board, the flow story and
-// document views and the host's flows are chunks of their own that index.html does not load: one file per name, whose file name index.html's text (a
-// script, a modulepreload link or anything else) does not hold.
+// document views, the host's flows, the new session screen and settings are chunks of their
+// own that index.html does not load: one file per name, whose file name index.html's text
+// (a script, a modulepreload link or anything else) does not hold.
 func checkLazyViews(assets map[string]staticAsset) error {
 	index, ok := assets["/index.html"]
 	if !ok {
