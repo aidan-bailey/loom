@@ -1,0 +1,144 @@
+// The flow document view (a chunk of its own): one flow document over useFlowDoc, a port of the
+// classic document view. It draws the gone, empty, loading and error states, the way back to the
+// board, the document's name and path, an index of its sections, its text and the cut note.
+import { useMemo, type ReactElement } from "react";
+
+import type { MdNode } from "@/api/gen";
+import { useFlowDoc } from "@/api/reads";
+import type { PanelProps } from "@/app/panels";
+import { hrefFor } from "@/app/routes";
+import { Markdown } from "@/conversation/Markdown";
+import { NoSession } from "@/session/NoSession";
+import { useSession } from "@/store/fleet";
+
+import { planOf } from "./parts";
+
+interface Heading {
+  text: string;
+  level: number;
+  line: number;
+}
+
+// docName words a document's name for the head line.
+function docName(doc: string): string {
+  if (doc === "drafts-state") return "drafts' state";
+  if (doc.startsWith("report:")) return `report · ${doc.slice("report:".length)}`;
+  return doc;
+}
+
+// textOf is the text a node holds: its text and inline code, in order.
+function textOf(node: MdNode | null): string {
+  if (node === null) return "";
+  if (node.t === "text" || node.t === "code_inline") return node.v ?? "";
+  return (node.c ?? []).map(textOf).join("");
+}
+
+// headings are the headings of the tree in document order, found through every node with
+// children but a code node. A heading's index here is its index among the headings Markdown
+// draws.
+function headings(blocks: (MdNode | null)[]): Heading[] {
+  const found: Heading[] = [];
+  const walk = (nodes: (MdNode | null)[]): void => {
+    for (const node of nodes) {
+      if (node === null) continue;
+      if (node.t === "h") {
+        found.push({ text: textOf(node), level: node.level ?? 0, line: node.line ?? 0 });
+      }
+      if (node.t !== "code") walk(node.c ?? []);
+    }
+  };
+  walk(blocks);
+  return found;
+}
+
+// Indent is a heading's whole class string by its level.
+const INDENT: Record<number, string> = { 1: "pl-0", 2: "pl-3", 3: "pl-6" };
+
+// Sections is the index of the headings of level 3 or less, drawn for a document with more than 2.
+function Sections({
+  all,
+  jump,
+}: {
+  all: Heading[];
+  jump: (index: number) => void;
+}): ReactElement | null {
+  const shown = all
+    .map((heading, index) => ({ heading, index }))
+    .filter((h) => h.heading.level <= 3);
+  if (shown.length <= 2) return null;
+  return (
+    <details className="rounded-xl border border-border bg-card px-3">
+      <summary className="flex min-h-11 items-center text-sm text-muted-foreground">
+        sections
+      </summary>
+      {shown.map(({ heading, index }) => (
+        <button
+          key={index}
+          type="button"
+          onClick={() => {
+            jump(index);
+          }}
+          className={`flex min-h-11 w-full items-center text-left text-sm ${INDENT[heading.level] ?? "pl-0"}`}
+        >
+          {heading.text}
+        </button>
+      ))}
+    </details>
+  );
+}
+
+const NOTE = "px-4 py-8 text-center text-muted-foreground";
+
+export default function FlowDocBody(props: PanelProps): ReactElement {
+  const session = useSession(props.sessionId);
+  const plan = session !== undefined ? planOf(session, props.search.plan ?? "") : "";
+  const name = props.params.doc ?? "";
+  const { doc, error } = useFlowDoc({ session: props.sessionId ?? 0, plan, doc: name });
+  const all = useMemo(() => headings(doc?.blocks ?? []), [doc]);
+
+  if (session === undefined) return <NoSession />;
+  if (plan === "") {
+    return (
+      <p role="status" className={NOTE}>
+        No flow in this session's worktree.
+      </p>
+    );
+  }
+  // jump is the sections index's jump; the next task replaces this no-op.
+  const jump = (index: number): void => {
+    void index;
+  };
+  return (
+    <section className="flex flex-col gap-3 px-4 pb-6">
+      <p className="flex items-center gap-2">
+        <a
+          href={hrefFor("flow", { id: String(session.id) }, { plan })}
+          className="flex min-h-11 items-center text-muted-foreground"
+        >
+          ‹ board
+        </a>
+        <span className="font-semibold">{docName(name)}</span>
+      </p>
+      {doc === undefined && error === "" && (
+        <p role="status" className={NOTE}>
+          Loading…
+        </p>
+      )}
+      {error !== "" && (
+        <p role="alert" className="text-error">
+          {error}
+        </p>
+      )}
+      {doc !== undefined && (
+        <>
+          <p className="font-mono text-xs break-all text-faint">{doc.path}</p>
+          <Sections all={all} jump={jump} />
+          <div>
+            <Markdown blocks={doc.blocks ?? []} />
+          </div>
+          {doc.cut && <p className="text-xs text-faint">The document was cut short.</p>}
+        </>
+      )}
+    </section>
+  );
+}
