@@ -6,19 +6,46 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/stretchr/testify/require"
 )
 
+// relativeTime matches a JSON string that is a time relative to now: "now",
+// "now-12m" or "now+1h40m", matched whole.
+var relativeTime = regexp.MustCompile(`"now(?:[+-][0-9a-z.]+)?"`)
+
+// readFixture decodes a fixture of tools/webshot/fixture as the layer's own
+// type. A relative time ("now-12m") is filled with one fixed time first, so a
+// time.Time field decodes from a fixture that keeps its relative form.
 func readFixture(t *testing.T, name string, into any) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "tools", "webshot", "fixture", name))
 	require.NoError(t, err)
+	raw = relativeTime.ReplaceAll(raw, []byte(`"2026-11-03T10:00:00Z"`))
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	require.NoError(t, dec.Decode(into))
+}
+
+// TestWebshotFixture_TheSnapshotsNoticesDecodeWithTheirTimes holds the canned notices
+// to what the layer sends, their relative times filled before the decode.
+func TestWebshotFixture_TheSnapshotsNoticesDecodeWithTheirTimes(t *testing.T) {
+	var snap snapshotJSON
+	readFixture(t, "snapshot.json", &snap)
+	require.Len(t, snap.Notices, 2)
+	errs := 0
+	for _, n := range snap.Notices {
+		require.False(t, n.At.IsZero())
+		if n.Error {
+			errs++
+		}
+	}
+	require.Equal(t, 1, errs)
+	require.Equal(t, "expired", snap.Device.Push)
+	require.NotEmpty(t, snap.Device.Notify.PausedUntil)
 }
 
 // TestWebshotFixture_TheAsksAreOfKindsTheLayerSends holds each canned ask to a

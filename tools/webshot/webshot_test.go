@@ -481,6 +481,81 @@ func TestFixture_SessionOneHoldsAWorktreeATmuxSessionAndAQueuedJob(t *testing.T)
 	require.True(t, found, "no session 1")
 }
 
+func TestFixture_SessionSixHoldsASecondOlderFlowSoThePickerShows(t *testing.T) {
+	c := &cannedLoom{now: func() time.Time { return time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC) }}
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Sessions map[string][]struct {
+			ID    int `json:"id"`
+			Flows []struct {
+				Plan    string `json:"plan"`
+				Stage   string `json:"stage"`
+				Status  string `json:"status"`
+				Updated string `json:"updated"`
+			} `json:"flows"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	found := false
+	for _, list := range snap.Sessions {
+		for _, s := range list {
+			if s.ID != 6 {
+				assert.Empty(t, s.Flows, "no other session has a flow")
+				continue
+			}
+			found = true
+			require.Len(t, s.Flows, 2)
+			first, second := s.Flows[0], s.Flows[1]
+			assert.Equal(t, "docs/superpowers/plans/2026-11-09-flow-visualisation.md", first.Plan)
+			assert.Equal(t, "parked", first.Status)
+			assert.Equal(t, "spec", second.Stage)
+			assert.Equal(t, "designed", second.Status)
+			assert.NotEqual(t, first.Plan, second.Plan)
+			t1, err := time.Parse(time.RFC3339, first.Updated)
+			require.NoError(t, err)
+			t2, err := time.Parse(time.RFC3339, second.Updated)
+			require.NoError(t, err)
+			assert.True(t, t2.Before(t1), "the second flow is older")
+		}
+	}
+	require.True(t, found, "no session 6")
+}
+
+func TestFixture_TheDeviceIsExpiredAndPausedAndTwoNoticesOneAnError(t *testing.T) {
+	now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	c := &cannedLoom{now: func() time.Time { return now }}
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Device struct {
+			Notify struct {
+				PausedUntil string `json:"paused_until"`
+			} `json:"notify"`
+			Push string `json:"push"`
+		} `json:"device"`
+		Notices []struct {
+			Text  string `json:"text"`
+			Error bool   `json:"error"`
+			At    string `json:"at"`
+		} `json:"notices"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	assert.Equal(t, "expired", snap.Device.Push)
+	paused, err := time.Parse(time.RFC3339, snap.Device.Notify.PausedUntil)
+	require.NoError(t, err)
+	assert.Equal(t, now.Add(40*time.Minute), paused)
+	require.Len(t, snap.Notices, 2)
+	assert.False(t, snap.Notices[0].Error)
+	assert.True(t, snap.Notices[1].Error)
+	for _, n := range snap.Notices {
+		assert.NotEmpty(t, n.Text)
+		at, err := time.Parse(time.RFC3339, n.At)
+		require.NoError(t, err)
+		assert.True(t, at.Before(now), "a notice's age is relative")
+	}
+}
+
 func TestFixture_TheTurnsHoldEveryItemKindAnInterruptedStepAndTheTreesNodes(t *testing.T) {
 	c := &cannedLoom{now: time.Now}
 	raw, err := c.fixture("turns.json")

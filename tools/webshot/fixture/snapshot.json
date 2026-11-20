@@ -471,6 +471,23 @@
             "unreadable": "",
             "spent": 4.71,
             "part": ""
+          },
+          {
+            "plan": "docs/superpowers/plans/2026-11-16-flow-plan-treatment-part-2-estimate.md",
+            "spec": "docs/superpowers/specs/2026-11-16-flow-plan-treatment-design.md",
+            "title": "Plan treatment, part 2: the planner's estimate",
+            "stage": "spec",
+            "status": "designed",
+            "run": "",
+            "done": 0,
+            "total": 0,
+            "drafted": 0,
+            "asks": "",
+            "phase": "",
+            "updated": "now-72h",
+            "unreadable": "",
+            "spent": null,
+            "part": ""
           }
         ],
         "asks": []
@@ -482,12 +499,23 @@
     "notify": {
       "waiting": true,
       "finished": true,
-      "paused_until": ""
+      "paused_until": "now+40m"
     },
-    "push": ""
+    "push": "expired"
   },
   "badge": 2,
-  "notices": [],
+  "notices": [
+    {
+      "text": "Merged flow-run into main.",
+      "error": false,
+      "at": "now-12m"
+    },
+    {
+      "text": "Could not push fix-pane-cursor: the remote rejected it.",
+      "error": true,
+      "at": "now-3m"
+    }
+  ],
   "usage": [
     {
       "account": "default",
