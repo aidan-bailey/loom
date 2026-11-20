@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import type { MouseEvent, ReactElement } from "react";
+import { lazy, type ComponentType, type MouseEvent, type ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Session, SessionGroup, Snapshot } from "@/api/gen";
@@ -116,6 +116,52 @@ describe("PanelHost", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("draws a skeleton while a lazy body loads, then the body", async () => {
+    let release: (m: { default: ComponentType<PanelProps> }) => void = () => {};
+    const gate = new Promise<{ default: ComponentType<PanelProps> }>((resolve) => {
+      release = resolve;
+    });
+    definePanel({ id: "new", title: () => "Lazy", Body: lazy(() => gate) });
+    render(<PanelHost panel="new" props={props} />);
+
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+    expect(screen.queryByText("loaded")).toBeNull();
+
+    await act(() => {
+      release({ default: () => <p>loaded</p> });
+      return Promise.resolve();
+    });
+    expect(screen.getByText("loaded")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
+  });
+
+  it("shows what failed and a reload when a lazy body's chunk does not load", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      definePanel({
+        id: "new",
+        title: () => "Lazy",
+        Body: lazy(() => Promise.reject(new Error("chunk gone"))),
+      });
+      render(<PanelHost panel="new" props={props} />);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Lazy failed to draw");
+      expect(alert).toHaveTextContent("chunk gone");
+      expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a body that is not lazy is drawn at once, with no skeleton", () => {
+    definePanel({ id: "new", title: () => "Plain", Body: () => <p>plain</p> });
+    render(<PanelHost panel="new" props={props} />);
+
+    expect(screen.getByText("plain")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
   });
 });
 

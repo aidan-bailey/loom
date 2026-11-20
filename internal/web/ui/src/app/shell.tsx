@@ -1,6 +1,7 @@
 import { Outlet } from "@tanstack/react-router";
 import {
   Component,
+  Suspense,
   useEffect,
   useState,
   type ErrorInfo,
@@ -12,6 +13,7 @@ import {
 import type { Session, SessionGroup } from "@/api/gen";
 import type { LinkState } from "@/api/stream";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { fleetGroups, nextInGroup } from "@/fleet/groups";
 import { cn } from "@/lib/utils";
@@ -119,14 +121,29 @@ export function Placeholder({ panel }: { panel: PanelId }): ReactElement {
   );
 }
 
+// BodyLoading is the fallback of a lazy body: two skeletons under a named status.
+function BodyLoading(): ReactElement {
+  return (
+    <div role="status" aria-label="Loading" className="flex flex-col gap-3 px-4 py-6">
+      <Skeleton className="h-6 w-1/2" />
+      <Skeleton className="h-32 w-full" />
+    </div>
+  );
+}
+
 // PanelHost draws the panel registered under `panel` inside an error
-// boundary, or the placeholder when none is.
+// boundary, or the placeholder when none is. A body that is `React.lazy`
+// suspends under a skeleton, and its chunk failing to load reaches the
+// boundary, which offers a reload: the Suspense stays inside the Boundary, so
+// a failed load is the boundary's and a pending one never is.
 export function PanelHost({ panel, props }: { panel: PanelId; props: PanelProps }): ReactElement {
   const entry = panelFor(panel);
   if (entry === undefined) return <Placeholder panel={panel} />;
   return (
     <Boundary key={resetKey(panel, props)} what={entry.title(props)}>
-      <entry.Body {...props} />
+      <Suspense fallback={<BodyLoading />}>
+        <entry.Body {...props} />
+      </Suspense>
     </Boundary>
   );
 }
