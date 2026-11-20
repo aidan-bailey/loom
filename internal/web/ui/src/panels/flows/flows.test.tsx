@@ -76,7 +76,7 @@ describe("FlowsBody", () => {
         { plan: "docs/superpowers/plans/2026-11-09-flow-visualisation.md" },
       ),
     );
-    expect(within(links[0] as HTMLElement).getByText("flow-run")).toBeInTheDocument();
+    expect(within(links[0]).getByText("flow-run")).toBeInTheDocument();
     expect(links[0]).toHaveTextContent("part 2 of 3");
     expect(links[0]).toHaveTextContent("flow 2/5 · asks · $4.71");
     expect(links[1]).toHaveAttribute(
@@ -316,7 +316,8 @@ describe("the flows panel", () => {
       </>,
     );
     expect(vi.mocked(useFlows).mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(vi.mocked(useFlows).mock.results.every((r) => r.value.reload === reload)).toBe(true);
+    screen.getByRole("button", { name: "Read the flows again" }).click();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("the panel is registered under flows with its head, a lazy body and no tab", () => {
