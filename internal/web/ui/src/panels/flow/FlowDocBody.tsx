@@ -7,6 +7,7 @@ import type { MdNode } from "@/api/gen";
 import { useFlowDoc } from "@/api/reads";
 import type { PanelProps } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { useScrollPane } from "@/app/scroll";
 import { Markdown } from "@/conversation/Markdown";
 import { NoSession } from "@/session/NoSession";
 import { useSession } from "@/store/fleet";
@@ -118,17 +119,19 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
   const { doc, error } = useFlowDoc({ session: props.sessionId ?? 0, plan, doc: name });
   const all = useMemo(() => headings(doc?.blocks ?? []), [doc]);
   const body = useRef<HTMLDivElement>(null);
+  const pane = useScrollPane();
   const at = props.search.at ?? "";
 
   // jump scrolls the index'th heading just below the pinned header: Markdown draws every heading
   // as an h3 or an h4, in document order.
-  const jump = useCallback((index: number): void => {
-    const el = body.current?.querySelectorAll("h3, h4")[index];
-    if (el === undefined) return;
-    const header = document.querySelector('[data-slot="header"]');
-    const below = header?.getBoundingClientRect().height ?? 0;
-    window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - below) });
-  }, []);
+  const jump = useCallback(
+    (index: number): void => {
+      const el = body.current?.querySelectorAll("h3, h4")[index];
+      if (el === undefined) return;
+      pane.scrollTo(pane.topFor(el));
+    },
+    [pane],
+  );
 
   // A held document opens at `at`, once for each document and `at`.
   useEffect(() => {

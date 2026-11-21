@@ -6,6 +6,8 @@ import type { FlowDoc, MdNode, Session } from "@/api/gen";
 import { useFlowDoc } from "@/api/reads";
 import { panelFor } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
+import { elementPane, ScrollPaneProvider, type ScrollPane } from "@/app/scroll";
+import { stubScroller, type Scroller } from "@/app/scrollkit";
 import { PanelHost } from "@/app/shell";
 import { resetFleet, seed } from "@/commands/testkit";
 import { fixtureFlowDoc, fixtureSnapshot } from "@/fixtures";
@@ -62,6 +64,7 @@ function show(
     error?: string;
     name?: string;
     search?: Record<string, string>;
+    pane?: ScrollPane;
   } = {},
 ): RenderResult {
   const session = opts.session === undefined ? session6() : opts.session;
@@ -73,8 +76,15 @@ function show(
     loading: false,
   });
   window.history.replaceState(null, "", `#/s/6/flow/doc/${name}`);
+  const body = (
+    <FlowDocBody sessionId={6} params={{ id: "6", doc: name }} search={opts.search ?? {}} />
+  );
   return render(
-    <FlowDocBody sessionId={6} params={{ id: "6", doc: name }} search={opts.search ?? {}} />,
+    opts.pane === undefined ? (
+      body
+    ) : (
+      <ScrollPaneProvider pane={opts.pane}>{body}</ScrollPaneProvider>
+    ),
   );
 }
 
@@ -226,6 +236,8 @@ describe("the jump", () => {
   let scrollTo: MockInstance<typeof window.scrollTo>;
   let headerEl: HTMLElement;
   let headingTop: (index: number) => number;
+  let scroller: Scroller;
+  let paneHead: HTMLElement;
 
   beforeEach(() => {
     scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
@@ -239,11 +251,18 @@ describe("the jump", () => {
     ) {
       const rect = { top: 0, height: 0 };
       if (this === headerEl) rect.height = 120;
+      if (this === scroller.el) rect.top = 200;
+      if (this === paneHead) rect.height = 70;
       const headings = Array.from(document.querySelectorAll("h3, h4"));
       const at = headings.indexOf(this);
       if (at >= 0) rect.top = headingTop(at);
       return rect as DOMRect;
     });
+  });
+
+  beforeEach(() => {
+    scroller = stubScroller({ height: 4000, viewport: 600, top: 300 });
+    paneHead = document.createElement("div");
   });
 
   afterEach(() => {
@@ -254,12 +273,12 @@ describe("the jump", () => {
   it("at §2 lands the second numbered section just below the header", () => {
     show({ search: { at: "§2" } });
     expect(scrollTo).toHaveBeenCalledTimes(1);
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 4 + 100 - 120 });
+    expect(scrollTo).toHaveBeenCalledWith(0, 1000 + 100 * 4 + 100 - 120);
   });
 
   it("a section number is not a prefix of another", () => {
     const view = show({ search: { at: "§1" } });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 3 + 100 - 120 });
+    expect(scrollTo).toHaveBeenCalledWith(0, 1000 + 100 * 3 + 100 - 120);
     view.unmount();
     scrollTo.mockClear();
 
@@ -268,7 +287,7 @@ describe("the jump", () => {
       search: { at: "§1" },
     });
     expect(scrollTo).toHaveBeenCalledTimes(1);
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * 1 + 100 - 120 });
+    expect(scrollTo).toHaveBeenCalledWith(0, 1000 + 100 * 1 + 100 - 120);
   });
 
   it("at a source line lands the last heading at or above it", () => {
@@ -282,7 +301,7 @@ describe("the jump", () => {
       scrollTo.mockClear();
       const view = show({ search: { at } });
       expect(scrollTo).toHaveBeenCalledTimes(1);
-      expect(scrollTo).toHaveBeenCalledWith({ top: 1000 + 100 * index + 100 - 120 });
+      expect(scrollTo).toHaveBeenCalledWith(0, 1000 + 100 * index + 100 - 120);
       view.unmount();
     }
   });
@@ -310,14 +329,43 @@ describe("the jump", () => {
     expect(scrollTo).toHaveBeenCalledTimes(1);
     view.rerender(draw("§3"));
     expect(scrollTo).toHaveBeenCalledTimes(2);
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 1000 + 100 * 5 + 100 - 120);
   });
 
   it("a heading never lands above the top of the page", () => {
     Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
     headingTop = () => 10;
     show({ search: { at: "§2" } });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("inside a pane the jump scrolls the pane just below its head, not the window", () => {
+    show({ search: { at: "§2" }, pane: elementPane(scroller.el, paneHead) });
+    expect(scroller.scrolls).toEqual([1000 + 100 * 4 - 200 + 300 - 70]);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("a pane with no head subtracts nothing", () => {
+    show({ search: { at: "§2" }, pane: elementPane(scroller.el, null) });
+    expect(scroller.scrolls).toEqual([1500]);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("a heading never lands above the top of the pane", () => {
+    headingTop = () => 10;
+    scroller.set({ top: 0 });
+    show({ search: { at: "§2" }, pane: elementPane(scroller.el, paneHead) });
+    expect(scroller.scrolls).toEqual([0]);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("the sections index's buttons jump inside the pane", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    show({ pane: elementPane(scroller.el, null) });
+    await user.click(screen.getByText("sections"));
+    await user.click(screen.getByRole("button", { name: "3. Costs" }));
+    expect(scroller.scrolls).toEqual([1000 + 100 * 5 - 200 + 300]);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it("the sections index's buttons jump to their own heading", async () => {
@@ -327,9 +375,9 @@ describe("the jump", () => {
     await user.click(screen.getByText("sections"));
     await user.click(screen.getByRole("button", { name: "3. Costs" }));
     expect(scrollTo).toHaveBeenCalledTimes(1);
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 1000 + 100 * 5 + 100 - 120);
     await user.click(screen.getByRole("button", { name: "Problem" }));
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 1 + 100 - 120 });
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 1000 + 100 * 1 + 100 - 120);
     first.unmount();
     scrollTo.mockClear();
 
@@ -339,7 +387,7 @@ describe("the jump", () => {
     await user.click(screen.getByText("sections"));
     await user.click(screen.getByRole("button", { name: "3. Costs" }));
     expect(scrollTo).toHaveBeenCalledTimes(1);
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 5 + 100 - 120 });
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 1000 + 100 * 5 + 100 - 120);
     at.unmount();
     scrollTo.mockClear();
 
@@ -349,7 +397,7 @@ describe("the jump", () => {
     });
     await user.click(screen.getByText("sections"));
     await user.click(screen.getByRole("button", { name: "D" }));
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1000 + 100 * 3 + 100 - 120 });
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 1000 + 100 * 3 + 100 - 120);
   });
 });
 
