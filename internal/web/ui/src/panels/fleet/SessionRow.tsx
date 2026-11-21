@@ -57,7 +57,7 @@ export function flowTone(flow: FlowSummary): "docs" | "attention" | "error" {
   return "docs";
 }
 
-const DOT: Record<string, string> = {
+export const DOT: Record<string, string> = {
   needs_you: "bg-attention",
   your_turn: "bg-turn",
   working: "bg-working",
