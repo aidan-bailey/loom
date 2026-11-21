@@ -11,19 +11,19 @@ import {
   type ReactNode,
 } from "react";
 
-import type { Session, SessionGroup } from "@/api/gen";
+import type { Session } from "@/api/gen";
 import type { LinkState } from "@/api/stream";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
-import { fleetGroups, nextInGroup } from "@/fleet/groups";
 import { cn } from "@/lib/utils";
-import { useFleet, useFleetGroups, useLink, useSession } from "@/store/fleet";
+import { useFleet, useLink, useSession } from "@/store/fleet";
 
 import { CommandButton } from "./CommandButton";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
 import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./routes";
+import { GroupCounts, HostLabel, LinkPill } from "./status";
 import { useLayout } from "./viewport";
 
 // resetKey changes with the route, so a boundary that caught an error starts
@@ -414,110 +414,13 @@ export function SessionTabs({ session }: { session: Session }): ReactElement {
   );
 }
 
-const PILL: Record<LinkState, string> = {
-  live: "LIVE",
-  connecting: "CONNECTING",
-  restarting: "RESTARTING",
-  offline: "OFFLINE",
-};
-
-const PILL_TONE: Record<LinkState, string> = {
-  live: "bg-working",
-  connecting: "bg-muted-foreground",
-  restarting: "bg-attention",
-  offline: "bg-error",
-};
-
-// COUNTED are the groups the status row counts, in its order.
-const COUNTED: { key: SessionGroup; glyph: string; words: string; tone: string }[] = [
-  { key: "needs_you", glyph: "●", words: "need you", tone: "text-attention" },
-  { key: "your_turn", glyph: "◆", words: "your turn", tone: "text-turn" },
-  { key: "working", glyph: "◐", words: "working", tone: "text-working" },
-];
-
-// clock is the time of day of a ms timestamp.
-function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-// StatusRow is the footer's row: the link's pill, loom@host (with the time of
-// the last update while offline) and a count per group over the shown
-// workspaces. A count opens the group's next session: the one after the
-// session on screen, in the group's order at the tap, wrapping, or the first.
-// While the stream is down the counts are the cached snapshot's, drawn faint
-// and still buttons; a zero is no button.
+// StatusRow is the footer's row: the link's pill, loom@host and a count per group (app/status.tsx).
 export function StatusRow(): ReactElement {
-  const { state } = useLink();
-  const host = useFleet((s) => s.snapshot?.host ?? "");
-  const updated = useFleet((s) => s.updated);
-  const groups = useFleetGroups();
-  const route = useRoute();
-  const when = state === "offline" && updated > 0 ? ` · ${clock(updated)}` : "";
-
-  const open = (group: SessionGroup): void => {
-    const snapshot = useFleet.getState().snapshot;
-    if (snapshot === null) return;
-    const current = panelProps(route).sessionId ?? null;
-    const next = nextInGroup(fleetGroups(snapshot), group, current);
-    if (next !== undefined) window.location.assign(hrefFor("turns", { id: String(next.id) }));
-  };
-
   return (
     <div className="flex min-h-[44px] items-center gap-1 px-4 text-xs">
-      <span
-        aria-live="polite"
-        className={cn(
-          "mr-1 flex-none rounded-sm px-1.5 font-bold text-background",
-          PILL_TONE[state],
-        )}
-      >
-        {PILL[state]}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono">
-        {host === "" ? (
-          "loom"
-        ) : (
-          <>
-            <span className="text-muted-foreground">loom@</span>
-            {host}
-          </>
-        )}
-        {when}
-      </span>
-      {COUNTED.map((g) => {
-        const n = groups[g.key].length;
-        const tone = cn(
-          "flex min-h-[44px] flex-none items-center gap-1 px-2 tabular-nums",
-          g.tone,
-          state !== "live" && "opacity-60",
-        );
-        const inner = (
-          <>
-            <span aria-hidden="true">{g.glyph}</span>
-            {n}
-          </>
-        );
-        if (n === 0) {
-          return (
-            <span key={g.key} className={cn(tone, "opacity-40")}>
-              {inner}
-            </span>
-          );
-        }
-        return (
-          <button
-            key={g.key}
-            type="button"
-            aria-label={`${n} ${g.words}: open the next`}
-            className={tone}
-            onClick={() => {
-              open(g.key);
-            }}
-          >
-            {inner}
-          </button>
-        );
-      })}
+      <LinkPill />
+      <HostLabel />
+      <GroupCounts />
     </div>
   );
 }
