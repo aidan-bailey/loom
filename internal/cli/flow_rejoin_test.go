@@ -417,6 +417,45 @@ func TestFlowGatesStart_ARestartMidChainQueuesNoGateTwice(t *testing.T) {
 	assert.Equal(t, *queued, d.job(run.Steps[1].Job()).After)
 }
 
+// TestFlowGatesStart_ARestartAfterAGateFailedStillStartsTheRun: a restart
+// loses a submit's reply, and gate 1 fails before the start joins again, so
+// the gates it queued after gate 1 are cancelled. Sent again, the chain's
+// keys answer with gate 1's job but not the cancelled ones (core's keyed),
+// and the daemon refuses gate 2 behind the failure: the cascade the chain
+// had, so the run starts with the rest SKIPPED and queues no gate again.
+func TestFlowGatesStart_ARestartAfterAGateFailedStillStartsTheRun(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	latch := newGateLatch(t)
+	conf.gates = []string{"RUN " + latch.wait() + "; exit 3", "RUN echo two", "RUN echo three"}
+	r := restartableDaemon(t, d)
+	lost := false
+	old := submitFlowJob
+	submitFlowJob = func(c *client, sub sched.Submit) (sched.JobID, error) {
+		id, err := old(c, sub)
+		if lost || err != nil || !strings.HasPrefix(sub.Description, "gate 3/3:") {
+			return id, err
+		}
+		lost = true
+		r.stop()
+		require.Eventually(t, func() bool { return c.Err() != nil }, 5*time.Second, 5*time.Millisecond, "the command saw the daemon go")
+		latch.open(t)
+		d.waitFinished(t, 1)
+		r.start()
+		return 0, errors.New("the reply was lost")
+	}
+	t.Cleanup(func() { submitFlowJob = old })
+
+	out, errOut, err := runFlow(t, "gates", "start", "--story", "abc")
+
+	require.NoError(t, err, errOut)
+	assert.Contains(t, errOut, "loom: lost the loom daemon (")
+	assert.Equal(t, "started story-abc: 3 steps, job 1\n2 SKIPPED: echo two (not run: gate 1 failed)\n3 SKIPPED: echo three (not run: gate 1 failed)\n", out)
+	assert.Len(t, d.jobs(), 3, "no gate was queued again")
+	out, _, err = runFlow(t, "gates", "wait", "60")
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Contains(t, out, "\nended: 1 FAIL, 2 SKIPPED\n")
+}
+
 // refuseAsNewer makes every join fail as daemon_client.go's
 // newerDaemonError does (it matches rpc.ErrDaemonNewer), counting the
 // joins, with rejoin's backoff cut to milliseconds and its outage bound to

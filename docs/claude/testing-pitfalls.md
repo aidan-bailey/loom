@@ -60,6 +60,10 @@ Loom's diff probe works on a private copy of each session worktree's index (`loo
 
 A test binary logs to `log.LogFilePath()`, which `log.Initialize("", false)` (every `TestMain`) puts in a directory of the process's own under `os.TempDir()` (`loom-log-*`), removed by `log.Close()`. Until 2026-11-05 every test process shared `os.TempDir()/loom.log`, and one process renamed it to `loom.log.1` at 5 MB while another counted its lines: `core`'s `TestJobQueue_AQueuedRecordWhoseLockTestKeepsFailingIsLoggedOnce`, `TestJobQueue_ARunningRecordWhoseLockTestKeepsFailingIsLoggedOnce` and `TestJobQueue_ASilentShimsLockTestFailureIsLoggedWhenItsTextIsNew` read 0 whenever two suites ran at once. A test that counts log lines reads `log.LogFilePath()`, never a fixed path; a new `TestMain` ends with `log.Close()`, or leaves a `loom-log-*` directory per run. Concurrent suites still share the host: tmux servers, ports and CPU time.
 
+## A test that ends while its jobs run
+
+A job in an `internal/cli` test is a real process group of the test binary (`sched.TestRunner`), and it outlives the test daemon's stop. A test that returns while one runs has it write into its job dir as `t.TempDir`'s cleanup removes that dir, and fails after its last assertion passed: `TempDir RemoveAll cleanup: unlinkat …/jobs/3: directory not empty`. `TestFlowGates_AStoryRunChainsItsGatesAndPasses` and `TestFlowGates_CancelEndsARunAndFreesTheWorktree` ended with a `gates start` whose jobs still ran, and failed so in six CI runs between 2026-11-11 and 2026-11-20. End such a test with every job it queued ended: cancel what is left, then wait for each (`waitJobsGone`, `waitFinished`).
+
 ## A gate's exit code
 
 A gate run through a pipe ends with the pipe's last command's status: `loom job run -- sh -c 'go test ./... | grep -v ^ok'` exited 0 on 2026-11-09 with three `core` failures in its output, and the gate read as passed. Write the output to a file and test each command's own status (`go test … > log; t=$?; …; [ $t -eq 0 ]`), or read the output for `FAIL` before trusting a 0.
