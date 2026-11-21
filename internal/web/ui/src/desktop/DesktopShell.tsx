@@ -11,6 +11,8 @@ import { PanelHead } from "@/app/shell";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/fleet";
 
+import { TopBar } from "./TopBar";
+
 // READABLE are the panels whose text keeps a readable measure in a wide pane: a conversation's
 // turns and its reply box are at most 48rem wide, centred.
 const READABLE: ReadonlySet<PanelId> = new Set<PanelId>(["turns", "agent"]);
@@ -31,7 +33,7 @@ function Middle(): ReactElement {
         data-slot="middle-head"
         className="flex-none border-b border-border bg-background pt-2 empty:hidden"
       >
-        <PanelHead route={route} session={session} />
+        {route.panel === "fleet" ? null : <PanelHead route={route} session={session} />}
       </header>
       <div ref={setScroller} data-slot="middle-scroller" className="min-h-0 flex-1 overflow-y-auto">
         {pane === null ? null : (
@@ -58,6 +60,7 @@ export default function DesktopShell(): ReactElement {
   if (route.panel === "mockupFull") return <Outlet />;
   return (
     <div data-slot="desktop" className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
+      <TopBar />
       <div className="flex min-h-0 flex-1">
         <Middle />
       </div>

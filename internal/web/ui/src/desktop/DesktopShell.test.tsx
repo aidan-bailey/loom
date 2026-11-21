@@ -205,3 +205,64 @@ describe("DesktopShell's scroll pane", () => {
     }
   });
 });
+
+describe("DesktopShell's top bar", () => {
+  it("draws the top bar above the middle, inside the frame", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    const bar = slot("top-bar");
+    if (bar === null) throw new Error("the frame drew no top bar");
+    expect(slot("desktop")).toContainElement(bar);
+    const middle = slot("middle");
+    if (middle === null) throw new Error("the frame drew no middle");
+    expect(bar.compareDocumentPosition(middle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bar).getByRole("link", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("draws the top bar on a route with no session", async () => {
+    definePanel({ id: "settings", title: () => "Settings", Body: () => null });
+    live();
+    desktopAt("#/settings");
+
+    await screen.findByText("outlet");
+    expect(slot("top-bar")).not.toBeNull();
+  });
+
+  it("draws no head on the fleet route, and its Body in full", async () => {
+    definePanel({
+      id: "fleet",
+      title: () => "Fleet",
+      Head: () => <p>fleet head</p>,
+      Body: () => null,
+    });
+    live();
+    desktopAt("#/");
+
+    await screen.findByText("outlet");
+    expect(screen.queryByText("fleet head")).toBeNull();
+    expect(slot("middle-head")).toBeEmptyDOMElement();
+    expect(screen.getByRole("link", { name: "+ New" })).toBeInTheDocument();
+  });
+
+  it("still draws the head on a session route", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    expect(within(slot("middle-head")!).getByText("turns head")).toBeInTheDocument();
+  });
+
+  it("draws no top bar on the full mockup", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100/mockup/full");
+
+    await screen.findByText("outlet");
+    expect(slot("top-bar")).toBeNull();
+    expect(slot("desktop")).toBeNull();
+  });
+});
