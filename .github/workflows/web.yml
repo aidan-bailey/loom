@@ -73,8 +73,12 @@ jobs:
 
       # webshot exits 1 on a console error, a CSP violation, an uncaught
       # exception or an API route the fixture cannot answer. It finds the
-      # runner's google-chrome as its browser.
-      - name: Render every route
+      # runner's google-chrome as its browser. The run covers the phone and
+      # both desktop devices, and any of them failing fails the step.
+      - name: Render every route at the phone and both desktop sizes
         env:
           CGO_ENABLED: 0
-        run: go run ./tools/webshot -app next -out "$RUNNER_TEMP/shots"
+        run: |
+          for device in iphone15 desktop desktop-narrow; do
+            go run ./tools/webshot -app next -device "$device" -out "$RUNNER_TEMP/shots-$device"
+          done
