@@ -9,6 +9,7 @@ import { api } from "@/api/request";
 import { panelFor } from "@/app/panels";
 import { PanelHost } from "@/app/shell";
 import { resetFleet, spyOnAdd } from "@/commands/testkit";
+import { useFilter } from "@/fleet/filter";
 import { fixtureSnapshot } from "@/fixtures";
 import { useFleet } from "@/store/fleet";
 import { usePending } from "@/store/pending";
@@ -86,6 +87,7 @@ afterEach(() => {
   usePending.getState().clear();
   resetFleet();
   window.localStorage.clear();
+  useFilter.setState({ stored: "" });
   window.history.replaceState(null, "", window.location.pathname);
 });
 
@@ -142,7 +144,7 @@ describe("NewSessionBody", () => {
   });
 
   it("starts on the fleet filter's workspace", () => {
-    window.localStorage.setItem("loom.filter", JSON.stringify("2"));
+    useFilter.setState({ stored: "2" });
     show([W1, W2]);
     expect(combo("Workspace")).toHaveTextContent("beta");
     expect(lastCall()?.slice(0, 2)).toEqual([2, true]);
@@ -151,11 +153,11 @@ describe("NewSessionBody", () => {
   it("falls back to the first shown workspace, then the first one", () => {
     const cases: [string, Workspace[], string][] = [
       ["", [W3, W1], "Alpha"],
-      [JSON.stringify("9"), [W1, W2], "Alpha"],
+      ["9", [W1, W2], "Alpha"],
       ["", [W3], "Gamma"],
     ];
     for (const [filter, workspaces, name] of cases) {
-      window.localStorage.setItem("loom.filter", filter === "" ? JSON.stringify("") : filter);
+      useFilter.setState({ stored: filter });
       const view = show(workspaces);
       expect(combo("Workspace")).toHaveTextContent(name);
       view.unmount();
@@ -163,10 +165,13 @@ describe("NewSessionBody", () => {
     }
   });
 
-  it("a stored filter that is not a JSON string is read as none", () => {
-    window.localStorage.setItem("loom.filter", "not json");
-    show([W3, W1]);
-    expect(combo("Workspace")).toHaveTextContent("Alpha");
+  it("follows the shared in-memory choice when localStorage refuses the write", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    useFilter.getState().pick("2");
+    show([W1, W2]);
+    expect(combo("Workspace")).toHaveTextContent("beta");
   });
 
   it("groups the workspaces Active and Other workspaces when one is hidden, and lists them flat when none is", async () => {
@@ -265,7 +270,7 @@ describe("NewSessionBody", () => {
     first.unmount();
     resetFleet();
 
-    window.localStorage.setItem("loom.filter", JSON.stringify("2"));
+    useFilter.setState({ stored: "2" });
     const second = show([W1, W2]);
     await openOptions(second.user);
     expect(combo("Model")).toBeInTheDocument();
@@ -273,7 +278,7 @@ describe("NewSessionBody", () => {
   });
 
   it("a pick's list puts a missing default first and labels the empty one (default)", async () => {
-    window.localStorage.setItem("loom.filter", JSON.stringify("2"));
+    useFilter.setState({ stored: "2" });
     const two = show([W1, W2]);
     await openOptions(two.user);
     expect(combo("Model")).toHaveTextContent("(default)");
@@ -282,7 +287,7 @@ describe("NewSessionBody", () => {
     two.unmount();
     resetFleet();
 
-    window.localStorage.setItem("loom.filter", JSON.stringify("1"));
+    useFilter.setState({ stored: "1" });
     const one = show([W1, W2]);
     await openOptions(one.user);
     await one.user.click(combo("Model"));
