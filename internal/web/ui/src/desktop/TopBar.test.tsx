@@ -84,6 +84,20 @@ describe("TopBar", () => {
     expect(bar().querySelectorAll('[class*="min-h-[44px]"]')).toHaveLength(0);
   });
 
+  it("keeps the filter's group from taking the host label's room", () => {
+    load();
+    render(<TopBar />);
+
+    const group = screen.getByRole("group", { name: "Workspaces" });
+    expect(group.className).toContain("w-auto");
+    expect(group.className).toContain("flex-none");
+    expect(group.className).not.toMatch(/(^| )w-full( |$)/);
+    for (const item of within(group).getAllByRole("button")) {
+      expect(item.className).toContain("flex-none");
+      expect(item.className).not.toMatch(/(^| )flex-1( |$)/);
+    }
+  });
+
   it("a count opens the group's next session, as the footer's do", async () => {
     load();
     const ids = fleetGroups(useFleet.getState().snapshot!).needs_you.map((s) => s.id);

@@ -10,8 +10,10 @@ import { shownWorkspaces } from "./groups";
 
 const ALL = "all";
 
-// DENSE drops the toggle item's 44px touch minimum for the desktop's denser bars.
-const DENSE = "after:min-h-0 after:min-w-0";
+// DENSE drops the toggle item's 44px touch minimum for the desktop's denser bars, and lets the
+// group take only the room its items need (the group's w-full would crowd out HostLabel's flex-1).
+const DENSE = "after:min-h-0 after:min-w-0 flex-none";
+const DENSE_GROUP = "w-auto flex-none";
 
 // WorkspaceFilter draws nothing with no snapshot or fewer than two shown workspaces. Choosing the
 // chosen item again, which Base UI reports as an empty value, picks all.
@@ -25,6 +27,7 @@ export function WorkspaceFilter({ dense }: { dense?: boolean }): ReactElement | 
   const className = dense === true ? DENSE : undefined;
   return (
     <ToggleGroup
+      className={dense === true ? DENSE_GROUP : undefined}
       aria-label="Workspaces"
       value={[active === "" ? ALL : active]}
       onValueChange={(value: string[]) => {
