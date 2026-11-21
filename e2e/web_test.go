@@ -188,6 +188,60 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
+// webCommand runs `loom web args…` in the sandbox, failing the test on an
+// error, and returns what it printed.
+func webCommand(t *testing.T, sb *devsandbox.Sandbox) func(args ...string) string {
+	return func(args ...string) string {
+		t.Helper()
+		out, err := runLoom(t, sb, append([]string{sb.LoomBin(), "web"}, args...)...)
+		require.NoError(t, err, out)
+		return out
+	}
+}
+
+// awaitListening waits until something accepts connections at addr.
+func awaitListening(t *testing.T, addr string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}, uiTimeout, 100*time.Millisecond, "the daemon never listened on %s", addr)
+}
+
+// pairWith posts code to /api/v1/pair and keeps the device cookie it sets as
+// the client's token.
+func (c *webClient) pairWith(code string) {
+	c.t.Helper()
+	status, body, header := c.round(c.request(http.MethodPost, "/api/v1/pair", map[string]string{"code": code}))
+	require.Equal(c.t, http.StatusOK, status, string(body))
+	for _, ck := range (&http.Response{Header: header}).Cookies() {
+		if ck.Name == webCookie {
+			c.token = ck.Value
+		}
+	}
+	require.NotEmpty(c.t, c.token, "pairing sets the device cookie")
+}
+
+// stream opens the paired device's event stream and returns its events; the
+// stream closes with the test. It has no timeout of its own: it stays open.
+func (c *webClient) stream() <-chan sseEvent {
+	c.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	c.t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+"/api/v1/stream", nil)
+	require.NoError(c.t, err)
+	req.AddCookie(&http.Cookie{Name: webCookie, Value: c.token})
+	resp, err := (&http.Client{Transport: c.client.Transport}).Do(req)
+	require.NoError(c.t, err)
+	c.t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(c.t, http.StatusOK, resp.StatusCode)
+	return readStream(ctx, resp.Body)
+}
+
 // `loom web enable` starts the layer in the sandbox's daemon, `loom web
 // pair` makes a code the phone posts for its cookie, and the cookie opens
 // the stream and the routes. A session is created, paused, resumed and
@@ -197,22 +251,10 @@ func TestE2E_Web_SessionLifecycleOverHTTP(t *testing.T) {
 	sb := newSandbox(t, "")
 	addr := freeLoopbackAddr(t)
 	web := &webClient{t: t, origin: "http://" + addr, client: &http.Client{Timeout: 45 * time.Second}}
-	loomWeb := func(args ...string) string {
-		t.Helper()
-		out, err := runLoom(t, sb, append([]string{sb.LoomBin(), "web"}, args...)...)
-		require.NoError(t, err, out)
-		return out
-	}
+	loomWeb := webCommand(t, sb)
 
 	loomWeb("enable", "--listen", addr, "--origin", web.origin)
-	require.Eventually(t, func() bool {
-		conn, err := net.DialTimeout("tcp", addr, time.Second)
-		if err != nil {
-			return false
-		}
-		_ = conn.Close()
-		return true
-	}, uiTimeout, 100*time.Millisecond, "the daemon never listened on %s", addr)
+	awaitListening(t, addr)
 
 	// The guard, before any device is paired.
 	status, _, _ := web.round(web.request(http.MethodGet, "/api/v1/launch-defaults?workspace=1", nil))
@@ -225,14 +267,7 @@ func TestE2E_Web_SessionLifecycleOverHTTP(t *testing.T) {
 	// Pairing: the code posted alone gives the cookie.
 	code := pairingCode.FindString(loomWeb("pair", "--name", "e2e"))
 	require.NotEmpty(t, code, "loom web pair printed no code")
-	status, body, header := web.round(web.request(http.MethodPost, "/api/v1/pair", map[string]string{"code": code}))
-	require.Equal(t, http.StatusOK, status, string(body))
-	for _, c := range (&http.Response{Header: header}).Cookies() {
-		if c.Name == webCookie {
-			web.token = c.Value
-		}
-	}
-	require.NotEmpty(t, web.token, "pairing sets the device cookie")
+	web.pairWith(code)
 	crossOrigin := web.request(http.MethodPost, "/api/v1/sessions/1/kill", nil)
 	crossOrigin.Header.Set("Origin", "https://evil.example.com")
 	crossOrigin.AddCookie(&http.Cookie{Name: webCookie, Value: web.token})
@@ -240,16 +275,7 @@ func TestE2E_Web_SessionLifecycleOverHTTP(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, status, "an Origin that is not the origin is refused, cookie or not")
 
 	// The stream: a snapshot names the sandbox's workspace.
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, web.origin+"/api/v1/stream", nil)
-	require.NoError(t, err)
-	streamReq.AddCookie(&http.Cookie{Name: webCookie, Value: web.token})
-	resp, err := (&http.Client{}).Do(streamReq)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	events := readStream(ctx, resp.Body)
+	events := web.stream()
 	snapshot := awaitEvent(t, events, "snapshot", nil)
 	var fleet struct {
 		Workspaces []struct {
@@ -268,7 +294,7 @@ func TestE2E_Web_SessionLifecycleOverHTTP(t *testing.T) {
 
 	// Create: answered at once with the new ID; the start follows on the
 	// stream and in tmux.
-	status, body = web.call(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": ws, "title": "webkeeper"})
+	status, body := web.call(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": ws, "title": "webkeeper"})
 	require.Equal(t, http.StatusCreated, status, string(body))
 	var created struct {
 		ID      uint64 `json:"id"`
@@ -305,4 +331,59 @@ func TestE2E_Web_SessionLifecycleOverHTTP(t *testing.T) {
 	awaitEnd(t, events)
 	status, _ = web.call(http.MethodGet, "/api/v1/launch-defaults?workspace=1", nil)
 	assert.Equal(t, http.StatusUnauthorized, status, "the revoked token names no device")
+}
+
+// The listener answers to its own local origin, http://loom.localhost:<port>,
+// beside the configured one: a device pairs over it with a `loom web pair`
+// code, its stream opens and an action passes the guard, while bare localhost
+// and the IP literal are refused as Host and as Origin. The client dials the
+// listener's address whatever the name, so the test does not depend on how
+// the machine's resolver treats *.localhost.
+func TestE2E_Web_PairsAndStreamsOverTheLocalOrigin(t *testing.T) {
+	sb := newSandbox(t, "")
+	addr := freeLoopbackAddr(t)
+	_, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}
+	t.Cleanup(transport.CloseIdleConnections)
+	web := &webClient{t: t, origin: "http://loom.localhost:" + port, client: &http.Client{Timeout: 45 * time.Second, Transport: transport}}
+	loomWeb := webCommand(t, sb)
+
+	// The configured origin is the tunnel's; the local one comes with the listener.
+	loomWeb("enable", "--listen", addr, "--origin", "https://loom.example.com")
+	awaitListening(t, addr)
+
+	// Before pairing: the guard lets the local host through to the route's
+	// own 401, and still refuses the names that are not the listener's.
+	status, _, _ := web.round(web.request(http.MethodGet, "/api/v1/launch-defaults?workspace=1", nil))
+	assert.Equal(t, http.StatusUnauthorized, status, "the local origin reaches the route, which needs the cookie")
+	for _, host := range []string{"localhost:" + port, addr} {
+		req := web.request(http.MethodGet, "/api/v1/launch-defaults?workspace=1", nil)
+		req.Host = host
+		status, _, _ = web.round(req)
+		assert.Equal(t, http.StatusMisdirectedRequest, status, "the Host %s is not the listener's", host)
+	}
+
+	// Pairing over the local origin, then the stream.
+	code := pairingCode.FindString(loomWeb("pair", "--name", "e2e-local"))
+	require.NotEmpty(t, code, "loom web pair printed no code")
+	web.pairWith(code)
+	events := web.stream()
+	snapshot := awaitEvent(t, events, "snapshot", nil)
+	assert.Contains(t, snapshot.Data, devsandbox.WorkspaceName, "the snapshot lists the sandbox's workspace")
+
+	// A write from the local origin passes the guard and reaches the model,
+	// which has no such session; one from bare localhost or the IP literal
+	// does not pass the guard, cookie or not.
+	status, body := web.call(http.MethodPost, "/api/v1/sessions/1/kill", nil)
+	assert.Equal(t, http.StatusNotFound, status, "the model says there is no session 1: %s", body)
+	for _, origin := range []string{"http://localhost:" + port, "http://" + addr} {
+		req := web.request(http.MethodPost, "/api/v1/sessions/1/kill", nil)
+		req.Header.Set("Origin", origin)
+		req.AddCookie(&http.Cookie{Name: webCookie, Value: web.token})
+		status, _, _ = web.round(req)
+		assert.Equal(t, http.StatusForbidden, status, "the Origin %s is not the listener's", origin)
+	}
 }
