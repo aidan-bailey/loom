@@ -988,3 +988,43 @@ func TestWebOpen_AnOpenerFailureIsReportedAndTheCommandSucceeds(t *testing.T) {
 	_, _, err = d.loop.RedeemPairing(m[1])
 	assert.NoError(t, err, "the code that was minted stays good")
 }
+
+func TestWebStatus_ShowsTheLocalOrigin(t *testing.T) {
+	d := webDaemon(t)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+
+	out, _, err := runWeb(t, "status")
+
+	require.NoError(t, err)
+	assert.Regexp(t, `Local:\s+http://loom\.localhost:7420\n`, out)
+	assert.Regexp(t, `Origin:\s+https://loom\.example\.com`, out, "beside the configured origin, which is unchanged")
+}
+
+func TestWebStatus_SaysWhenTheListenerHasNoLocalOrigin(t *testing.T) {
+	d := webDaemon(t)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.2:7420")
+	_, noLocal := core.LocalOrigin("127.0.0.2:7420")
+	require.Error(t, noLocal, "control: another loopback address has no local origin")
+
+	out, _, err := runWeb(t, "status")
+
+	require.NoError(t, err)
+	assert.Equal(t, "Local:    none ("+noLocal.Error()+")", lineWith(t, out, "Local:"))
+}
+
+func TestWebStatus_HasNoLocalRowUntilItServes(t *testing.T) {
+	d := webDaemon(t)
+	out, _, err := runWeb(t, "status")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "Local", "off")
+
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	out, _, err = runWeb(t, "status")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "Local", "on, and nothing has answered")
+
+	d.loop.WebServing("", errors.New("listen tcp 127.0.0.1:7420: bind: address already in use"))
+	out, _, err = runWeb(t, "status")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "Local", "on, and the bind failed")
+}
