@@ -920,7 +920,7 @@ func TestRun_RendersTheNewAppAtBothDesktopSizesInARealBrowser(t *testing.T) {
 	for _, name := range []string{"desktop", "desktop-narrow"} {
 		t.Run(name, func(t *testing.T) {
 			out := t.TempDir()
-			args := []string{"-app", "next", "-device", name, "-out", out, "-settle", "800ms"}
+			args := []string{"-app", "next", "-static", filepath.Join("..", "..", "internal", "web", "dist"), "-device", name, "-out", out, "-settle", "800ms"}
 			if which != "1" {
 				_, err := exec.LookPath(which)
 				require.NoError(t, err)
