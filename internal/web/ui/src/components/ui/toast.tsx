@@ -7,7 +7,23 @@ import type { ReactElement } from "react";
 // added with timeout: 0 stays until dismissed.
 export const toastManager = Toast.createToastManager();
 
-function ToastList(): ReactElement {
+// ToastPlacement is where the toasts sit: centred at the top (the phone) or at the window's
+// bottom right (the desktop).
+export type ToastPlacement = "top" | "bottom-right";
+
+const viewportClass: Record<ToastPlacement, string> = {
+  top: "fixed top-[max(0.5rem,env(safe-area-inset-top))] left-1/2 z-50 flex w-[min(100vw-1rem,24rem)] -translate-x-1/2 flex-col gap-2 outline-none",
+  "bottom-right":
+    "fixed right-4 bottom-4 z-50 flex w-[min(100vw-2rem,24rem)] flex-col gap-2 outline-none",
+};
+
+// A toast enters from above at the top and from below at the bottom right.
+const enterClass: Record<ToastPlacement, string> = {
+  top: "data-starting-style:-translate-y-2",
+  "bottom-right": "data-starting-style:translate-y-2",
+};
+
+function ToastList({ placement }: { placement: ToastPlacement }): ReactElement {
   const { toasts } = Toast.useToastManager();
   return (
     <>
@@ -16,7 +32,7 @@ function ToastList(): ReactElement {
           key={toast.id}
           toast={toast}
           data-slot="toast"
-          className="flex items-start gap-2 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] shadow-lg transition-[opacity,transform] duration-200 data-ending-style:opacity-0 data-starting-style:-translate-y-2 data-starting-style:opacity-0"
+          className={`flex items-start gap-2 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] shadow-lg transition-[opacity,transform] duration-200 data-ending-style:opacity-0 ${enterClass[placement]} data-starting-style:opacity-0`}
         >
           <Toast.Content className="flex min-w-0 flex-1 flex-col gap-0.5">
             <Toast.Title
@@ -39,12 +55,16 @@ function ToastList(): ReactElement {
   );
 }
 
-export function Toaster(): ReactElement {
+export function Toaster({ placement }: { placement: ToastPlacement }): ReactElement {
   return (
     <Toast.Provider toastManager={toastManager} limit={8}>
       <Toast.Portal>
-        <Toast.Viewport className="fixed top-[max(0.5rem,env(safe-area-inset-top))] left-1/2 z-50 flex w-[min(100vw-1rem,24rem)] -translate-x-1/2 flex-col gap-2 outline-none">
-          <ToastList />
+        <Toast.Viewport
+          data-slot="toast-viewport"
+          data-placement={placement}
+          className={viewportClass[placement]}
+        >
+          <ToastList placement={placement} />
         </Toast.Viewport>
       </Toast.Portal>
     </Toast.Provider>

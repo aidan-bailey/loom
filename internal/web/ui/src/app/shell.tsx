@@ -206,7 +206,7 @@ export function AppShell(): ReactElement {
         </footer>
       ) : null}
       <ConfirmSheet variant="drawer" />
-      <Toaster />
+      <Toaster placement="top" />
     </div>
   );
 }

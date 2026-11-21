@@ -291,7 +291,7 @@ describe("Dialog", () => {
 describe("Toaster", () => {
   it("Toaster: a toast added through toastManager shows, an error one is styled, and its close control dismisses it", async () => {
     const user = userEvent.setup();
-    render(<Toaster />);
+    render(<Toaster placement="top" />);
     act(() => {
       toastManager.add({
         title: "Killed fix-pane-cursor",
@@ -313,6 +313,46 @@ describe("Toaster", () => {
   });
 });
 
+describe("Toaster placement", () => {
+  it.each(["top", "bottom-right"] as const)(
+    "Toaster: the top placement is centred at the top, and the bottom-right one is anchored to the right and bottom (%s)",
+    async (placement) => {
+      render(<Toaster placement={placement} />);
+      act(() => {
+        toastManager.add({ title: `Placed ${placement}`, timeout: 0 });
+      });
+      await screen.findByText(`Placed ${placement}`);
+      const viewport = document.querySelector('[data-slot="toast-viewport"]');
+      expect(viewport).not.toBeNull();
+      expect(viewport).toHaveAttribute("data-placement", placement);
+      const cls = viewport?.className ?? "";
+      if (placement === "top") {
+        expect(cls).toContain("left-1/2");
+        expect(cls).toContain("top-[max(0.5rem,env(safe-area-inset-top))]");
+        expect(cls).not.toContain("right-4");
+      } else {
+        expect(cls).toContain("right-4");
+        expect(cls).toContain("bottom-4");
+        expect(cls).not.toContain("left-1/2");
+        expect(cls).not.toContain("-translate-x-1/2");
+      }
+    },
+  );
+
+  it("Toaster: an error toast is styled and dismisses in the bottom-right placement too", async () => {
+    const user = userEvent.setup();
+    render(<Toaster placement="bottom-right" />);
+    act(() => {
+      toastManager.add({ title: "Could not push", type: "error", timeout: 0 });
+    });
+    const failed = await screen.findByText("Could not push");
+    expect(failed.className).toContain("text-error");
+    const root = failed.closest("[data-slot='toast']") as HTMLElement;
+    await user.click(within(root).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByText("Could not push")).toBeNull());
+  });
+});
+
 describe("no <style> element", () => {
   it("No component injects a <style> element, on import or in use", async () => {
     expect(document.querySelectorAll("style").length).toBe(0);
@@ -330,7 +370,7 @@ describe("no <style> element", () => {
         <SampleDrawer open onOpenChange={vi.fn()} />
         <Skeleton />
         <Textarea />
-        <Toaster />
+        <Toaster placement="top" />
       </>,
     );
     act(() => {
