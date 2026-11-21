@@ -20,6 +20,9 @@ type device struct {
 	island        rectPt  // the Dynamic Island
 	homeBar       rectPt  // the home indicator
 	userAgent     string
+	// desktop is a desktop browser window, not a phone: a bare viewport that
+	// frame returns as it is, and that emulation does not make a touch screen.
+	desktop bool
 }
 
 // rectPt is a rectangle in points, its corners rounded by r.
@@ -32,9 +35,31 @@ const defaultDevice = "iphone15"
 // one screen: 393×852 points at @3x (1179×2556 pixels), safe area 59 over 34
 // in portrait, the Dynamic Island 126×37 points 11 from the top, the home
 // indicator 139×5 points 8 from the bottom, corners of 55 points.
+//
+// The desktop entries are bare browser windows, scale 1. Their widths are
+// chosen against the layouts' thresholds, DESK2_MIN (1024, the sidebar) and
+// DESK3_MIN (1280, the inspector too) in internal/web/ui/src/app/viewport.ts,
+// which Go cannot import: 1100 is over the first and under the second, 1440
+// over both, so the two runs show both frames.
+// TestDevices_TheDesktopsAreBareViewportsAndThePhonesAreNot holds the pairing.
 var devices = map[string]device{
-	"iphone15": sixOneInchIsland("iPhone 15"),
-	"iphone16": sixOneInchIsland("iPhone 16"),
+	"iphone15":       sixOneInchIsland("iPhone 15"),
+	"iphone16":       sixOneInchIsland("iPhone 16"),
+	"desktop":        desktopWindow("desktop", 1440, 900),
+	"desktop-narrow": desktopWindow("desktop-narrow", 1100, 800),
+}
+
+// desktopWindow is a desktop Chrome window on Linux, w×h points at scale 1:
+// no insets, corners, island or home indicator.
+func desktopWindow(name string, w, h int) device {
+	return device{
+		name:      name,
+		width:     w,
+		height:    h,
+		scale:     1,
+		desktop:   true,
+		userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	}
 }
 
 // sixOneInchIsland is the 6.1-inch iPhone with a Dynamic Island.
@@ -75,8 +100,20 @@ var (
 // drawing of it on a transparent ground, the viewport's size; nil draws
 // none), the Dynamic Island and the home indicator, as iOS draws them over a
 // Home Screen app; with a bezel, the screen's corners are cut and a bezel is
-// drawn round it. The result is a new image; shot is not changed.
+// drawn round it. The result is a new image; shot is not changed. A desktop
+// device's screenshot comes back as it is, whatever o and bar say: no bezel,
+// guides, status bar, island or home indicator.
 func frame(shot, bar image.Image, d device, o frameOpts) *image.NRGBA {
+	if d.desktop {
+		b := shot.Bounds()
+		out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+		for y := 0; y < b.Dy(); y++ {
+			for x := 0; x < b.Dx(); x++ {
+				out.SetNRGBA(x, y, color.NRGBAModel.Convert(shot.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA))
+			}
+		}
+		return out
+	}
 	s := d.scale
 	pad := 0
 	if o.bezel {

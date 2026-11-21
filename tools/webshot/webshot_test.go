@@ -144,6 +144,54 @@ func TestFrame_LaysTheStatusBarOverTheScreen(t *testing.T) {
 	assert.Equal(t, color.NRGBA{255, 255, 255, 255}, out.NRGBAAt(pad+101, pad+100), "a transparent pixel leaves the screen")
 }
 
+func TestDevices_TheDesktopsAreBareViewportsAndThePhonesAreNot(t *testing.T) {
+	for name, size := range map[string][2]int{"desktop": {1440, 900}, "desktop-narrow": {1100, 800}} {
+		d, ok := devices[name]
+		require.True(t, ok, name)
+		assert.Equal(t, size, [2]int{d.width, d.height}, name)
+		assert.Equal(t, 1.0, d.scale, name)
+		assert.True(t, d.desktop, name)
+		assert.Zero(t, d.insetTop, name)
+		assert.Zero(t, d.insetBottom, name)
+		assert.Zero(t, d.corner, name)
+		assert.Equal(t, rectPt{}, d.island, name)
+		assert.Equal(t, rectPt{}, d.homeBar, name)
+		assert.Contains(t, d.userAgent, "Chrome/", name)
+		assert.Contains(t, d.userAgent, "X11; Linux x86_64", name)
+		assert.NotContains(t, d.userAgent, "Mobile", name)
+		assert.NotContains(t, d.userAgent, "iPhone", name)
+	}
+	// The thresholds are DESK2_MIN 1024 and DESK3_MIN 1280 of app/viewport.ts:
+	// the narrow desktop gets the sidebar without the inspector, the wide one both.
+	assert.GreaterOrEqual(t, devices["desktop-narrow"].width, 1024)
+	assert.Less(t, devices["desktop-narrow"].width, 1280)
+	assert.GreaterOrEqual(t, devices["desktop"].width, 1280)
+	for _, name := range []string{"iphone15", "iphone16"} {
+		assert.False(t, devices[name].desktop, name)
+		assert.Equal(t, 3.0, devices[name].scale, name)
+	}
+}
+
+func TestFrame_ADesktopScreenshotComesBackUnchanged(t *testing.T) {
+	d := devices["desktop"]
+	shot := image.NewNRGBA(image.Rect(0, 0, d.width, d.height))
+	for i := range shot.Pix {
+		shot.Pix[i] = 128
+		if i%4 == 3 {
+			shot.Pix[i] = 255
+		}
+	}
+	shot.SetNRGBA(7, 9, color.NRGBA{10, 200, 30, 255})
+	bar := image.NewNRGBA(image.Rect(0, 0, d.width, d.height))
+	bar.SetNRGBA(100, 100, color.NRGBA{255, 0, 0, 255})
+
+	out := frame(shot, bar, d, frameOpts{bezel: true, guides: true})
+	assert.Equal(t, shot.Bounds(), out.Bounds())
+	assert.Equal(t, shot.Pix, out.Pix, "no bezel, bar, island or home indicator")
+	out.SetNRGBA(0, 0, color.NRGBA{1, 2, 3, 4})
+	assert.Equal(t, color.NRGBA{128, 128, 128, 255}, shot.NRGBAAt(0, 0), "the result is a copy")
+}
+
 func TestStatusBarHTML_SitsOnTheIslandsMiddle(t *testing.T) {
 	d := devices[defaultDevice]
 	page := statusBarHTML(d)
