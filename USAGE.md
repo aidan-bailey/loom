@@ -832,7 +832,7 @@ and answers only phones you have paired.
   session (its tab strip never repeats the tab on the left, and its choice
   is kept in this browser). The fleet screen has no sidebar, since it is the
   same list. Under 1280px the session's tabs reach every view. A
-  confirmation is a centred dialog and notifications sit at the bottom
+  confirmation is a centred dialog and toasts sit at the bottom
   right. The layout follows the window as it resizes, and under 1024px it is
   the phone's. To open it on the machine that runs the daemon, use
   `loom web open` (below).
