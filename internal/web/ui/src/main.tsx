@@ -4,6 +4,11 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+// First of the app's own imports (spec §26): its evaluation sets the cookie of a launch by ?ui=next
+// and takes a pairing link's code out of the address, and app/routes.tsx builds the router from
+// the address when a later import reaches it. Keep every import that reaches the router below it.
+import "@/app/pairHold";
+
 import "./styles/app.css";
 import "@/panels";
 import "@/commands";
@@ -11,6 +16,7 @@ import "@/commands";
 import { queryClient } from "@/api/queries";
 import { onUnpaired } from "@/api/request";
 import { AddToHome, needsInstall } from "@/app/install";
+import { watchPairLink } from "@/app/pairLink";
 import { goToPairing, router, watchHash } from "@/app/routes";
 import { watchNotices } from "@/app/toasts";
 import { registerWorker } from "@/app/worker";
@@ -31,6 +37,7 @@ const root = createRoot(mount);
 let stopHash: (() => void) | undefined;
 let stopNotices: (() => void) | undefined;
 let stopFleet: (() => void) | undefined;
+let stopPairLink: (() => void) | undefined;
 let stopUnpaired: (() => void) | undefined;
 let started = false;
 
@@ -39,6 +46,7 @@ function start(): void {
   started = true;
   stopHash = watchHash();
   stopNotices = watchNotices();
+  stopPairLink = watchPairLink();
   stopFleet = startFleet();
   stopUnpaired = onUnpaired(goToPairing);
 
@@ -71,6 +79,7 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     stopHash?.();
     stopNotices?.();
+    stopPairLink?.();
     stopFleet?.();
     stopUnpaired?.();
   });
