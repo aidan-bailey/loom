@@ -311,9 +311,7 @@ describe("Toaster", () => {
     await waitFor(() => expect(screen.queryByText("Killed fix-pane-cursor")).toBeNull());
     expect(screen.getByText("Could not push")).toBeInTheDocument();
   });
-});
 
-describe("Toaster placement", () => {
   it.each(["top", "bottom-right"] as const)(
     "Toaster: the top placement is centred at the top, and the bottom-right one is anchored to the right and bottom (%s)",
     async (placement) => {
@@ -335,6 +333,14 @@ describe("Toaster placement", () => {
         expect(cls).toContain("bottom-4");
         expect(cls).not.toContain("left-1/2");
         expect(cls).not.toContain("-translate-x-1/2");
+      }
+      // A toast enters from above at the top and from below at the bottom right.
+      const rootClass = document.querySelector('[data-slot="toast"]')?.className ?? "";
+      if (placement === "top") {
+        expect(rootClass).toContain("data-starting-style:-translate-y-2");
+      } else {
+        expect(rootClass).toContain("data-starting-style:translate-y-2");
+        expect(rootClass).not.toContain("data-starting-style:-translate-y-2");
       }
     },
   );
