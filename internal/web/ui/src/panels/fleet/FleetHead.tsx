@@ -1,5 +1,6 @@
 // The fleet's context row: its title, and links to the flows, the settings and a new session. They
-// are plain links, not commands: they act on nothing.
+// are plain links, not commands: they act on nothing. FleetLinks is the links alone, for the
+// desktop's top bar too.
 import { Settings } from "lucide-react";
 import type { MouseEvent, ReactElement } from "react";
 
@@ -10,8 +11,10 @@ import { cn } from "@/lib/utils";
 import { useFleet, useLink } from "@/store/fleet";
 
 const LINK = "flex min-h-[44px] min-w-[44px] flex-none items-center justify-center text-sm";
+const LINK_DENSE = "flex h-7 min-w-7 flex-none items-center justify-center px-1.5 text-sm";
 
-export function FleetHead(): ReactElement {
+export function FleetLinks({ dense = false }: { dense?: boolean }): ReactElement {
+  const link = dense ? LINK_DENSE : LINK;
   const hasFlows = useFleet((s) => {
     if (s.snapshot === null) return false;
     const shown = new Set(shownWorkspaces(s.snapshot).map((w) => w.id));
@@ -21,17 +24,17 @@ export function FleetHead(): ReactElement {
   });
   const { stale } = useLink();
 
-  const actions = (
+  return (
     <>
       {hasFlows ? (
-        <a href={hrefFor("flows")} aria-label="Flows" className={cn(LINK, "text-muted-foreground")}>
+        <a href={hrefFor("flows")} aria-label="Flows" className={cn(link, "text-muted-foreground")}>
           flows
         </a>
       ) : null}
       <a
         href={hrefFor("settings")}
         aria-label="Settings"
-        className={cn(LINK, "text-muted-foreground")}
+        className={cn(link, "text-muted-foreground")}
       >
         <Settings aria-hidden="true" className="size-5" />
       </a>
@@ -42,7 +45,7 @@ export function FleetHead(): ReactElement {
           if (stale) e.preventDefault();
         }}
         className={cn(
-          LINK,
+          link,
           "rounded-md bg-secondary px-3 font-medium text-foreground",
           stale && "opacity-50",
         )}
@@ -51,6 +54,8 @@ export function FleetHead(): ReactElement {
       </a>
     </>
   );
+}
 
-  return <ContextRow title="Fleet" actions={actions} />;
+export function FleetHead(): ReactElement {
+  return <ContextRow title="Fleet" actions={<FleetLinks />} />;
 }
