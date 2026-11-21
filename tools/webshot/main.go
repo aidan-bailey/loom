@@ -541,42 +541,37 @@ func emulation(d device, standalone bool) []cdpStep {
 	standaloneScript := cdpStep{"Page.addScriptToEvaluateOnNewDocument", map[string]any{
 		"source": fmt.Sprintf(`Object.defineProperty(Navigator.prototype, "standalone", {get: () => %t, configurable: true});`, standalone),
 	}}
-	if d.desktop {
-		return []cdpStep{
-			{"Page.enable", nil},
-			{"Runtime.enable", nil},
-			{"Log.enable", nil},
-			{"Network.enable", nil},
-			{"Network.setBypassServiceWorker", map[string]any{"bypass": true}},
-			{"Emulation.setDeviceMetricsOverride", map[string]any{
-				"width": d.width, "height": d.height, "deviceScaleFactor": d.scale, "mobile": false,
-				"screenWidth": d.width, "screenHeight": d.height,
-			}},
-			{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": "Linux x86_64"}},
-			{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
-			standaloneScript,
-		}
+	metrics := map[string]any{
+		"width": d.width, "height": d.height, "deviceScaleFactor": d.scale, "mobile": !d.desktop,
+		"screenWidth": d.width, "screenHeight": d.height,
 	}
-	return []cdpStep{
+	platform := "Linux x86_64"
+	if !d.desktop {
+		metrics["screenOrientation"] = map[string]any{"type": "portraitPrimary", "angle": 0}
+		platform = "iPhone"
+	}
+	steps := []cdpStep{
 		{"Page.enable", nil},
 		{"Runtime.enable", nil},
 		{"Log.enable", nil},
 		{"Network.enable", nil},
 		{"Network.setBypassServiceWorker", map[string]any{"bypass": true}},
-		{"Emulation.setDeviceMetricsOverride", map[string]any{
-			"width": d.width, "height": d.height, "deviceScaleFactor": d.scale, "mobile": true,
-			"screenWidth": d.width, "screenHeight": d.height,
-			"screenOrientation": map[string]any{"type": "portraitPrimary", "angle": 0},
-		}},
-		{"Emulation.setSafeAreaInsetsOverride", map[string]any{"insets": map[string]any{
-			"top": d.insetTop, "topMax": d.insetTop, "bottom": d.insetBottom, "bottomMax": d.insetBottom,
-			"left": 0, "leftMax": 0, "right": 0, "rightMax": 0,
-		}}},
-		{"Emulation.setTouchEmulationEnabled", map[string]any{"enabled": true, "maxTouchPoints": 5}},
-		{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": "iPhone"}},
-		{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
-		standaloneScript,
+		{"Emulation.setDeviceMetricsOverride", metrics},
 	}
+	if !d.desktop {
+		steps = append(steps,
+			cdpStep{"Emulation.setSafeAreaInsetsOverride", map[string]any{"insets": map[string]any{
+				"top": d.insetTop, "topMax": d.insetTop, "bottom": d.insetBottom, "bottomMax": d.insetBottom,
+				"left": 0, "leftMax": 0, "right": 0, "rightMax": 0,
+			}}},
+			cdpStep{"Emulation.setTouchEmulationEnabled", map[string]any{"enabled": true, "maxTouchPoints": 5}},
+		)
+	}
+	return append(steps,
+		cdpStep{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": platform}},
+		cdpStep{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
+		standaloneScript,
+	)
 }
 
 // query runs a JavaScript expression in the page and decodes its value.

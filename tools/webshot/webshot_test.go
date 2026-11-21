@@ -875,6 +875,28 @@ func TestEmulation_ADesktopIsNotMobileAndHasNoTouchNoInsets(t *testing.T) {
 	assert.Contains(t, phone, "Emulation.setSafeAreaInsetsOverride")
 	assert.Contains(t, phone, "Emulation.setTouchEmulationEnabled")
 	assert.Equal(t, true, phone["Emulation.setDeviceMetricsOverride"]["mobile"])
+
+	// The desktop's calls are the phone's, in order, minus the safe-area and
+	// touch steps: dropping a shared step from either fails here.
+	methodsOf := func(steps []cdpStep, skip ...string) []string {
+		var out []string
+	next:
+		for _, s := range steps {
+			for _, k := range skip {
+				if s.method == k {
+					continue next
+				}
+			}
+			out = append(out, s.method)
+		}
+		return out
+	}
+	want := methodsOf(emulation(devices["iphone15"], true), "Emulation.setSafeAreaInsetsOverride", "Emulation.setTouchEmulationEnabled")
+	assert.Contains(t, want, "Runtime.enable")
+	assert.Contains(t, want, "Log.enable")
+	for _, name := range []string{"desktop", "desktop-narrow"} {
+		assert.Equal(t, want, methodsOf(emulation(devices[name], true)), name)
+	}
 }
 
 func TestForDevice_DropsOnlyAddToHomeOnADesktop(t *testing.T) {
