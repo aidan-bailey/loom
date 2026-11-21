@@ -51,7 +51,7 @@ The flow commands that wait (the run engine, `flow run wait`, `flow agent wait`,
 | `web open` | refused unless `Web()` is serving and `core.LocalOrigin` gives its address a local origin (`webLocalOrigin`), then `PairDevice`: a refusal `core.IsDeviceExists` reads as a paired name opens the plain URL with no code, any other refusal is the model's; the URL is printed, then handed to `openBrowser` (5 s wait, never killed, a failure reported and exit 0) |
 | `web devices` | `Web().Devices` (read only; `--json` for a script) |
 | `web revoke` | `RevokeDevice`, once per name for `--all` |
-| `web status` | `Web()` (read only); the `Local:` row is `core.LocalOrigin`'s answer for the listener's address (`none (<why>)` when it has no local origin) |
+| `web status` | `Web()` (read only); the `Local:` row is `core.LocalOrigin` of the served address, shown only while serving (`none (<why>)` when it has no local origin) |
 | `job submit` | `SubmitJob` and a wait for its `Reply` (`submitJob`), then for the replica to hold the job (`awaitJob`); prints where it stands |
 | `job run` | `SubmitJob` without a message, then follows the job (`follow`) and exits with its code |
 | `job wait` | follows an existing job (`follow`); an interrupt asks for a message (`NotifyJob`) when the job has an owner and has not ended |
