@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "@/api/gen";
 import { DESKTOP_KEY, readDesktopPrefs, useDesktop } from "@/app/desktopState";
 import { definePanel, type Panel, type PanelProps } from "@/app/panels";
-import { useScrollPane, windowPane } from "@/app/scroll";
+import { useScrollPane, windowPane, type ScrollPane } from "@/app/scroll";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
 
@@ -270,14 +270,19 @@ describe("Inspector", () => {
     });
     try {
       const onScroll = vi.fn();
+      const seen: ScrollPane[] = [];
       const Probe = (): ReactElement => {
         const pane = useScrollPane();
+        seen.push(pane);
+        pane.top();
         useEffect(() => pane.subscribe(onScroll), [pane]);
         return <p>{pane === windowPane ? "probe window" : "probe pane"}</p>;
       };
       tabs({ Body: Probe });
       render(<Inspector session={claude()} middle="turns" />);
       expect(screen.getByText("probe pane")).toBeInTheDocument();
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((pane) => pane !== windowPane)).toBe(true);
       expect(reads).toBe(0);
       fireEvent.scroll(window);
       expect(onScroll).not.toHaveBeenCalled();
