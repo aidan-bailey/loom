@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, type ReactElement } from "react";
 
 import type { Session } from "@/api/gen";
 import { keepScroll, keptScroll, useTurnPages } from "@/api/reads";
+import { useScrollPane, type ScrollPane } from "@/app/scroll";
 import { Button } from "@/components/ui/button";
 import { NeedsYou } from "@/conversation/NeedsYou";
 import { ReplyBox } from "@/conversation/ReplyBox";
@@ -16,11 +17,11 @@ interface Metrics {
   fromBottom: number;
 }
 
-function measure(): Metrics {
-  const height = document.documentElement.scrollHeight;
+function measure(pane: ScrollPane): Metrics {
+  const height = pane.height();
   return {
-    atBottom: window.innerHeight + window.scrollY >= height - BOTTOM_MARGIN,
-    fromBottom: height - window.scrollY,
+    atBottom: pane.viewport() + pane.top() >= height - BOTTOM_MARGIN,
+    fromBottom: height - pane.top(),
   };
 }
 
@@ -28,6 +29,7 @@ function measure(): Metrics {
 // A port of the classic Conversation.
 export function Conversation(props: { session: Session }): ReactElement {
   const { session } = props;
+  const pane = useScrollPane();
   const working = session.status === "Running";
   const { held, landed, error, load } = useTurnPages({
     session: session.id,
@@ -56,9 +58,9 @@ export function Conversation(props: { session: Session }): ReactElement {
   });
   useLayoutEffect(() => {
     const kept = keptScroll(session.id);
-    if (heldNow.current !== undefined && kept !== undefined) window.scrollTo(0, kept);
-    metrics.current = measure();
-  }, [session.id]);
+    if (heldNow.current !== undefined && kept !== undefined) pane.scrollTo(kept);
+    metrics.current = measure(pane);
+  }, [session.id, pane]);
 
   // A page that lands anchors the page: a first or reset page at the bottom, an earlier page
   // where the reader was, a refresh at the bottom only for a reader already there.
@@ -66,25 +68,20 @@ export function Conversation(props: { session: Session }): ReactElement {
   useLayoutEffect(() => {
     if (held === anchored.current) return;
     anchored.current = held;
-    const height = document.documentElement.scrollHeight;
     if (landed === "newest" || (landed === "refresh" && metrics.current.atBottom)) {
-      window.scrollTo(0, height);
+      pane.scrollTo(pane.height());
     } else if (landed === "earlier") {
-      window.scrollTo(0, height - metrics.current.fromBottom);
+      pane.scrollTo(pane.height() - metrics.current.fromBottom);
     }
-    metrics.current = measure();
-  }, [held, landed]);
+    metrics.current = measure(pane);
+  }, [held, landed, pane]);
 
   useEffect(() => {
-    const onScroll = (): void => {
-      keepScroll(session.id, window.scrollY);
-      metrics.current = measure();
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-    };
-  }, [session.id]);
+    return pane.subscribe(() => {
+      keepScroll(session.id, pane.top());
+      metrics.current = measure(pane);
+    });
+  }, [session.id, pane]);
   return (
     <section className="flex flex-col gap-3 px-4 py-3">
       {held !== undefined && held.skipped > 0 && (

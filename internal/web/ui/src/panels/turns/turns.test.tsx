@@ -9,6 +9,8 @@ import { keptScroll } from "@/api/reads";
 import { api } from "@/api/request";
 import "@/commands";
 import { definePanel, panelFor, type PanelProps } from "@/app/panels";
+import { elementPane, ScrollPaneProvider, type ScrollPane } from "@/app/scroll";
+import { stubScroller, type Scroller } from "@/app/scrollkit";
 import { deferred, makeSession, resetFleet, seed } from "@/commands/testkit";
 import { fixtureTurns } from "@/fixtures";
 import { readSeen } from "@/fleet/seen";
@@ -103,12 +105,18 @@ function Screen(): ReactElement | null {
   return session === undefined ? null : <Conversation session={session} />;
 }
 
-function show(over: Partial<Session> = {}) {
+function show(over: Partial<Session> = {}, pane?: ScrollPane) {
   current = over;
   seed([sessionNow()]);
   return render(
     <QueryClientProvider client={queryClient}>
-      <Screen />
+      {pane === undefined ? (
+        <Screen />
+      ) : (
+        <ScrollPaneProvider pane={pane}>
+          <Screen />
+        </ScrollPaneProvider>
+      )}
     </QueryClientProvider>,
   );
 }
@@ -430,6 +438,113 @@ describe("Conversation's scroll", () => {
     readerAt(640);
     first.unmount();
     readerAt(5);
+    expect(keptScroll(1)).toBe(640);
+  });
+});
+
+describe("Conversation's scroll inside a pane", () => {
+  let s: Scroller;
+  let pane: ScrollPane;
+
+  beforeEach(() => {
+    stubPage();
+    pageHeight = 9000;
+    s = stubScroller({ height: 2000, viewport: 600 });
+    pane = elementPane(s.el, null);
+  });
+
+  afterEach(() => {
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("the first page lands at the bottom of the pane", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    show({}, pane);
+    await settle();
+    expect(s.scrolls).toContain(2000);
+  });
+
+  it("an earlier page keeps the reader's place in the pane", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([5, 6], { earlier: 5 })));
+    show({}, pane);
+    await settle();
+    s.place(300);
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    s.set({ height: 3200 });
+    fireEvent.click(screen.getByRole("button", { name: "↑ earlier turns" }));
+    await settle();
+    expect(s.scrolls.at(-1)).toBe(1500);
+  });
+
+  it("a refresh follows the pane's bottom for a reader within 48 px of it", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    show({}, pane);
+    await settle();
+    s.place(1352);
+    s.scrolls.length = 0;
+    s.set({ height: 2400 });
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    change({ last_message: "a" });
+    await settle();
+    expect(s.scrolls).toEqual([2400]);
+  });
+
+  it("a refresh leaves a reader 49 px from the pane's bottom where they are", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    show({}, pane);
+    await settle();
+    s.place(1351);
+    s.scrolls.length = 0;
+    s.set({ height: 2400 });
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    change({ last_message: "a" });
+    await settle();
+    expect(s.scrolls).toEqual([]);
+  });
+
+  it("a reset page lands at the bottom of the pane wherever the reader is", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2])));
+    show({}, pane);
+    await settle();
+    s.place(0);
+    s.set({ height: 2600 });
+    turnsRead.mockResolvedValueOnce(ok(page([9], { conversation: "c2", reset: true })));
+    change({ last_message: "a" });
+    await settle();
+    expect(s.scrolls).toContain(2600);
+  });
+
+  it("a conversation kept in the cache comes back where it was left in the pane", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const first = show({}, pane);
+    await settle();
+    s.place(640);
+    first.unmount();
+    s.scrolls.length = 0;
+
+    turnsRead.mockResolvedValueOnce(ok(page([3, 4])));
+    show({}, pane);
+    expect(s.scrolls).toContain(640);
+    await settle();
+    expect(s.scrolls).not.toContain(2000);
+  });
+
+  it("leaving the conversation stops recording the pane's scroll", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    const first = show({}, pane);
+    await settle();
+    s.place(640);
+    first.unmount();
+    s.place(5);
+    expect(keptScroll(1)).toBe(640);
+  });
+
+  it("the window's scroll is not the pane's", async () => {
+    turnsRead.mockResolvedValueOnce(ok(page([1, 2, 3])));
+    show({}, pane);
+    await settle();
+    s.place(640);
+    readerAt(77);
     expect(keptScroll(1)).toBe(640);
   });
 });
