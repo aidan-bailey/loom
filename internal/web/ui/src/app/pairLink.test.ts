@@ -148,7 +148,9 @@ describe("holdPairLink", () => {
 
 describe("pairHold", () => {
   it("imports only leaves, nothing that reaches app/routes.tsx", () => {
-    const specifiers = [...pairHoldSource.matchAll(/^import .* from "(.*)";$/gm)].map((m) => m[1]);
+    const specifiers = [...pairHoldSource.matchAll(/^import\b[^;]*?["']([^"']+)["']\s*;?/gm)].map(
+      (m) => m[1],
+    );
     expect(specifiers.sort()).toEqual(["./switchApp", "@/panels/pair/code"]);
   });
 
