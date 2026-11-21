@@ -187,7 +187,7 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 }
 
 // checkLazyViews is whether the job and mockup screens, the flow board, the flow story and
-// document views, the host's flows, the new session screen and settings are chunks of their
+// document views, the host's flows, the new session screen, settings and the desktop shell are chunks of their
 // own that index.html does not load: one file per name, whose file name index.html's text
 // (a script, a modulepreload link or anything else) does not hold.
 func checkLazyViews(assets map[string]staticAsset) error {
@@ -196,7 +196,7 @@ func checkLazyViews(assets map[string]staticAsset) error {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody", "SettingsBody"} {
+	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody", "SettingsBody", "DesktopShell"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
 		for url := range assets {
@@ -235,7 +235,7 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		}
 		return assets
 	}
-	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js", "/assets/SettingsBody-s.js"}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js", "/assets/SettingsBody-s.js", "/assets/DesktopShell-i.js"}
 
 	for _, tc := range []struct {
 		name   string
@@ -257,6 +257,8 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		{"a preloaded new-session chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/NewSessionBody-h.js">`, all...), "/assets/NewSessionBody-h.js"},
 		{"no settings chunk", build(entry, slices.DeleteFunc(slices.Clone(all), func(f string) bool { return strings.HasPrefix(f, "/assets/SettingsBody-") })...), "SettingsBody"},
 		{"a preloaded settings chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/SettingsBody-s.js">`, all...), "/assets/SettingsBody-s.js"},
+		{"no desktop shell chunk", build(entry, slices.DeleteFunc(slices.Clone(all), func(f string) bool { return strings.HasPrefix(f, "/assets/DesktopShell-") })...), "DesktopShell"},
+		{"a preloaded desktop shell chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/DesktopShell-i.js">`, all...), "/assets/DesktopShell-i.js"},
 		{"a second job chunk", build(entry, append([]string{"/assets/JobBody-z.js"}, all...)...), "more than one"},
 		{"a preloaded chunk", build(entry+`<link rel="modulepreload" crossorigin href="/assets/JobBody-b.js">`, all...), "/assets/JobBody-b.js"},
 		{"a chunk named in the page's text", build(entry+`<script>load("MockupBody-c.js")</script>`, all...), "MockupBody"},
