@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -705,4 +707,76 @@ func TestWebRevoke_NeedsOneNameOrAll(t *testing.T) {
 	require.Error(t, err, "two names")
 
 	assert.Len(t, webView(t, d).Devices, 1, "none of them revoked anything")
+}
+
+// startedOpener starts sh running script (its arguments after the script, as
+// $1 and on) as a stand-in for an opener, and kills it when the test ends.
+func startedOpener(t *testing.T, script string, args ...string) *exec.Cmd {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("these tests stand an opener in with sh")
+	}
+	cmd := exec.Command("sh", append([]string{"-c", script, "sh"}, args...)...)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	return cmd
+}
+
+func TestWebOpen_WaitOpener_AnOpenerThatExitsCleanlyIsOpened(t *testing.T) {
+	cmd := startedOpener(t, "exit 0")
+
+	assert.NoError(t, waitOpener(cmd, 5*time.Second))
+}
+
+func TestWebOpen_WaitOpener_AQuickFailureNamesItsExitStatus(t *testing.T) {
+	cmd := startedOpener(t, "exit 3")
+
+	err := waitOpener(cmd, 5*time.Second)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit status 3")
+}
+
+func TestWebOpen_WaitOpener_AnOpenerStillRunningIsOpenedAndLeftRunning(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran-on")
+	cmd := startedOpener(t, `sleep 1; touch "$1"`, marker)
+
+	err := waitOpener(cmd, 50*time.Millisecond)
+
+	require.NoError(t, err, "still running at the limit counts as opened")
+	assert.NoFileExists(t, marker, "waitOpener returned at its limit, with the opener still running")
+	assert.Eventually(t, func() bool {
+		_, statErr := os.Stat(marker)
+		return statErr == nil
+	}, 10*time.Second, 20*time.Millisecond, "the opener was left running: it went on to finish")
+}
+
+func TestWebOpen_OpenerCommandIsThePlatformsOwn(t *testing.T) {
+	const link = "http://loom.localhost:7420/?ui=next#/pair?code=K7QM2XPA"
+	want := []string{"xdg-open", link}
+	switch runtime.GOOS {
+	case "darwin":
+		want = []string{"open", link}
+	case "windows":
+		want = []string{"rundll32", "url.dll,FileProtocolHandler", link}
+	}
+
+	cmd := openerCommand(link)
+
+	assert.Equal(t, want, cmd.Args)
+	assert.Nil(t, cmd.Stdin, "a console browser must not take the terminal")
+	assert.Nil(t, cmd.Stdout)
+	assert.Nil(t, cmd.Stderr)
+}
+
+func TestWebOpen_AMissingOpenerIsAnError(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	err := startBrowser("http://loom.localhost:7420/?ui=next")
+
+	require.Error(t, err, "no opener on the PATH is a start error, never a silent success")
+}
+
+func TestWebOpen_TheOpenerWaitIsFiveSeconds(t *testing.T) {
+	assert.Equal(t, 5*time.Second, openerWait)
 }
