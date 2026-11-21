@@ -10,7 +10,8 @@ The `loom workspace`, `loom account`, `loom session`, `loom web`, `loom sweep`, 
 | `workspace.go` | `WorkspaceCmd` and `add`, `list`, `remove`, `use`, `rename`, `status`; `client.resolveWorkspace`, `client.served` |
 | `session.go` | `SessionCmd` (built by `newSessionCmd`) and `list`, `new`, `send`, `kill`, `pause`, `resume`; `findSession`, `client.launchOptions`, `sessionJSON` (the `--json` row) |
 | `account.go` | `AccountCmd` and `add`, `login`, `list`, `use`, `sync`, `remove`; the environment guards and credential warnings |
-| `web.go` | `WebCmd` (built by `newWebCmd`) and `enable`, `disable`, `pair`, `devices`, `revoke`, `status`; `client.awaitServing`, `servesAlready`, `webSettled`, `sameAddr`, `webDeviceJSON` (the `devices --json` row), `webWait` |
+| `web.go` | `WebCmd` (built by `newWebCmd`) and `enable`, `disable`, `pair`, `open`, `devices`, `revoke`, `status`; `client.awaitServing`, `servesAlready`, `webSettled`, `sameAddr`, `webDeviceJSON` (the `devices --json` row), `webWait` |
+| `web_open.go`, `open_unix.go`, `open_windows.go` | `open` (built by `newWebOpenCmd`), `webLocalOrigin`, `defaultDesktopName`; the opener: `openBrowser` (the seam tests replace), `startBrowser`, `openerCommand` (the platform's command, in the `_unix.go` and `_windows.go` files), `waitOpener`, `openerWait` |
 | `job.go` | `JobCmd` (built by `newJobCmd`) and `submit`, `cancel`; `claimFlags` (`submission`: the argv, directory, environment and `$LOOM_LAUNCH` a job is sent with), `client.submitJob`, `client.awaitJob`, `ExitError` (a command's exit code, which `main.go` honours), the helpers the other files share |
 | `job_follow.go` | `run`, `wait`, `logs`; `jobFollower` (the follower of `run`, `wait` and `logs -f`), `jobOutcome` (a job's last line and exit code), `interruptible` and `notifySignals` (the interrupt), `tailOffset` |
 | `job_list.go` | `list` and `writeJobList` |
@@ -47,9 +48,10 @@ The flow commands that wait (the run engine, `flow run wait`, `flow agent wait`,
 | `web enable` | `ConfigureWeb` once (a repeat of the stored settings retries a failed bind, since every call bumps `Web().Rev`; nothing is sent when they are already served: `servesAlready`), then a wait up to `webWait` for a `Web()` past the `Rev` read before the call to report the address served, or an error (`awaitServing`) |
 | `web disable` | `ConfigureWeb` with an empty `listen` and the stored origin |
 | `web pair` | `PairDevice`; the code is printed as `XXXX-XXXX` with its expiry and the origin |
+| `web open` | refused unless `Web()` is serving and `core.LocalOrigin` gives its address a local origin (`webLocalOrigin`), then `PairDevice`: a refusal `core.IsDeviceExists` reads as a paired name opens the plain URL with no code, any other refusal is the model's; the URL is printed, then handed to `openBrowser` (5 s wait, never killed, a failure reported and exit 0) |
 | `web devices` | `Web().Devices` (read only; `--json` for a script) |
 | `web revoke` | `RevokeDevice`, once per name for `--all` |
-| `web status` | `Web()` (read only) |
+| `web status` | `Web()` (read only); the `Local:` row is `webLocalOrigin`'s answer for the listener |
 | `job submit` | `SubmitJob` and a wait for its `Reply` (`submitJob`), then for the replica to hold the job (`awaitJob`); prints where it stands |
 | `job run` | `SubmitJob` without a message, then follows the job (`follow`) and exits with its code |
 | `job wait` | follows an existing job (`follow`); an interrupt asks for a message (`NotifyJob`) when the job has an owner and has not ended |

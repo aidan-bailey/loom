@@ -872,6 +872,34 @@ and answers only phones you have paired.
    again); sixteen devices at most. A daemon restart voids the codes.
 5. **Notifications.** In the app's settings, tap to turn them on.
 
+**On the daemon's machine.** `loom web open [--name <device>]` opens the app
+in this machine's browser with no tunnel, at the listener's local origin,
+`http://loom.localhost:<port>` (browsers resolve `*.localhost` to loopback; a
+listener on `127.0.0.1` or `[::1]` has one, `loom web status` shows it as
+`Local:`, and a listener on any other loopback address has none). Bare
+`localhost` and `127.0.0.1` are not served: a cookie set there would reach every
+server this machine's browser reaches on any port. The name is `desktop` unless
+`--name` gives another. For a name not paired yet it makes a code and opens the
+link that carries it (`<local>/?ui=next#/pair?code=…`: the app takes the code out
+of the address before it does anything else, and it works once, for ten
+minutes); for a paired name it opens `<local>/?ui=next` and says so, and
+`loom web revoke <name>` unpairs it for another go. The URL is always printed.
+The command refuses, minting nothing, while the web is off (when `web.json` is
+left alone it quotes why, as `loom web status` does in its `Error:` row) or not
+serving, or when the listener has no local origin. If no browser opens (no
+display, over SSH) it says so, leaves the URL for you and exits 0. Each origin
+holds its own device cookie, so this browser and a phone on the tunnel are
+separate devices. Safari may not resolve `*.localhost`: pair a Safari desktop
+through the tunnel with `loom web pair`.
+
+Two things are accepted on a single-user machine, and not on a shared one. The
+pairing link, code included, is the opener's argument, so another local user can
+read the code from the process list (`ps`, `/proc/<pid>/cmdline`) while the
+opener or a freshly started browser runs; the code works once and for ten
+minutes. And the `loom.localhost` device cookie goes to whatever listens on
+loopback at the port the browser is steered to, so a hostile local listener
+there can read it.
+
 `loom web devices` lists each device, when it paired and was last seen, its
 notifications and its push state; `loom web revoke <name>` (or `--all`)
 unpairs one: its stream ends, its push subscription is dropped and the app
@@ -879,7 +907,8 @@ returns to pairing. `loom web disable` turns the web off and keeps the
 devices and the origin, voids the pending pairing codes, and sends no push
 until it is on again (the phones' subscriptions stay, so turning it on
 resumes pushes without them subscribing again); `loom web status` shows
-the settings, whether it serves and why not, and the device count. The
+the settings, whether it serves and why not, its local origin and the device
+count. The
 settings live in `web.json` in the global dir, which only the daemon
 writes; a `web.json` that fails to load (unreadable, a newer version than
 this build, or a stored address, origin, name or key that is not valid) is
@@ -951,6 +980,9 @@ and the restarted daemon adopts the jobs that are still running (see
 | 403 on an action | The request's `Origin` is not the configured origin |
 | "loom is restarting" | The daemon stopped; the app reconnects by itself |
 | Pairing says the code is wrong, used or expired | Run `loom web pair` again; a code works once, for ten minutes |
+| `loom web open` says it could not open a browser | The URL is printed above the message: open it yourself (a code it made works for ten minutes); over SSH there is no display to open it on |
+| `loom web open` says the web app is off and its settings file is left alone | `loom web enable` refuses too: fix or move `web.json` by hand (the message quotes why it failed to load; `loom web status` shows it as `Error:`), then run `loom web enable` |
+| `loom web open` says there is no local origin | The listener is bound to another loopback address than `127.0.0.1` or `[::1]`: run `loom web enable` with one of those |
 | `loom web enable` says it is not serving | `loom web status` shows the reason, usually a port that is taken; the settings are kept. Free the port and run the same `loom web enable` again: it retries the bind |
 | The fleet is greyed with every action off | The app shows its last snapshot until the stream is back |
 | No notifications | The app is not installed to the Home Screen, notifications are off or paused for the device, the origin is a development `http://127.0.0.1:<port>` or `http://localhost:<port>` (push needs `https`), or `loom web devices` shows `expired` or `failing` |
@@ -1349,9 +1381,10 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 | `web enable --listen <addr> --origin <url>` | Turn the web app on, or change it: `--listen` is a loopback `127.0.0.1:<port>` or `[::1]:<port>`, `--origin` the `https://<host>` the phone opens. Both are required and checked by the daemon, which applies them at once; the command waits up to 5 s and says whether it serves or why not. Running it again with the same values changes nothing while the web serves, and retries a bind that failed (the port was taken) |
 | `web disable` | Turn the web app off; paired devices and the origin are kept, pending pairing codes are voided, and no push is sent until it is on again |
 | `web pair [--name <device>]` | Print a one-time code (`XXXX-XXXX`, default name `iPhone`), when it expires and the origin to enter it at. Refused while the web is off, for a name already paired, and at sixteen devices |
+| `web open [--name <device>]` | Open the web app in this machine's browser with no tunnel, at the listener's local origin (`http://loom.localhost:<port>`). A name not paired yet gets a one-time code in the opened link (default name `desktop`); a paired name opens the plain link. Prints the URL always; refused, minting nothing, while the web is off or not serving or when the listener has no local origin; with no browser to open it says so and exits 0 |
 | `web devices [--json]` | Each device: name, when paired, last seen, notifications, push state (`ok`, `expired`, `failing: <status>`, or none) |
 | `web revoke <name>` or `web revoke --all` | Unpair a device, or every device: its app returns to pairing and its push subscription is dropped |
-| `web status` | The settings, whether the web app serves or why not, and the number of devices |
+| `web status` | The settings, whether the web app serves or why not, its local origin (the `Local:` row) and the number of devices |
 
 ### Examples
 
