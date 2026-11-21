@@ -30,12 +30,13 @@ var webWait = 5 * time.Second
 func newWebCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "web",
-		Short: "Serve loom's fleet to a paired phone: enable, disable, pair, devices, revoke, status",
+		Short: "Serve loom's fleet to a paired phone: enable, disable, pair, open, devices, revoke, status",
 	}
 	cmd.AddCommand(
 		newWebEnableCmd(),
 		newWebDisableCmd(),
 		newWebPairCmd(),
+		newWebOpenCmd(),
 		newWebDevicesCmd(),
 		newWebRevokeCmd(),
 		newWebStatusCmd(),

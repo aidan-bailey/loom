@@ -780,3 +780,211 @@ func TestWebOpen_AMissingOpenerIsAnError(t *testing.T) {
 func TestWebOpen_TheOpenerWaitIsFiveSeconds(t *testing.T) {
 	assert.Equal(t, 5*time.Second, openerWait)
 }
+
+// fakeBrowser replaces openBrowser for the test with one that records the
+// URLs it is asked to open and answers err. A test of `loom web open` must
+// call it: the real opener starts the developer's browser.
+func fakeBrowser(t *testing.T, err error) *[]string {
+	t.Helper()
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(link string) error {
+		opened = append(opened, link)
+		return err
+	}
+	t.Cleanup(func() { openBrowser = prev })
+	return &opened
+}
+
+// servingWeb has the daemon enable the web on listen for the tunnel's origin
+// and its layer report that it serves addr.
+func servingWeb(t *testing.T, d *testDaemon, listen, addr string) {
+	t.Helper()
+	require.NoError(t, d.loop.ConfigureWeb(listen, "https://loom.example.com"))
+	d.loop.WebServing(addr, nil)
+}
+
+// openLink matches the link `loom web open` opens for a new name, and holds
+// its code.
+var openLink = regexp.MustCompile(`^http://loom\.localhost:7420/\?ui=next#/pair\?code=([` + codeAlphabet + `]{8})$`)
+
+func TestWebOpen_RefusedWhileTheWebIsOff(t *testing.T) {
+	webDaemon(t)
+	opened := fakeBrowser(t, nil)
+
+	out, _, err := runWeb(t, "open")
+
+	require.EqualError(t, err, "The web app is off; turn it on with loom web enable.")
+	assert.Empty(t, *opened)
+	assert.NotContains(t, out, "Pairing code")
+}
+
+func TestWebOpen_WebJSONLeftAloneAnswersItsErrorNotTheOffMessage(t *testing.T) {
+	isolateWorkspaces(t)
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte("not json"), 0o600))
+	d := serveDaemon(t, "true")
+	opened := fakeBrowser(t, nil)
+	w := webView(t, d)
+	require.Empty(t, w.Listen, "web.json left alone keeps the web off")
+	require.NotEmpty(t, w.Error)
+
+	out, _, err := runWeb(t, "open")
+
+	require.EqualError(t, err, "The web app is off, and its settings file is left alone ("+w.Error+"); see loom web status.")
+	assert.NotContains(t, err.Error(), "turn it on with loom web enable", "enable refuses while web.json is left alone")
+	assert.NotContains(t, out, "Pairing code", "nothing is minted")
+	assert.Empty(t, *opened)
+}
+
+func TestWebOpen_RefusedUntilTheLayerServes(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+
+	out, _, err := runWeb(t, "open")
+	require.EqualError(t, err, "The web app is not serving yet; see loom web status.")
+	assert.NotContains(t, out, "Pairing code")
+
+	d.loop.WebServing("", errors.New("listen tcp 127.0.0.1:7420: bind: address already in use"))
+	out, _, err = runWeb(t, "open")
+	require.EqualError(t, err, "The web app is not serving (listen tcp 127.0.0.1:7420: bind: address already in use); see loom web status.")
+	assert.NotContains(t, out, "Pairing code")
+	assert.Empty(t, *opened)
+}
+
+func TestWebOpen_RefusedWhenTheListenerHasNoLocalOrigin(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.2:7420")
+	_, noLocal := core.LocalOrigin("127.0.0.2:7420")
+	require.Error(t, noLocal, "control: another loopback address has no local origin")
+
+	out, _, err := runWeb(t, "open")
+
+	require.EqualError(t, err, "The web app has no local origin: "+noLocal.Error()+".")
+	assert.NotContains(t, out, "Pairing code", "no code is minted for a link nothing can open")
+	assert.Empty(t, *opened)
+}
+
+func TestWebOpen_PairsANewNameAndOpensItsLink(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+	webDevice(t, d, "iPhone") // another device paired does not make desktop's name taken
+
+	out, _, err := runWeb(t, "open")
+
+	require.NoError(t, err)
+	assert.Regexp(t, `Pairing code for desktop expires at \d\d:\d\d:\d\d\.`, out)
+	require.Len(t, *opened, 1)
+	m := openLink.FindStringSubmatch((*opened)[0])
+	require.NotNil(t, m, (*opened)[0])
+	assert.Contains(t, out, "Opening "+(*opened)[0], "the URL is printed")
+	name, token, err := d.loop.RedeemPairing(m[1])
+	require.NoError(t, err, "the link's code is the daemon's")
+	assert.Equal(t, "desktop", name, "the default name")
+	assert.NotEmpty(t, token)
+	assert.Len(t, webView(t, d).Devices, 2)
+}
+
+func TestWebOpen_NamesTheDeviceAndTrimsIt(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+
+	out, _, err := runWeb(t, "open", "--name", "  Work PC ")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Pairing code for Work PC expires at")
+	require.Len(t, *opened, 1)
+	m := openLink.FindStringSubmatch((*opened)[0])
+	require.NotNil(t, m, (*opened)[0])
+	name, _, err := d.loop.RedeemPairing(m[1])
+	require.NoError(t, err)
+	assert.Equal(t, "Work PC", name)
+}
+
+func TestWebOpen_AnIPv6ListenerHasTheSameLocalOrigin(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "[::1]:7420", "[::1]:7420")
+
+	_, _, err := runWeb(t, "open")
+
+	require.NoError(t, err)
+	require.Len(t, *opened, 1)
+	assert.Regexp(t, openLink, (*opened)[0])
+}
+
+func TestWebOpen_APairedNameOpensThePlainURL(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+	webDevice(t, d, "desktop")
+
+	for _, args := range [][]string{{"open"}, {"open", "--name", "  desktop "}} {
+		*opened = nil
+		out, _, err := runWeb(t, args...)
+
+		require.NoError(t, err, args)
+		assert.Contains(t, out, "desktop is already paired. If this browser is not, pass --name or run loom web revoke desktop.", args)
+		assert.NotContains(t, out, "Pairing code", args)
+		assert.Contains(t, out, "Opening http://loom.localhost:7420/?ui=next\n", "the URL is printed: %v", args)
+		assert.Equal(t, []string{"http://loom.localhost:7420/?ui=next"}, *opened, args)
+	}
+	assert.Len(t, webView(t, d).Devices, 1, "nothing was paired")
+}
+
+func TestWebOpen_ABadNameIsTheModelsRefusal(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, nil)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+	_, badErr := core.ValidateDeviceName("   ")
+	require.Error(t, badErr, "the model refuses a name of spaces")
+
+	_, _, err := runWeb(t, "open", "--name", "   ")
+
+	assert.EqualError(t, err, badErr.Error(), "the model's refusal, not a paired name")
+	assert.Empty(t, *opened)
+}
+
+func TestWebOpen_SaysWhatItOpensBeforeTheOpenerRuns(t *testing.T) {
+	d := webDaemon(t)
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+	cmd := newWebCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"open"})
+	var seenByOpener string
+	prev := openBrowser
+	openBrowser = func(string) error {
+		seenByOpener = out.String()
+		return nil
+	}
+	t.Cleanup(func() { openBrowser = prev })
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, seenByOpener, "Pairing code for desktop expires at")
+	assert.Contains(t, seenByOpener, "Opening http://loom.localhost:7420/?ui=next#/pair?code=", "the opener may block for its 5 seconds: the URL is printed first")
+}
+
+func TestWebOpen_AnOpenerFailureIsReportedAndTheCommandSucceeds(t *testing.T) {
+	d := webDaemon(t)
+	opened := fakeBrowser(t, errors.New(`exec: "xdg-open": executable file not found in $PATH`))
+	servingWeb(t, d, "127.0.0.1:7420", "127.0.0.1:7420")
+
+	out, _, err := runWeb(t, "open")
+
+	require.NoError(t, err, "a browser that does not open is not a failed command")
+	assert.Contains(t, out, `Could not open a browser (exec: "xdg-open": executable file not found in $PATH); open the URL above yourself.`)
+	require.Len(t, *opened, 1)
+	assert.Contains(t, out, "Opening "+(*opened)[0], "the URL is printed for the user to open")
+	m := openLink.FindStringSubmatch((*opened)[0])
+	require.NotNil(t, m, (*opened)[0])
+	_, _, err = d.loop.RedeemPairing(m[1])
+	assert.NoError(t, err, "the code that was minted stays good")
+}
