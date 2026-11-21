@@ -9,6 +9,13 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { utf8Length } from "@/lib/utf8";
 
@@ -111,10 +118,27 @@ function firstValue(field: ConfirmField | undefined): string {
   return field?.kind === "choice" ? (field.options[0]?.value ?? "") : "";
 }
 
-// Sheet is one ask's drawer content. A newer ask replaces the text in place,
-// inside the one DrawerContent, so the drawer's transition and focus trap do
-// not restart.
-function Sheet({ ask }: { ask: Ask }): ReactElement {
+// ConfirmVariant is the form a sheet is drawn in: the phone's bottom drawer or
+// the desktop's centred dialog.
+export type ConfirmVariant = "drawer" | "dialog";
+
+// Sheet is one ask's content in the form `variant` names. A newer ask replaces
+// the text in place, inside the one DrawerContent or DialogContent, so the
+// transition and focus trap do not restart.
+function Sheet({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): ReactElement {
+  if (variant === "dialog") {
+    return (
+      <DialogContent>
+        <div className="flex flex-col gap-1.5">
+          <DialogTitle>{ask.spec.title}</DialogTitle>
+          <DialogDescription className="break-words whitespace-pre-line">
+            {ask.spec.body}
+          </DialogDescription>
+        </div>
+        <AskBody key={ask.id} ask={ask} variant={variant} />
+      </DialogContent>
+    );
+  }
   return (
     <DrawerContent>
       <DrawerHeader>
@@ -123,15 +147,16 @@ function Sheet({ ask }: { ask: Ask }): ReactElement {
           {ask.spec.body}
         </DrawerDescription>
       </DrawerHeader>
-      <AskBody key={ask.id} ask={ask} />
+      <AskBody key={ask.id} ask={ask} variant={variant} />
     </DrawerContent>
   );
 }
 
 // AskBody is the ask's field and buttons. Sheet keys it by the ask, so each
 // ask starts with a field of its own; its buttons answer that ask by its id.
-function AskBody({ ask }: { ask: Ask }): ReactElement {
+function AskBody({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): ReactElement {
   const { spec } = ask;
+  const Footer = variant === "dialog" ? DialogFooter : DrawerFooter;
   const [value, setValue] = useState(() => firstValue(spec.field));
   const fieldId = useId();
   const field = spec.field;
@@ -179,7 +204,7 @@ function AskBody({ ask }: { ask: Ask }): ReactElement {
           )}
         </div>
       )}
-      <DrawerFooter>
+      <Footer>
         <Button
           size="lg"
           variant={spec.destructive ? "destructive" : "default"}
@@ -199,29 +224,37 @@ function AskBody({ ask }: { ask: Ask }): ReactElement {
         >
           Cancel
         </Button>
-      </DrawerFooter>
+      </Footer>
     </>
   );
 }
 
-// ConfirmSheet is the one confirmation drawer: AppShell mounts it once, and
-// every command with a `confirm` opens it through runCommand. The last ask
-// stays drawn after an answer, until the drawer's close has finished and it
-// unmounts its content, so the exit transition plays over the sheet and not
-// over an empty one.
-export function ConfirmSheet(): ReactElement {
+// ConfirmSheet is the one confirmation sheet, drawn as a drawer or a dialog by
+// `variant`: AppShell mounts it once, and every command with a `confirm` opens
+// it through runCommand. The last ask stays drawn after an answer, until the
+// close has finished and it unmounts its content, so the exit transition plays
+// over the sheet and not over an empty one. A variant that changes while an ask
+// is open redraws the same ask in the other form.
+export function ConfirmSheet({ variant }: { variant: ConfirmVariant }): ReactElement {
   const ask = useSyncExternalStore(subscribe, () => current);
   const [last, setLast] = useState<Ask | null>(null);
   if (ask !== null && ask !== last) setLast(ask);
   const shown = ask ?? last;
+  const open = ask !== null;
+  const onOpenChange = (next: boolean): void => {
+    if (!next && ask !== null) answer(ask.id, null);
+  };
+  const sheet = shown === null ? null : <Sheet ask={shown} variant={variant} />;
+  if (variant === "dialog") {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        {sheet}
+      </Dialog>
+    );
+  }
   return (
-    <Drawer
-      open={ask !== null}
-      onOpenChange={(open) => {
-        if (!open && ask !== null) answer(ask.id, null);
-      }}
-    >
-      {shown === null ? null : <Sheet ask={shown} />}
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      {sheet}
     </Drawer>
   );
 }

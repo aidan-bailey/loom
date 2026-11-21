@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Check } from "lucide-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,12 +28,12 @@ function ask(spec: ConfirmSpec): Promise<string | null> {
 
 describe("ConfirmSheet", () => {
   it("draws nothing while nobody asks", () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("names what the command does, and resolves the empty value on its action when it has no field", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(kill);
 
     expect(await screen.findByText("Kill session")).toBeInTheDocument();
@@ -46,8 +46,16 @@ describe("ConfirmSheet", () => {
     });
   });
 
+  it("the drawer variant still draws the drawer and no dialog", async () => {
+    render(<ConfirmSheet variant="drawer" />);
+    void ask(kill);
+    await screen.findByRole("dialog", { name: "Kill session" });
+    expect(document.querySelector('[data-slot="drawer-content"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="dialog-content"]')).toBeNull();
+  });
+
   it("resolves null on Cancel", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(kill);
 
     await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -55,7 +63,7 @@ describe("ConfirmSheet", () => {
   });
 
   it("resolves null on Escape", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(kill);
     await screen.findByText("Kill session");
 
@@ -64,7 +72,7 @@ describe("ConfirmSheet", () => {
   });
 
   it("lets a newer ask replace an open one, which resolves null", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const first = ask(kill);
     await screen.findByText("Kill session");
 
@@ -86,7 +94,7 @@ describe("ConfirmSheet", () => {
   // Fails without `ask.id !== id` in answer: the old ask's answer would close
   // the newer sheet and resolve its promise with the old ask's value.
   it("an answer from a replaced ask changes nothing: the newer ask stays open and resolves its own value", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const first = ask(kill);
     await screen.findByText("Kill session");
     const firstId = testSeam.openId();
@@ -148,7 +156,7 @@ const merge: ConfirmSpec = {
 
 describe("ConfirmSheet's field", () => {
   it("a text field shows its label and placeholder and resolves what was typed, as typed", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(textSpec(100));
 
     const field = await screen.findByLabelText("Tell Claude why");
@@ -160,7 +168,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a text field left empty resolves the empty string, which is an answer and not a cancel", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(textSpec(100));
 
     await userEvent.click(await screen.findByRole("button", { name: "Deny" }));
@@ -169,7 +177,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a text field counts UTF-8 bytes: at the limit the action is on, one byte past it the action is off and the too-long line shows", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(textSpec(4));
     const field = await screen.findByLabelText("Tell Claude why");
 
@@ -192,7 +200,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("cancelling with text typed resolves null, not the text", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(textSpec(100));
 
     await userEvent.type(await screen.findByLabelText("Tell Claude why"), "abc");
@@ -202,7 +210,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a choice field is a native select with its first option chosen, and resolves that option's value", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(merge);
 
     const select = await screen.findByLabelText("Merge from");
@@ -215,7 +223,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a choice field resolves the option that was picked", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(merge);
 
     await userEvent.selectOptions(await screen.findByLabelText("Merge from"), "9");
@@ -225,7 +233,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a newer ask starts with a field of its own, not the text typed into the one it replaced", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const first = ask(textSpec(100));
     await userEvent.type(await screen.findByLabelText("Tell Claude why"), "old");
 
@@ -239,7 +247,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a choice field with no options leaves the action off, with Cancel still open", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask({ ...merge, field: { kind: "choice", label: "Merge from", options: [] } });
 
     expect(await screen.findByLabelText("Merge from")).toBeInTheDocument();
@@ -249,7 +257,7 @@ describe("ConfirmSheet's field", () => {
   });
 
   it("a sheet with no field draws no input", async () => {
-    render(<ConfirmSheet />);
+    render(<ConfirmSheet variant="drawer" />);
     const answer = ask(kill);
     await screen.findByText("Kill session");
 
@@ -257,6 +265,128 @@ describe("ConfirmSheet's field", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await answer).toBeNull();
+  });
+});
+
+describe("ConfirmSheet as a dialog", () => {
+  it("draws a centred dialog and no drawer, with the title, the paragraphs and both actions", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    void ask(kill);
+
+    const dialog = await screen.findByRole("dialog", { name: "Kill session" });
+    expect(dialog.closest('[data-slot="dialog-content"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
+    expect(within(dialog).getByText(/Removes the worktree \/w\/x/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Kill" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("the dialog resolves the empty value on its action", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(kill);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    expect(await answer).toBe("");
+    await waitFor(() => {
+      expect(screen.queryByText("Kill session")).toBeNull();
+    });
+  });
+
+  it("the dialog resolves null on Cancel", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(kill);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(await answer).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText("Kill session")).toBeNull();
+    });
+  });
+
+  it("the dialog resolves null on Escape", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(kill);
+    await screen.findByText("Kill session");
+
+    await userEvent.keyboard("{Escape}");
+    expect(await answer).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText("Kill session")).toBeNull();
+    });
+  });
+
+  it("a text field in the dialog resolves what was typed, and past its limit the action is off with the line showing", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(textSpec(5));
+    const field = await screen.findByLabelText("Tell Claude why");
+
+    await userEvent.type(field, "not now");
+    expect(screen.getByText("That is over the limit.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
+
+    await userEvent.clear(field);
+    await userEvent.type(field, "no");
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(await answer).toBe("no");
+  });
+
+  it("a choice field in the dialog resolves the picked option", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(merge);
+
+    const select = await screen.findByLabelText("Merge from");
+    expect(screen.getByRole("option", { name: "fix-a (aidanb/fix-a)" })).toHaveProperty(
+      "selected",
+      true,
+    );
+    await userEvent.selectOptions(select, "fix-b (aidanb/fix-b)");
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+    expect(await answer).toBe("9");
+  });
+
+  it("a newer ask replaces the open one in the dialog, and the replaced ask's late answer changes nothing", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const first = ask(kill);
+    await screen.findByText("Kill session");
+    const firstId = testSeam.openId();
+
+    const second = ask({
+      title: "Push",
+      body: "Pushes the branch.",
+      action: "Push",
+      destructive: false,
+    });
+    expect(await first).toBeNull();
+    expect(await screen.findByText("Pushes the branch.")).toBeInTheDocument();
+    expect(screen.queryByText("Kill session")).toBeNull();
+
+    act(() => {
+      testSeam.answer(firstId ?? -1, "late");
+    });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(testSeam.openId()).not.toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Push" }));
+    expect(await second).toBe("");
+  });
+
+  it("a variant that changes while an ask is open redraws it in the other form and the ask still resolves", async () => {
+    const { rerender } = render(<ConfirmSheet variant="drawer" />);
+    const answer = ask(kill);
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="drawer-content"]')).not.toBeNull();
+    });
+
+    rerender(<ConfirmSheet variant="dialog" />);
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="dialog-content"]')).not.toBeNull();
+      expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
+    });
+    expect(screen.getByText("Kill session")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Kill" }));
+    expect(await answer).toBe("");
   });
 });
 
@@ -392,7 +522,7 @@ describe("CommandButton", () => {
 
     render(
       <>
-        <ConfirmSheet />
+        <ConfirmSheet variant="drawer" />
         <CommandButton id="test.button.confirm" args="x" />
       </>,
     );
@@ -527,7 +657,7 @@ describe("CommandButton", () => {
 
     const { rerender } = render(
       <>
-        <ConfirmSheet />
+        <ConfirmSheet variant="drawer" />
         <CommandButton id="test.button.field" args="ask-1" />
       </>,
     );
@@ -545,7 +675,7 @@ describe("CommandButton", () => {
 
     rerender(
       <>
-        <ConfirmSheet />
+        <ConfirmSheet variant="drawer" />
         <CommandButton id="test.button.field" args="skip" />
       </>,
     );

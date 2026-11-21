@@ -205,7 +205,7 @@ export function AppShell(): ReactElement {
           <StatusRow />
         </footer>
       ) : null}
-      <ConfirmSheet />
+      <ConfirmSheet variant="drawer" />
       <Toaster />
     </div>
   );
