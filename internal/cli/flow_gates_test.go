@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,7 @@ func TestFlowGates_AStoryRunChainsItsGatesAndPasses(t *testing.T) {
 	assert.Equal(t, "nothing to cancel: story-abc1234 has ended\n", out)
 	_, _, err = runFlow(t, "gates", "start", "--final")
 	require.NoError(t, err, "a run that has ended no longer holds the worktree")
+	waitJobsGone(t, d, 3, 4)
 }
 
 func TestFlowGates_AStoryStopsAtItsFirstFail(t *testing.T) {
@@ -226,6 +228,19 @@ func TestFlowGates_CancelEndsARunAndFreesTheWorktree(t *testing.T) {
 	assert.Contains(t, out, "\ncancelled\n")
 	_, _, err = runFlow(t, "gates", "start", "--final")
 	require.NoError(t, err, "a cancelled run no longer holds the worktree")
+	_, _, err = runFlow(t, "gates", "cancel")
+	require.NoError(t, err)
+	waitJobsGone(t, d, 3, 4)
+}
+
+// waitJobsGone waits until each of ids has ended: a job still running when
+// the test ends writes into its job dir while the test's temp dirs are
+// removed, which fails the test ("directory not empty").
+func waitJobsGone(t *testing.T, d *testDaemon, ids ...sched.JobID) {
+	t.Helper()
+	for _, id := range ids {
+		d.waitFinished(t, id)
+	}
 }
 
 // A gate cancelled by someone else, while the one before it still ran, is
@@ -266,26 +281,172 @@ func TestFlowGates_TwoWaitsQueueTheRestOnce(t *testing.T) {
 	assert.Len(t, d.jobs(), 3, "the gate after the failure was queued again once")
 }
 
+// A refusal behind a gate that hasn't failed is no cascade: behind one still
+// running or one that passed, the chain is cancelled and the run never
+// starts.
 func TestFlowGates_AChainItCantQueueWholeIsCancelledAndLeavesNoRecord(t *testing.T) {
-	d, conf := flowJobsDaemon(t)
-	conf.gates = []string{"RUN echo up; sleep 30", "RUN echo two"}
-	calls := 0
+	for _, tc := range []struct {
+		name  string
+		gate1 string
+		first sched.State // how job 1 ends: cancelled with the chain, or done before the refusal
+	}{
+		{"behind a gate still running", "RUN echo up; sleep 30", sched.Cancelled},
+		{"behind a gate that passed", "RUN echo one", sched.Done},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, conf := flowJobsDaemon(t)
+			conf.gates = []string{tc.gate1, "RUN echo two"}
+			calls := 0
+			old := submitFlowJob
+			submitFlowJob = func(c *client, sub sched.Submit) (sched.JobID, error) {
+				if calls++; calls == 2 {
+					if tc.first == sched.Done {
+						d.waitFinished(t, 1)
+					}
+					return 0, errors.New("refused for the test")
+				}
+				return old(c, sub)
+			}
+			t.Cleanup(func() { submitFlowJob = old })
+
+			_, _, err := runFlow(t, "gates", "start", "--story", "abc")
+			assert.Equal(t, exitNotRun, flowExit(err))
+			assert.ErrorContains(t, err, "gate 2 was not queued (refused for the test), so the 1 queued before it were cancelled")
+			assert.Equal(t, tc.first, d.waitFinished(t, 1).State)
+			records, err := filepath.Glob(filepath.Join(conf.state, "gates", "*.json"))
+			require.NoError(t, err)
+			assert.Empty(t, records)
+		})
+	}
+}
+
+// gateLatch is a file a gate's command waits for, so the test decides when
+// that gate ends.
+type gateLatch string
+
+func newGateLatch(t *testing.T) gateLatch {
+	return gateLatch(filepath.Join(t.TempDir(), "open"))
+}
+
+// wait is a command that returns once the latch is open.
+func (l gateLatch) wait() string {
+	return fmt.Sprintf("until [ -e '%s' ]; do sleep 0.01; done", string(l))
+}
+
+func (l gateLatch) open(t *testing.T) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(string(l), nil, 0o600))
+}
+
+// beforeSubmit runs fn before the nth submit of a gate whose description
+// starts with prefix, as a gate that fails in milliseconds does when it
+// outruns the chain still being queued after it.
+func beforeSubmit(t *testing.T, prefix string, nth int, fn func()) {
+	t.Helper()
+	n := 0
 	old := submitFlowJob
 	submitFlowJob = func(c *client, sub sched.Submit) (sched.JobID, error) {
-		if calls++; calls == 2 {
-			return 0, errors.New("refused for the test")
+		if strings.HasPrefix(sub.Description, prefix) {
+			if n++; n == nth {
+				fn()
+			}
 		}
 		return old(c, sub)
 	}
 	t.Cleanup(func() { submitFlowJob = old })
+}
 
-	_, _, err := runFlow(t, "gates", "start", "--story", "abc")
-	assert.Equal(t, exitNotRun, flowExit(err))
-	assert.ErrorContains(t, err, "gate 2 was not queued (refused for the test), so the 1 queued before it were cancelled")
-	assert.Equal(t, sched.Cancelled, d.waitFinished(t, 1).State)
-	records, err := filepath.Glob(filepath.Join(conf.state, "gates", "*.json"))
-	require.NoError(t, err)
-	assert.Empty(t, records)
+// A story gate that fails before the chain after it is queued has the
+// daemon cancel the gates already held after it and refuse the next. That
+// is the cascade the whole chain would have had: the gates never queued
+// are SKIPPED like the ones it cancelled, and the run starts.
+func TestFlowGates_AStoryCutSkipsTheRest(t *testing.T) {
+	for _, tc := range []struct {
+		name, held, started string
+	}{
+		{"refused after a gate the failure cancelled", "gate 3/3:",
+			"started story-abc: 3 steps, jobs 1, 2\n3 SKIPPED: echo three (not run: gate 1 failed)\n"},
+		{"refused after the gate that failed", "gate 2/3:",
+			"started story-abc: 3 steps, job 1\n2 SKIPPED: echo two (not run: gate 1 failed)\n3 SKIPPED: echo three (not run: gate 1 failed)\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, conf := flowJobsDaemon(t)
+			latch := newGateLatch(t)
+			conf.gates = []string{"RUN " + latch.wait() + "; exit 3", "RUN echo two", "RUN echo three"}
+			beforeSubmit(t, tc.held, 1, func() {
+				latch.open(t)
+				d.waitFinished(t, 1)
+			})
+
+			out, errOut, err := runFlow(t, "gates", "start", "--story", "abc")
+			require.NoError(t, err, errOut)
+			assert.Equal(t, tc.started, out)
+
+			out, _, err = runFlow(t, "gates", "wait", "60")
+			assert.Equal(t, 1, flowExit(err), out)
+			assert.Regexp(t, `\n1 FAIL: [^\n]*\(job 1 failed in \S+ \(exit 3\); log \S+\)\n`, out)
+			assert.Contains(t, out, "\n2 SKIPPED: echo two (not run: gate 1 failed)\n")
+			assert.Contains(t, out, "\n3 SKIPPED: echo three (not run: gate 1 failed)\n")
+			assert.Contains(t, out, "\nended: 1 FAIL, 2 SKIPPED\n")
+		})
+	}
+}
+
+// A final gate that fails before the chain after it is queued leaves the
+// gates never queued to the wait, which queues them again with the gates
+// the failure cancelled, in one chain.
+func TestFlowGates_AFinalCutQueuesTheRestAgain(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	latch := newGateLatch(t)
+	conf.gates = []string{"RUN " + latch.wait() + "; exit 3", "RUN echo two", "RUN echo three"}
+	beforeSubmit(t, "gate 3/3:", 1, func() {
+		latch.open(t)
+		d.waitFinished(t, 1)
+	})
+
+	out, errOut, err := runFlow(t, "gates", "start", "--final")
+	require.NoError(t, err, errOut)
+	assert.Equal(t, "started final: 3 steps, jobs 1, 2\n", out)
+
+	out, _, err = runFlow(t, "gates", "wait", "60")
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Contains(t, out, "\n2 PASS: echo two\n")
+	assert.Contains(t, out, "\n3 PASS: echo three\n")
+	run := readTestRun(t, conf, "final")
+	require.Len(t, run.Steps[1].Jobs, 2, "gate 2 ran in a second generation")
+	require.Len(t, run.Steps[2].Jobs, 1, "gate 3 had no job until the second")
+	again := run.Steps[1].Job()
+	assert.Equal(t, sched.JobID(0), d.job(again).After, "the new chain's first gate runs after nothing")
+	assert.Equal(t, again, d.job(run.Steps[2].Job()).After, "and gate 3 runs after it")
+}
+
+// The same race in a final run's later generation: the wait's own requeue
+// is cut where the gate it queued first fails, and the next wait queues the
+// rest again.
+func TestFlowGates_AFinalRequeueCutIsQueuedAgain(t *testing.T) {
+	d, conf := flowJobsDaemon(t)
+	first, second := newGateLatch(t), newGateLatch(t)
+	conf.gates = []string{"RUN " + first.wait() + "; exit 3", "RUN " + second.wait() + "; exit 4", "RUN echo three"}
+	out, errOut, err := runFlow(t, "gates", "start", "--final")
+	require.NoError(t, err, errOut)
+	require.Equal(t, "started final: 3 steps, jobs 1, 2, 3\n", out)
+	first.open(t)
+	// The wait queues gates 2 and 3 again as jobs 4 and 5: gate 2's ends
+	// before gate 3's is submitted.
+	beforeSubmit(t, "gate 3/3:", 1, func() {
+		second.open(t)
+		d.waitFinished(t, 4)
+	})
+
+	out, _, err = runFlow(t, "gates", "wait", "60")
+	assert.Equal(t, 1, flowExit(err), out)
+	assert.Regexp(t, `\n1 FAIL: [^\n]*\(exit 3\)`, out)
+	assert.Regexp(t, `\n2 FAIL: [^\n]*\(exit 4\)`, out)
+	assert.Contains(t, out, "\n3 PASS: echo three\n")
+	run := readTestRun(t, conf, "final")
+	assert.Equal(t, []sched.JobID{2, 4}, run.Steps[1].Jobs)
+	assert.Equal(t, []sched.JobID{3, 5}, run.Steps[2].Jobs, "gate 3's cut generation queued nothing")
+	assert.Equal(t, sched.JobID(0), d.job(5).After)
 }
 
 func TestFlowGates_ARecordItCantReadIsLeftAsItIs(t *testing.T) {
