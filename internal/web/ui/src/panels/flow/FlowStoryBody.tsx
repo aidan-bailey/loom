@@ -282,7 +282,7 @@ export default function FlowStoryBody(props: PanelProps): ReactElement {
   const { flow, error } = useFlow({ session: props.sessionId ?? 0, plan, key });
   const id = props.params.story ?? "";
 
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   if (plan === "") {
     return (
       <p role="status" className={NOTE}>

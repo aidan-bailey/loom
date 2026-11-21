@@ -13,11 +13,15 @@ import { Conversation } from "./Conversation";
 
 function Body(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   if (!session.claude) {
     // Looked up at render: Story 9's info panel registers whenever its module is imported.
     const info = panelFor("info");
-    return info === undefined ? <NoSession /> : <info.Body {...props} />;
+    return info === undefined ? (
+      <NoSession sessionId={props.sessionId} />
+    ) : (
+      <info.Body {...props} />
+    );
   }
   return <Conversation session={session} />;
 }

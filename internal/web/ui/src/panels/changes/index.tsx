@@ -11,7 +11,7 @@ import { Changes, ChangesMark } from "./Changes";
 
 function ChangesBody(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   // The key gives each session its own open set and held patch state.
   return <Changes key={session.id} session={session} />;
 }

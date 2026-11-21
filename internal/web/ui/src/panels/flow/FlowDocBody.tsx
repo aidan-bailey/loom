@@ -140,7 +140,7 @@ export default function FlowDocBody(props: PanelProps): ReactElement {
     if (target >= 0) jump(target);
   }, [doc, all, at, jump]);
 
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   if (plan === "") {
     return (
       <p role="status" className={NOTE}>

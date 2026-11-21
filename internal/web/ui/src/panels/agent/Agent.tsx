@@ -230,6 +230,6 @@ function AgentTurns(props: { session: Session; agent: string | undefined }): Rea
 // box and no needs-you box. It reads nothing for a session the snapshot does not list.
 export function Agent(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   return <AgentTurns session={session} agent={props.params.agent} />;
 }

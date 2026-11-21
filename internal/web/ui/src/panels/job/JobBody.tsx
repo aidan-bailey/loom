@@ -161,6 +161,6 @@ function JobScreen({ session, job: id }: { session: Session; job: number }): Rea
 
 export default function JobBody(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   return <JobScreen session={session} job={Number(props.params.job)} />;
 }

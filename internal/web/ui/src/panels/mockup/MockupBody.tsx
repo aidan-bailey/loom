@@ -42,7 +42,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
   const [again, setAgain] = useState(0);
   useMarkSeen(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   const mk = session.mockup;
   return (
     <section className="flex flex-1 flex-col">
@@ -84,7 +84,7 @@ export default function MockupBody(props: PanelProps): ReactElement {
 export function MockupFullBody(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
   useMarkSeen(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   return (
     <section className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <Frame session={session} again={0} />

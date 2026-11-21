@@ -11,7 +11,7 @@ import { Info } from "./Info";
 
 function InfoBody(props: PanelProps): ReactElement {
   const session = useSession(props.sessionId);
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   return <Info session={session} />;
 }
 

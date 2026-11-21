@@ -429,7 +429,7 @@ export default function FlowBody(props: PanelProps): ReactElement {
   const key = session === undefined ? "" : flowKey(session);
   const { flow, error } = useFlow({ session: props.sessionId ?? 0, plan, key });
 
-  if (session === undefined) return <NoSession />;
+  if (session === undefined) return <NoSession sessionId={props.sessionId} />;
   const id = String(session.id);
   if (plan === "") {
     return (

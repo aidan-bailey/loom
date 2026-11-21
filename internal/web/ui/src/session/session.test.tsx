@@ -123,7 +123,7 @@ describe("SubLine and NoSession", () => {
   });
 
   it("NoSession says the session is gone", () => {
-    render(<NoSession />);
+    render(<NoSession sessionId={undefined} />);
     expect(screen.getByRole("status")).toHaveTextContent("This session is gone.");
   });
 });
@@ -341,28 +341,39 @@ describe("pending session", () => {
     expect(screen.getByRole("heading").textContent).toBe("listed");
   });
 
-  it("NoSession says Loading… for the route's pending session", () => {
+  it("NoSession says Loading… for the pending session", () => {
     load();
-    window.history.replaceState(null, "", "#/s/9");
     usePending.setState({ id: 9 });
-    render(<NoSession />);
+    render(<NoSession sessionId={9} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading…");
     expect(screen.queryByText("This session is gone.")).not.toBeInTheDocument();
   });
 
-  it("NoSession still says gone for an unpending session, another session's pending id, and a route with no session", () => {
+  it("NoSession still says gone for an unpending session, another session's pending id, and no session id", () => {
     load();
-    const cases: [number | null, string][] = [
-      [null, "#/s/9"],
-      [8, "#/s/9"],
-      [9, "#/"],
+    const cases: [number | null, number | undefined][] = [
+      [null, 9],
+      [8, 9],
+      [9, undefined],
     ];
-    for (const [id, hash] of cases) {
-      window.history.replaceState(null, "", hash);
+    for (const [id, sessionId] of cases) {
       usePending.setState({ id });
-      const view = render(<NoSession />);
+      const view = render(<NoSession sessionId={sessionId} />);
       expect(screen.getByRole("status")).toHaveTextContent("This session is gone.");
       view.unmount();
     }
+  });
+
+  it("NoSession reads no route", () => {
+    load();
+    usePending.setState({ id: 9 });
+    window.history.replaceState(null, "", "#/s/9");
+    const gone = render(<NoSession sessionId={undefined} />);
+    expect(screen.getByRole("status")).toHaveTextContent("This session is gone.");
+    gone.unmount();
+
+    window.history.replaceState(null, "", "#/");
+    render(<NoSession sessionId={9} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading…");
   });
 });
