@@ -134,9 +134,8 @@ func (s originSet) allowsOrigin(header string) bool {
 // (421: DNS rebinding), refuses any request but a GET or HEAD without exactly
 // one Origin header that is a member (403: a cross-site post), and caps the
 // body at maxBody. With no origin set (no listener runs) it refuses
-// everything. It hands next the
-// ResponseWriter it was given, unwrapped, so a stream flushes through
-// http.NewResponseController.
+// everything. It hands next the ResponseWriter it was given, unwrapped, so a
+// stream flushes through http.NewResponseController.
 func (l *Layer) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
