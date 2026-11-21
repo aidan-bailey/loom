@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -7,9 +7,10 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { useEffect, type ReactElement } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "@/api/gen";
+import { useDesktop } from "@/app/desktopState";
 import { definePanel } from "@/app/panels";
 import { useScrollPane, windowPane } from "@/app/scroll";
 import { fixtureSnapshot } from "@/fixtures";
@@ -264,5 +265,73 @@ describe("DesktopShell's top bar", () => {
     await screen.findByText("outlet");
     expect(slot("top-bar")).toBeNull();
     expect(slot("desktop")).toBeNull();
+  });
+});
+
+describe("DesktopShell's sidebar", () => {
+  const reset = (): void => useDesktop.setState({ sidebar: true, inspector: true, slots: [] });
+  beforeEach(reset);
+  afterEach(reset);
+
+  it("draws the sidebar before the middle, inside the frame, with the route's session highlighted", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    const bar = slot("sidebar");
+    if (bar === null) throw new Error("the frame drew no sidebar");
+    expect(slot("desktop")).toContainElement(bar);
+    const middle = slot("middle");
+    if (middle === null) throw new Error("the frame drew no middle");
+    expect(bar.compareDocumentPosition(middle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bar).getByRole("link", { name: /fix-pane-cursor/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("draws the sidebar on a route with no session, with nothing highlighted", async () => {
+    definePanel({ id: "settings", title: () => "Settings", Body: () => null });
+    live();
+    desktopAt("#/settings");
+
+    await screen.findByText("outlet");
+    const bar = slot("sidebar");
+    if (bar === null) throw new Error("the frame drew no sidebar");
+    expect(within(bar).getByRole("link", { name: /fix-pane-cursor/ })).toBeInTheDocument();
+    expect(bar.querySelector("[aria-current]")).toBeNull();
+  });
+
+  it("draws no sidebar on the fleet route, and the middle in full", async () => {
+    definePanel({ id: "fleet", title: () => "Fleet", Body: () => null });
+    live();
+    desktopAt("#/");
+
+    await screen.findByText("outlet");
+    expect(slot("sidebar")).toBeNull();
+    expect(slot("middle")).not.toBeNull();
+  });
+
+  it("draws no sidebar while the preference hides it, and keeps the middle", async () => {
+    useDesktop.setState({ sidebar: false });
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    expect(slot("sidebar")).toBeNull();
+    expect(slot("middle")).not.toBeNull();
+    expect(slot("top-bar")).not.toBeNull();
+    act(() => useDesktop.getState().setSidebar(true));
+    expect(slot("sidebar")).not.toBeNull();
+  });
+
+  it("draws no sidebar on the full mockup", async () => {
+    live();
+    desktopAt("#/s/100/mockup/full");
+
+    await screen.findByText("outlet");
+    expect(slot("sidebar")).toBeNull();
   });
 });

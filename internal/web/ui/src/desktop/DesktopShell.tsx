@@ -4,6 +4,7 @@
 import { Outlet } from "@tanstack/react-router";
 import { useMemo, useState, type ReactElement } from "react";
 
+import { useDesktop } from "@/app/desktopState";
 import type { PanelId } from "@/app/panels";
 import { panelProps, useRoute } from "@/app/routes";
 import { elementPane, ScrollPaneProvider } from "@/app/scroll";
@@ -11,6 +12,7 @@ import { PanelHead } from "@/app/shell";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/fleet";
 
+import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
 // READABLE are the panels whose text keeps a readable measure in a wide pane: a conversation's
@@ -57,11 +59,15 @@ function Middle(): ReactElement {
 // The full mockup is the one screen that draws the whole window itself, with no chrome.
 export default function DesktopShell(): ReactElement {
   const route = useRoute();
+  const sidebar = useDesktop((s) => s.sidebar);
   if (route.panel === "mockupFull") return <Outlet />;
   return (
     <div data-slot="desktop" className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
       <TopBar />
       <div className="flex min-h-0 flex-1">
+        {sidebar && route.panel !== "fleet" ? (
+          <Sidebar current={panelProps(route).sessionId} />
+        ) : null}
         <Middle />
       </div>
     </div>
