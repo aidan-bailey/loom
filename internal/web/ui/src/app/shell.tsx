@@ -38,6 +38,9 @@ interface BoundaryProps {
   // fallback replaces the failed subtree; without it the boundary shows what
   // failed and a reload.
   fallback?: ReactNode;
+  // resetOn, once it changes, clears a caught error and draws the children again: a boundary
+  // that stays mounted across routes starts over on another route.
+  resetOn?: string;
   children: ReactNode;
 }
 
@@ -52,6 +55,12 @@ export class Boundary extends Component<BoundaryProps, BoundaryState> {
 
   static getDerivedStateFromError(error: unknown): BoundaryState {
     return { error: error instanceof Error ? error : new Error(String(error)) };
+  }
+
+  componentDidUpdate(prev: BoundaryProps): void {
+    if (this.state.error !== null && prev.resetOn !== this.props.resetOn) {
+      this.setState({ error: null });
+    }
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
@@ -234,8 +243,9 @@ const DesktopShell = lazy(() => import("@/desktop/DesktopShell"));
 // 1024px and wider, once there is a snapshot and off the pairing screen, else PhoneShell, which is
 // also the pairing screen's and the splash's frame at every width (a centred column). The one
 // confirmation sheet and the one toaster are mounted here, above both frames, told the layout, so a
-// swap neither drops an open confirmation nor a toast (spec §11). A chunk of the desktop that fails
-// to load reaches the boundary, which offers a reload.
+// swap neither drops an open confirmation nor a toast (spec §11). A desktop that fails to draw
+// reaches the boundary, which offers a reload and starts over on another route; a chunk that failed
+// to load stays failed until the reload, since the lazy import keeps its rejection.
 export function AppShell(): ReactElement {
   const layout = useLayout();
   const route = useRoute();
@@ -244,7 +254,7 @@ export function AppShell(): ReactElement {
   return (
     <>
       {desktop ? (
-        <Boundary what="The desktop layout">
+        <Boundary what="The desktop layout" resetOn={resetKey(route.panel, panelProps(route))}>
           <Suspense fallback={<BodyLoading />}>
             <DesktopShell />
           </Suspense>
