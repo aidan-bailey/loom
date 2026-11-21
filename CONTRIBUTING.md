@@ -63,6 +63,7 @@ pnpm -C internal/web/ui run build                      # rewrites internal/web/d
 pnpm -C internal/web/ui run dist:check                 # fails when the bundle is stale
 go generate ./internal/web                             # gen.ts, docs/specs/web-api.md, api.fields
 go run ./tools/webshot -app next -out <dir>            # render every route of the built app
+go run ./tools/webshot -app next -device desktop -out <dir>  # at 1440x900; desktop-narrow is 1100x800
 ```
 
 ### Cleanup
