@@ -86,11 +86,55 @@ func (o originRule) allowsOrigin(header string) bool {
 	return hostKey(u.Scheme, u.Host) == o.host
 }
 
+// originSet is the origins a listener serves: the configured one and, when the
+// listener's address has one, its local origin (core.LocalOrigin). A Host or
+// an Origin header is accepted when any member accepts it and refused
+// otherwise, so a member added here is a name every route answers to.
+type originSet []originRule
+
+// originsFor is the set for a listener bound to addr: configured, and the
+// local origin http://loom.localhost:<port> when addr is 127.0.0.1:<port> or
+// [::1]:<port>, which is not added twice when configured is it. Another
+// address has no local origin, and its set is the configured origin alone;
+// bind has checked the address by then.
+func originsFor(configured originRule, addr string) originSet {
+	set := originSet{configured}
+	local, err := core.LocalOrigin(addr)
+	if err != nil {
+		return set
+	}
+	if rule, err := parseOrigin(local); err == nil && rule != configured {
+		set = append(set, rule)
+	}
+	return set
+}
+
+// allowsHost reports whether a request's Host header names a member's host.
+func (s originSet) allowsHost(host string) bool {
+	for _, rule := range s {
+		if rule.allowsHost(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowsOrigin reports whether an Origin header is a member itself.
+func (s originSet) allowsOrigin(header string) bool {
+	for _, rule := range s {
+		if rule.allowsOrigin(header) {
+			return true
+		}
+	}
+	return false
+}
+
 // guard is the door every route stands behind. It sets the security headers
-// on every answer, refuses a Host that is not the origin's (421: DNS
-// rebinding), refuses any request but a GET or HEAD without the origin's own
-// Origin header (403: a cross-site post), and caps the body at maxBody. With
-// no origin rule (no listener runs) it refuses everything. It hands next the
+// on every answer, refuses a Host that is not a member of the origin set's
+// (421: DNS rebinding), refuses any request but a GET or HEAD without exactly
+// one Origin header that is a member (403: a cross-site post), and caps the
+// body at maxBody. With no origin set (no listener runs) it refuses
+// everything. It hands next the
 // ResponseWriter it was given, unwrapped, so a stream flushes through
 // http.NewResponseController.
 func (l *Layer) guard(next http.Handler) http.Handler {
@@ -158,13 +202,14 @@ func (l *Layer) bind(key webKey) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	origins := originsFor(rule, ln.Addr().String())
 	l.srv = &http.Server{
 		Handler:           l.guard(l.mux()),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(log.For("web").Handler(), slog.LevelWarn),
 	}
-	l.rule.Store(&rule)
+	l.rule.Store(&origins)
 	go l.serve(l.srv, ln)
 	return ln.Addr().String(), nil
 }

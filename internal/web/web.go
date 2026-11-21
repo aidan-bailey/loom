@@ -37,9 +37,10 @@ type Layer struct {
 	build    string
 	now      func() time.Time
 
-	// rule is the origin rule of the listener now running, which guard
-	// enforces; nil while none runs, and then guard refuses every request.
-	rule atomic.Pointer[originRule]
+	// rule is the origin set of the listener now running (its configured
+	// origin and its local one), which guard enforces; nil while none runs,
+	// and then guard refuses every request.
+	rule atomic.Pointer[originSet]
 
 	// bindMu guards the listener (srv) and closed, which bind, shutListener
 	// and the unbinding take it for.

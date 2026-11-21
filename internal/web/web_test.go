@@ -90,13 +90,21 @@ const guardOrigin = "https://loom.example.com"
 
 // guardedBy is guard around a handler that answers 200 with the number of
 // body bytes it read, or 413 with the reader's error. The layer enforces
-// origin, as a bound listener's does.
+// origin alone, as a listener whose address has no local origin does.
 func guardedBy(t *testing.T, origin string) http.Handler {
+	t.Helper()
+	return guardedOn(t, origin, "")
+}
+
+// guardedOn is guardedBy for a listener bound to addr: the layer enforces
+// origin and addr's local origin, the set bind makes.
+func guardedOn(t *testing.T, origin, addr string) http.Handler {
 	t.Helper()
 	rule, err := parseOrigin(origin)
 	require.NoError(t, err)
+	origins := originsFor(rule, addr)
 	l := &Layer{}
-	l.rule.Store(&rule)
+	l.rule.Store(&origins)
 	return l.guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := io.Copy(io.Discard, r.Body)
 		if err != nil {
@@ -169,6 +177,71 @@ func TestGuard_TheHostMustBeTheOrigins(t *testing.T) {
 			assert.Equal(t, tc.status, rec.Code)
 		})
 	}
+}
+
+// A listener bound to 127.0.0.1 or ::1 answers to its own loom.localhost name
+// beside the configured origin, as Host and as a write's Origin; no other
+// name for loopback, no other port and no other listener is its.
+func TestGuard_TheLocalOriginIsTheListenersOwn(t *testing.T) {
+	const local = "http://loom.localhost:7420"
+	for _, tc := range []struct {
+		name    string
+		origin  string // the configured origin
+		listen  string // the address the listener is bound to
+		method  string
+		host    string
+		origins []string // the Origin headers, none when nil
+		status  int
+	}{
+		{"the local host on a 127.0.0.1 listener", guardOrigin, "127.0.0.1:7420", http.MethodGet, "loom.localhost:7420", nil, http.StatusOK},
+		{"the local host in any case", guardOrigin, "127.0.0.1:7420", http.MethodGet, "LOOM.Localhost:7420", nil, http.StatusOK},
+		{"the local host on a ::1 listener", guardOrigin, "[::1]:7420", http.MethodGet, "loom.localhost:7420", nil, http.StatusOK},
+		{"the local host on another port", guardOrigin, "127.0.0.1:7420", http.MethodGet, "loom.localhost:7421", nil, http.StatusMisdirectedRequest},
+		{"the local host with no port", guardOrigin, "127.0.0.1:7420", http.MethodGet, "loom.localhost", nil, http.StatusMisdirectedRequest},
+		{"a name under the local host", guardOrigin, "127.0.0.1:7420", http.MethodGet, "app.loom.localhost:7420", nil, http.StatusMisdirectedRequest},
+		{"bare localhost", guardOrigin, "127.0.0.1:7420", http.MethodGet, "localhost:7420", nil, http.StatusMisdirectedRequest},
+		{"the 127.0.0.1 literal", guardOrigin, "127.0.0.1:7420", http.MethodGet, "127.0.0.1:7420", nil, http.StatusMisdirectedRequest},
+		{"the ::1 literal on a ::1 listener", guardOrigin, "[::1]:7420", http.MethodGet, "[::1]:7420", nil, http.StatusMisdirectedRequest},
+		{"localhost is not 127.0.0.1 on a 127.0.0.1 listener", "http://127.0.0.1:7420", "127.0.0.1:7420", http.MethodGet, "localhost:7420", nil, http.StatusMisdirectedRequest},
+		{"localhost is not 127.0.0.1 on a ::1 listener", "http://127.0.0.1:7420", "[::1]:7420", http.MethodGet, "localhost:7420", nil, http.StatusMisdirectedRequest},
+		{"a 127.0.0.2 listener has no local host", guardOrigin, "127.0.0.2:7420", http.MethodGet, "loom.localhost:7420", nil, http.StatusMisdirectedRequest},
+		{"the configured host beside the local one", guardOrigin, "127.0.0.1:7420", http.MethodGet, "loom.example.com", nil, http.StatusOK},
+		{"the configured host on a 127.0.0.2 listener", guardOrigin, "127.0.0.2:7420", http.MethodGet, "loom.example.com", nil, http.StatusOK},
+		{"a configured local origin", local, "127.0.0.1:7420", http.MethodGet, "loom.localhost:7420", nil, http.StatusOK},
+
+		{"a post from the local origin", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{local}, http.StatusOK},
+		{"a post from the local origin on a ::1 listener", guardOrigin, "[::1]:7420", http.MethodPost, "loom.localhost:7420", []string{local}, http.StatusOK},
+		{"a post from the local origin in another case", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{"HTTP://LOOM.LOCALHOST:7420"}, http.StatusOK},
+		{"a post from the configured origin beside it", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.example.com", []string{guardOrigin}, http.StatusOK},
+		{"a post from the local origin's other port", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{"http://loom.localhost:7421"}, http.StatusForbidden},
+		{"a post from the local origin's https form", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{"https://loom.localhost:7420"}, http.StatusForbidden},
+		{"a post from bare localhost", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{"http://localhost:7420"}, http.StatusForbidden},
+		{"a post from the 127.0.0.1 literal", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{"http://127.0.0.1:7420"}, http.StatusForbidden},
+		{"a post from the ::1 literal", guardOrigin, "[::1]:7420", http.MethodPost, "loom.localhost:7420", []string{"http://[::1]:7420"}, http.StatusForbidden},
+		{"a post from the local origin with a path", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{local + "/x"}, http.StatusForbidden},
+		{"two local Origin headers", guardOrigin, "127.0.0.1:7420", http.MethodPost, "loom.localhost:7420", []string{local, local}, http.StatusForbidden},
+		{"a post from the local origin on a 127.0.0.2 listener", guardOrigin, "127.0.0.2:7420", http.MethodPost, "loom.example.com", []string{local}, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := sendGuarded(guardedOn(t, tc.origin, tc.listen), tc.method, tc.host, tc.origins, nil)
+			assert.Equal(t, tc.status, rec.Code)
+		})
+	}
+}
+
+func TestOriginsFor_AConfiguredLocalOriginCountsOnce(t *testing.T) {
+	configured := func(origin string) originRule {
+		t.Helper()
+		rule, err := parseOrigin(origin)
+		require.NoError(t, err)
+		return rule
+	}
+	assert.Len(t, originsFor(configured(guardOrigin), "127.0.0.1:7420"), 2, "the configured origin and the local one")
+	assert.Len(t, originsFor(configured("http://loom.localhost:7420"), "127.0.0.1:7420"), 1, "a configured origin that is the local one")
+	assert.Len(t, originsFor(configured("http://loom.localhost:7420"), "[::1]:7420"), 1, "the same on a ::1 listener")
+	assert.Len(t, originsFor(configured("http://loom.localhost:7421"), "127.0.0.1:7420"), 2, "another port's origin is another origin")
+	assert.Len(t, originsFor(configured(guardOrigin), "127.0.0.2:7420"), 1, "no local origin on another loopback address")
+	assert.Len(t, originsFor(configured(guardOrigin), ""), 1, "no local origin without an address")
 }
 
 func TestGuard_AnUnsafeMethodMustCarryTheOrigin(t *testing.T) {
@@ -263,7 +336,7 @@ func TestGuard_AHandlerBehindItCanFlushToTheClient(t *testing.T) {
 	defer close(unblock) // runs first, so Close does not wait on the handler
 	rule, err := parseOrigin(srv.URL)
 	require.NoError(t, err)
-	l.rule.Store(&rule)
+	l.rule.Store(&originSet{rule})
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(srv.URL)
@@ -804,6 +877,56 @@ func TestApplyWeb_OnlyWhatTheLayerDidIsReportedOff(t *testing.T) {
 	// And a further disable has nothing of the layer's to clear.
 	l.applyWeb(core.WebView{Rev: 3, Listen: ""})
 	assert.Len(t, h.serving, 2)
+}
+
+// bind makes the set from the address it bound: a real listener answers to its
+// own loom.localhost:<port> and the configured origin, not to bare localhost
+// or the IP literal, and a rebind to another port moves the local origin.
+func TestBind_ServesItsLocalOriginBesideTheConfiguredOne(t *testing.T) {
+	l := &Layer{}
+	t.Cleanup(l.shutListener)
+	// status sends one request to the listener at listen with host as its
+	// Host and origin as its Origin (none when ""). No cookie goes along, so
+	// a request guard lets through is answered 401 by the route.
+	status := func(listen, method, host, origin string) int {
+		t.Helper()
+		path := "/api/v1/launch-defaults?workspace=1"
+		if method == http.MethodPost {
+			path = "/api/v1/sessions/1/kill"
+		}
+		req, err := http.NewRequest(method, "http://"+listen+path, nil)
+		require.NoError(t, err)
+		req.Host = host
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	listen := freeLoopbackAddr(t)
+	_, port, err := net.SplitHostPort(listen)
+	require.NoError(t, err)
+	_, err = l.bind(webKey{listen: listen, origin: guardOrigin})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, status(listen, http.MethodGet, "loom.localhost:"+port, ""), "the local host passes guard")
+	assert.Equal(t, http.StatusUnauthorized, status(listen, http.MethodGet, "loom.example.com", ""), "so does the configured one")
+	assert.Equal(t, http.StatusMisdirectedRequest, status(listen, http.MethodGet, "localhost:"+port, ""), "bare localhost does not")
+	assert.Equal(t, http.StatusMisdirectedRequest, status(listen, http.MethodGet, listen, ""), "nor does the IP literal")
+	assert.Equal(t, http.StatusUnauthorized, status(listen, http.MethodPost, "loom.localhost:"+port, "http://loom.localhost:"+port), "a write from the local origin passes guard")
+	assert.Equal(t, http.StatusForbidden, status(listen, http.MethodPost, "loom.localhost:"+port, "http://localhost:"+port), "a write from bare localhost does not")
+	assert.Equal(t, http.StatusForbidden, status(listen, http.MethodPost, "loom.localhost:"+port, "http://"+listen), "nor one from the IP literal")
+
+	// A rebind to another port builds the set again from the new address.
+	again := freeLoopbackAddr(t)
+	_, port2, err := net.SplitHostPort(again)
+	require.NoError(t, err)
+	_, err = l.bind(webKey{listen: again, origin: guardOrigin})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, status(again, http.MethodGet, "loom.localhost:"+port2, ""), "the new port's local host passes")
+	assert.Equal(t, http.StatusMisdirectedRequest, status(again, http.MethodGet, "loom.localhost:"+port, ""), "the old port's does not")
 }
 
 func TestBind_ListensOnLoopbackOnly(t *testing.T) {
