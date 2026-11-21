@@ -20,13 +20,25 @@ export function cookieApp(): AppName {
   return pair === `${prefix}next` ? "next" : "classic";
 }
 
+// hasAppCookie is whether the device has chosen an app at all: cookieApp says "classic" for no
+// cookie as it does for an explicit choice, and the two must be told apart (spec §26).
+export function hasAppCookie(): boolean {
+  return document.cookie.split("; ").some((c) => c.startsWith(`${COOKIE}=`));
+}
+
+// setAppCookie records app as the device's choice, the one writer of the cookie: switchApp sets it
+// when the owner switches, adoptNextApp when a launch by ?ui=next has no choice yet.
+export function setAppCookie(app: AppName): void {
+  document.cookie = `${COOKIE}=${app}; Secure; Path=/; SameSite=Strict; Max-Age=31536000`;
+}
+
 // switchApp makes app this device's app: it sets the cookie, registers the worker again at
 // /sw.js?ui=<app> and reloads when that worker takes over (the other tree's worker differs in
 // bytes, so it installs and takes over, the path a daemon upgrade already takes). It answers
 // "deferred" when the registration fails (offline): the cookie stays set and the next launch
 // registers the worker by the cookie and finishes the switch.
 export async function switchApp(app: AppName): Promise<"switched" | "deferred"> {
-  document.cookie = `${COOKIE}=${app}; Secure; Path=/; SameSite=Strict; Max-Age=31536000`;
+  setAppCookie(app);
   if (!("serviceWorker" in navigator)) {
     page.reload();
     return "switched";
