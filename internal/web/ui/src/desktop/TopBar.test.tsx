@@ -2,6 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { LinkState } from "@/api/stream";
 import { hrefFor } from "@/app/routes";
 import { readFilter, useFilter } from "@/fleet/filter";
 import { allSessions, fleetGroups } from "@/fleet/groups";
@@ -11,11 +12,11 @@ import { useFleet } from "@/store/fleet";
 
 import { TopBar } from "./TopBar";
 
-function load(link = "live"): void {
+function load(link: LinkState = "live"): void {
   useFleet.setState({
     snapshot: fixtureSnapshot(),
     stale: link !== "live",
-    link: link as "live",
+    link,
     updated: Date.now(),
   });
 }
