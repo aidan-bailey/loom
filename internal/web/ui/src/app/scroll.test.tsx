@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { elementPane, ScrollPaneProvider, useScrollPane, windowPane } from "./scroll";
@@ -118,11 +119,11 @@ describe("elementPane", () => {
   });
 });
 
-function Probe(): React.ReactElement {
+function Probe(): ReactElement {
   return <p>{String(useScrollPane() === windowPane)}</p>;
 }
 
-function Same(props: { pane: unknown }): React.ReactElement {
+function Same(props: { pane: unknown }): ReactElement {
   return <p>{String(useScrollPane() === props.pane)}</p>;
 }
 
