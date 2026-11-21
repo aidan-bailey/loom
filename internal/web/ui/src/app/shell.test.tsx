@@ -16,9 +16,19 @@ import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
 
 import { askConfirm } from "./ConfirmSheet";
-import { definePanel, type PanelProps } from "./panels";
-import { router, useRoute } from "./routes";
-import { AppShell, ContextRow, PanelHost, SessionTabs, StatusRow } from "./shell";
+import { definePanel, type PanelId, type PanelProps } from "./panels";
+import { routeOf, router, useRoute } from "./routes";
+import {
+  AppShell,
+  ContextRow,
+  PanelHead,
+  PanelHost,
+  resetKey,
+  SessionTabs,
+  StatusRow,
+  TABBED,
+  tabOf,
+} from "./shell";
 import { switchApp } from "./switchApp";
 import { showMessage } from "./toasts";
 
@@ -774,5 +784,118 @@ describe("AppShell's chrome", () => {
       showMessage("Stashed as 1a2b3c4.");
     });
     expect(await screen.findByText("Stashed as 1a2b3c4.")).toBeInTheDocument();
+  });
+});
+
+// claudeSession is the fixture's first session as a session numbered 7.
+function claudeSession(claude = true): Session {
+  const base = allSessions(fixtureSnapshot())[0];
+  if (base === undefined) throw new Error("the fixture holds no session");
+  return { ...base, id: 7, claude };
+}
+
+describe("PanelHead", () => {
+  function tabbed(): void {
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      Head: () => <p>turns head</p>,
+      Strip: () => <p>the strip</p>,
+      Body: () => null,
+    });
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      tab: { order: 3, label: "info" },
+      Body: () => null,
+    });
+  }
+
+  it("draws the panel's head, then the session's tabs, then its strip", () => {
+    tabbed();
+    window.history.replaceState(null, "", "#/s/7");
+    render(<PanelHead route={routeOf("#/s/7")} session={claudeSession()} />);
+
+    const head = screen.getByText("turns head");
+    const nav = screen.getByRole("navigation", { name: "Session views" });
+    const strip = screen.getByText("the strip");
+    expect(head.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(nav.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the tabs and the strip when the head throws", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      tabbed();
+      definePanel({
+        id: "turns",
+        title: () => "Conversation",
+        tab: { order: 1, label: "conversation" },
+        Head: () => {
+          throw new Error("head boom");
+        },
+        Strip: () => <p>the strip</p>,
+        Body: () => null,
+      });
+      window.history.replaceState(null, "", "#/s/7");
+      render(<PanelHead route={routeOf("#/s/7")} session={claudeSession()} />);
+
+      expect(screen.getByRole("navigation", { name: "Session views" })).toBeInTheDocument();
+      expect(screen.getByText("the strip")).toBeInTheDocument();
+      expect(screen.queryByText(/head boom/)).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("draws no tabs and no strip for a route that is not tabbed, or for no session", () => {
+    tabbed();
+    window.history.replaceState(null, "", "#/");
+    const { unmount } = render(<PanelHead route={routeOf("#/")} session={claudeSession()} />);
+    expect(screen.queryByRole("navigation", { name: "Session views" })).toBeNull();
+    expect(screen.queryByText("the strip")).toBeNull();
+    unmount();
+
+    window.history.replaceState(null, "", "#/s/7");
+    render(<PanelHead route={routeOf("#/s/7")} session={undefined} />);
+    expect(screen.getByText("turns head")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Session views" })).toBeNull();
+    expect(screen.queryByText("the strip")).toBeNull();
+  });
+});
+
+describe("tabOf, TABBED and resetKey", () => {
+  it.each<[PanelId, PanelId]>([
+    ["turns", "turns"],
+    ["changes", "changes"],
+    ["agent", "turns"],
+    ["job", "info"],
+    ["flowStory", "flow"],
+    ["flowDoc", "flow"],
+    ["mockupFull", "mockup"],
+  ])("tabOf lights, for the route %s, the tab %s", (panel, lit) => {
+    expect(tabOf(panel, claudeSession())).toBe(lit);
+  });
+
+  it("tabOf lights info for the conversation of a session that is not Claude's", () => {
+    expect(tabOf("turns", claudeSession(false))).toBe("info");
+  });
+
+  it("TABBED holds the session's routes and not the fleet's", () => {
+    expect(TABBED.has("turns")).toBe(true);
+    expect(TABBED.has("job")).toBe(true);
+    expect(TABBED.has("fleet")).toBe(false);
+    expect(TABBED.has("settings")).toBe(false);
+  });
+
+  it("resetKey changes with the panel, the route's params and its search", () => {
+    const base = resetKey("turns", { sessionId: 5, params: { id: "5" }, search: {} });
+    expect(resetKey("turns", { sessionId: 5, params: { id: "5" }, search: {} })).toBe(base);
+    expect(resetKey("info", { sessionId: 5, params: { id: "5" }, search: {} })).not.toBe(base);
+    expect(resetKey("turns", { sessionId: 6, params: { id: "6" }, search: {} })).not.toBe(base);
+    expect(resetKey("turns", { sessionId: 5, params: { id: "5" }, search: { at: "2" } })).not.toBe(
+      base,
+    );
   });
 });

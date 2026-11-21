@@ -27,7 +27,7 @@ import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./route
 // resetKey changes with the route, so a boundary that caught an error starts
 // over once the route is another one: another session, or another board or
 // document (`?plan=`, `?at=`) of the same panel.
-function resetKey(panel: PanelId, props: PanelProps): string {
+export function resetKey(panel: PanelId, props: PanelProps): string {
   return `${panel}/${JSON.stringify(props.params)}/${JSON.stringify(props.search)}`;
 }
 
@@ -45,7 +45,7 @@ interface BoundaryState {
 
 // Boundary keeps one broken view from blanking the app (spec §29): the
 // header, the footer and every other panel keep working.
-class Boundary extends Component<BoundaryProps, BoundaryState> {
+export class Boundary extends Component<BoundaryProps, BoundaryState> {
   state: BoundaryState = { error: null };
 
   static getDerivedStateFromError(error: unknown): BoundaryState {
@@ -123,6 +123,47 @@ const SPLASH: Record<LinkState, string> = {
   offline: "Can't reach loom. Retrying…",
 };
 
+// PanelHead is a route's head rows: the panel's Head, then, for a session on a tabbed route, the
+// session's tabs and the panel's Strip, each in a boundary of its own so a head that throws
+// leaves the tabs, the strip and the screen. The phone pins it in its header and the desktop's
+// middle pins it above its scroller.
+export function PanelHead({
+  route,
+  session,
+}: {
+  route: RouteState;
+  session: Session | undefined;
+}): ReactElement {
+  const props = panelProps(route);
+  const entry = panelFor(route.panel);
+  const title = entry === undefined ? route.panel : entry.title(props);
+  const Head = entry?.Head;
+  const Strip = entry?.Strip;
+  return (
+    <>
+      {Head === undefined ? null : (
+        <Boundary key={resetKey(route.panel, props)} what={`The ${title} header`} fallback={null}>
+          <Head {...props} />
+        </Boundary>
+      )}
+      {session !== undefined && TABBED.has(route.panel) ? (
+        <>
+          <SessionTabs session={session} />
+          {Strip === undefined ? null : (
+            <Boundary
+              key={resetKey(route.panel, props)}
+              what={`The ${title} strip`}
+              fallback={null}
+            >
+              <Strip {...props} />
+            </Boundary>
+          )}
+        </>
+      ) : null}
+    </>
+  );
+}
+
 // AppShell is the app's frame: the pinned header (the panel's Head), main
 // (the router's outlet, or the splash while the store holds no snapshot,
 // except on pairing) and the pinned footer. Pairing and the full mockup
@@ -138,10 +179,6 @@ export function AppShell(): ReactElement {
   const typing = useTextFieldFocus(route);
   const chromed = hasSnapshot && route.panel !== "pair" && route.panel !== "mockupFull";
   const waiting = !hasSnapshot && route.panel !== "pair";
-  const entry = panelFor(route.panel);
-  const title = entry === undefined ? route.panel : entry.title(props);
-  const Head = entry?.Head;
-  const Strip = entry?.Strip;
 
   return (
     <div
@@ -155,29 +192,7 @@ export function AppShell(): ReactElement {
           data-slot="header"
           className="sticky top-0 z-30 flex-none border-b border-border bg-background pt-[calc(env(safe-area-inset-top)+8px)]"
         >
-          {Head === undefined ? null : (
-            <Boundary
-              key={resetKey(route.panel, props)}
-              what={`The ${title} header`}
-              fallback={null}
-            >
-              <Head {...props} />
-            </Boundary>
-          )}
-          {session !== undefined && TABBED.has(route.panel) ? (
-            <>
-              <SessionTabs session={session} />
-              {Strip === undefined ? null : (
-                <Boundary
-                  key={resetKey(route.panel, props)}
-                  what={`The ${title} strip`}
-                  fallback={null}
-                >
-                  <Strip {...props} />
-                </Boundary>
-              )}
-            </>
-          ) : null}
+          <PanelHead route={route} session={session} />
         </header>
       ) : null}
       <main className="flex flex-1 flex-col">
@@ -264,7 +279,7 @@ function useTextFieldFocus(route: RouteState): boolean {
 }
 
 // TABBED are the routes that show a session's tabs under their head.
-const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
+export const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
   "turns",
   "info",
   "changes",
@@ -315,7 +330,7 @@ function backLabel(href: string): string {
 // tabOf is the tab a route lights: a flow's row and document light the flow
 // tab, the full mockup the mockup tab, a subagent the conversation and a job
 // the info tab; the conversation of a session that is not Claude's is its info.
-function tabOf(panel: PanelId, session: Session): PanelId {
+export function tabOf(panel: PanelId, session: Session): PanelId {
   if (panel === "flowStory" || panel === "flowDoc") return "flow";
   if (panel === "mockupFull") return "mockup";
   const lit = panel === "agent" ? "turns" : panel === "job" ? "info" : panel;
