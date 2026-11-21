@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   createMemoryHistory,
@@ -14,6 +14,7 @@ import type { Session, SessionGroup, Snapshot } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
+import { setViewportWidth } from "@/test-layout";
 
 import { askConfirm } from "./ConfirmSheet";
 import { definePanel, type PanelId, type PanelProps } from "./panels";
@@ -897,5 +898,132 @@ describe("tabOf, TABBED and resetKey", () => {
     expect(resetKey("turns", { sessionId: 5, params: { id: "5" }, search: { at: "2" } })).not.toBe(
       base,
     );
+  });
+});
+
+describe("AppShell's layouts", () => {
+  const desktopFrame = (): Element | null => document.querySelector('[data-slot="desktop"]');
+
+  it.each([
+    [390, false],
+    [1023, false],
+    [1024, true],
+    [1279, true],
+    [1280, true],
+  ])("at %ipx the desktop frame is drawn: %s", async (width, desktop) => {
+    live(withGroups(["needs_you"]));
+    setViewportWidth(width);
+    shellAt("#/");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    if (desktop) {
+      await waitFor(() => {
+        expect(desktopFrame()).not.toBeNull();
+      });
+      expect(header()).toBeNull();
+      expect(footer()).toBeNull();
+    } else {
+      expect(desktopFrame()).toBeNull();
+      expect(header()).not.toBeNull();
+      expect(footer()).not.toBeNull();
+    }
+  });
+
+  it("a resize swaps the frame and keeps the route and the screen", async () => {
+    definePanel({
+      id: "info",
+      title: () => "Info",
+      Head: () => <p>info head</p>,
+      Body: () => null,
+    });
+    live(withGroups(["needs_you"]));
+    shellAt("#/s/100/info");
+    await screen.findByText("outlet");
+    expect(header()).toHaveTextContent("info head");
+
+    setViewportWidth(1280);
+    await waitFor(() => {
+      expect(desktopFrame()).not.toBeNull();
+    });
+    expect(document.querySelector('[data-slot="middle-head"]')).toHaveTextContent("info head");
+    expect(screen.getByText("outlet")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/s/100/info");
+
+    setViewportWidth(500);
+    await waitFor(() => {
+      expect(desktopFrame()).toBeNull();
+    });
+    expect(header()).toHaveTextContent("info head");
+    expect(screen.getByText("outlet")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/s/100/info");
+  });
+
+  it("draws pairing in the phone's column at a desktop width, even with a snapshot", async () => {
+    live(withGroups(["needs_you"]));
+    setViewportWidth(1400);
+    shellAt("#/pair");
+
+    expect(await screen.findByText("outlet")).toBeInTheDocument();
+    expect(desktopFrame()).toBeNull();
+  });
+
+  it("draws the splash in the phone's column at a desktop width while there is no snapshot", async () => {
+    useFleet.setState({ link: "offline" });
+    setViewportWidth(1400);
+    shellAt("#/");
+
+    expect(await screen.findByText("Can't reach loom. Retrying…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to classic" })).toBeInTheDocument();
+    expect(desktopFrame()).toBeNull();
+  });
+
+  it("keeps an open confirmation across a swap, redrawn as a dialog, and it still answers", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/");
+    await screen.findByText("outlet");
+
+    let answer = Promise.resolve<string | null>(null);
+    act(() => {
+      answer = askConfirm({
+        title: "Kill session",
+        body: "Ends it.",
+        action: "Kill",
+        destructive: true,
+      });
+    });
+    expect(await screen.findByText("Kill session")).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="drawer-content"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="dialog-content"]')).toBeNull();
+
+    setViewportWidth(1100);
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="dialog-content"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
+    expect(screen.getByText("Kill session")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Kill" }));
+    expect(await answer).toBe("");
+  });
+
+  it("keeps a toast showing across a swap, at the top on the phone and the bottom right on desktop", async () => {
+    live(withGroups(["needs_you"]));
+    shellAt("#/");
+    await screen.findByText("outlet");
+
+    act(() => {
+      showMessage("Could not push", true);
+    });
+    // An error toast is also announced in a visually hidden live region, so the text is there twice.
+    expect((await screen.findAllByText("Could not push")).length).toBeGreaterThan(0);
+    const viewport = (): Element | null => document.querySelector('[data-slot="toast-viewport"]');
+    expect(viewport()).toHaveAttribute("data-placement", "top");
+
+    setViewportWidth(1100);
+    await waitFor(() => {
+      expect(desktopFrame()).not.toBeNull();
+    });
+    expect(screen.getAllByText("Could not push").length).toBeGreaterThan(0);
+    expect(viewport()).toHaveAttribute("data-placement", "bottom-right");
   });
 });

@@ -1,6 +1,7 @@
 import { Outlet } from "@tanstack/react-router";
 import {
   Component,
+  lazy,
   Suspense,
   useEffect,
   useState,
@@ -23,6 +24,7 @@ import { CommandButton } from "./CommandButton";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { panelFor, sessionTabs, type Panel, type PanelId, type PanelProps } from "./panels";
 import { hrefFor, panelProps, routeOf, useRoute, type RouteState } from "./routes";
+import { useLayout } from "./viewport";
 
 // resetKey changes with the route, so a boundary that caught an error starts
 // over once the route is another one: another session, or another board or
@@ -164,13 +166,13 @@ export function PanelHead({
   );
 }
 
-// AppShell is the app's frame: the pinned header (the panel's Head), main
+// PhoneShell is the phone's frame, one centred column: the pinned header (the panel's Head), main
 // (the router's outlet, or the splash while the store holds no snapshot,
 // except on pairing) and the pinned footer. Pairing and the full mockup
 // have no header or footer, and neither has a screen with no snapshot. The
 // splash draws the way back to the classic app on every route, so it works
 // with the daemon down and nothing saved.
-export function AppShell(): ReactElement {
+export function PhoneShell(): ReactElement {
   const route = useRoute();
   const props = panelProps(route);
   const hasSnapshot = useFleet((s) => s.snapshot !== null);
@@ -220,9 +222,39 @@ export function AppShell(): ReactElement {
           <StatusRow />
         </footer>
       ) : null}
-      <ConfirmSheet variant="drawer" />
-      <Toaster placement="top" />
     </div>
+  );
+}
+
+// DesktopShell is the desktop's frame, a module of its own (spec §4): the phone's first load does not
+// carry it.
+const DesktopShell = lazy(() => import("@/desktop/DesktopShell"));
+
+// AppShell chooses the frame by the window's width, live as it resizes: the lazy DesktopShell at
+// 1024px and wider, once there is a snapshot and off the pairing screen, else PhoneShell, which is
+// also the pairing screen's and the splash's frame at every width (a centred column). The one
+// confirmation sheet and the one toaster are mounted here, above both frames, told the layout, so a
+// swap neither drops an open confirmation nor a toast (spec §11). A chunk of the desktop that fails
+// to load reaches the boundary, which offers a reload.
+export function AppShell(): ReactElement {
+  const layout = useLayout();
+  const route = useRoute();
+  const hasSnapshot = useFleet((s) => s.snapshot !== null);
+  const desktop = layout !== "phone" && hasSnapshot && route.panel !== "pair";
+  return (
+    <>
+      {desktop ? (
+        <Boundary what="The desktop layout">
+          <Suspense fallback={<BodyLoading />}>
+            <DesktopShell />
+          </Suspense>
+        </Boundary>
+      ) : (
+        <PhoneShell />
+      )}
+      <ConfirmSheet variant={layout === "phone" ? "drawer" : "dialog"} />
+      <Toaster placement={layout === "phone" ? "top" : "bottom-right"} />
+    </>
   );
 }
 
