@@ -78,3 +78,13 @@ export function sessionTabs(session: Session): Panel[] {
   }
   return tabs.sort((a, b) => (a.tab?.order ?? 0) - (b.tab?.order ?? 0));
 }
+
+// tabOrder is the id of every tab panel in tab order, whether or not it applies to any session:
+// what sessionTabs filters, for the inspector's tab walk.
+export function tabOrder(): PanelId[] {
+  const tabs: Panel[] = [];
+  for (const panel of registry.values()) {
+    if (panel.tab !== undefined) tabs.push(panel);
+  }
+  return tabs.sort((a, b) => (a.tab?.order ?? 0) - (b.tab?.order ?? 0)).map((p) => p.id);
+}

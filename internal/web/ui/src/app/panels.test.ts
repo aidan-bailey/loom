@@ -4,7 +4,14 @@ import type { Session } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
 
-import { definePanel, panelFor, sessionTabs, type PanelId, type PanelProps } from "./panels";
+import {
+  definePanel,
+  panelFor,
+  sessionTabs,
+  tabOrder,
+  type PanelId,
+  type PanelProps,
+} from "./panels";
 
 const Body = (): null => null;
 const props: PanelProps = { sessionId: undefined, params: {}, search: {} };
@@ -62,6 +69,42 @@ describe("the panel registry", () => {
       "info",
     ]);
     expect(sessionTabs(aSession({ claude: false })).map((p) => p.id)).toEqual(["info"]);
+  });
+
+  it("lists every tab panel in tab order, whether or not it applies", () => {
+    // Defined out of order, so the sort is what orders them.
+    definePanel({
+      id: "flow",
+      title: () => "Flow",
+      tab: { order: 5, label: "flow" },
+      appliesTo: () => false,
+      Body,
+    });
+    definePanel({ id: "info", title: () => "Info", tab: { order: 3, label: "info" }, Body });
+    definePanel({
+      id: "turns",
+      title: () => "Conversation",
+      tab: { order: 1, label: "conversation" },
+      appliesTo: (s) => s.claude,
+      Body,
+    });
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "mockup" },
+      appliesTo: () => false,
+      Body,
+    });
+    definePanel({
+      id: "changes",
+      title: () => "Changes",
+      tab: { order: 2, label: "changes" },
+      Body,
+    });
+    // A panel with no tab is not in it.
+    definePanel({ id: "settings", title: () => "Settings", Body });
+
+    expect(tabOrder()).toEqual(["turns", "changes", "info", "mockup", "flow"]);
   });
 
   it("has a panel for every PanelId once @/panels is imported", async () => {
