@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactElement } from "react";
 import type { Job, Session } from "@/api/gen";
 import { useJobLog } from "@/api/reads";
 import type { PanelProps } from "@/app/panels";
+import { useScrollPane } from "@/app/scroll";
 import { CommandButton } from "@/app/CommandButton";
 import { elapsed, endedParts, jobGlyph, jobTone, joinParts, waitingParts } from "@/session/jobs";
 import { NoSession } from "@/session/NoSession";
@@ -102,23 +103,19 @@ function JobScreen({ session, job: id }: { session: Session; job: number }): Rea
   const job = (session.jobs ?? []).find((j) => j.id === id);
   const live = job !== undefined && isLive(job);
   const log = useJobLog({ session: session.id, job: id, live });
+  const pane = useScrollPane();
 
   // follow is whether the page trails the log: true on open, false once the reader is more than
   // 40 px above the bottom, true again when they are back.
   const follow = useRef(true);
   useEffect(() => {
-    const onScroll = (): void => {
-      follow.current =
-        window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-    };
-  }, []);
+    return pane.subscribe(() => {
+      follow.current = pane.viewport() + pane.top() >= pane.height() - 40;
+    });
+  }, [pane]);
   useEffect(() => {
-    if (follow.current) window.scrollTo(0, document.documentElement.scrollHeight);
-  }, [log.log]);
+    if (follow.current) pane.scrollTo(pane.height());
+  }, [log.log, pane]);
 
   const now = clock();
   let body: ReactElement;

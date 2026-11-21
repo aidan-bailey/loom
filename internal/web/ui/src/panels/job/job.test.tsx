@@ -9,6 +9,8 @@ import { useJobLog, type JobLogView } from "@/api/reads";
 import { api } from "@/api/request";
 import { askConfirm } from "@/app/ConfirmSheet";
 import { definePanel, panelFor } from "@/app/panels";
+import { elementPane, ScrollPaneProvider, type ScrollPane } from "@/app/scroll";
+import { stubScroller, type Scroller } from "@/app/scrollkit";
 import { PanelHost } from "@/app/shell";
 import { makeJob, makeSession, noticesOk, resetFleet, seed } from "@/commands/testkit";
 import { fixtureJobLog } from "@/fixtures";
@@ -379,6 +381,81 @@ describe("JobBody following the log", () => {
     more("third");
     view.rerender(element());
     expect(scrollTo).toHaveBeenCalledWith(0, 5000);
+  });
+});
+
+describe("JobBody following the log inside a pane", () => {
+  let scrollTo: MockInstance<typeof window.scrollTo>;
+  let s: Scroller;
+  let pane: ScrollPane;
+  beforeEach(() => {
+    scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: 9000,
+      configurable: true,
+    });
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    s = stubScroller({ height: 5000, viewport: 600 });
+    pane = elementPane(s.el, null);
+  });
+  afterEach(() => {
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  const more = (text: string): void => {
+    vi.mocked(useJobLog).mockReturnValue({
+      ...noLog,
+      log: { text, end: text.length, cut: false },
+    });
+  };
+  // A new element each time: React skips a rerender of the very same element.
+  const element = (): ReactElement => (
+    <ScrollPaneProvider pane={pane}>
+      <JobBody sessionId={1} params={{ id: "1", job: "214" }} search={{}} />
+    </ScrollPaneProvider>
+  );
+  const open = (): RenderResult => {
+    seed([
+      makeSession({
+        id: 1,
+        status: "Running",
+        group: "working",
+        jobs: [makeJob({ id: 214, state: "running" })],
+      }),
+    ]);
+    window.history.replaceState(null, "", "#/s/1/job/214");
+    return render(element());
+  };
+
+  it("opens at the bottom of the pane when the screen opens with output", () => {
+    more("first");
+    open();
+    expect(s.scrolls).toEqual([5000]);
+  });
+
+  it("follows new output while the reader is within 40 px of the pane's bottom", () => {
+    more("first");
+    const view = open();
+    s.place(5000 - 600 - 40);
+    s.scrolls.length = 0;
+    more("second");
+    view.rerender(element());
+    expect(s.scrolls).toEqual([5000]);
+  });
+
+  it("leaves a reader more than 40 px above the pane's bottom, and follows again once they are back", () => {
+    more("first");
+    const view = open();
+    s.place(5000 - 600 - 41);
+    s.scrolls.length = 0;
+    more("second");
+    view.rerender(element());
+    expect(s.scrolls).toEqual([]);
+
+    s.place(5000 - 600);
+    more("third");
+    view.rerender(element());
+    expect(s.scrolls).toEqual([5000]);
   });
 });
 
