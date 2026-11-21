@@ -821,6 +821,22 @@ and answers only phones you have paired.
   and Settings has **Back to classic**, which switches back. Offline, the
   switch happens the next time the app opens.
 
+- **The desktop layout.** The new app draws a desktop layout whenever its
+  window is 1024px wide or more, with nothing to turn on: a top bar across
+  the window (the link's pill, `loom@host`, the workspace filter, the counts
+  of sessions that need you, wait for your turn and are working, and links
+  to new session, flows and settings), a sidebar of the fleet's sessions
+  (two lines each: the title and age, then why it waits, its flow's state or
+  what it said last), the screen you are on in a pane of its own, and, from
+  1280px, an inspector at the right showing another view of the same
+  session (its tab strip never repeats the tab on the left, and its choice
+  is kept in this browser). The fleet screen has no sidebar, since it is the
+  same list. Under 1280px the session's tabs reach every view. A
+  confirmation is a centred dialog and notifications sit at the bottom
+  right. The layout follows the window as it resizes, and under 1024px it is
+  the phone's. To open it on the machine that runs the daemon, use
+  `loom web open` (below).
+
 #### Set it up
 
 1. **Reach the daemon.** The daemon listens on a loopback port, and a
