@@ -190,6 +190,22 @@ func IsNoDevice(err error, name string) bool {
 	return errors.Is(err, ErrNoDevice) || err.Error() == noDeviceError(name).Error()
 }
 
+// IsDeviceExists reports whether err says a device is called name already:
+// ErrDeviceExists itself, or the text the model gives for that name
+// (fmt.Errorf("%w: %q", ErrDeviceExists, name), what PairDevice and the host's
+// redemption answer with). A client sees the second, as IsNoDevice's does:
+// the error crossed the rpc wire as text under CodeError, which WireError.Is
+// does not map back to ErrDeviceExists, so errors.Is cannot see the sentinel.
+// It matches any error wrapping ErrDeviceExists, whatever name that error
+// carries; only the text comparison is exact to name, so over the wire
+// another name's error is not this name's.
+func IsDeviceExists(err error, name string) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrDeviceExists) || err.Error() == fmt.Errorf("%w: %q", ErrDeviceExists, name).Error()
+}
+
 // validPort reports whether port is a port number written plainly: digits
 // only, 1 to 65535, no sign and no leading zero.
 func validPort(port string) bool {

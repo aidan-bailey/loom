@@ -585,3 +585,24 @@ func TestIsNoDevice(t *testing.T) {
 	assert.False(t, IsNoDevice(errors.New("web.json is left alone"), "ghost"), "an unrelated error")
 	assert.False(t, IsNoDevice(nil, "ghost"))
 }
+
+func TestIsDeviceExists(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	_, local := m.PairDevice("iPhone")
+	require.ErrorIs(t, local, ErrDeviceExists)
+	// What a client holds once the error has crossed the rpc wire: its text
+	// under CodeError, which WireError.Is does not map back to ErrDeviceExists.
+	wire := &WireError{Code: CodeError, Message: local.Error()}
+	require.NotErrorIs(t, wire, ErrDeviceExists, "control: the sentinel is lost on the wire")
+
+	assert.True(t, IsDeviceExists(ErrDeviceExists, "iPhone"), "the sentinel")
+	assert.True(t, IsDeviceExists(local, "iPhone"), "the model's own error")
+	assert.True(t, IsDeviceExists(wire, "iPhone"), "the text the model gives for that name")
+	assert.False(t, IsDeviceExists(wire, "iPad"), "another name's text")
+	assert.False(t, IsDeviceExists(&WireError{Code: CodeError, Message: ErrDeviceExists.Error()}, "iPhone"), "the sentinel's text alone names no device")
+	assert.False(t, IsDeviceExists(&WireError{Code: CodeError, Message: "write web.json: " + local.Error()}, "iPhone"), "text that merely contains it")
+	assert.False(t, IsDeviceExists(ErrWebOff, "iPhone"), "another refusal of PairDevice")
+	assert.False(t, IsDeviceExists(errors.New("web.json is left alone"), "iPhone"), "an unrelated error")
+	assert.False(t, IsDeviceExists(nil, "iPhone"))
+}
