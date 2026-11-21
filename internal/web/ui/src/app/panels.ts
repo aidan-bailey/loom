@@ -70,13 +70,11 @@ export function panelFor(id: PanelId): Panel | undefined {
 
 // sessionTabs are the tab panels that apply to the session, in tab order.
 export function sessionTabs(session: Session): Panel[] {
-  const tabs: Panel[] = [];
-  for (const panel of registry.values()) {
-    if (panel.tab === undefined) continue;
-    if (panel.appliesTo !== undefined && !panel.appliesTo(session)) continue;
-    tabs.push(panel);
-  }
-  return tabs.sort((a, b) => (a.tab?.order ?? 0) - (b.tab?.order ?? 0));
+  return tabOrder()
+    .map((id) => registry.get(id))
+    .filter(
+      (p): p is Panel => p !== undefined && (p.appliesTo === undefined || p.appliesTo(session)),
+    );
 }
 
 // tabOrder is the id of every tab panel in tab order, whether or not it applies to any session:
