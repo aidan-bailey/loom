@@ -198,7 +198,8 @@ func newWebStatusCmd() *cobra.Command {
 }
 
 // writeWebStatus prints w: whether the web is on, where it listens and for
-// which origin, whether it serves or why not (and, while it serves, its local origin), and the device count.
+// which origin, whether it serves or why not (and, while it serves, its
+// local origin), and the device count.
 func writeWebStatus(out io.Writer, w core.WebView) {
 	row := func(label, value string) { fmt.Fprintf(out, "%-9s %s\n", label+":", value) }
 	if w.Listen == "" {
