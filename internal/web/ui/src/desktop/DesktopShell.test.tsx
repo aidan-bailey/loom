@@ -10,12 +10,13 @@ import { useEffect, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "@/api/gen";
-import { useDesktop } from "@/app/desktopState";
-import { definePanel } from "@/app/panels";
+import { readDesktopPrefs, useDesktop } from "@/app/desktopState";
+import { definePanel, type Panel } from "@/app/panels";
 import { useScrollPane, windowPane } from "@/app/scroll";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions, shownWorkspaces } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
+import { setViewportWidth } from "@/test-layout";
 
 import DesktopShell from "./DesktopShell";
 
@@ -333,5 +334,180 @@ describe("DesktopShell's sidebar", () => {
 
     await screen.findByText("outlet");
     expect(slot("sidebar")).toBeNull();
+  });
+});
+
+// inspectable defines the tab panels the inspector draws, in the order turns, changes, info, and
+// the job panel, which lights info and is no tab; `over` replaces fields of changes.
+function inspectable(over: Partial<Panel> = {}): void {
+  definePanel({
+    id: "turns",
+    title: () => "turns",
+    tab: { order: 1, label: "conversation" },
+    Head: () => <p>turns head</p>,
+    Body: () => null,
+  });
+  definePanel({
+    id: "changes",
+    title: () => "changes",
+    tab: { order: 2, label: "changes" },
+    Body: () => <p>changes body</p>,
+    ...over,
+  });
+  definePanel({
+    id: "info",
+    title: () => "info",
+    tab: { order: 3, label: "info" },
+    Body: () => <p>info body</p>,
+  });
+  definePanel({ id: "job", title: () => "job", Body: () => null });
+}
+
+describe("DesktopShell's inspector", () => {
+  beforeEach(() => {
+    useDesktop.setState({ sidebar: true, inspector: true, slots: [] });
+  });
+  afterEach(() => {
+    useDesktop.setState({ sidebar: true, inspector: true, slots: [] });
+  });
+
+  const strip = (): HTMLElement =>
+    within(slot("inspector")!).getByRole("navigation", { name: "Inspector views" });
+  const names = (): (string | null)[] =>
+    within(strip())
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+  const lit = (): string | null =>
+    within(strip())
+      .getAllByRole("button")
+      .find((b) => b.getAttribute("aria-current") === "true")?.textContent ?? null;
+
+  it("draws the inspector after the middle at desk3, with the next tab drawn", async () => {
+    setViewportWidth(1400);
+    inspectable();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    const inspector = slot("inspector");
+    const middle = slot("middle");
+    if (inspector === null || middle === null) throw new Error("no inspector or middle");
+    expect(slot("desktop")).toContainElement(inspector);
+    expect(
+      middle.compareDocumentPosition(inspector) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(inspector).toHaveTextContent("changes body");
+    expect(names()).toEqual(["changes", "info"]);
+    expect(slot("sidebar")).not.toBeNull();
+    expect(slot("top-bar")).not.toBeNull();
+  });
+
+  it("draws no inspector at desk2, and draws it when the window grows to desk3", async () => {
+    setViewportWidth(1100);
+    inspectable();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    expect(slot("inspector")).toBeNull();
+    expect(slot("middle")).not.toBeNull();
+    setViewportWidth(1400);
+    expect(slot("inspector")).not.toBeNull();
+    setViewportWidth(1279);
+    expect(slot("inspector")).toBeNull();
+  });
+
+  it.each([
+    ["#/settings", "settings"],
+    ["#/", "fleet"],
+    ["#/s/999", "turns"],
+  ] as const)("draws no inspector off session routes (%s)", async (hash, panel) => {
+    setViewportWidth(1400);
+    inspectable();
+    if (panel === "settings" || panel === "fleet") {
+      definePanel({ id: panel, title: () => panel, Body: () => null });
+    }
+    live();
+    desktopAt(hash);
+
+    await screen.findByText("outlet");
+    expect(slot("middle")).not.toBeNull();
+    expect(slot("inspector")).toBeNull();
+  });
+
+  it("draws no inspector while the preference hides it, and draws it again when shown", async () => {
+    useDesktop.setState({ inspector: false });
+    setViewportWidth(1400);
+    inspectable();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    expect(slot("inspector")).toBeNull();
+    expect(slot("middle")).not.toBeNull();
+    act(() => useDesktop.getState().setInspector(true));
+    expect(slot("inspector")).not.toBeNull();
+  });
+
+  it("draws no inspector on the full mockup", async () => {
+    setViewportWidth(1400);
+    inspectable();
+    live();
+    desktopAt("#/s/100/mockup/full");
+
+    await screen.findByText("outlet");
+    expect(slot("inspector")).toBeNull();
+  });
+
+  it("never repeats the tab the route lights", async () => {
+    setViewportWidth(1400);
+    inspectable();
+    live();
+    const first = desktopAt("#/s/100/info");
+    await screen.findByText("outlet");
+    expect(names()).toEqual(["conversation", "changes"]);
+    expect(lit()).toBe("conversation");
+    first.unmount();
+
+    desktopAt("#/s/100/job/5");
+    await screen.findByText("outlet");
+    expect(names()).toEqual(["conversation", "changes"]);
+  });
+
+  it("draws the tab the first slot of loom.desktop names", async () => {
+    setViewportWidth(1400);
+    inspectable();
+    live();
+    useDesktop.setState(
+      readDesktopPrefs('{"sidebar":true,"inspector":true,"slots":[{"tab":"info"}]}'),
+    );
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    expect(lit()).toBe("info");
+    expect(slot("inspector")).toHaveTextContent("info body");
+  });
+
+  it("a throwing inspector panel leaves the middle, the sidebar and the top bar drawn", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      setViewportWidth(1400);
+      inspectable({
+        Body: () => {
+          throw new Error("body boom");
+        },
+      });
+      live();
+      desktopAt("#/s/100");
+
+      expect(await screen.findByText("outlet")).toBeInTheDocument();
+      expect(within(slot("inspector")!).getByText("body boom")).toBeInTheDocument();
+      expect(screen.getAllByText("body boom")).toHaveLength(1);
+      expect(slot("sidebar")).not.toBeNull();
+      expect(slot("top-bar")).not.toBeNull();
+      expect(screen.getByRole("navigation", { name: "Session views" })).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

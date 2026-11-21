@@ -8,10 +8,12 @@ import { useDesktop } from "@/app/desktopState";
 import type { PanelId } from "@/app/panels";
 import { panelProps, useRoute } from "@/app/routes";
 import { elementPane, ScrollPaneProvider } from "@/app/scroll";
-import { PanelHead } from "@/app/shell";
+import { PanelHead, tabOf } from "@/app/shell";
+import { useLayout } from "@/app/viewport";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/fleet";
 
+import { Inspector } from "./Inspector";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -60,6 +62,9 @@ function Middle(): ReactElement {
 export default function DesktopShell(): ReactElement {
   const route = useRoute();
   const sidebar = useDesktop((s) => s.sidebar);
+  const inspector = useDesktop((s) => s.inspector);
+  const layout = useLayout();
+  const session = useSession(panelProps(route).sessionId);
   if (route.panel === "mockupFull") return <Outlet />;
   return (
     <div data-slot="desktop" className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
@@ -69,6 +74,9 @@ export default function DesktopShell(): ReactElement {
           <Sidebar current={panelProps(route).sessionId} />
         ) : null}
         <Middle />
+        {layout === "desk3" && inspector && session !== undefined ? (
+          <Inspector session={session} middle={tabOf(route.panel, session)} />
+        ) : null}
       </div>
     </div>
   );
