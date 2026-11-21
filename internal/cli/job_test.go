@@ -1316,3 +1316,31 @@ func TestJobList_SaysWhichJobsTheOwnerPaused(t *testing.T) {
 	assert.Contains(t, find("8"), "paused by you, CPU only")
 	assert.Contains(t, find("9"), "parked by you")
 }
+
+// A test that ends with a job still running has it ended before its temp
+// dirs go (endJobs): a job outlives the daemon's Stop, and one still
+// writing into its job dir as the dir was removed failed the test's
+// cleanup ("directory not empty").
+func TestServeDaemon_EndsItsJobsBeforeTheTestsTempDirsGo(t *testing.T) {
+	var pid int
+	t.Cleanup(func() {
+		if pid > 1 {
+			_ = sched.SignalGroup(pid, syscall.SIGKILL) // the job a failed run left behind
+		}
+	})
+	ok := t.Run("a test that leaves a job running", func(t *testing.T) {
+		isolateWorkspaces(t)
+		pinCaps(t)
+		t.Setenv(claudemod.EnvLaunch, "")
+		d := serveDaemon(t, "true")
+		_, _, err := runJob(t, "submit", "-d", "writer", "--no-notify", "--", "sh", "-c", "echo up; while :; do echo more; sleep 0.01; done")
+		require.NoError(t, err)
+		d.waitLog(t, 1, "up")
+		st, err := sched.ReadStarted(filepath.Dir(d.job(1).LogPath))
+		require.NoError(t, err)
+		pid = st.PID
+	})
+	assert.True(t, ok, "the test and its cleanup passed")
+	require.Greater(t, pid, 1)
+	assert.ErrorIs(t, syscall.Kill(-pid, 0), syscall.ESRCH, "the job's process group is gone")
+}
