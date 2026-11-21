@@ -5,8 +5,8 @@ import { useEffect, useMemo, useState, type ReactElement } from "react";
 
 import type { Session, SessionGroup } from "@/api/gen";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { activeFilter, useFilter } from "@/fleet/filter";
-import { allSessions, groupSessions, GROUPS, shownWorkspaces } from "@/fleet/groups";
+import { useFilter } from "@/fleet/filter";
+import { GROUPS, listFleet, shownWorkspaces } from "@/fleet/groups";
 import { sessionHref } from "@/fleet/links";
 import { cn } from "@/lib/utils";
 import { ago, DOT, flowChip, flowTone } from "@/panels/fleet/SessionRow";
@@ -112,11 +112,7 @@ export function Sidebar({ current }: { current: number | undefined }): ReactElem
 
   const listing = useMemo(() => {
     if (snapshot === null) return null;
-    const workspaces = shownWorkspaces(snapshot);
-    const shown = new Set(workspaces.map((w) => w.id));
-    const listed = allSessions(snapshot).filter((s) => shown.has(s.workspace));
-    const active = activeFilter(stored, workspaces);
-    return { active, grouped: groupSessions(listed, active === "" ? null : Number(active)) };
+    return listFleet(snapshot, shownWorkspaces(snapshot), stored);
   }, [snapshot, stored]);
 
   const total =

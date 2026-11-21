@@ -7,8 +7,8 @@ import { useLayout } from "@/app/viewport";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Session, SessionGroup, Usage } from "@/api/gen";
-import { activeFilter, useFilter } from "@/fleet/filter";
-import { allSessions, groupSessions, GROUPS, shownWorkspaces } from "@/fleet/groups";
+import { useFilter } from "@/fleet/filter";
+import { allSessions, GROUPS, listFleet, shownWorkspaces } from "@/fleet/groups";
 import { hasNewTurn, pruneSeen, useSeen } from "@/fleet/seen";
 import { WorkspaceFilter } from "@/fleet/WorkspaceFilter";
 import { useFleet } from "@/store/fleet";
@@ -83,15 +83,7 @@ function Fleet(): ReactElement {
     [snapshot],
   );
   const groups = useMemo(() => {
-    if (snapshot === null) return null;
-    const shown = new Set(workspaces.map((w) => w.id));
-    const listed = allSessions(snapshot).filter((s) => shown.has(s.workspace));
-    const active = activeFilter(stored, workspaces);
-    return {
-      active,
-      listed,
-      grouped: groupSessions(listed, active === "" ? null : Number(active)),
-    };
+    return snapshot === null ? null : listFleet(snapshot, workspaces, stored);
   }, [snapshot, workspaces, stored]);
 
   if (snapshot === null || groups === null) {

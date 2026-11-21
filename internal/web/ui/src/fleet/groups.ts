@@ -2,6 +2,8 @@
 // the sessions a count in the footer cycles through.
 import type { Session, SessionGroup, Snapshot, Workspace } from "@/api/gen";
 
+import { activeFilter } from "./filter";
+
 export type FleetGroups = Record<SessionGroup, Session[]>;
 
 export const GROUPS: { key: SessionGroup; title: string }[] = [
@@ -61,6 +63,25 @@ export function fleetGroups(snapshot: Snapshot): FleetGroups {
     allSessions(snapshot).filter((s) => shown.has(s.workspace)),
     null,
   );
+}
+
+/**
+ * The fleet's listing under a workspace filter (the stored one, as activeFilter reads it): the
+ * sessions of the shown workspaces, grouped, with the filter in force ("" for every workspace). The
+ * fleet panel and the desktop's sidebar both list this way, so they cannot drift apart.
+ */
+export function listFleet(
+  snapshot: Snapshot,
+  workspaces: Workspace[],
+  stored: string,
+): { active: string; grouped: FleetGroups } {
+  const shown = new Set(workspaces.map((w) => w.id));
+  const listed = allSessions(snapshot).filter((s) => shown.has(s.workspace));
+  const active = activeFilter(stored, workspaces);
+  return {
+    active,
+    grouped: groupSessions(listed, active === "" ? null : Number(active)),
+  };
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   fleetGroups,
   GROUPS,
   groupSessions,
+  listFleet,
   nextInGroup,
   shownWorkspaces,
 } from "./groups";
@@ -100,6 +101,28 @@ describe("fleetGroups", () => {
     const groups = fleetGroups(hidden);
     expect(ids(groups.needs_you)).toEqual([2]);
     expect(ids(groups.paused)).toEqual([]);
+  });
+});
+
+describe("listFleet", () => {
+  const snapshot = fixtureSnapshot(NOW);
+  const shown = shownWorkspaces(snapshot);
+
+  it("lists every shown workspace when nothing is filtered", () => {
+    const { active, grouped } = listFleet(snapshot, shown, "");
+    expect(active).toBe("");
+    expect(ids(grouped.needs_you)).toEqual([4, 2]);
+  });
+
+  it("keeps the stored workspace only, and reads an unlisted one as all", () => {
+    const first = shown[0];
+    if (!first) throw new Error("the fixture has a workspace");
+    const one = listFleet(snapshot, shown, String(first.id));
+    expect(one.active).toBe(String(first.id));
+    expect(ids(one.grouped.needs_you)).toEqual([2]);
+    const stale = listFleet(snapshot, shown, "999");
+    expect(stale.active).toBe("");
+    expect(ids(stale.grouped.needs_you)).toEqual([4, 2]);
   });
 });
 
