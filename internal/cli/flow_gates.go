@@ -359,8 +359,11 @@ func (d *client) startRun(out io.Writer, dir string, run *gateRun) error {
 // run's directory, each with its step's locks and key (gateKey), and adds
 // each job to its step. A submit refused partway, or a job whose locks the
 // daemon dropped (keptLocks), cancels the jobs already queued and adds
-// none. Sent again after a daemon lost mid-chain, it adds the jobs the lost
-// try queued, which the daemon answers the keys with, and queues the rest.
+// none, unless the chain was cut short (chainCut): then it keeps the jobs
+// queued, and the steps it never queued are the cascade's, which a story
+// run marks SKIPPED here and a final run's advance queues again. Sent
+// again after a daemon lost mid-chain, it adds the jobs the lost try
+// queued, which the daemon answers the keys with, and queues the rest.
 func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 	var ids []sched.JobID
 	var after sched.JobID
@@ -370,6 +373,9 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 		sub.Locks = slices.Clone(run.Steps[i].Locks)
 		sub.Key = gateKey(run, i)
 		id, err := submitFlowJob(d, sub)
+		if err != nil && d.chainCut(after) {
+			break
+		}
 		if err == nil {
 			err = d.keptLocks(sub, id)
 		}
@@ -380,10 +386,32 @@ func (d *client) submitChain(run *gateRun, steps []int) ([]sched.JobID, error) {
 		ids = append(ids, id)
 		after = id
 	}
-	for k, i := range steps {
-		run.Steps[i].Jobs = append(run.Steps[i].Jobs, ids[k])
+	for k, id := range ids {
+		run.Steps[steps[k]].Jobs = append(run.Steps[steps[k]].Jobs, id)
+	}
+	if cut := steps[len(ids):]; len(cut) > 0 && run.Kind == "story" {
+		// Judged as though each had been queued and cancelled by the
+		// cascade, as cascadedFrom judges those.
+		gate, _ := cascadedFrom(d.Queue(), run, core.JobView{State: sched.Cancelled, After: after})
+		for _, i := range cut {
+			run.Steps[i].Verdict, run.Steps[i].Why = verdictSkipped, fmt.Sprintf("not run: gate %d failed", gate)
+		}
 	}
 	return ids, nil
+}
+
+// chainCut reports whether a chain whose submit after job after failed was
+// cut short: after has ended other than done, so the daemon has cancelled
+// any job held after it and refuses a new one (core's prerequisiteOf), as
+// when a gate that fails in milliseconds ends while its chain is still
+// being queued. The queue view already shows that end when the refusal
+// arrives, since a reply follows the state its call saw. A lost submit is
+// judged the same way: a job it may have queued after a job that ended so
+// was cancelled with the rest, and a key sent again is never answered with
+// a cancelled job.
+func (d *client) chainCut(after sched.JobID) bool {
+	v, ok := jobOf(d.Queue(), after)
+	return ok && v.State.Finished() && v.State != sched.Done
 }
 
 // gateKey is the key of step i's submit in its next generation: the run's
@@ -458,8 +486,11 @@ func (d *client) waitRun(out io.Writer, conf flowConf, dir, name string, deadlin
 }
 
 // advance judges each step whose job has ended and, in a final run, queues
-// again the steps a failure cancelled, under the run lock, saving the
-// record when anything changed (spec §5.2, §5.4).
+// again the steps a failure cancelled or kept from being queued (a cut
+// chain, submitChain), under the run lock, saving the record when anything
+// changed (spec §5.2, §5.4). A step a requeue's cut kept from its next
+// generation still has its last generation's job, which the cascade
+// cancelled, so the next advance queues it again.
 func (d *client) advance(conf flowConf, dir, name string) (*gateRun, error) {
 	unlock, err := lockRuns(dir)
 	if err != nil {
@@ -484,6 +515,11 @@ func (d *client) advance(conf flowConf, dir, name string) (*gateRun, error) {
 		}
 		v, ok := jobOf(q, st.Job())
 		switch {
+		case st.Job() == 0 && run.Kind == "final":
+			// Never queued: its chain was cut short (submitChain), so
+			// it is queued again with the gates the cascade cancelled.
+			again = append(again, i)
+			continue
 		case !ok:
 			st.Verdict, st.Why = verdictInfra, fmt.Sprintf("the queue no longer knows job %d", st.Job())
 		case !v.State.Finished():
