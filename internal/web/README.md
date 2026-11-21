@@ -46,8 +46,8 @@ A panic in the drain or the listener stops the layer, tells the model (the same 
 `guard` stands in front of every route:
 
 1. The security headers go on the answer, errors included.
-2. The `Host` must be the origin's host (default port dropped, any case), else 421.
-3. A method other than GET or HEAD must carry exactly one `Origin` header equal to the origin, else 403.
+2. The `Host` must be the host of a member of the origin set (default port dropped, any case), else 421. The set is the configured origin and, when the listener is bound to `127.0.0.1` or `[::1]`, its local origin `http://loom.localhost:<port>` (`core.LocalOrigin`; browsers resolve `*.localhost` to loopback). Bare `localhost` and the IP literal are never members: a device cookie set on them would reach every server the browser reaches there, on any port, and a token is tied to no origin. A listener on another loopback address (`127.0.0.2`) has no local origin. The `loom.localhost` cookie is host-only, so no service at bare `localhost` or a loopback literal receives it, but cookies ignore the port: a hostile listener on another loopback port (another OS user's server, a forward to a compromised machine, a container's published port) that steers the browser to `loom.localhost:<its port>` receives it. That is accepted on a single-user machine. The local origin grants nothing the tunnel's does not: every route but pairing still needs the device cookie, and each origin holds its own.
+3. A method other than GET or HEAD must carry exactly one `Origin` header equal to a member of the set, else 403.
 4. The body is capped at `maxBody` (1 MiB).
 
 With no listener bound there is no origin rule, and `guard` refuses everything.
