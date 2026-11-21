@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"math"
 	"net"
@@ -840,6 +841,103 @@ func TestEmulation_ABrowserTabIsNotStandalone(t *testing.T) {
 	assert.NotContains(t, appSrc, "get: () => false")
 	assert.Contains(t, tabSrc, "get: () => false")
 	assert.NotContains(t, tabSrc, "get: () => true")
+}
+
+func TestEmulation_ADesktopIsNotMobileAndHasNoTouchNoInsets(t *testing.T) {
+	for _, name := range []string{"desktop", "desktop-narrow"} {
+		d := devices[name]
+		for _, standalone := range []bool{true, false} {
+			methods := map[string]map[string]any{}
+			for _, s := range emulation(d, standalone) {
+				m, _ := s.params.(map[string]any)
+				methods[s.method] = m
+			}
+			assert.NotContains(t, methods, "Emulation.setSafeAreaInsetsOverride", name)
+			assert.NotContains(t, methods, "Emulation.setTouchEmulationEnabled", name)
+			metrics := methods["Emulation.setDeviceMetricsOverride"]
+			require.NotNil(t, metrics, name)
+			assert.Equal(t, false, metrics["mobile"], name)
+			assert.Equal(t, d.width, metrics["width"], name)
+			assert.Equal(t, d.height, metrics["height"], name)
+			assert.Equal(t, 1.0, metrics["deviceScaleFactor"], name)
+			assert.NotContains(t, metrics, "screenOrientation", name)
+			ua := methods["Emulation.setUserAgentOverride"]
+			require.NotNil(t, ua, name)
+			assert.Equal(t, d.userAgent, ua["userAgent"], name)
+			assert.NotEqual(t, "iPhone", ua["platform"], name)
+		}
+	}
+	phone := map[string]map[string]any{}
+	for _, s := range emulation(devices["iphone15"], true) {
+		m, _ := s.params.(map[string]any)
+		phone[s.method] = m
+	}
+	assert.Contains(t, phone, "Emulation.setSafeAreaInsetsOverride")
+	assert.Contains(t, phone, "Emulation.setTouchEmulationEnabled")
+	assert.Equal(t, true, phone["Emulation.setDeviceMetricsOverride"]["mobile"])
+}
+
+func TestForDevice_DropsOnlyAddToHomeOnADesktop(t *testing.T) {
+	var want []screen
+	for _, sc := range screens {
+		if sc.name != "add-to-home" {
+			want = append(want, sc)
+		}
+	}
+	for _, name := range []string{"desktop", "desktop-narrow"} {
+		got := forDevice(devices[name], screens)
+		assert.Equal(t, want, got, name)
+		assert.Len(t, got, len(screens)-1, name)
+		assert.Contains(t, got, screen{"pair", "#pair"}, name)
+	}
+	assert.Contains(t, screens, screen{"add-to-home", ""}, "screens is not changed")
+	assert.Equal(t, screens, forDevice(devices[defaultDevice], screens))
+	assert.Empty(t, forDevice(devices["desktop"], []screen{{"add-to-home", ""}}))
+}
+
+func TestRun_AnUnknownDeviceNamesTheOnesItHas(t *testing.T) {
+	err := run([]string{"-out", t.TempDir(), "-device", "ipad"})
+	require.Error(t, err)
+	for _, s := range []string{"ipad", "desktop", "desktop-narrow", "iphone15", "iphone16"} {
+		assert.Contains(t, err.Error(), s)
+	}
+}
+
+func TestRun_AddToHomeAloneOnADesktopRendersNothing(t *testing.T) {
+	err := run([]string{"-out", t.TempDir(), "-device", "desktop", "-screens", "add-to-home", "-browser", "no-such-browser-binary"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no screen to render on desktop")
+	assert.NotContains(t, err.Error(), "no-such-browser-binary", "the check runs before a browser is looked for")
+}
+
+// TestRun_RendersTheNewAppAtBothDesktopSizesInARealBrowser runs only with
+// LOOM_WEBSHOT_BROWSER set, as TestRun_RendersEveryScreenInARealBrowser does.
+func TestRun_RendersTheNewAppAtBothDesktopSizesInARealBrowser(t *testing.T) {
+	which := os.Getenv("LOOM_WEBSHOT_BROWSER")
+	if which == "" {
+		t.Skip("set LOOM_WEBSHOT_BROWSER to run it")
+	}
+	for _, name := range []string{"desktop", "desktop-narrow"} {
+		t.Run(name, func(t *testing.T) {
+			out := t.TempDir()
+			args := []string{"-app", "next", "-device", name, "-out", out, "-settle", "800ms"}
+			if which != "1" {
+				_, err := exec.LookPath(which)
+				require.NoError(t, err)
+				args = append(args, "-browser", which)
+			}
+			require.NoError(t, run(args), "every screen draws with no console error, CSP violation or route the fixture lacks")
+			f, err := os.Open(filepath.Join(out, "fleet.png"))
+			require.NoError(t, err)
+			defer f.Close()
+			img, err := png.Decode(f)
+			require.NoError(t, err)
+			d := devices[name]
+			assert.Equal(t, [2]int{d.width, d.height}, [2]int{img.Bounds().Dx(), img.Bounds().Dy()}, "a bare viewport at scale 1")
+			_, err = os.Stat(filepath.Join(out, "add-to-home.png"))
+			assert.True(t, os.IsNotExist(err), "add-to-home is phone only")
+		})
+	}
 }
 
 // TestRun_RendersEveryScreenInARealBrowser drives Chromium end to end. It

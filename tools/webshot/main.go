@@ -18,6 +18,13 @@
 // -serve answers the canned /api/v1 alone on that address until killed, for
 // the new app's dev server to proxy to, and renders nothing.
 //
+//	go run ./tools/webshot -app next -device desktop -out /tmp/shots
+//	go run ./tools/webshot -app next -device desktop-narrow -out /tmp/shots
+//
+// -device desktop and desktop-narrow are bare browser windows at 1440×900 and
+// 1100×800: scale 1, no touch, no insets, nothing drawn over the screenshot.
+// They skip add-to-home, which only an iPhone browser tab shows.
+//
 // It never touches a daemon, a session or the user's tmux server. Console
 // errors, uncaught exceptions and API routes the fixture can't answer are
 // printed after each screen, and any of them makes the exit status 1.
@@ -102,7 +109,7 @@ func run(args []string) error {
 	fs := flag.NewFlagSet("webshot", flag.ContinueOnError)
 	out := fs.String("out", "", "directory to write the PNGs to (required; keep it out of the worktree)")
 	only := fs.String("screens", "", "comma-separated screens to render (default all: "+screenNames()+")")
-	dev := fs.String("device", defaultDevice, "the device to render as: iphone15 or iphone16")
+	dev := fs.String("device", defaultDevice, "the device to render as: "+deviceNames())
 	app := fs.String("app", "classic", "the app to render: classic (internal/web/static) or next (internal/web/dist)")
 	static := fs.String("static", "", "the app's files (overrides the directory -app picks)")
 	browserBin := fs.String("browser", "", "Chromium or Chrome to run (default: the first of chromium, chromium-browser, google-chrome, google-chrome-stable on PATH)")
@@ -130,11 +137,20 @@ func run(args []string) error {
 	}
 	d, ok := devices[*dev]
 	if !ok {
-		return fmt.Errorf("no device %q", *dev)
+		return fmt.Errorf("no device %q (have %s)", *dev, deviceNames())
 	}
 	todo, err := pickScreens(*only)
 	if err != nil {
 		return err
+	}
+	kept := forDevice(d, todo)
+	for _, sc := range todo {
+		if !slices.Contains(kept, sc) {
+			fmt.Printf("%s\tskipped: phone only\n", sc.name)
+		}
+	}
+	if todo = kept; len(todo) == 0 {
+		return fmt.Errorf("no screen to render on %s", d.name)
 	}
 	bin, err := findBrowser(*browserBin)
 	if err != nil {
@@ -190,7 +206,7 @@ func run(args []string) error {
 	}
 
 	var bar image.Image
-	if !*bare {
+	if !*bare && !d.desktop {
 		if bar, err = pg.statusBar(ctx, d); err != nil {
 			return err
 		}
@@ -264,6 +280,34 @@ func serveAPI(ctx context.Context, addr string, announce func(net.Addr), onMiss 
 		return fmt.Errorf("serve %s: %w", addr, err)
 	}
 	return nil
+}
+
+// forDevice is todo as it is for a phone; for a desktop device, todo without
+// the screens only a phone's browser tab draws (today add-to-home, the iOS
+// Add to Home gate, shown only for an iOS user agent). It tests modeOf's
+// browserTab, not the screen's name, so a later browser-tab screen is skipped
+// too. todo is not changed.
+func forDevice(d device, todo []screen) []screen {
+	if !d.desktop {
+		return todo
+	}
+	var out []screen
+	for _, sc := range todo {
+		if !modeOf(sc).browserTab {
+			out = append(out, sc)
+		}
+	}
+	return out
+}
+
+// deviceNames is the keys of devices, sorted and joined with ", ".
+func deviceNames() string {
+	names := make([]string, 0, len(devices))
+	for n := range devices {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
 }
 
 func screenNames() string {
@@ -491,7 +535,28 @@ type cdpStep struct {
 
 // emulation is the calls that make a tab the device's Home Screen app, or
 // with standalone false its browser tab: the same but for navigator.standalone.
+// A desktop device is no touch screen and has no insets: its viewport is not
+// mobile, and the safe-area and touch steps are left out.
 func emulation(d device, standalone bool) []cdpStep {
+	standaloneScript := cdpStep{"Page.addScriptToEvaluateOnNewDocument", map[string]any{
+		"source": fmt.Sprintf(`Object.defineProperty(Navigator.prototype, "standalone", {get: () => %t, configurable: true});`, standalone),
+	}}
+	if d.desktop {
+		return []cdpStep{
+			{"Page.enable", nil},
+			{"Runtime.enable", nil},
+			{"Log.enable", nil},
+			{"Network.enable", nil},
+			{"Network.setBypassServiceWorker", map[string]any{"bypass": true}},
+			{"Emulation.setDeviceMetricsOverride", map[string]any{
+				"width": d.width, "height": d.height, "deviceScaleFactor": d.scale, "mobile": false,
+				"screenWidth": d.width, "screenHeight": d.height,
+			}},
+			{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": "Linux x86_64"}},
+			{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
+			standaloneScript,
+		}
+	}
 	return []cdpStep{
 		{"Page.enable", nil},
 		{"Runtime.enable", nil},
@@ -510,9 +575,7 @@ func emulation(d device, standalone bool) []cdpStep {
 		{"Emulation.setTouchEmulationEnabled", map[string]any{"enabled": true, "maxTouchPoints": 5}},
 		{"Emulation.setUserAgentOverride", map[string]any{"userAgent": d.userAgent, "platform": "iPhone"}},
 		{"Emulation.setScrollbarsHidden", map[string]any{"hidden": true}},
-		{"Page.addScriptToEvaluateOnNewDocument", map[string]any{
-			"source": fmt.Sprintf(`Object.defineProperty(Navigator.prototype, "standalone", {get: () => %t, configurable: true});`, standalone),
-		}},
+		standaloneScript,
 	}
 }
 
