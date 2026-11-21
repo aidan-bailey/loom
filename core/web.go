@@ -221,6 +221,32 @@ func ValidateWebListen(listen string) error {
 	return nil
 }
 
+// LocalOrigin is the origin a browser on the daemon's machine reaches a bound
+// listener at: http://loom.localhost:<port> for addr 127.0.0.1:<port> or
+// [::1]:<port>, written as net.JoinHostPort writes them (what a listener's
+// Addr gives), with a port from 1 to 65535. Browsers resolve every
+// *.localhost name to loopback and keep a cookie for one apart from every
+// other name (though not from another port on that name). Bare localhost and the IP
+// literal are never the local origin: a device cookie set there would reach
+// every server the browser reaches on that name, on any port, and the model
+// ties a token to no origin. Another loopback IP literal has no local origin
+// and the error says to listen on 127.0.0.1 or ::1; any other address is an
+// error too.
+func LocalOrigin(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("address %q: want a loopback IP literal and a port from 1 to 65535, like 127.0.0.1:7420", addr)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || ip.String() != host || !ip.IsLoopback() || !validPort(port) {
+		return "", fmt.Errorf("address %q: want a loopback IP literal and a port from 1 to 65535, like 127.0.0.1:7420", addr)
+	}
+	if ip != netip.AddrFrom4([4]byte{127, 0, 0, 1}) && ip != netip.IPv6Loopback() {
+		return "", fmt.Errorf("address %q has no local origin: listen on 127.0.0.1 or ::1", addr)
+	}
+	return "http://loom.localhost:" + port, nil
+}
+
 // ValidateWebOrigin checks the origin the phone reaches loom at:
 // https://<host>[:<port>] in lower case with no user, path, query or
 // fragment, or for development http://127.0.0.1:<port> or

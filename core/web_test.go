@@ -29,6 +29,40 @@ func TestValidateWebListen(t *testing.T) {
 	assert.ErrorContains(t, ValidateWebListen("localhost:7420"), "loopback IP literal", "a host name is refused for what it is")
 }
 
+func TestLocalOrigin(t *testing.T) {
+	for addr, want := range map[string]string{
+		"127.0.0.1:7420":  "http://loom.localhost:7420",
+		"[::1]:7420":      "http://loom.localhost:7420",
+		"127.0.0.1:1":     "http://loom.localhost:1",
+		"[::1]:65535":     "http://loom.localhost:65535",
+		"127.0.0.1:80":    "http://loom.localhost:80",
+		"127.0.0.1:12345": "http://loom.localhost:12345",
+	} {
+		got, err := LocalOrigin(addr)
+		require.NoError(t, err, addr)
+		assert.Equal(t, want, got, addr)
+	}
+	for _, addr := range []string{
+		"", "localhost:7420", "loom.localhost:7420", "0.0.0.0:7420", ":7420", "192.168.1.5:7420", "[::]:7420",
+		"127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:-1", "127.0.0.1:07420",
+		"[0:0:0:0:0:0:0:1]:7420", " 127.0.0.1:7420", "127.0.0.1:7420 ", "unix:/tmp/loom.sock",
+	} {
+		got, err := LocalOrigin(addr)
+		require.Error(t, err, "%q", addr)
+		assert.Empty(t, got, "%q", addr)
+		assert.ErrorContains(t, err, "loopback IP literal", "%q", addr)
+	}
+	// Another loopback address is a listener with no local origin, and the
+	// error says what to do.
+	for _, addr := range []string{"127.0.0.2:7420", "127.1.2.3:7420", "[::ffff:127.0.0.1]:7420"} {
+		got, err := LocalOrigin(addr)
+		require.Error(t, err, addr)
+		assert.Empty(t, got, addr)
+		assert.ErrorContains(t, err, "has no local origin", addr)
+		assert.ErrorContains(t, err, "listen on 127.0.0.1 or ::1", addr)
+	}
+}
+
 func TestValidateWebOrigin(t *testing.T) {
 	long := "https://" + strings.Repeat("a", maxWebOrigin-len("https://"))
 	for _, origin := range []string{
