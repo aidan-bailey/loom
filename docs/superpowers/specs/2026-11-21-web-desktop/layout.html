@@ -1,0 +1,133 @@
+<style>
+  .lm { --bg:#0f1012; --card:#16181c; --bd:#23262b; --fg:#e6e7ea; --mu:#a3a8b1; --amb:#f0b45a; --turn:#6ca4e0; --work:#8fc46a; --ws:#d9a3b8; --docs:#a991d4;
+        background:var(--bg); color:var(--fg); font:12px/1.4 Inter, system-ui, sans-serif; border:1px solid var(--bd); border-radius:8px; overflow:hidden; height:330px; display:flex; flex-direction:column; }
+  .lm .top { height:30px; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:10px; padding:0 10px; color:var(--mu); flex:none; }
+  .lm .top b { color:var(--fg); }
+  .lm .kbd { border:1px solid var(--bd); border-radius:4px; padding:0 5px; font:11px "JetBrains Mono", monospace; color:var(--mu); }
+  .lm .row { display:flex; flex:1; min-height:0; }
+  .lm .col { border-right:1px solid var(--bd); padding:8px; overflow:hidden; }
+  .lm .col:last-child { border-right:none; }
+  .lm .grp { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--mu); margin:8px 0 4px; }
+  .lm .s { padding:5px 6px; border-radius:5px; display:flex; justify-content:space-between; gap:6px; white-space:nowrap; }
+  .lm .s.sel { background:var(--card); outline:1px solid var(--bd); }
+  .lm .dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:6px; }
+  .lm .pill { font-size:10px; border-radius:9px; padding:0 6px; }
+  .lm .amb { color:var(--amb); } .lm .turn { color:var(--turn); } .lm .work { color:var(--work); } .lm .mu { color:var(--mu); }
+  .lm .tabs { display:flex; gap:12px; border-bottom:1px solid var(--bd); padding:0 2px 6px; color:var(--mu); margin-bottom:8px; }
+  .lm .tabs .on { color:var(--fg); border-bottom:2px solid var(--fg); padding-bottom:4px; }
+  .lm .msg { background:var(--card); border:1px solid var(--bd); border-radius:6px; padding:6px 8px; margin-bottom:6px; }
+  .lm .me { border-color:#2c3b4f; }
+  .lm .mono { font-family:"JetBrains Mono", monospace; font-size:11px; }
+  .lm .reply { border:1px solid var(--bd); border-radius:6px; padding:6px 8px; color:var(--mu); margin-top:auto; }
+  .lm .tile { background:var(--card); border:1px solid var(--bd); border-radius:6px; padding:8px; display:flex; flex-direction:column; gap:5px; }
+  .lm .tile.need { border-color:#5a4524; }
+  .lm .bar { height:5px; border-radius:3px; background:var(--bd); }
+  .optwide { display:flex; flex-direction:column; gap:18px; }
+  .optwide .option { display:block; }
+  .optwide .option .content { width:100%; }
+</style>
+
+<h2>Which desktop layout should be the default?</h2>
+<p class="subtitle">Each is the same app at a wide width; the phone keeps its single column. Same fleet in all three: 20 sessions, one needs you.</p>
+
+<div class="options optwide">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Three columns: fleet · session · inspector</h3>
+      <p>Fleet sidebar always on the left; the chosen session's conversation in the centre; a second panel of the <em>same</em> session on the right (changes, info, flow). Like Linear or Slack with a details pane. Maps straight onto today's panels: sidebar = fleet, centre = the route, right = another tab.</p>
+      <div class="lm">
+        <div class="top"><b>loom</b> <span>fresco</span> <span style="margin-left:auto">Search or run a command</span> <span class="kbd">⌘K</span></div>
+        <div class="row">
+          <div class="col" style="width:200px">
+            <div class="grp amb">Needs you · 1</div>
+            <div class="s"><span><span class="dot" style="background:var(--amb)"></span>issue 2</span><span class="pill amb">ask</span></div>
+            <div class="grp turn">Your turn · 2</div>
+            <div class="s sel"><span><span class="dot" style="background:var(--turn)"></span>desktop app</span><span class="mu mono">2m</span></div>
+            <div class="s"><span><span class="dot" style="background:var(--turn)"></span>issue 1</span><span class="mu mono">11h</span></div>
+            <div class="grp work">Running · 4</div>
+            <div class="s"><span><span class="dot" style="background:var(--work)"></span>web part 4 run</span><span class="mu mono">$12</span></div>
+            <div class="s"><span><span class="dot" style="background:var(--work)"></span>retro</span><span class="mu mono">40s</span></div>
+            <div class="grp">Paused · 13</div>
+            <div class="s mu"><span>memory sweep</span></div>
+          </div>
+          <div class="col" style="flex:1; display:flex; flex-direction:column">
+            <div class="tabs"><span class="on">conversation</span><span>changes +412 −9</span><span>info</span><span>flow</span></div>
+            <div class="msg me">alright let's do desktop</div>
+            <div class="msg">Companion running. First question is conceptual…</div>
+            <div class="msg"><span class="mono mu">Bash</span> git log --oneline main..HEAD</div>
+            <div class="reply">reply, or /command…</div>
+          </div>
+          <div class="col" style="width:240px">
+            <div class="tabs"><span class="on">changes</span><span>info</span><span>flow</span></div>
+            <div class="mono">internal/web/ui/src/app/shell.tsx <span class="work">+88</span> <span style="color:#e8836b">−4</span></div>
+            <div class="mono mu" style="margin-top:6px">@@ -140,7 +140,12 @@</div>
+            <div class="mono work">+ &lt;Sidebar /&gt;</div>
+            <div class="mono work">+ &lt;Inspector panel=…/&gt;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Fleet + split panes (editor groups)</h3>
+      <p>Fleet sidebar, then one or more panes side by side, each holding <em>any</em> panel of <em>any</em> session with its own tab strip. Split with a key, close with a key; the layout is saved per browser. Like VS Code's editor groups. Watch two sessions at once, or a conversation beside another's flow board.</p>
+      <div class="lm">
+        <div class="top"><b>loom</b> <span>fresco</span> <span style="margin-left:auto">Search or run a command</span> <span class="kbd">⌘K</span></div>
+        <div class="row">
+          <div class="col" style="width:180px">
+            <div class="grp amb">Needs you · 1</div>
+            <div class="s"><span><span class="dot" style="background:var(--amb)"></span>issue 2</span><span class="pill amb">ask</span></div>
+            <div class="grp turn">Your turn · 2</div>
+            <div class="s sel"><span><span class="dot" style="background:var(--turn)"></span>desktop app</span></div>
+            <div class="s"><span><span class="dot" style="background:var(--turn)"></span>issue 1</span></div>
+            <div class="grp work">Running · 4</div>
+            <div class="s sel"><span><span class="dot" style="background:var(--work)"></span>web part 4 run</span></div>
+            <div class="grp">Paused · 13</div>
+          </div>
+          <div class="col" style="flex:1; display:flex; flex-direction:column">
+            <div class="tabs"><span class="on">desktop app · conversation</span><span>×</span></div>
+            <div class="msg me">alright let's do desktop</div>
+            <div class="msg">Companion running…</div>
+            <div class="reply">reply, or /command…</div>
+          </div>
+          <div class="col" style="flex:1">
+            <div class="tabs"><span class="on">web part 4 run · flow</span><span>×</span></div>
+            <div class="mono">Story 1 <span class="work">● done</span></div>
+            <div class="mono">Story 2 <span class="work">● done</span></div>
+            <div class="mono">Story 3 <span class="amb">● review</span></div>
+            <div class="mono mu">Story 4 ○ queued</div>
+            <div style="margin-top:8px" class="mu">$12.40 of $41</div>
+            <div class="bar"><div class="bar" style="width:30%; background:var(--work)"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Mission control grid</h3>
+      <p>The home view is a grid of tiles, one per active session: status, last message, cost, an inline answer for asks. Click a tile to open the session full width (as A's centre + inspector). Best for watching many agents at once; the session view itself is a second screen.</p>
+      <div class="lm">
+        <div class="top"><b>loom</b> <span>fresco</span> <span class="mu">· 7 active · 13 paused</span> <span style="margin-left:auto">Search or run a command</span> <span class="kbd">⌘K</span></div>
+        <div class="row" style="padding:8px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px">
+          <div class="tile need"><b class="amb">issue 2</b><span class="mu">Allow Bash: go test ./internal/cli?</span><span><span class="pill amb" style="border:1px solid var(--amb)">Allow</span> <span class="pill mu" style="border:1px solid var(--bd)">Deny</span></span></div>
+          <div class="tile"><b class="turn">desktop app</b><span class="mu">Companion running. First question…</span><span class="mono mu">2m · $0.80</span></div>
+          <div class="tile"><b class="turn">issue 1</b><span class="mu">PR opened, CI green.</span><span class="mono mu">11h · $3.10</span></div>
+          <div class="tile"><b class="work">web part 4 run</b><span class="mu">Story 3 in review</span><div class="bar"><div class="bar" style="width:30%; background:var(--work)"></div></div></div>
+          <div class="tile"><b class="work">retro</b><span class="mu">Reading 30 run records…</span><span class="mono mu">40s</span></div>
+          <div class="tile"><b class="work">feedback n58</b><span class="mu">Running go vet</span><span class="mono mu">3m</span></div>
+          <div class="tile"><b class="work">sweep</b><span class="mu">Freed 4.1G</span><span class="mono mu">1m</span></div>
+          <div class="tile mu" style="justify-content:center; align-items:center">13 paused ›</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
