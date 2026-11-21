@@ -5,11 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { FlowSummary, Pr, Session, Snapshot, Usage } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
+import { readFilter, useFilter } from "@/fleet/filter";
 import { allSessions } from "@/fleet/groups";
 import { markSeen, readSeen, SEEN_KEY } from "@/fleet/seen";
+import { WorkspaceFilter } from "@/fleet/WorkspaceFilter";
 import { panelFor } from "@/app/panels";
 import "@/panels";
 import { useFleet } from "@/store/fleet";
+import { setViewportWidth } from "@/test-layout";
 
 import { FleetHead } from "./FleetHead";
 import { ago, flowChip, SessionRow } from "./SessionRow";
@@ -34,6 +37,7 @@ afterEach(() => {
   vi.useRealTimers();
   resetStore();
   window.localStorage.clear();
+  useFilter.setState({ stored: readFilter() });
   window.history.replaceState(null, "", window.location.pathname);
 });
 
@@ -343,6 +347,7 @@ describe("the fleet panel", () => {
 
   it("honours a filter the classic app stored", () => {
     window.localStorage.setItem("loom.filter", JSON.stringify("1"));
+    useFilter.setState({ stored: readFilter() });
     withSnapshot();
     render(<Body />);
     expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
@@ -352,6 +357,7 @@ describe("the fleet panel", () => {
 
   it("reads a stored filter for a workspace that is not listed as all, and leaves it stored", () => {
     window.localStorage.setItem("loom.filter", JSON.stringify("9"));
+    useFilter.setState({ stored: readFilter() });
     withSnapshot();
     render(<Body />);
     expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
@@ -379,6 +385,7 @@ describe("the fleet panel", () => {
     expect(screen.getByText("No sessions.")).toBeInTheDocument();
     unmount();
     window.localStorage.setItem("loom.filter", JSON.stringify("2"));
+    useFilter.setState({ stored: readFilter() });
     render(<Body />);
     expect(screen.getByText("No sessions in this workspace.")).toBeInTheDocument();
   });
@@ -551,6 +558,75 @@ describe("the fleet panel", () => {
       render(<Body />);
 
       expect(readSeen()).toEqual({ "5": 1, "6": 2 });
+    });
+  });
+
+  describe("WorkspaceFilter", () => {
+    it("draws no filter of its own in the fleet panel on desktop, and one on the phone", () => {
+      withSnapshot();
+      setViewportWidth(1100);
+      const desk = render(<Body />);
+      expect(screen.queryByLabelText("Workspaces")).toBeNull();
+      desk.unmount();
+
+      setViewportWidth(1400);
+      const wide = render(<Body />);
+      expect(screen.queryByLabelText("Workspaces")).toBeNull();
+      wide.unmount();
+
+      setViewportWidth(390);
+      render(<Body />);
+      expect(screen.getByLabelText("Workspaces")).toBeInTheDocument();
+    });
+
+    it("a pick in the filter shows in the fleet and in what the new-session form reads", async () => {
+      withSnapshot();
+      setViewportWidth(1100);
+      render(
+        <>
+          <WorkspaceFilter />
+          <Body />
+        </>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: "flow" }));
+      expect(screen.getByText("flow-docs")).toBeInTheDocument();
+      expect(screen.queryByText("fix-pane-cursor")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("loom.filter")).toBe('"2"');
+      expect(readFilter()).toBe("2");
+
+      await userEvent.click(screen.getByRole("button", { name: "All" }));
+      expect(screen.getByText("flow-docs")).toBeInTheDocument();
+      expect(screen.getByText("fix-pane-cursor")).toBeInTheDocument();
+      expect(window.localStorage.getItem("loom.filter")).toBe('""');
+    });
+
+    it("draws nothing with one shown workspace", () => {
+      withSnapshot((s) => {
+        s.workspaces![1].shown = false;
+      });
+      const { container } = render(<WorkspaceFilter />);
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("reads a stored workspace that is not listed as all, and leaves it stored", () => {
+      window.localStorage.setItem("loom.filter", JSON.stringify("9"));
+      useFilter.setState({ stored: readFilter() });
+      withSnapshot();
+      render(<WorkspaceFilter />);
+      expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+      expect(window.localStorage.getItem("loom.filter")).toBe('"9"');
+    });
+
+    it("drops the 44px touch minimum when dense", () => {
+      withSnapshot();
+      const plain = render(<WorkspaceFilter />);
+      expect(screen.getByRole("button", { name: "All" }).className).toContain("after:min-h-[44px]");
+      plain.unmount();
+
+      render(<WorkspaceFilter dense />);
+      expect(screen.getByRole("button", { name: "All" }).className).not.toContain(
+        "after:min-h-[44px]",
+      );
     });
   });
 

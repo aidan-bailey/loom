@@ -20,8 +20,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { launchBody, type LaunchPicks } from "@/commands/launch";
+import { readFilter } from "@/fleet/filter";
 import { MAX_MESSAGE_BYTES, utf8Length } from "@/lib/utf8";
-import { FILTER_KEY } from "@/panels/fleet";
 import { useFleet, useLink } from "@/store/fleet";
 
 const LABEL = "text-xs font-semibold tracking-wide text-muted-foreground uppercase";
@@ -31,21 +31,10 @@ interface Option {
   label: string;
 }
 
-// storedFilter is the workspace ID the fleet's filter holds, "" for none: the fleet keeps it in
-// localStorage as a JSON string, and anything else (a throw included) is none.
-function storedFilter(): string {
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(FILTER_KEY) ?? '""');
-    return typeof value === "string" ? value : "";
-  } catch {
-    return "";
-  }
-}
-
 // firstWorkspace is the form's first choice: the fleet's filter, else the first shown workspace,
 // else the first one, else none ("").
 function firstWorkspace(workspaces: Workspace[]): string {
-  const filter = storedFilter();
+  const filter = readFilter();
   const named = workspaces.find((w) => String(w.id) === filter);
   const chosen = named ?? workspaces.find((w) => w.shown !== false) ?? workspaces[0];
   return chosen === undefined ? "" : String(chosen.id);
