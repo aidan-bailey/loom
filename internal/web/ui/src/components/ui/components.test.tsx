@@ -19,6 +19,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "./drawer";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "./dialog";
 import { Input } from "./input";
 import { InputOTP, InputOTPSeparator, InputOTPSlot } from "./input-otp";
 import {
@@ -232,6 +233,61 @@ describe("Drawer", () => {
   });
 });
 
+function SampleDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Kill fix-pane-cursor?</DialogTitle>
+        <DialogDescription>The worktree is stashed first.</DialogDescription>
+        <DialogFooter>
+          <Button
+            onClick={() => {
+              onOpenChange(false);
+            }}
+          >
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+describe("Dialog", () => {
+  it("Dialog: it shows its title and description while open, none while closed, and Escape reports false", async () => {
+    const user = userEvent.setup();
+    const fn = vi.fn();
+    const { unmount } = render(<SampleDialog open onOpenChange={fn} />);
+    expect(await screen.findByRole("dialog")).toHaveAccessibleName("Kill fix-pane-cursor?");
+    expect(screen.getByText("The worktree is stashed first.")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(fn.mock.calls[0][0]).toBe(false);
+    unmount();
+
+    render(<SampleDialog open={false} onOpenChange={vi.fn()} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Dialog: its parts carry their slots, the popup holds no button of its own, and the footer is a row from sm", async () => {
+    render(<SampleDialog open onOpenChange={vi.fn()} />);
+    const popup = await screen.findByRole("dialog");
+    expect(popup).toHaveAttribute("data-slot", "dialog-content");
+    expect(popup.querySelector('[data-slot="dialog-title"]')).not.toBeNull();
+    expect(popup.querySelector('[data-slot="dialog-description"]')).not.toBeNull();
+    const footer = popup.querySelector('[data-slot="dialog-footer"]');
+    expect(footer).not.toBeNull();
+    expect(footer?.className).toContain("sm:flex-row-reverse");
+    expect(within(popup).getAllByRole("button")).toHaveLength(1);
+    expect(document.querySelector('[data-slot="dialog-backdrop"]')).not.toBeNull();
+  });
+});
+
 describe("Toaster", () => {
   it("Toaster: a toast added through toastManager shows, an error one is styled, and its close control dismisses it", async () => {
     const user = userEvent.setup();
@@ -281,6 +337,17 @@ describe("no <style> element", () => {
       toastManager.add({ title: "hello", timeout: 0 });
     });
     await screen.findByText("hello");
+    await screen.findByRole("dialog", { name: "Kill fix-pane-cursor?" });
+    expect(document.querySelectorAll("style").length).toBe(0);
+  });
+
+  it("No Dialog injects a <style> element, even open under the CSP provider", async () => {
+    expect(document.querySelectorAll("style").length).toBe(0);
+    render(
+      <CSPProvider disableStyleElements>
+        <SampleDialog open onOpenChange={vi.fn()} />
+      </CSPProvider>,
+    );
     await screen.findByRole("dialog", { name: "Kill fix-pane-cursor?" });
     expect(document.querySelectorAll("style").length).toBe(0);
   });
