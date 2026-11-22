@@ -422,6 +422,14 @@ describe("paletteGroups: commands and places", () => {
     expect(plain.some((g) => g.label === "Places")).toBe(false);
   });
 
+  it("a query of only whitespace gives the empty query's groups", () => {
+    const commands = [cmd("a.one", "One")];
+    const ctx = context(current);
+    expect(paletteGroups(input({ query: "  ", commands, ctx, tabs }))).toEqual(
+      paletteGroups(input({ query: "", commands, ctx, tabs })),
+    );
+  });
+
   it("orders the groups Sessions, Commands, Places, and leaves out an empty one", () => {
     const commands = [cmd("a.one", "One")];
     const labels = (groups: PaletteGroup[]): string[] => groups.map((g) => g.label);
