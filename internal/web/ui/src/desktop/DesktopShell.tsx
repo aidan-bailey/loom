@@ -4,6 +4,8 @@
 import { Outlet } from "@tanstack/react-router";
 import { useMemo, useState, type ReactElement } from "react";
 
+// Registers the two view toggles with the desktop chunk, not the phone's entry.
+import "@/commands/view";
 import { useDesktop } from "@/app/desktopState";
 import type { PanelId } from "@/app/panels";
 import { panelProps, useRoute } from "@/app/routes";

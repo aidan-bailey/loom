@@ -10,6 +10,7 @@ import { useEffect, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "@/api/gen";
+import { commandById } from "@/app/commands";
 import { readDesktopPrefs, useDesktop } from "@/app/desktopState";
 import { definePanel, type Panel } from "@/app/panels";
 import { useScrollPane, windowPane } from "@/app/scroll";
@@ -509,5 +510,12 @@ describe("DesktopShell's inspector", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("DesktopShell's commands", () => {
+  it("registers the view toggles by being imported", () => {
+    expect(commandById("view.toggleSidebar")).toBeDefined();
+    expect(commandById("view.toggleInspector")).toBeDefined();
   });
 });
