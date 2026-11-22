@@ -1,4 +1,11 @@
-import { useId, useState, useSyncExternalStore, type ReactElement } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+  type RefObject,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -135,16 +142,24 @@ export type ConfirmVariant = "drawer" | "dialog";
 // the text in place, inside the one DrawerContent or DialogContent, so the
 // transition and focus trap do not restart.
 function Sheet({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): ReactElement {
+  const cancel = useRef<HTMLButtonElement>(null);
   if (variant === "dialog") {
+    // The palette's Enter opens a confirmation from the keyboard, and the dialog lists the action
+    // before Cancel, so first-tabbable focus would let an Enter held past key-repeat press the
+    // action: a destructive ask opens on Cancel, and any other keeps the Dialog's default. A newer
+    // ask replacing an open one does not move focus, since the dialog stays open. The drawer is
+    // the phone's and is unchanged.
+    const initialFocus = (): boolean | HTMLElement =>
+      ask.spec.destructive ? (cancel.current ?? true) : true;
     return (
-      <DialogContent>
+      <DialogContent initialFocus={initialFocus}>
         <div className="flex flex-col gap-1.5">
           <DialogTitle>{ask.spec.title}</DialogTitle>
           <DialogDescription className="break-words whitespace-pre-line">
             {ask.spec.body}
           </DialogDescription>
         </div>
-        <AskBody key={ask.id} ask={ask} variant={variant} />
+        <AskBody key={ask.id} ask={ask} variant={variant} cancel={cancel} />
       </DialogContent>
     );
   }
@@ -163,7 +178,15 @@ function Sheet({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): ReactEl
 
 // AskBody is the ask's field and buttons. Sheet keys it by the ask, so each
 // ask starts with a field of its own; its buttons answer that ask by its id.
-function AskBody({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): ReactElement {
+function AskBody({
+  ask,
+  variant,
+  cancel,
+}: {
+  ask: Ask;
+  variant: ConfirmVariant;
+  cancel?: RefObject<HTMLButtonElement | null>;
+}): ReactElement {
   const { spec } = ask;
   const Footer = variant === "dialog" ? DialogFooter : DrawerFooter;
   const [value, setValue] = useState(() => firstValue(spec.field));
@@ -225,6 +248,7 @@ function AskBody({ ask, variant }: { ask: Ask; variant: ConfirmVariant }): React
           {spec.action}
         </Button>
         <Button
+          ref={cancel}
           size="lg"
           variant="outline"
           onClick={() => {

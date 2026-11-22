@@ -388,9 +388,66 @@ describe("ConfirmSheet as a dialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Kill" }));
     expect(await answer).toBe("");
   });
+
+  it("a destructive ask opens with focus on Cancel", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const answer = ask(kill);
+
+    const dialog = await screen.findByRole("dialog", { name: "Kill session" });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    });
+    await userEvent.keyboard("{Enter}");
+    expect(await answer).toBeNull();
+  });
+
+  it("a non-destructive ask keeps the Dialog's default focus", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    void ask({ ...kill, destructive: false });
+
+    const dialog = await screen.findByRole("dialog", { name: "Kill session" });
+    await waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).not.toHaveFocus();
+  });
+
+  it("a destructive ask with a text field still opens on Cancel", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    void ask({ ...textSpec(5), destructive: true });
+
+    const dialog = await screen.findByRole("dialog", { name: "Deny this?" });
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    });
+  });
+
+  it("the focus follows the next ask when the dialog is reopened", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const first = ask(kill);
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await first;
+    await waitFor(() => {
+      expect(screen.queryByText("Kill session")).toBeNull();
+    });
+
+    void ask({ ...kill, destructive: false });
+    const dialog = await screen.findByRole("dialog", { name: "Kill session" });
+    await waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).not.toHaveFocus();
+  });
 });
 
 afterEach(() => {
+  // A test that leaves an ask open must not leave it to the next.
+  const open = testSeam.openId();
+  if (open !== null) {
+    act(() => {
+      testSeam.answer(open, null);
+    });
+  }
   useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
   window.history.replaceState(null, "", window.location.pathname);
 });
