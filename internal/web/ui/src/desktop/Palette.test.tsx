@@ -16,6 +16,7 @@ import { usePalette } from "./paletteState";
 
 const runSpy = vi.fn();
 const killSpy = vi.fn();
+const neverSpy = vi.fn();
 const seen: { open: boolean; ctx: CommandContext }[] = [];
 
 defineCommand({
@@ -35,7 +36,10 @@ defineCommand({
   title: "Aardvark never",
   palette: true,
   when: () => false,
-  run: () => Promise.resolve(),
+  run: () => {
+    neverSpy();
+    return Promise.resolve();
+  },
 });
 
 defineCommand({
@@ -102,6 +106,7 @@ afterEach(() => {
   window.history.replaceState(null, "", window.location.pathname);
   runSpy.mockClear();
   killSpy.mockClear();
+  neverSpy.mockClear();
   seen.length = 0;
 });
 
@@ -322,6 +327,7 @@ describe("Palette", () => {
     await userEvent.keyboard("{Enter}");
     await userEvent.click(item);
     expect(usePalette.getState().open).toBe(true);
+    expect(neverSpy).not.toHaveBeenCalled();
     expect(seen).toHaveLength(0);
   });
 
