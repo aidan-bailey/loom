@@ -15,3 +15,6 @@ func lowerPriority() error {
 	}
 	return nil
 }
+
+// raiseOOMScore does nothing: oom_score_adj is Linux's.
+func raiseOOMScore() error { return nil }

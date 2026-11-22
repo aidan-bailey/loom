@@ -22,6 +22,21 @@ import (
 // niceValue is the nice value the shim, and everything it starts, runs at.
 const niceValue = 10
 
+// jobOOMScoreAdj is the oom_score_adj a build or agent job, and everything it
+// starts, runs at on Linux, so the kernel's and earlyoom's victim choice takes
+// a job's processes before an interactive agent's of a similar size. A
+// systemd user manager starts its units at 200, and a host may raise its tmux
+// server to match; a job inherits the daemon's score, often 0, so it would be
+// chosen last. That happened on 2026-11-21: a job's vitest workers held 26 GB
+// at 0 while earlyoom killed every agent and the tmux server first. 300
+// stays close enough to 200 that an interactive process about 4 GB larger
+// than a job's (a tenth of RAM plus swap there) is still chosen first.
+const jobOOMScoreAdj = 300
+
+// oomScoreTarget is the oom_score_adj a job runs at, given the shim's: it
+// raises the score to jobOOMScoreAdj and keeps one already above it.
+func oomScoreTarget(current int) int { return max(current, jobOOMScoreAdj) }
+
 // Start starts a shim for the job in jobDir: this program's "job-shim", as a
 // child in a session of its own (so it leads a process group whose id is its
 // pid, the job's), with stdin on /dev/null and stdout and stderr appended to
@@ -137,6 +152,14 @@ func RunShim(jobDir string) int {
 	if err := lowerPriority(); err != nil {
 		// Not fatal: a job at the default priority is still a job.
 		fmt.Fprintf(os.Stderr, "loom job-shim: lowering the priority: %v\n", err)
+	}
+	// A run engine keeps the daemon's score: killing it ends a whole plan
+	// run, while a build or an agent's own test run is a job to lose first.
+	if spec.Kind != KindRun {
+		if err := raiseOOMScore(); err != nil {
+			// Not fatal either: the job runs at the daemon's score.
+			fmt.Fprintf(os.Stderr, "loom job-shim: raising the OOM score: %v\n", err)
+		}
 	}
 
 	lock, err := os.OpenFile(filepath.Join(jobDir, LockFile), os.O_RDWR|os.O_CREATE, 0o600)

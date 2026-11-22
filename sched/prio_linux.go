@@ -3,6 +3,9 @@ package sched
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -26,4 +29,30 @@ func lowerPriority() error {
 		errs = append(errs, fmt.Errorf("ioprio_set: %w", errno))
 	}
 	return errors.Join(errs...)
+}
+
+// oomScoreAdjFile is this process's oom_score_adj, kept per process (not per
+// thread) and inherited by what it forks.
+const oomScoreAdjFile = "/proc/self/oom_score_adj"
+
+// raiseOOMScore raises this process's oom_score_adj to oomScoreTarget of its
+// own, so the command RunShim starts next inherits it. Raising needs no
+// privilege; a score already at or above the target is left alone.
+func raiseOOMScore() error {
+	data, err := os.ReadFile(oomScoreAdjFile)
+	if err != nil {
+		return fmt.Errorf("reading oom_score_adj: %w", err)
+	}
+	current, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return fmt.Errorf("reading oom_score_adj: %w", err)
+	}
+	want := oomScoreTarget(current)
+	if want == current {
+		return nil
+	}
+	if err := os.WriteFile(oomScoreAdjFile, []byte(strconv.Itoa(want)), 0o600); err != nil {
+		return fmt.Errorf("writing oom_score_adj: %w", err)
+	}
+	return nil
 }
