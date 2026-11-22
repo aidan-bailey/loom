@@ -102,6 +102,7 @@ async function enable(used: Run): Promise<void> {
 defineCommand({
   id: "push.enable",
   title: "Turn on notifications",
+  palette: true,
   when: (ctx) => ctx.panel === "settings",
   run: async () => {
     const used: Run = { ok: false, registration: null };

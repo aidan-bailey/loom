@@ -74,6 +74,7 @@ defineCommand<{ text: string }>({
 defineCommand({
   id: "session.pause",
   title: "Pause",
+  palette: true,
   when: offers("pause"),
   run: async (ctx) => {
     showOutcome(await api.pause(requireSession(ctx).id), "Pause");
@@ -83,6 +84,7 @@ defineCommand({
 defineCommand({
   id: "session.resume",
   title: "Resume",
+  palette: true,
   when: offers("resume"),
   run: async (ctx) => {
     showOutcome(await api.resume(requireSession(ctx).id), "Resume");
@@ -92,6 +94,7 @@ defineCommand({
 defineCommand({
   id: "session.push",
   title: "Push",
+  palette: true,
   when: offers("push"),
   confirm: (ctx) => ({
     title: "Push this branch?",
@@ -117,6 +120,7 @@ function mergeSources(session: Session): ChoiceOption[] {
 defineCommand({
   id: "session.merge",
   title: "Merge",
+  palette: true,
   when: offers("merge"),
   // No sheet when there is nothing to pick: run then says so.
   confirm: (ctx) => {
@@ -167,6 +171,7 @@ function killBody(session: Session): string {
 defineCommand({
   id: "session.kill",
   title: "Kill",
+  palette: true,
   when: offers("kill"),
   confirm: (ctx) => ({
     title: "Kill this session?",

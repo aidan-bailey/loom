@@ -76,6 +76,7 @@ defineCommand<{ replies: string[] | null; onSaved?: () => void }>({
 defineCommand({
   id: "device.unpair",
   title: "Unpair this phone",
+  palette: true,
   when: onSettings,
   confirm: () => ({
     title: "Unpair this phone?",

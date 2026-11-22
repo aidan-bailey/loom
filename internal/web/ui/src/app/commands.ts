@@ -196,12 +196,13 @@ export async function runCommand<A>(
 // splash on every route (so it works with the daemon down and nothing saved)
 // and in Settings. It is offline for that reason: the cookie is set and the
 // worker's update may fail, in which case the switch comes with the next
-// launch.
+// launch. The palette lists it.
 defineCommand({
   id: "app.backToClassic",
   title: "Back to classic",
   icon: ArrowLeft,
   offline: true,
+  palette: true,
   when: () => true,
   run: async () => {
     if ((await switchApp("classic")) === "deferred") {
