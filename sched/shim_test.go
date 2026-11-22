@@ -388,6 +388,64 @@ func TestRunShim_SetsTheCommandsIOClass(t *testing.T) {
 	assert.Contains(t, shimLog(t, dir), "best-effort: prio 7")
 }
 
+// ownOOMScoreAdj is this test process's oom_score_adj, which the shim it
+// starts inherits.
+func ownOOMScoreAdj(t *testing.T) int {
+	t.Helper()
+	data, err := os.ReadFile("/proc/self/oom_score_adj")
+	require.NoError(t, err)
+	adj, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	require.NoError(t, err)
+	return adj
+}
+
+func TestRunShim_RaisesTheCommandsOOMScore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("oom_score_adj is Linux's")
+	}
+	if self := ownOOMScoreAdj(t); self >= jobOOMScoreAdj {
+		t.Skipf("this test process already has oom_score_adj %d: the shim's raise would not show", self)
+	}
+	for _, kind := range []string{"", KindAgent} {
+		t.Run("kind "+strconv.Quote(kind), func(t *testing.T) {
+			spec := shimSpec(t, []string{"cat", "/proc/self/oom_score_adj"})
+			spec.Kind = kind
+			dir := writeShimJob(t, spec)
+			startShim(t, dir)
+
+			awaitShimExit(t, dir)
+
+			adj, err := strconv.Atoi(strings.TrimSpace(shimOutput(t, dir)))
+			require.NoError(t, err, "cat printed %q", shimOutput(t, dir))
+			assert.Equal(t, jobOOMScoreAdj, adj, "the command, and all it starts, outranks the agents for an OOM killer")
+		})
+	}
+}
+
+func TestRunShim_LeavesARunJobsOOMScore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("oom_score_adj is Linux's")
+	}
+	self := ownOOMScoreAdj(t)
+	spec := shimSpec(t, []string{"cat", "/proc/self/oom_score_adj"})
+	spec.Kind = KindRun
+	dir := writeShimJob(t, spec)
+	startShim(t, dir)
+
+	awaitShimExit(t, dir)
+
+	adj, err := strconv.Atoi(strings.TrimSpace(shimOutput(t, dir)))
+	require.NoError(t, err, "cat printed %q", shimOutput(t, dir))
+	assert.Equal(t, self, adj, "a run engine keeps the daemon's score: killing it ends a whole plan run")
+}
+
+func TestOOMScoreTarget_OnlyRaises(t *testing.T) {
+	assert.Equal(t, jobOOMScoreAdj, oomScoreTarget(0))
+	assert.Equal(t, jobOOMScoreAdj, oomScoreTarget(-900))
+	assert.Equal(t, jobOOMScoreAdj, oomScoreTarget(jobOOMScoreAdj))
+	assert.Equal(t, 800, oomScoreTarget(800), "a score already above the job's is kept")
+}
+
 // holdRunLock takes run.lock in dir the way a shim does and returns the
 // function that lets go of it, which the test calls at the point it chooses
 // (a cleanup lets go too).

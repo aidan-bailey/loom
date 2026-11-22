@@ -123,7 +123,7 @@ The process half of the package: it starts a job's runner, tests whether the run
 | `shim.go` | `Runner`, `NewRunner`, `ErrUnsupported` |
 | `shim_unix.go` | `RunShim`, `Runner.Start`, `Probe`, `SignalGroup` |
 | `shim_windows.go` | the same four names, each answering `ErrUnsupported` |
-| `prio_linux.go`, `prio_other.go` | the shim's nice value and, on Linux, its I/O class |
+| `prio_linux.go`, `prio_other.go` | the shim's nice value and, on Linux, its I/O class and OOM score |
 | `sample.go` | `Proc`, `Snapshot`, `ParsePS`, `parseProcStat`, `Snapshot.Group`, `Snapshot.Session` |
 | `sample_linux.go`, `sample_other.go` | `Sample`: from `/proc` on Linux, from `ps` elsewhere |
 | `host.go`, `host_linux.go`, `host_darwin.go`, `host_other.go` | `DetectHost` and the RAM readers |
@@ -131,7 +131,7 @@ The process half of the package: it starts a job's runner, tests whether the run
 
 **The shim.** `loom job-shim <job dir>` (`job_shim.go` in the root package) calls `RunShim`. The daemon starts it with `Runner.Start` as `<loom> job-shim <job dir>`, a child in a session of its own (`Setsid`), so it leads a process group whose id is its pid. Its stdin is `/dev/null`, and its stdout and stderr are appended to `output.log`. It:
 1. refuses to run unless it leads its group;
-2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, so the command and its children inherit both;
+2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, and, for a build or agent job (not a run job), raises its own `oom_score_adj` to 300 (`jobOOMScoreAdj`; a higher one is kept), so the command and its children inherit all three and an OOM killer takes a job's processes before an interactive agent's of a similar size;
 3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock; when `spec.json` names a scope, joins it (`joinScope`: `StartTransientUnit` with its own pid, in the slice, with `CPUWeight` from the claim, `OOMPolicy=kill` and `CollectMode=inactive-or-failed`, bounded by 2 s), and runs uncontained, saying why, when it can't; and writes `started.json`;
 4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the hints (`Hints`: the parallelism variables, and `SCCACHE_CLIENT_SIDE=1`, so sccache runs each compile in its client, inside the job's tree, rather than in its shared daemon), found on that environment's `PATH`;
 5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; a SIGTERM that arrives before the command starts is not checked for, since Go delivers signals asynchronously and no check is reliable; the command starts anyway and the daemon's SIGKILL escalation, 10 s after the cancel, ends it and the job settles as cancelled;
