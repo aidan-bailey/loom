@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { useSession } from "@/store/fleet";
 
 import { Inspector } from "./Inspector";
+import { Palette } from "./Palette";
+import { usePaletteKey } from "./paletteState";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -67,7 +69,17 @@ export default function DesktopShell(): ReactElement {
   const inspector = useDesktop((s) => s.inspector);
   const layout = useLayout();
   const session = useSession(panelProps(route).sessionId);
-  if (route.panel === "mockupFull") return <Outlet />;
+  // The chord's hook runs before the early return, so it works on every route; Palette is drawn on
+  // both branches, so the store and the dialog never disagree.
+  usePaletteKey();
+  if (route.panel === "mockupFull") {
+    return (
+      <>
+        <Outlet />
+        <Palette />
+      </>
+    );
+  }
   return (
     <div data-slot="desktop" className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
       <TopBar />
@@ -80,6 +92,7 @@ export default function DesktopShell(): ReactElement {
           <Inspector session={session} middle={tabOf(route.panel, session)} />
         ) : null}
       </div>
+      <Palette />
     </div>
   );
 }

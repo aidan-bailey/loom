@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "@/api/gen";
 import { commandById } from "@/app/commands";
+import { askConfirm, testSeam } from "@/app/ConfirmSheet";
 import { readDesktopPrefs, useDesktop } from "@/app/desktopState";
 import { definePanel, type Panel } from "@/app/panels";
 import { useScrollPane, windowPane } from "@/app/scroll";
@@ -20,8 +21,10 @@ import { useFleet } from "@/store/fleet";
 import { setViewportWidth } from "@/test-layout";
 
 import DesktopShell from "./DesktopShell";
+import { usePalette } from "./paletteState";
 
 afterEach(() => {
+  usePalette.setState({ open: false });
   useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
   window.history.replaceState(null, "", window.location.pathname);
 });
@@ -517,5 +520,105 @@ describe("DesktopShell's commands", () => {
   it("registers the view toggles by being imported", () => {
     expect(commandById("view.toggleSidebar")).toBeDefined();
     expect(commandById("view.toggleInspector")).toBeDefined();
+  });
+});
+
+describe("DesktopShell's palette", () => {
+  const chord = (target: Document | Element = document): void => {
+    fireEvent.keyDown(target, { key: "k", ctrlKey: true });
+  };
+
+  it("the chord opens the palette on a session route, and a second chord closes it", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    chord();
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+    chord();
+    await waitFor(() => expect(slot("palette")).toBeNull());
+  });
+
+  it("the chord opens it from a text field the screen holds", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100", <input aria-label="reply" />);
+
+    const field = await screen.findByLabelText("reply");
+    field.focus();
+    fireEvent.keyDown(field, { key: "k", metaKey: true });
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+  });
+
+  it("the chord and the palette work on the full mockup, which draws no chrome", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100/mockup/full");
+
+    await screen.findByText("outlet");
+    expect(slot("desktop")).toBeNull();
+    chord();
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+    expect(usePalette.getState().open).toBe(true);
+  });
+
+  it("the top bar's box opens the palette", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    fireEvent.click(slot("palette-box")!);
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+  });
+
+  it("a palette open when the shell unmounts is closed, and not drawn when it returns", async () => {
+    tabbed();
+    live();
+    const first = desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    chord();
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+    first.unmount();
+    expect(usePalette.getState().open).toBe(false);
+
+    desktopAt("#/s/100");
+    await screen.findByText("outlet");
+    expect(slot("palette")).toBeNull();
+  });
+
+  it("a chord pressed while a confirmation is open does not open it", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    await screen.findByText("outlet");
+    act(() => {
+      void askConfirm({ title: "Kill", body: "b", action: "Kill", destructive: true });
+    });
+    chord();
+    expect(slot("palette")).toBeNull();
+    expect(usePalette.getState().open).toBe(false);
+    act(() => testSeam.answer(testSeam.openId() as number, null));
+  });
+
+  it("the palette lists the sessions of the shell's fleet", async () => {
+    tabbed();
+    live();
+    desktopAt("#/s/100");
+
+    const title = allSessions(aSnapshot())[0]?.title;
+    if (title === undefined) throw new Error("the fixture holds no session");
+    await screen.findByText("outlet");
+    chord();
+    await waitFor(() => expect(slot("palette")).not.toBeNull());
+    fireEvent.change(slot("palette-input")!, { target: { value: title } });
+    await waitFor(() => {
+      const item = document.querySelector('[data-slot="palette-item"][data-kind="session"]');
+      expect(item).not.toBeNull();
+      expect(item).toHaveTextContent(title);
+    });
   });
 });
