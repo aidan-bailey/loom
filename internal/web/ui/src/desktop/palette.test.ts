@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { Session, Snapshot } from "@/api/gen";
+import type { Command } from "@/app/commands";
 import { context, makeSession } from "@/commands/testkit";
 import { fixtureSnapshot } from "@/fixtures";
+import { allSessions } from "@/fleet/groups";
 
 import {
   compareCodePoints,
   fuzzyScore,
   paletteGroups,
+  type PaletteCommand,
   type PaletteGroup,
   type PaletteInput,
   type PaletteItem,
@@ -226,5 +229,226 @@ describe("paletteGroups: sessions", () => {
     const b = plain(11, "xpa");
     const items = sessionItems(paletteGroups(input({ snapshot: snapshotOf([a, b]), query: "pa" })));
     expect(keys(items)).toEqual(["session:10", "session:11"]);
+  });
+});
+
+describe("paletteGroups: commands and places", () => {
+  const cmd = (
+    id: string,
+    title: Command<unknown>["title"],
+    over: Partial<Command<unknown>> = {},
+  ): Command<unknown> => ({
+    id,
+    title,
+    palette: true,
+    when: () => true,
+    run: () => Promise.resolve(),
+    ...over,
+  });
+  const items = (groups: PaletteGroup[], label: PaletteGroup["label"]): PaletteItem[] =>
+    groups.find((g) => g.label === label)?.items ?? [];
+  const current = allSessions(fixtureSnapshot(NOW)).find((s) => s.id === 3);
+  if (current === undefined) throw new Error("the canned snapshot holds no session 3");
+  const tabs = [
+    { id: "turns" as const, label: "conversation" },
+    { id: "info" as const, label: "info" },
+  ];
+  const fourCommands = (): Command<unknown>[] => [
+    cmd("c.beta", "beta"),
+    cmd("c.zed", "Zed"),
+    cmd("c.alpha", "alpha"),
+    cmd("c.hidden", "hidden", { when: () => false }),
+  ];
+  const noFlows = (): Snapshot => {
+    const snapshot = fixtureSnapshot(NOW);
+    for (const s of allSessions(snapshot)) s.flows = null;
+    return snapshot;
+  };
+
+  it("lists only the commands that carry the palette mark", () => {
+    const commands = [
+      cmd("a.one", "One"),
+      cmd("a.two", "Two", { palette: false }),
+      { ...cmd("a.three", "Three"), palette: undefined },
+    ];
+    expect(keys(items(paletteGroups(input({ commands })), "Commands"))).toEqual(["command:a.one"]);
+  });
+
+  it("draws a command as its key, its title and itself", () => {
+    const one = cmd("a.one", "One");
+    const [item] = items(paletteGroups(input({ commands: [one] })), "Commands");
+    expect(item).toMatchObject({
+      kind: "command",
+      key: "command:a.one",
+      title: "One",
+      enabled: true,
+    });
+    expect((item as PaletteCommand).command).toBe(one);
+  });
+
+  it("calls a function title with the context", () => {
+    const titled = cmd("a.title", (ctx) => `Pause ${ctx.session?.title ?? "nothing"}`);
+    const withSession = items(
+      paletteGroups(input({ commands: [titled], ctx: context(current) })),
+      "Commands",
+    );
+    expect(withSession[0]).toMatchObject({ title: "Pause plain-shell" });
+    const without = items(paletteGroups(input({ commands: [titled] })), "Commands");
+    expect(without[0]).toMatchObject({ title: "Pause nothing" });
+  });
+
+  it("says enabled as commandEnabled does", () => {
+    const enabled = (command: Command<unknown>, ctx = context(current)): boolean | undefined =>
+      // a query, so a command whose `when` fails is listed (disabled) too
+      (
+        items(
+          paletteGroups(input({ commands: [command], ctx, query: "a" })),
+          "Commands",
+        )[0] as PaletteCommand
+      )?.enabled;
+    const stale = context(current, { stale: true });
+    expect(enabled(cmd("a", "A"), stale)).toBe(false);
+    expect(enabled(cmd("a", "A", { offline: true }), stale)).toBe(true);
+    expect(enabled(cmd("a", "A", { when: () => false }), context(current, { stale: false }))).toBe(
+      false,
+    );
+    expect(enabled(cmd("a", "A"))).toBe(true);
+  });
+
+  it("with an empty query lists the commands whose when holds, by title by code point", () => {
+    const groups = paletteGroups(input({ commands: fourCommands() }));
+    expect(keys(items(groups, "Commands"))).toEqual([
+      "command:c.zed",
+      "command:c.alpha",
+      "command:c.beta",
+    ]);
+  });
+
+  it("with an empty query lists a command whose when holds even while stale, not enabled", () => {
+    const groups = paletteGroups(
+      input({ commands: [cmd("a.one", "One")], ctx: context(current, { stale: true }) }),
+    );
+    expect(items(groups, "Commands")[0]).toMatchObject({ key: "command:a.one", enabled: false });
+  });
+
+  it("with a query matches on the title and lists a command whose when fails, not enabled", () => {
+    const hid = items(paletteGroups(input({ commands: fourCommands(), query: "hid" })), "Commands");
+    expect(hid).toHaveLength(1);
+    expect(hid[0]).toMatchObject({ key: "command:c.hidden", enabled: false });
+    const a = items(paletteGroups(input({ commands: fourCommands(), query: "a" })), "Commands");
+    expect(keys(a)).toEqual(["command:c.alpha", "command:c.beta"]);
+  });
+
+  it("matches a command on its title, never its id", () => {
+    const groups = paletteGroups(input({ commands: [cmd("zzz.id", "One")], query: "zzz" }));
+    expect(groups.some((g) => g.label === "Commands")).toBe(false);
+  });
+
+  it("with an empty query lists the session's tabs, then Fleet, New session, Flows and Settings", () => {
+    const groups = paletteGroups(input({ ctx: context(current), tabs }));
+    expect(keys(items(groups, "Places"))).toEqual([
+      "place:turns",
+      "place:info",
+      "place:fleet",
+      "place:new",
+      "place:flows",
+      "place:settings",
+    ]);
+  });
+
+  it("draws a tab as its label, the session's title and its tab's link", () => {
+    const places = items(paletteGroups(input({ ctx: context(current), tabs })), "Places");
+    const byKey = (key: string): PaletteItem | undefined => places.find((i) => i.key === key);
+    expect(byKey("place:turns")).toMatchObject({
+      kind: "place",
+      title: "conversation",
+      hint: "plain-shell",
+      href: "#/s/3",
+    });
+    expect(byKey("place:info")).toMatchObject({ href: "#/s/3/info" });
+  });
+
+  it("draws Fleet, New session, Flows and Settings with their titles, no hint and their links", () => {
+    const places = items(paletteGroups(input()), "Places");
+    const byKey = (key: string): PaletteItem | undefined => places.find((i) => i.key === key);
+    expect(byKey("place:fleet")).toMatchObject({ title: "Fleet", hint: "", href: "#/" });
+    expect(byKey("place:new")).toMatchObject({ title: "New session", hint: "", href: "#/new" });
+    expect(byKey("place:flows")).toMatchObject({ title: "Flows", hint: "", href: "#/flows" });
+    expect(byKey("place:settings")).toMatchObject({
+      title: "Settings",
+      hint: "",
+      href: "#/settings",
+    });
+  });
+
+  it("leaves the Flows place out when no shown workspace's session has a flow", () => {
+    const none = items(paletteGroups(input({ snapshot: noFlows() })), "Places");
+    expect(keys(none)).not.toContain("place:flows");
+    const snapshot = fixtureSnapshot(NOW);
+    const hidden: Snapshot = {
+      ...snapshot,
+      workspaces: (snapshot.workspaces ?? []).map((w) => (w.id === 2 ? { ...w, shown: false } : w)),
+    };
+    expect(keys(items(paletteGroups(input({ snapshot: hidden })), "Places"))).not.toContain(
+      "place:flows",
+    );
+    expect(keys(items(paletteGroups(input({ snapshot: null })), "Places"))).toEqual([
+      "place:fleet",
+      "place:new",
+      "place:settings",
+    ]);
+  });
+
+  it("has no tab places without a session", () => {
+    expect(keys(items(paletteGroups(input()), "Places"))).toEqual([
+      "place:fleet",
+      "place:new",
+      "place:flows",
+      "place:settings",
+    ]);
+    expect(keys(items(paletteGroups(input({ tabs })), "Places"))).toEqual([
+      "place:fleet",
+      "place:new",
+      "place:flows",
+      "place:settings",
+    ]);
+  });
+
+  it("with a query matches a place on its title, not its hint, ordered by score, title, key", () => {
+    const ctx = context(current);
+    const s = items(paletteGroups(input({ query: "s", ctx, tabs })), "Places");
+    expect(keys(s)).toEqual(["place:new", "place:settings", "place:flows", "place:turns"]);
+    const plain = paletteGroups(input({ query: "plain", ctx, tabs }));
+    expect(plain.some((g) => g.label === "Places")).toBe(false);
+  });
+
+  it("orders the groups Sessions, Commands, Places, and leaves out an empty one", () => {
+    const commands = [cmd("a.one", "One")];
+    const labels = (groups: PaletteGroup[]): string[] => groups.map((g) => g.label);
+    expect(labels(paletteGroups(input({ commands })))).toEqual(["Sessions", "Commands", "Places"]);
+    const quiet: Snapshot = {
+      ...fixtureSnapshot(NOW),
+      sessions: { "1": [makeSession({ id: 1, title: "solo", branch: "" })] },
+    };
+    expect(labels(paletteGroups(input({ commands, snapshot: quiet })))).toEqual([
+      "Commands",
+      "Places",
+    ]);
+    expect(labels(paletteGroups(input({ snapshot: quiet })))).toEqual(["Places"]);
+    expect(paletteGroups(input({ commands, query: "zzzz" }))).toEqual([]);
+  });
+
+  it("matches across the three kinds in one query", () => {
+    const groups = paletteGroups(
+      input({
+        query: "pa",
+        commands: [cmd("p.pause", "Pause")],
+        ctx: context(current),
+        tabs: [{ id: "turns", label: "conversation" }],
+      }),
+    );
+    expect(keys(items(groups, "Sessions"))).toEqual(["session:1", "session:3"]);
+    expect(keys(items(groups, "Commands"))).toEqual(["command:p.pause"]);
+    expect(groups.some((g) => g.label === "Places")).toBe(false);
   });
 });

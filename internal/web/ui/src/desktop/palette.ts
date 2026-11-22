@@ -1,9 +1,10 @@
 // The palette's pure part: no React and no store. The score, the code-point order, and the items
 // and their order from a snapshot, the registered commands and a command context.
 import type { Session, Snapshot } from "@/api/gen";
-import type { Command, CommandContext } from "@/app/commands";
+import { commandEnabled, type Command, type CommandContext } from "@/app/commands";
 import type { PanelId } from "@/app/panels";
-import { allSessions, groupSessions } from "@/fleet/groups";
+import { hrefFor } from "@/app/routes";
+import { allSessions, groupSessions, hasShownFlows } from "@/fleet/groups";
 import { sessionHref } from "@/fleet/links";
 
 /** A tab panel of the current session. */
@@ -168,14 +169,84 @@ function sessionItems(snapshot: Snapshot | null, query: string): PaletteSession[
   return rank(entries);
 }
 
+// commandItems: the commands that carry the palette mark. With a query, those whose title matches,
+// ranked, a command whose `when` fails among them (drawn disabled); with none, those whose `when`
+// holds (a stale snapshot still lists them, dimmed), by title by code point.
+function commandItems(input: PaletteInput, query: string): PaletteCommand[] {
+  const entries: Ranked<PaletteCommand>[] = [];
+  for (const command of input.commands) {
+    if (command.palette !== true) continue;
+    const title = typeof command.title === "function" ? command.title(input.ctx) : command.title;
+    let score = 0;
+    if (query === "") {
+      if (!command.when(input.ctx)) continue;
+    } else {
+      const matched = fuzzyScore(query, title);
+      if (matched === null) continue;
+      score = matched;
+    }
+    const item: PaletteCommand = {
+      kind: "command",
+      key: `command:${command.id}`,
+      title,
+      command,
+      enabled: commandEnabled(command, input.ctx),
+    };
+    entries.push({ item, score, title, key: item.key });
+  }
+  return rank(entries);
+}
+
+// placeItems: the current session's tabs, then Fleet, New session, Flows (only when a shown
+// workspace's session has a flow) and Settings. With a query, those whose title (never the hint)
+// matches, ranked; with none, every one in that order.
+function placeItems(input: PaletteInput, query: string): PalettePlace[] {
+  const { session } = input.ctx;
+  const places: PalettePlace[] = [];
+  if (session !== undefined) {
+    for (const tab of input.tabs) {
+      places.push({
+        kind: "place",
+        key: `place:${tab.id}`,
+        title: tab.label,
+        hint: session.title,
+        href: hrefFor(tab.id, { id: String(session.id) }),
+      });
+    }
+  }
+  const plain = (id: PanelId, title: string): PalettePlace => ({
+    kind: "place",
+    key: `place:${id}`,
+    title,
+    hint: "",
+    href: hrefFor(id),
+  });
+  places.push(plain("fleet", "Fleet"), plain("new", "New session"));
+  if (input.snapshot !== null && hasShownFlows(input.snapshot))
+    places.push(plain("flows", "Flows"));
+  places.push(plain("settings", "Settings"));
+  if (query === "") return places;
+  const entries: Ranked<PalettePlace>[] = [];
+  for (const place of places) {
+    const score = fuzzyScore(query, place.title);
+    if (score !== null) entries.push({ item: place, score, title: place.title, key: place.key });
+  }
+  return rank(entries);
+}
+
 /**
  * The palette's groups, in the order Sessions, Commands, Places, a group with no items left out.
- * With an empty query the Sessions group lists the sessions that need you, the longest wait first.
+ * With an empty query the Sessions group lists the sessions that need you, the longest wait first,
+ * the Commands group the commands whose `when` holds, and the Places group every place.
  */
 export function paletteGroups(input: PaletteInput): PaletteGroup[] {
   const query = input.query.trim();
   const groups: PaletteGroup[] = [];
   const sessions = sessionItems(input.snapshot, query);
   if (sessions.length > 0) groups.push({ label: "Sessions", items: sessions });
+  const commands = commandItems(input, query);
+  if (commands.length > 0) groups.push({ label: "Commands", items: commands });
+  const places = placeItems(input, query);
+  if (places.length > 0) groups.push({ label: "Places", items: places });
   return groups;
 }
