@@ -7,6 +7,7 @@ import {
   fleetGroups,
   GROUPS,
   groupSessions,
+  hasShownFlows,
   listFleet,
   nextInGroup,
   shownWorkspaces,
@@ -52,6 +53,42 @@ describe("allSessions and shownWorkspaces", () => {
     const flagless = { ...snapshot, workspaces: [first, older as typeof second] };
     expect(shownWorkspaces(flagless).map((w) => w.id)).toEqual([1, 2]);
     expect(shownWorkspaces({ ...snapshot, workspaces: null })).toEqual([]);
+  });
+});
+
+describe("hasShownFlows", () => {
+  it("is true when a session of a shown workspace has a flow", () => {
+    expect(hasShownFlows(fixtureSnapshot(NOW))).toBe(true);
+  });
+
+  it("is false when no session has a flow, whether its list is empty or null", () => {
+    for (const flows of [[], null]) {
+      const snapshot = fixtureSnapshot(NOW);
+      for (const s of allSessions(snapshot)) s.flows = flows;
+      expect(hasShownFlows(snapshot)).toBe(false);
+    }
+  });
+
+  it("ignores the flows of a hidden workspace", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    const [first, second] = snapshot.workspaces ?? [];
+    if (!first || !second) throw new Error("the fixture has two workspaces");
+    const hidden = { ...snapshot, workspaces: [first, { ...second, shown: false }] };
+    expect(hasShownFlows(hidden)).toBe(false);
+  });
+
+  it("counts a workspace without the shown flag, as an older daemon sends it", () => {
+    const snapshot = fixtureSnapshot(NOW);
+    const [first, second] = snapshot.workspaces ?? [];
+    if (!first || !second) throw new Error("the fixture has two workspaces");
+    const older: Partial<typeof second> = { ...second };
+    delete older.shown;
+    const flagless = { ...snapshot, workspaces: [first, older as typeof second] };
+    expect(hasShownFlows(flagless)).toBe(true);
+  });
+
+  it("is false for a snapshot with no sessions", () => {
+    expect(hasShownFlows({ ...fixtureSnapshot(NOW), sessions: null })).toBe(false);
   });
 });
 

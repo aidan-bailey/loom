@@ -30,6 +30,15 @@ export function shownWorkspaces(snapshot: Snapshot): Workspace[] {
   return (snapshot.workspaces ?? []).filter((w) => w.shown !== false);
 }
 
+/**
+ * Whether a session of a shown workspace has at least one flow: the rule of the top bar's and the
+ * fleet header's Flows link and of the palette's Flows place.
+ */
+export function hasShownFlows(snapshot: Snapshot): boolean {
+  const shown = new Set(shownWorkspaces(snapshot).map((w) => w.id));
+  return allSessions(snapshot).some((x) => shown.has(x.workspace) && (x.flows ?? []).length > 0);
+}
+
 function isGroup(group: string): group is SessionGroup {
   return GROUPS.some((g) => g.key === group);
 }

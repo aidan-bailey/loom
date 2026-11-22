@@ -6,7 +6,7 @@ import type { MouseEvent, ReactElement } from "react";
 
 import { hrefFor } from "@/app/routes";
 import { ContextRow } from "@/app/shell";
-import { allSessions, shownWorkspaces } from "@/fleet/groups";
+import { hasShownFlows } from "@/fleet/groups";
 import { cn } from "@/lib/utils";
 import { useFleet, useLink } from "@/store/fleet";
 
@@ -15,13 +15,7 @@ const LINK_DENSE = "flex h-7 min-w-7 flex-none items-center justify-center px-1.
 
 export function FleetLinks({ dense = false }: { dense?: boolean }): ReactElement {
   const link = dense ? LINK_DENSE : LINK;
-  const hasFlows = useFleet((s) => {
-    if (s.snapshot === null) return false;
-    const shown = new Set(shownWorkspaces(s.snapshot).map((w) => w.id));
-    return allSessions(s.snapshot).some(
-      (x) => shown.has(x.workspace) && (x.flows ?? []).length > 0,
-    );
-  });
+  const hasFlows = useFleet((s) => s.snapshot !== null && hasShownFlows(s.snapshot));
   const { stale } = useLink();
 
   return (
