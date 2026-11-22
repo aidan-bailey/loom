@@ -104,6 +104,15 @@ function answer(id: number, value: string | null): void {
   ask.resolve(value);
 }
 
+// confirmOpen reports whether a confirmation is waiting for an answer: the
+// desktop's chord listener reads it, and a confirmation open blocks the chord.
+// It reads the module's state, not a subscription, and is true from askConfirm
+// until the ask is answered; a newer ask replacing an open one leaves it true
+// for the newer one.
+export function confirmOpen(): boolean {
+  return current !== null;
+}
+
 // testSeam reaches what a test needs and the module otherwise keeps to
 // itself: the open ask's id, and `answer`, whose id check a replaced ask's
 // buttons would otherwise never reach (they unmount with the ask).

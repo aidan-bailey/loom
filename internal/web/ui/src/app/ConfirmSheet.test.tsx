@@ -8,7 +8,7 @@ import { useFleet } from "@/store/fleet";
 
 import { CommandButton } from "./CommandButton";
 import { defineCommand, type CommandContext } from "./commands";
-import { askConfirm, ConfirmSheet, testSeam, type ConfirmSpec } from "./ConfirmSheet";
+import { askConfirm, confirmOpen, ConfirmSheet, testSeam, type ConfirmSpec } from "./ConfirmSheet";
 
 const kill: ConfirmSpec = {
   title: "Kill session",
@@ -398,6 +398,52 @@ afterEach(() => {
 function live(): void {
   useFleet.setState({ snapshot: fixtureSnapshot(), stale: false, link: "live" });
 }
+
+describe("confirmOpen", () => {
+  afterEach(() => {
+    const id = testSeam.openId();
+    if (id !== null)
+      act(() => {
+        testSeam.answer(id, null);
+      });
+  });
+
+  it("is false while nobody asks", () => {
+    expect(confirmOpen()).toBe(false);
+  });
+
+  it("is true while an ask waits and false once it is answered", async () => {
+    const waiting = ask(kill);
+    expect(confirmOpen()).toBe(true);
+    const id = testSeam.openId() as number;
+    act(() => {
+      testSeam.answer(id, null);
+    });
+    await waiting;
+    expect(confirmOpen()).toBe(false);
+  });
+
+  it("stays true when a newer ask replaces the open one, and false only after the newer one is answered", async () => {
+    const first = ask(kill);
+    const second = ask({ ...kill, title: "Push" });
+    expect(await first).toBeNull();
+    expect(confirmOpen()).toBe(true);
+    const id = testSeam.openId() as number;
+    act(() => {
+      testSeam.answer(id, null);
+    });
+    await second;
+    expect(confirmOpen()).toBe(false);
+  });
+
+  it("is false after a cancel from the drawn sheet", async () => {
+    render(<ConfirmSheet variant="dialog" />);
+    const waiting = ask(kill);
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await waiting;
+    expect(confirmOpen()).toBe(false);
+  });
+});
 
 describe("CommandButton", () => {
   it("draws the command's title and runs it with the arguments on a click", async () => {
