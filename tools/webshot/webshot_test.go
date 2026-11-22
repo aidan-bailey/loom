@@ -1053,8 +1053,44 @@ func TestRun_RendersTheNewAppAtBothDesktopSizesInARealBrowser(t *testing.T) {
 			assert.Equal(t, [2]int{d.width, d.height}, [2]int{img.Bounds().Dx(), img.Bounds().Dy()}, "a bare viewport at scale 1")
 			_, err = os.Stat(filepath.Join(out, "add-to-home.png"))
 			assert.True(t, os.IsNotExist(err), "add-to-home is phone only")
+			pf, err := os.Open(filepath.Join(out, "palette.png"))
+			require.NoError(t, err)
+			defer pf.Close()
+			pimg, err := png.Decode(pf)
+			require.NoError(t, err)
+			assert.Equal(t, [2]int{d.width, d.height}, [2]int{pimg.Bounds().Dx(), pimg.Bounds().Dy()}, "the palette is a bare viewport at scale 1")
 		})
 	}
+}
+
+// realBrowserArgs skips the test unless LOOM_WEBSHOT_BROWSER is set, and
+// returns the -browser flag it asks for (none for "1", the one on PATH).
+func realBrowserArgs(t *testing.T) []string {
+	t.Helper()
+	which := os.Getenv("LOOM_WEBSHOT_BROWSER")
+	if which == "" {
+		t.Skip("set LOOM_WEBSHOT_BROWSER to run it")
+	}
+	if which == "1" {
+		return []string{}
+	}
+	_, err := exec.LookPath(which)
+	require.NoError(t, err)
+	return []string{"-browser", which}
+}
+
+// TestRun_ARealPhoneRunWritesNoPaletteScreen runs only with
+// LOOM_WEBSHOT_BROWSER set.
+func TestRun_ARealPhoneRunWritesNoPaletteScreen(t *testing.T) {
+	extra := realBrowserArgs(t)
+	out := t.TempDir()
+	args := append([]string{"-app", "next", "-static", filepath.Join("..", "..", "internal", "web", "dist"),
+		"-device", "iphone15", "-screens", "fleet,palette", "-out", out, "-settle", "800ms"}, extra...)
+	require.NoError(t, run(args))
+	_, err := os.Stat(filepath.Join(out, "fleet.png"))
+	assert.NoError(t, err)
+	_, err = os.Stat(filepath.Join(out, "palette.png"))
+	assert.True(t, os.IsNotExist(err), "a phone has no desktop frame to press on")
 }
 
 // TestRun_RendersEveryScreenInARealBrowser drives Chromium end to end. It
