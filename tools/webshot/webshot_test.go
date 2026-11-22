@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1071,6 +1072,177 @@ func TestRun_RendersEveryScreenInARealBrowser(t *testing.T) {
 		args = append(args, "-browser", which)
 	}
 	require.NoError(t, run(args), "every screen draws with no console error and no route the fixture lacks")
+}
+
+// recordingBrowser is a page over a fakeBrowser that answers each call with
+// answer's value and records the calls: the method, and for a key event its
+// type too (Input.dispatchKeyEvent:keyDown).
+func recordingBrowser(t *testing.T, answer func(method string, params map[string]any) any) (*page, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls []string
+	c, _, stop := fakeBrowser(t, func(m cdpMessage) []cdpMessage {
+		var params map[string]any
+		_ = json.Unmarshal(m.Params, &params)
+		name := m.Method
+		if m.Method == "Input.dispatchKeyEvent" {
+			name += ":" + params["type"].(string)
+		}
+		mu.Lock()
+		calls = append(calls, name)
+		mu.Unlock()
+		res, _ := json.Marshal(answer(m.Method, params))
+		return []cdpMessage{{ID: m.ID, Result: res}}
+	})
+	t.Cleanup(stop)
+	return &page{b: &browser{cdp: c}, session: "s1"}, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), calls...)
+	}
+}
+
+// evalValue is a Runtime.evaluate answer holding v.
+func evalValue(v any) any { return map[string]any{"result": map[string]any{"value": v}} }
+
+func TestParseChord(t *testing.T) {
+	for _, tc := range []struct {
+		chord string
+		key   string
+		mods  int
+	}{
+		{"Control+k", "k", 2}, {"Meta+k", "k", 4}, {"Alt+k", "k", 1}, {"Shift+k", "k", 8},
+		{"Control+Shift+k", "k", 10}, {"Alt+Control+Meta+Shift+x", "x", 15}, {"k", "k", 0}, {"Control+5", "5", 2},
+	} {
+		key, mods, err := parseChord(tc.chord)
+		require.NoError(t, err, tc.chord)
+		assert.Equal(t, tc.key, key, tc.chord)
+		assert.Equal(t, tc.mods, mods, tc.chord)
+	}
+	for _, bad := range []string{"", "Control+", "Hyper+k", "Control+Control+k", "Control+kk", "Control+é"} {
+		_, _, err := parseChord(bad)
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), bad)
+	}
+}
+
+func TestPress_SendsKeyDownThenKeyUpWithTheChordsModifiers(t *testing.T) {
+	for chord, mods := range map[string]float64{"Control+k": 2, "Control+Shift+k": 10} {
+		var mu sync.Mutex
+		var sent []map[string]any
+		p, calls := recordingBrowser(t, func(method string, params map[string]any) any {
+			mu.Lock()
+			defer mu.Unlock()
+			sent = append(sent, params)
+			return struct{}{}
+		})
+		require.NoError(t, p.press(context.Background(), chord), chord)
+		assert.Equal(t, []string{"Input.dispatchKeyEvent:keyDown", "Input.dispatchKeyEvent:keyUp"}, calls(), chord)
+		mu.Lock()
+		require.Len(t, sent, 2)
+		for i, typ := range []string{"keyDown", "keyUp"} {
+			assert.Equal(t, typ, sent[i]["type"], chord)
+			assert.Equal(t, mods, sent[i]["modifiers"], chord)
+			assert.Equal(t, "k", sent[i]["key"], chord)
+			assert.Equal(t, "KeyK", sent[i]["code"], chord)
+			assert.EqualValues(t, 75, sent[i]["windowsVirtualKeyCode"], chord)
+			assert.NotContains(t, sent[i], "text", "a chord types nothing")
+		}
+		mu.Unlock()
+	}
+}
+
+func TestPress_ABadChordSendsNothing(t *testing.T) {
+	p, calls := recordingBrowser(t, func(string, map[string]any) any { return struct{}{} })
+	require.Error(t, p.press(context.Background(), "Hyper+k"))
+	assert.Empty(t, calls())
+}
+
+func TestPressScreen_WaitsForTheFrameSettlesPressesOnceAndWaitsForTheSlot(t *testing.T) {
+	mode := modeOf(screen{"palette", "#s/1"})
+	var mu sync.Mutex
+	var frameAsks int
+	var firstTrue, keyDown time.Time
+	var pressed bool
+	var inputBeforeFrame bool
+	p, calls := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		switch method {
+		case "Input.dispatchKeyEvent":
+			if firstTrue.IsZero() {
+				inputBeforeFrame = true
+			}
+			if params["type"] == "keyDown" {
+				keyDown = time.Now()
+				pressed = true
+			}
+			return struct{}{}
+		case "Runtime.evaluate":
+			expr, _ := params["expression"].(string)
+			if strings.Contains(expr, "desktop") {
+				frameAsks++
+				if frameAsks > 3 {
+					if firstTrue.IsZero() {
+						firstTrue = time.Now()
+					}
+					return evalValue(true)
+				}
+				return evalValue(false)
+			}
+			if strings.Contains(expr, "palette") {
+				return evalValue(pressed)
+			}
+		}
+		return evalValue(false)
+	})
+	require.NoError(t, p.pressScreen(context.Background(), mode, 150*time.Millisecond, 2*time.Second))
+	got := calls()
+	assert.Equal(t, 1, countOf(got, "Input.dispatchKeyEvent:keyDown"))
+	assert.Equal(t, 1, countOf(got, "Input.dispatchKeyEvent:keyUp"))
+	mu.Lock()
+	defer mu.Unlock()
+	assert.False(t, inputBeforeFrame, "no key before the frame answered true")
+	assert.GreaterOrEqual(t, keyDown.Sub(firstTrue), 140*time.Millisecond, "the settle sits between the frame and the key")
+}
+
+func countOf(list []string, s string) int {
+	n := 0
+	for _, x := range list {
+		if x == s {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPressScreen_NoDesktopFrameFailsBeforeAnyKey(t *testing.T) {
+	p, calls := recordingBrowser(t, func(string, map[string]any) any { return evalValue(false) })
+	err := p.pressScreen(context.Background(), modeOf(screen{"palette", "#s/1"}), 10*time.Millisecond, 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, "no desktop frame to press Control+k on", err.Error())
+	assert.Zero(t, countOf(calls(), "Input.dispatchKeyEvent:keyDown")+countOf(calls(), "Input.dispatchKeyEvent:keyUp"))
+}
+
+func TestPressScreen_ASlotThatNeverDrawsFailsAfterOnePress(t *testing.T) {
+	p, calls := recordingBrowser(t, func(method string, params map[string]any) any {
+		if method == "Runtime.evaluate" {
+			expr, _ := params["expression"].(string)
+			return evalValue(strings.Contains(expr, "desktop"))
+		}
+		return struct{}{}
+	})
+	err := p.pressScreen(context.Background(), modeOf(screen{"palette", "#s/1"}), 10*time.Millisecond, 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `pressing Control+k drew no [data-slot="palette"]`, err.Error())
+	assert.Equal(t, 1, countOf(calls(), "Input.dispatchKeyEvent:keyDown"))
+	assert.Equal(t, 1, countOf(calls(), "Input.dispatchKeyEvent:keyUp"))
+}
+
+func TestPressScreen_AScreenWithNoChordDoesNothing(t *testing.T) {
+	p, calls := recordingBrowser(t, func(string, map[string]any) any { return evalValue(true) })
+	require.NoError(t, p.pressScreen(context.Background(), screenMode{}, 10*time.Millisecond, 300*time.Millisecond))
+	assert.Empty(t, calls())
 }
 
 // serveForTest runs serveAPI on a free port and returns its address, the

@@ -634,12 +634,110 @@ func (p *page) query(ctx context.Context, expr string, out any) error {
 	return json.Unmarshal(r.Result.Value, out)
 }
 
+// parseChord splits a chord such as Control+k into its key and the CDP
+// modifiers bitmask (Alt 1, Control 2, Meta 4, Shift 8). Every part but the last
+// is a modifier, none repeats, and the last is one ASCII letter or digit.
+func parseChord(chord string) (string, int, error) {
+	bits := map[string]int{"Alt": 1, "Control": 2, "Meta": 4, "Shift": 8}
+	parts := strings.Split(chord, "+")
+	key := parts[len(parts)-1]
+	mods := 0
+	for _, m := range parts[:len(parts)-1] {
+		bit, ok := bits[m]
+		if !ok {
+			return "", 0, fmt.Errorf("chord %q: %q is not a modifier (Alt, Control, Meta, Shift)", chord, m)
+		}
+		if mods&bit != 0 {
+			return "", 0, fmt.Errorf("chord %q: %s is repeated", chord, m)
+		}
+		mods |= bit
+	}
+	if len(key) != 1 || !(key[0] >= 'a' && key[0] <= 'z' || key[0] >= 'A' && key[0] <= 'Z' || key[0] >= '0' && key[0] <= '9') {
+		return "", 0, fmt.Errorf("chord %q: the key %q is not one ASCII letter or digit", chord, key)
+	}
+	return key, mods, nil
+}
+
+// press sends chord to the page once, as a key down and a key up. It types no
+// character (a chord with Control or Meta types none, so there is no text); the
+// page's own keydown listener is what a screen waits on.
+func (p *page) press(ctx context.Context, chord string) error {
+	key, mods, err := parseChord(chord)
+	if err != nil {
+		return err
+	}
+	up := strings.ToUpper(key)
+	code := "Key" + up
+	if key[0] >= '0' && key[0] <= '9' {
+		code = "Digit" + key
+	}
+	for _, typ := range []string{"keyDown", "keyUp"} {
+		params := map[string]any{
+			"type": typ, "modifiers": mods, "key": key, "code": code, "windowsVirtualKeyCode": int(up[0]),
+		}
+		if err := p.b.cdp.call(ctx, p.session, "Input.dispatchKeyEvent", params, nil); err != nil {
+			return fmt.Errorf("press %s: %w", chord, err)
+		}
+	}
+	return nil
+}
+
+// waitFor polls every 100 ms until selector matches in the page or within has
+// passed, and reports whether it matched. A query that errors counts as no
+// match, as shoot's appDrawn loop treats it.
+func (p *page) waitFor(ctx context.Context, selector string, within time.Duration) bool {
+	q, _ := json.Marshal(selector)
+	expr := "!!document.querySelector(" + string(q) + ")"
+	deadline := time.Now().Add(within)
+	for {
+		var ok bool
+		if err := p.query(ctx, expr, &ok); err == nil && ok {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// pressWait is how long a screen with a chord gets for the desktop frame, and
+// then for its slot, to appear.
+const pressWait = 5 * time.Second
+
+// desktopFrame is the selector of the frame the lazy DesktopShell draws:
+// appDrawn is already true on the phone shell's splash and on the lazy shell's
+// fallback, where the chord has no listener yet.
+const desktopFrame = `[data-slot="desktop"]`
+
+// pressScreen presses mode's chord once the desktop frame has drawn and
+// settled, then waits for the slot the chord opens. It does nothing for a mode
+// with no chord. The chord toggles, so it is pressed once and never retried.
+func (p *page) pressScreen(ctx context.Context, mode screenMode, settle, wait time.Duration) error {
+	if mode.press == "" {
+		return nil
+	}
+	if !p.waitFor(ctx, desktopFrame, wait) {
+		return fmt.Errorf("no desktop frame to press %s on", mode.press)
+	}
+	time.Sleep(settle)
+	if err := p.press(ctx, mode.press); err != nil {
+		return err
+	}
+	if !p.waitFor(ctx, mode.drawn, wait) {
+		return fmt.Errorf("pressing %s drew no %s", mode.press, mode.drawn)
+	}
+	return nil
+}
+
 // appDrawn is true once the page is the app and it has drawn into #app.
 const appDrawn = `document.readyState === "complete" && location.protocol === "http:" && ` +
 	`!!document.querySelector("#app") && document.querySelector("#app").childElementCount > 0`
 
 // shoot loads one screen fresh, waits until the app has drawn and settled,
-// captures the viewport and writes it framed to file, bar laid over it. It returns what went
+// captures the viewport and writes it framed to file, bar laid over it. A screen
+// with a chord is pressed after the frame has drawn and settled, and settles
+// again before the capture. It returns what went
 // wrong on the page: console errors, exceptions and routes the canned loom
 // could not answer.
 func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, bar image.Image, sc screen, origin string, settle time.Duration, file string, o frameOpts) ([]string, error) {
@@ -663,6 +761,12 @@ func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, bar image.I
 		time.Sleep(100 * time.Millisecond)
 	}
 	time.Sleep(settle)
+	if mode := modeOf(sc); mode.press != "" {
+		if err := p.pressScreen(ctx, mode, settle, pressWait); err != nil {
+			return nil, err
+		}
+		time.Sleep(settle)
+	}
 
 	img, err := p.capture(ctx, d)
 	if err != nil {
