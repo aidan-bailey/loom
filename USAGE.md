@@ -831,11 +831,23 @@ and answers only phones you have paired.
   1280px, an inspector at the right showing another view of the same
   session (its tab strip never repeats the tab on the left, and its choice
   is kept in this browser). The fleet screen has no sidebar, since it is the
-  same list. Under 1280px the session's tabs reach every view. A
-  confirmation is a centred dialog and toasts sit at the bottom
-  right. The layout follows the window as it resizes, and under 1024px it is
-  the phone's. To open it on the machine that runs the daemon, use
-  `loom web open` (below).
+  same list. Under 1280px the session's tabs reach every view.
+  A confirmation is a centred dialog and toasts sit at the bottom right. A
+  **search box** in the top bar, after `loom@host`, **opens the palette**,
+  as do ⌘K on a Mac and Ctrl+K elsewhere, from anywhere, a text field
+  included. One box finds any session (by its title, its branch or its
+  workspace's name, paused ones too), runs a command on the session you are
+  on (pause, resume, push, merge, kill) or on the app (turn notifications
+  on, unpair, back to classic, show or hide the sidebar, show or hide the
+  inspector), and opens a place (the session's tabs, the fleet, new
+  session, the host's flows, settings). With nothing typed it lists the
+  sessions that need you first. Enter opens the highlighted one, Esc closes
+  the box, and a command that cannot run now (no session, or the daemon
+  unreachable) is dimmed and does nothing. Kill and the other commands that
+  ask first still ask. Nothing about it is on the phone, which keeps its
+  tabs and footer. The layout follows the window as it resizes, and under
+  1024px it is the phone's. To open it on the machine that runs the daemon,
+  use `loom web open` (below).
 
 #### Set it up
 
