@@ -1,5 +1,55 @@
 // The palette's pure part: no React and no store. The score, the code-point order, and the items
 // and their order from a snapshot, the registered commands and a command context.
+import type { Session, Snapshot } from "@/api/gen";
+import type { Command, CommandContext } from "@/app/commands";
+import type { PanelId } from "@/app/panels";
+import { allSessions, groupSessions } from "@/fleet/groups";
+import { sessionHref } from "@/fleet/links";
+
+/** A tab panel of the current session. */
+export interface PaletteTab {
+  id: PanelId;
+  label: string;
+}
+
+export interface PaletteSession {
+  kind: "session";
+  key: string;
+  title: string;
+  hint: string;
+  href: string;
+}
+
+export interface PaletteCommand {
+  kind: "command";
+  key: string;
+  title: string;
+  command: Command<unknown>;
+  enabled: boolean;
+}
+
+export interface PalettePlace {
+  kind: "place";
+  key: string;
+  title: string;
+  hint: string;
+  href: string;
+}
+
+export type PaletteItem = PaletteSession | PaletteCommand | PalettePlace;
+
+export interface PaletteGroup {
+  label: "Sessions" | "Commands" | "Places";
+  items: PaletteItem[];
+}
+
+export interface PaletteInput {
+  query: string;
+  snapshot: Snapshot | null;
+  commands: Command<unknown>[];
+  ctx: CommandContext;
+  tabs: PaletteTab[];
+}
 
 /**
  * Orders two strings by code point: the first difference decides, and a string that is a prefix of
@@ -62,4 +112,70 @@ export function fuzzyScore(query: string, text: string): number | null {
     if (ok && (best === null || score > best)) best = score;
   }
   return best;
+}
+
+interface Ranked<T> {
+  item: T;
+  score: number;
+  title: string;
+  key: string;
+}
+
+// rank orders by score (higher first), then title by code point, then key by code point: the one
+// order of all three groups.
+function rank<T>(entries: Ranked<T>[]): T[] {
+  return [...entries]
+    .sort(
+      (a, b) =>
+        b.score - a.score || compareCodePoints(a.title, b.title) || compareCodePoints(a.key, b.key),
+    )
+    .map((e) => e.item);
+}
+
+function paletteSession(session: Session, workspaceName: string): PaletteSession {
+  return {
+    kind: "session",
+    key: `session:${session.id}`,
+    title: session.title,
+    hint: [workspaceName, session.branch].filter((part) => part !== "").join(" · "),
+    href: sessionHref(session),
+  };
+}
+
+// sessionItems: with a query, every session (paused and hidden workspaces included) matched on its
+// title, branch or workspace name and ranked; with none, the sessions that need you, the longest
+// wait first.
+function sessionItems(snapshot: Snapshot | null, query: string): PaletteSession[] {
+  if (snapshot === null) return [];
+  const names = new Map((snapshot.workspaces ?? []).map((w) => [w.id, w.label || w.name] as const));
+  const nameOf = (s: Session): string => names.get(s.workspace) ?? "";
+  const sessions = allSessions(snapshot);
+  if (query === "") {
+    return groupSessions(sessions, null).needs_you.map((s) => paletteSession(s, nameOf(s)));
+  }
+  const entries: Ranked<PaletteSession>[] = [];
+  for (const s of sessions) {
+    const name = nameOf(s);
+    let best: number | null = null;
+    for (const text of [s.title, s.branch, name]) {
+      const score = fuzzyScore(query, text);
+      if (score !== null && (best === null || score > best)) best = score;
+    }
+    if (best === null) continue;
+    const item = paletteSession(s, name);
+    entries.push({ item, score: best, title: item.title, key: item.key });
+  }
+  return rank(entries);
+}
+
+/**
+ * The palette's groups, in the order Sessions, Commands, Places, a group with no items left out.
+ * With an empty query the Sessions group lists the sessions that need you, the longest wait first.
+ */
+export function paletteGroups(input: PaletteInput): PaletteGroup[] {
+  const query = input.query.trim();
+  const groups: PaletteGroup[] = [];
+  const sessions = sessionItems(input.snapshot, query);
+  if (sessions.length > 0) groups.push({ label: "Sessions", items: sessions });
+  return groups;
 }
