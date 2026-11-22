@@ -19,6 +19,14 @@
 | Every session marked gone in one tick; afterwards `tmux -S <socket> ls` (the daemon's tmux server, from `loom debug`; a bare `tmux ls` asks whatever server your shell would reach) shows every session created at the same instant (the server restarted); a burst of `orphan_tmux.kill_begin` in some process's log | An external kill: another process's orphan sweep, or the tmux server itself died |
 | Pauses or restarts scattered over minutes; `liveness.probe_timeout` warnings; `diff_stats_update_failed` git timeouts in the same window; a restart failing with "already exists" | Load: probes and git timing out. The tell is "already exists": a dead session can't already exist |
 | One session marked gone, the rest fine | Its agent exited (`/exit`, a crash); its worktree is intact |
+| Sessions marked gone over a few seconds, no `orphan_tmux.kill_begin` anywhere, `queue.ladder` lines and low `headroom_kb` just before, and the daemon still running (its `ps -o lstart=` predates the burst) | A memory killer (earlyoom, systemd-oomd, the kernel): see below |
+
+## A memory killer
+
+1. Read the host's journal for the burst's window: `journalctl --since '<start>' --until '<end>' -o short-precise | grep -E 'earlyoom|systemd-oomd|Out of memory|Killed process'`. Each earlyoom line names its victim's `oom_score_adj` and `VmRSS`; tally the victims by name, and find the first victim that was actually large.
+2. Compare scores. The victim is chosen by `oom_score`, in which `oom_score_adj` outweighs size: at adj 200 a 9 MiB process outranks a 4 GiB one at adj 0. Read `/proc/<pid>/oom_score_adj` and `/proc/<pid>/cgroup` for the daemon, a job's processes and the tmux server. A child inherits the adj of whatever started it, and moving it to another cgroup (a job's scope, tmux's `tmux-spawn-*.scope`) leaves the score unchanged. So a daemon started from an SSH login runs at 0 and so do its jobs, while a host that raises its tmux server to 200 puts every agent ahead of them. On 2026-11-21 a headless flow agent's `pnpm test` (about 26 GiB of vitest workers at adj 0) made earlyoom kill 47 Claude processes, the tmux server, and the user's `dbus-broker` before it reached the workers.
+3. Check the user bus: `systemctl --user --failed`. A killed `dbus-broker` that hits its start limit stays down, and while it does, every job runs uncontained (`queue.uncontained` … `/run/user/<uid>/bus`) and `gh`, which keeps its token in the keyring, fails. Recover with `systemctl --user reset-failed`, then start `dbus.socket`, then restart the failed units. The queue re-dials systemd every minute while jobs wait (`core/queue_contain.go:maybeProbeConfiner`).
+4. Recover the sessions as for an external kill: `r` resumes each one in place.
 
 ## An external kill
 
