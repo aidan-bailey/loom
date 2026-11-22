@@ -181,7 +181,7 @@ describe("Palette", () => {
     expect(titles()).toContain("Zebra run");
   });
 
-  it("returns focus to nothing when it closes, so the page behind is not focused", async () => {
+  it("Escape returns focus to the element that had it before the palette opened", async () => {
     const behind = document.createElement("input");
     behind.setAttribute("aria-label", "behind");
     document.body.appendChild(behind);
@@ -189,9 +189,17 @@ describe("Palette", () => {
     setup();
     await waitFor(() => expect(input()).toHaveFocus());
     await userEvent.keyboard("{Escape}");
-    await act(() => new Promise((r) => setTimeout(r, 100)));
-    expect(behind).not.toHaveFocus();
+    await waitFor(() => expect(behind).toHaveFocus());
     behind.remove();
+  });
+
+  it("reopened before the closing popup unmounts, starts with an empty query", async () => {
+    setup();
+    await userEvent.type(input(), "plain-shell");
+    expect(input()).toHaveValue("plain-shell");
+    act(() => usePalette.getState().setOpen(false));
+    act(() => usePalette.getState().setOpen(true));
+    expect(input()).toHaveValue("");
   });
 
   it("starts each opening with an empty query", async () => {

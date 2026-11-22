@@ -2,7 +2,7 @@
 // over palette.ts's groups. Enter or a click opens a session or a place, or closes the palette and
 // then runs the command through runCommand with the route's context. A module of the desktop chunk.
 import { Autocomplete } from "@base-ui/react/autocomplete";
-import { useMemo, useState, type ReactElement } from "react";
+import { useMemo, useRef, useState, type ReactElement } from "react";
 
 import { allCommands, runCommand, useCommandContext } from "@/app/commands";
 import { sessionTabs } from "@/app/panels";
@@ -16,7 +16,7 @@ import { usePalette } from "./paletteState";
 // Body is drawn inside the popup, which unmounts when closed, so its query is fresh each opening;
 // it also resets the query when `open` becomes true, so a reopen during the closing transition
 // starts empty too.
-function Body(): ReactElement {
+function Body({ onCommand }: { onCommand: () => void }): ReactElement {
   const open = usePalette((s) => s.open);
   const setOpen = usePalette((s) => s.setOpen);
   const ctx = useCommandContext();
@@ -46,10 +46,12 @@ function Body(): ReactElement {
   );
 
   // choose acts on one item: a session or a place goes to its link; a command closes the palette
-  // first, so its confirmation shows alone, and then runs as a button's does.
+  // first, so its confirmation shows alone, and then runs as a button's does; it also marks the
+  // close as a command's, so focus is not returned to the page (see `Palette`'s finalFocus).
   const choose = (item: PaletteItem): void => {
     if (item.kind === "command") {
       if (!item.enabled) return;
+      onCommand();
       setOpen(false);
       void runCommand(item.command, ctx, undefined);
       return;
@@ -116,17 +118,28 @@ function Body(): ReactElement {
 export function Palette(): ReactElement {
   const open = usePalette((s) => s.open);
   const setOpen = usePalette((s) => s.setOpen);
+  // Set by `Body`'s choose when a command closes the palette.
+  const ranCommand = useRef(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         data-slot="palette"
         className="max-w-xl p-0"
-        // The palette's closing returns focus to nothing, so a confirmation that opens right after
-        // it keeps its own focus (Cancel, for a destructive ask) and the page behind is not focused.
-        finalFocus={false}
+        // A close that runs a command returns focus to nothing, so a confirmation that opens right
+        // after it keeps its own focus (Cancel, for a destructive ask) and the page behind is not
+        // focused; any other close (Escape, a place) returns it to the box that had it.
+        finalFocus={() => {
+          const ran = ranCommand.current;
+          ranCommand.current = false;
+          return !ran;
+        }}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <Body />
+        <Body
+          onCommand={() => {
+            ranCommand.current = true;
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
