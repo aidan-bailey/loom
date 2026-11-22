@@ -35,6 +35,11 @@ export interface Command<A = void> {
   title: string | ((ctx: CommandContext) => string);
   icon?: LucideIcon;
   offline?: boolean;
+  // palette marks a command the palette lists: the palette shows exactly the
+  // registered commands that set it, and a command sets it only when it takes
+  // no args (a command whose args a view picks, such as an ask's answer, a
+  // job's controls or a send, never sets it).
+  palette?: boolean;
   // key names what the args pick (a job's id, an ask's id): it joins the
   // command's id and the session's id in the in-flight key, so Pause on one
   // job does not hold Pause on another. Without it the key is the command's
@@ -61,6 +66,12 @@ export function defineCommand<A = void>(command: Command<A>): Command<A> {
 // commandById is the command registered under id, or undefined.
 export function commandById(id: string): Command<unknown> | undefined {
   return registry.get(id);
+}
+
+// allCommands is every registered command, as a new array in definition order
+// (the Map's insertion order: a redefined id keeps its first place).
+export function allCommands(): Command<unknown>[] {
+  return [...registry.values()];
 }
 
 // useCommandContext is the context of the route on screen.

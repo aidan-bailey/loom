@@ -8,6 +8,7 @@ import { allSessions } from "@/fleet/groups";
 import { useFleet } from "@/store/fleet";
 
 import {
+  allCommands,
   commandById,
   commandEnabled,
   defineCommand,
@@ -73,6 +74,45 @@ describe("the registry", () => {
       run: () => Promise.resolve(),
     });
     expect(commandById("test.again")).toBe(second);
+  });
+});
+
+describe("allCommands", () => {
+  function define(id: string) {
+    return defineCommand({
+      id,
+      title: id,
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+  }
+
+  it("lists every registered command in definition order, and a redefined id keeps its first place", () => {
+    define("test.order.a");
+    define("test.order.b");
+    define("test.order.c");
+    const again = define("test.order.a");
+    const listed = allCommands().filter((c) => c.id.startsWith("test.order."));
+    expect(listed.map((c) => c.id)).toEqual(["test.order.a", "test.order.b", "test.order.c"]);
+    expect(listed[0]).toBe(again);
+  });
+
+  it("holds the commands the module registers itself", () => {
+    const all = allCommands();
+    expect(all.map((c) => c.id)).toContain("app.backToClassic");
+    expect(commandById("app.backToClassic")).toBe(all.find((c) => c.id === "app.backToClassic"));
+  });
+
+  it("is a snapshot: pushing to the list changes nothing", () => {
+    const first = allCommands();
+    const length = first.length;
+    first.push({
+      id: "test.snapshot.extra",
+      title: "extra",
+      when: () => true,
+      run: () => Promise.resolve(),
+    });
+    expect(allCommands().length).toBe(length);
   });
 });
 
