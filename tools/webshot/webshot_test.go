@@ -773,7 +773,7 @@ func TestScreens_PairIsShotUnpairedAndAddToHomeAsABrowserTab(t *testing.T) {
 	for _, sc := range screens {
 		assert.False(t, seen[sc.name], "the screen name %s is repeated", sc.name)
 		seen[sc.name] = true
-		if sc.name != "pair" && sc.name != "add-to-home" {
+		if sc.name != "pair" && sc.name != "add-to-home" && sc.name != "palette" {
 			assert.Equal(t, screenMode{}, modeOf(sc), "%s has a mode", sc.name)
 		}
 	}
@@ -899,7 +899,7 @@ func TestEmulation_ADesktopIsNotMobileAndHasNoTouchNoInsets(t *testing.T) {
 	}
 }
 
-func TestForDevice_DropsOnlyAddToHomeOnADesktop(t *testing.T) {
+func TestForDevice_DropsAddToHomeOnADesktopAndThePaletteOnAPhone(t *testing.T) {
 	var want []screen
 	for _, sc := range screens {
 		if sc.name != "add-to-home" {
@@ -911,10 +911,104 @@ func TestForDevice_DropsOnlyAddToHomeOnADesktop(t *testing.T) {
 		assert.Equal(t, want, got, name)
 		assert.Len(t, got, len(screens)-1, name)
 		assert.Contains(t, got, screen{"pair", "#pair"}, name)
+		assert.Contains(t, got, screen{"palette", "#s/1"}, name)
+	}
+	var phone []screen
+	for _, sc := range screens {
+		if sc.name != "palette" {
+			phone = append(phone, sc)
+		}
+	}
+	for _, name := range []string{"iphone15", "iphone16"} {
+		got := forDevice(devices[name], screens)
+		assert.Equal(t, phone, got, name)
+		assert.Len(t, got, len(screens)-1, name)
+		assert.Contains(t, got, screen{"add-to-home", ""}, name)
 	}
 	assert.Contains(t, screens, screen{"add-to-home", ""}, "screens is not changed")
-	assert.Equal(t, screens, forDevice(devices[defaultDevice], screens))
+	assert.Contains(t, screens, screen{"palette", "#s/1"}, "screens is not changed")
+	assert.Equal(t, forDevice(devices["iphone15"], screens), forDevice(devices[defaultDevice], screens))
 	assert.Empty(t, forDevice(devices["desktop"], []screen{{"add-to-home", ""}}))
+	assert.Empty(t, forDevice(devices["iphone15"], []screen{{"palette", "#s/1"}}))
+}
+
+func TestForApp_DropsDesktopOnlyScreensUnlessTheAppIsNext(t *testing.T) {
+	var without []screen
+	for _, sc := range screens {
+		if sc.name != "palette" {
+			without = append(without, sc)
+		}
+	}
+	assert.Equal(t, screens, forApp("next", screens))
+	assert.Equal(t, without, forApp("classic", screens))
+	assert.Equal(t, without, forApp("", screens))
+	assert.Empty(t, forApp("classic", []screen{{"palette", "#s/1"}}))
+	assert.Contains(t, screens, screen{"palette", "#s/1"}, "screens is not changed")
+}
+
+func TestScreens_PaletteIsDesktopOnlyAndPressesTheChord(t *testing.T) {
+	pal := screen{"palette", "#s/1"}
+	assert.Contains(t, screens, pal)
+	assert.Equal(t, screenMode{desktopOnly: true, press: "Control+k", drawn: `[data-slot="palette"]`}, modeOf(pal))
+	one, err := pickScreens("palette")
+	require.NoError(t, err)
+	assert.Equal(t, []screen{pal}, one)
+}
+
+// captureStdout returns what fn printed to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stdout
+	restore := func() { os.Stdout = orig }
+	t.Cleanup(restore)
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	fn()
+	restore()
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
+func TestRun_SkipLinesNameTheirReason(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a browser-tab screen on a desktop", []string{"-device", "desktop", "-app", "next", "-screens", "add-to-home,fleet"}, "add-to-home\tskipped: phone only"},
+		{"a desktop-only screen on a phone", []string{"-device", "iphone15", "-app", "next", "-screens", "palette,fleet"}, "palette\tskipped: desktop only"},
+		{"a desktop-only screen under the classic app", []string{"-device", "desktop", "-screens", "palette,fleet"}, "palette\tskipped: next app only"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			args := append([]string{"-browser", "no-such-browser-binary", "-out", t.TempDir()}, tc.args...)
+			got := captureStdout(t, func() { err = run(args) })
+			require.Error(t, err)
+			assert.Contains(t, got, tc.want)
+			assert.NotContains(t, got, "fleet\tskipped")
+		})
+	}
+}
+
+func TestRun_PaletteAloneOnAPhoneOrTheClassicAppRendersNothing(t *testing.T) {
+	for _, args := range [][]string{
+		{"-device", "iphone15", "-app", "next", "-screens", "palette"},
+		{"-device", "desktop", "-screens", "palette"},
+	} {
+		err := run(append([]string{"-out", t.TempDir(), "-browser", "no-such-browser-binary"}, args...))
+		require.Error(t, err, args)
+		assert.Contains(t, err.Error(), "no screen to render on", args)
+		assert.NotContains(t, err.Error(), "no-such-browser-binary", "the check runs before a browser is looked for")
+	}
 }
 
 func TestRun_AnUnknownDeviceNamesTheOnesItHas(t *testing.T) {

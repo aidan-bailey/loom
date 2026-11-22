@@ -65,7 +65,9 @@ type screen struct{ name, hash string }
 // The flow screens are session 6's flow (a run parked on story 3): its
 // board, story 1's row, its spec, and the host's Flows screen. "pair" is shot
 // with every /api/ request answered 401 (an unpaired device), "add-to-home"
-// as an iPhone browser tab (not standalone).
+// as an iPhone browser tab (not standalone). "palette" is session 1's route
+// with the command palette opened by its chord, shot on a desktop under -app
+// next only.
 var screens = []screen{
 	{"fleet", ""},
 	{"conversation", "#s/1"},
@@ -82,15 +84,23 @@ var screens = []screen{
 	{"flows", "#flows"},
 	{"new", "#new"},
 	{"settings", "#settings"},
+	{"palette", "#s/1"},
 	{"pair", "#pair"},
 	{"add-to-home", ""},
 }
 
 // screenMode is how a screen's tab and canned loom differ from the Home
-// Screen app on a paired loom.
-type screenMode struct{ unpaired, browserTab bool }
+// Screen app on a paired loom. desktopOnly is a screen only the desktop layout
+// draws; press is a chord pressed once the desktop frame has drawn (Control+k,
+// with Alt+, Control+, Meta+ and Shift+ prefixes allowed); drawn is the
+// selector that must match after the press.
+type screenMode struct {
+	unpaired, browserTab, desktopOnly bool
+	press, drawn                      string
+}
 
 var screenModes = map[string]screenMode{
+	"palette":     {desktopOnly: true, press: "Control+k", drawn: `[data-slot="palette"]`},
 	"pair":        {unpaired: true},
 	"add-to-home": {browserTab: true},
 }
@@ -143,14 +153,14 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	kept := forDevice(d, todo)
+	kept := forApp(*app, forDevice(d, todo))
 	for _, sc := range todo {
 		if !slices.Contains(kept, sc) {
-			fmt.Printf("%s\tskipped: phone only\n", sc.name)
+			fmt.Printf("%s\tskipped: %s\n", sc.name, skipReason(d, *app, sc))
 		}
 	}
 	if todo = kept; len(todo) == 0 {
-		return fmt.Errorf("no screen to render on %s", d.name)
+		return fmt.Errorf("no screen to render on %s with -app %s", d.name, *app)
 	}
 	bin, err := findBrowser(*browserBin)
 	if err != nil {
@@ -282,22 +292,53 @@ func serveAPI(ctx context.Context, addr string, announce func(net.Addr), onMiss 
 	return nil
 }
 
-// forDevice is todo as it is for a phone; for a desktop device, todo without
-// the screens only a phone's browser tab draws (today add-to-home, the iOS
-// Add to Home gate, shown only for an iOS user agent). It tests modeOf's
-// browserTab, not the screen's name, so a later browser-tab screen is skipped
-// too. todo is not changed.
+// forDevice is todo as it is for a phone without the desktopOnly screens; for
+// a desktop device, todo without the screens only a phone's browser tab draws
+// (today add-to-home, the iOS Add to Home gate, shown only for an iOS user
+// agent). It tests modeOf's modes, not the screens' names, so a later screen of
+// either kind is skipped too. todo is not changed.
 func forDevice(d device, todo []screen) []screen {
-	if !d.desktop {
+	var out []screen
+	for _, sc := range todo {
+		m := modeOf(sc)
+		if (d.desktop && m.browserTab) || (!d.desktop && m.desktopOnly) {
+			continue
+		}
+		out = append(out, sc)
+	}
+	return out
+}
+
+// forApp is todo, or without the desktopOnly screens unless app is next (the
+// classic app has no desktop layout and the -app flag defaults to it). todo is
+// not changed.
+func forApp(app string, todo []screen) []screen {
+	if app == "next" {
 		return todo
 	}
 	var out []screen
 	for _, sc := range todo {
-		if !modeOf(sc).browserTab {
+		if !modeOf(sc).desktopOnly {
 			out = append(out, sc)
 		}
 	}
 	return out
+}
+
+// skipReason is the words of a skip line for a screen forDevice or forApp
+// dropped: the device's reason comes first, then the app's, and it is empty for
+// a screen that is kept.
+func skipReason(d device, app string, sc screen) string {
+	m := modeOf(sc)
+	switch {
+	case d.desktop && m.browserTab:
+		return "phone only"
+	case !d.desktop && m.desktopOnly:
+		return "desktop only"
+	case m.desktopOnly && app != "next":
+		return "next app only"
+	}
+	return ""
 }
 
 // deviceNames is the keys of devices, sorted and joined with ", ".
