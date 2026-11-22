@@ -839,11 +839,14 @@ and answers only phones you have paired.
   workspace's name, paused ones too), runs a command on the session you are
   on (pause, resume, push, merge, kill) or on the app (turn notifications
   on, unpair, back to classic, show or hide the sidebar, show or hide the
-  inspector), and opens a place (the session's tabs, the fleet, new
-  session, the host's flows, settings). With nothing typed it lists the
+  inspector; turning notifications on and unpair act only from Settings),
+  and opens a place (the session's tabs, the fleet, new session, the host's
+  flows, settings). With nothing typed it lists the
   sessions that need you first. Enter opens the highlighted one, Esc closes
-  the box, and a command that cannot run now (no session, or the daemon
-  unreachable) is dimmed and does nothing. Kill and the other commands that
+  the box. A command that cannot run now (no session, not on Settings) is
+  left out while nothing is typed and shown dimmed, doing nothing, once you
+  type; with the daemon unreachable every command but back to classic and
+  the two view toggles is dimmed too. Kill and the other commands that
   ask first still ask. Nothing about it is on the phone, which keeps its
   tabs and footer. The layout follows the window as it resizes, and under
   1024px it is the phone's. To open it on the machine that runs the daemon,
