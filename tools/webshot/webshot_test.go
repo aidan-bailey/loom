@@ -1115,8 +1115,16 @@ func TestRun_RendersEveryScreenInARealBrowser(t *testing.T) {
 // type too (Input.dispatchKeyEvent:keyDown).
 func recordingBrowser(t *testing.T, answer func(method string, params map[string]any) any) (*page, func() []string) {
 	t.Helper()
+	p, calls, _ := recordingBrowserSessions(t, answer)
+	return p, calls
+}
+
+// recordingBrowserSessions is recordingBrowser that also returns the
+// sessionId each call carried, in the same order as the calls.
+func recordingBrowserSessions(t *testing.T, answer func(method string, params map[string]any) any) (*page, func() []string, func() []string) {
+	t.Helper()
 	var mu sync.Mutex
-	var calls []string
+	var calls, sessions []string
 	c, _, stop := fakeBrowser(t, func(m cdpMessage) []cdpMessage {
 		var params map[string]any
 		_ = json.Unmarshal(m.Params, &params)
@@ -1126,16 +1134,21 @@ func recordingBrowser(t *testing.T, answer func(method string, params map[string
 		}
 		mu.Lock()
 		calls = append(calls, name)
+		sessions = append(sessions, m.SessionID)
 		mu.Unlock()
 		res, _ := json.Marshal(answer(m.Method, params))
 		return []cdpMessage{{ID: m.ID, Result: res}}
 	})
 	t.Cleanup(stop)
 	return &page{b: &browser{cdp: c}, session: "s1"}, func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), calls...)
-	}
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), calls...)
+		}, func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), sessions...)
+		}
 }
 
 // evalValue is a Runtime.evaluate answer holding v.
@@ -1166,7 +1179,7 @@ func TestPress_SendsKeyDownThenKeyUpWithTheChordsModifiers(t *testing.T) {
 	for chord, mods := range map[string]float64{"Control+k": 2, "Control+Shift+k": 10} {
 		var mu sync.Mutex
 		var sent []map[string]any
-		p, calls := recordingBrowser(t, func(method string, params map[string]any) any {
+		p, calls, sessions := recordingBrowserSessions(t, func(method string, params map[string]any) any {
 			mu.Lock()
 			defer mu.Unlock()
 			sent = append(sent, params)
@@ -1174,6 +1187,7 @@ func TestPress_SendsKeyDownThenKeyUpWithTheChordsModifiers(t *testing.T) {
 		})
 		require.NoError(t, p.press(context.Background(), chord), chord)
 		assert.Equal(t, []string{"Input.dispatchKeyEvent:keyDown", "Input.dispatchKeyEvent:keyUp"}, calls(), chord)
+		assert.Equal(t, []string{"s1", "s1"}, sessions(), "both key events go to the page's session")
 		mu.Lock()
 		require.Len(t, sent, 2)
 		for i, typ := range []string{"keyDown", "keyUp"} {
