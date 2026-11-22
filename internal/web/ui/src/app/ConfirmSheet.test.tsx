@@ -457,14 +457,6 @@ function live(): void {
 }
 
 describe("confirmOpen", () => {
-  afterEach(() => {
-    const id = testSeam.openId();
-    if (id !== null)
-      act(() => {
-        testSeam.answer(id, null);
-      });
-  });
-
   it("is false while nobody asks", () => {
     expect(confirmOpen()).toBe(false);
   });
