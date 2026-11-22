@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LinkState } from "@/api/stream";
 import { hrefFor } from "@/app/routes";
@@ -10,7 +10,8 @@ import { fixtureSnapshot } from "@/fixtures";
 import { FleetLinks } from "@/panels/fleet/FleetHead";
 import { useFleet } from "@/store/fleet";
 
-import { TopBar } from "./TopBar";
+import { usePalette } from "./paletteState";
+import { PaletteBox, TopBar } from "./TopBar";
 
 function load(link: LinkState = "live"): void {
   useFleet.setState({
@@ -22,6 +23,7 @@ function load(link: LinkState = "live"): void {
 }
 
 afterEach(() => {
+  usePalette.setState({ open: false });
   window.localStorage.clear();
   useFilter.setState({ stored: readFilter() });
   useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
@@ -163,5 +165,64 @@ describe("TopBar", () => {
     expect(screen.queryByRole("link", { name: "Flows" })).toBeNull();
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "+ New" })).toBeInTheDocument();
+  });
+});
+
+describe("PaletteBox", () => {
+  const withPlatform = (platform: string): void => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(platform);
+  };
+  const box = (): HTMLElement => document.querySelector<HTMLElement>('[data-slot="palette-box"]')!;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("draws a button with the prompt and the Ctrl chord on a non-Mac", () => {
+    withPlatform("Linux x86_64");
+    render(<PaletteBox />);
+
+    expect(box().tagName).toBe("BUTTON");
+    expect(box()).toHaveTextContent("Search sessions, commands, places");
+    expect(box()).toHaveTextContent("Ctrl K");
+    expect(box()).not.toHaveTextContent("⌘K");
+  });
+
+  it.each(["MacIntel", "iPhone", "iPad"])("shows ⌘K on %s", (platform) => {
+    withPlatform(platform);
+    render(<PaletteBox />);
+
+    expect(box()).toHaveTextContent("⌘K");
+    expect(box()).not.toHaveTextContent("Ctrl K");
+  });
+
+  it("a click opens the palette", async () => {
+    render(<PaletteBox />);
+    await userEvent.click(box());
+    expect(usePalette.getState().open).toBe(true);
+  });
+
+  it("a click on an open palette's box leaves it open", async () => {
+    usePalette.setState({ open: true });
+    render(<PaletteBox />);
+    await userEvent.click(box());
+    expect(usePalette.getState().open).toBe(true);
+  });
+
+  it("is dense and about 16rem wide", () => {
+    render(<PaletteBox />);
+    expect(box().className).toContain("w-64");
+    expect(box().className).toContain("flex-none");
+    expect(box().className).not.toContain("min-h-[44px]");
+  });
+
+  it("the top bar draws it after loom@host and before the workspace filter", () => {
+    load();
+    render(<TopBar />);
+
+    const host = within(bar()).getByText("fresco");
+    const filter = screen.getByRole("group", { name: "Workspaces" });
+    expect(host.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(box().compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
