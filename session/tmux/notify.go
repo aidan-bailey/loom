@@ -64,6 +64,34 @@ type coalescer struct {
 	dirtyTimer *time.Timer // armed trailing-edge dirty; nil when none pending
 	quietTimer *time.Timer // re-armed on every touch
 	stopped    bool
+
+	// output and quiet each track the send of their kind in flight. The
+	// notifier is tea.Program.Send, which blocks until the TUI's Update
+	// takes the event, and Update stalls whole when the terminal stops
+	// reading (the renderer holds its lock across the write). Without the
+	// bound each event parked a goroutine of its own, about 62 a second
+	// from each streaming pane, for as long as Update stayed stalled.
+	output, quiet inflight
+}
+
+// inflight is one kind's send state: busy while a sender is in the
+// notifier, owed when an event of the kind came meanwhile. The sender sends
+// once more for everything owed when its send returns, so a stalled Update
+// parks one goroutine per kind per pane, and the pane's latest state still
+// reaches the TUI when Update resumes.
+type inflight struct {
+	busy, owed bool
+}
+
+// claim reports whether the caller is to send now, because no send of the
+// kind is in flight; otherwise it marks one owed. c.mu must be held.
+func (f *inflight) claim() bool {
+	if f.busy {
+		f.owed = true
+		return false
+	}
+	f.busy = true
+	return true
 }
 
 func newCoalescer(session string) *coalescer {
@@ -87,12 +115,15 @@ func (c *coalescer) touch() {
 	now := time.Now()
 	if now.Sub(c.lastDirty) >= dirtyCoalesceInterval {
 		c.lastDirty = now
+		send := c.output.claim()
 		c.mu.Unlock()
 		// On another goroutine, as the trailing edge's timer is: the writer
 		// is the output pump, and the notifier is tea.Program.Send, which
 		// blocks until the TUI's Update returns, while Update may be waiting
 		// for this pump to stop (PausePreview, Restore).
-		go c.fireLeading()
+		if send {
+			go c.deliver(&c.output, outputSink)
+		}
 		return
 	}
 	if c.dirtyTimer == nil {
@@ -101,17 +132,33 @@ func (c *coalescer) touch() {
 	c.mu.Unlock()
 }
 
-// fireLeading sends a burst's first Output event, unless the coalescer has
-// stopped since.
-func (c *coalescer) fireLeading() {
-	c.mu.Lock()
-	stopped := c.stopped
-	c.mu.Unlock()
-	if stopped {
-		return
-	}
-	if f := currentNotifier().Output; f != nil {
-		f(c.session)
+// outputSink and quietSink pick a kind's func from the notifier.
+func outputSink(n Notifier) func(string) { return n.Output }
+func quietSink(n Notifier) func(string)  { return n.Quiet }
+
+// deliver sends the kind's event, and once more while any was owed during
+// the send, until the coalescer stops; then it frees the kind. The caller
+// claimed it.
+func (c *coalescer) deliver(f *inflight, sink func(Notifier) func(string)) {
+	for {
+		c.mu.Lock()
+		if c.stopped {
+			f.busy, f.owed = false, false
+			c.mu.Unlock()
+			return
+		}
+		f.owed = false
+		c.mu.Unlock()
+		if send := sink(currentNotifier()); send != nil {
+			send(c.session)
+		}
+		c.mu.Lock()
+		if !f.owed {
+			f.busy = false
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
 	}
 }
 
@@ -123,9 +170,10 @@ func (c *coalescer) fireDirty() {
 	}
 	c.dirtyTimer = nil
 	c.lastDirty = time.Now()
+	send := c.output.claim()
 	c.mu.Unlock()
-	if f := currentNotifier().Output; f != nil {
-		f(c.session)
+	if send {
+		c.deliver(&c.output, outputSink)
 	}
 }
 
@@ -136,9 +184,10 @@ func (c *coalescer) fireQuiet() {
 		return
 	}
 	c.quietTimer = nil
+	send := c.quiet.claim()
 	c.mu.Unlock()
-	if f := currentNotifier().Quiet; f != nil {
-		f(c.session)
+	if send {
+		c.deliver(&c.quiet, quietSink)
 	}
 }
 

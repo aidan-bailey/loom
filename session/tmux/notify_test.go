@@ -158,3 +158,110 @@ func TestSetNotifier_ConcurrentAccessIsSafe(t *testing.T) {
 	wg.Wait()
 	SetNotifier(Notifier{})
 }
+
+// stalledNotifier is a notifier whose Output and Quiet block until release
+// closes, as tea.Program.Send does while the TUI's Update is stalled (a
+// terminal that stopped reading holds the renderer, and every Update waits
+// on it). It records how many senders are parked in it at once.
+type stalledNotifier struct {
+	release             chan struct{}
+	outputs, quiets     atomic.Int32
+	parked, maxParked   atomic.Int32
+	parkedQ, maxParkedQ atomic.Int32
+}
+
+func newStalledNotifier(t *testing.T) *stalledNotifier {
+	t.Helper()
+	s := &stalledNotifier{release: make(chan struct{})}
+	park := func(n, max *atomic.Int32) {
+		v := n.Add(1)
+		for {
+			m := max.Load()
+			if v <= m || max.CompareAndSwap(m, v) {
+				break
+			}
+		}
+		<-s.release
+		n.Add(-1)
+	}
+	notifierGuard(t, Notifier{
+		Output: func(string) { s.outputs.Add(1); park(&s.parked, &s.maxParked) },
+		Quiet:  func(string) { s.quiets.Add(1); park(&s.parkedQ, &s.maxParkedQ) },
+	})
+	return s
+}
+
+// On 2026-11-24 a TUI whose terminal stopped reading parked a goroutine per
+// pane per dirty event (about 62 a second from each streaming pane), with
+// nothing to bound them. While a send is in flight, later events only mark
+// one owed.
+func TestCoalescer_AStalledNotifierHoldsOneOutputSender(t *testing.T) {
+	s := newStalledNotifier(t)
+	c := newCoalescer("sess1")
+	t.Cleanup(c.stop)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(s.release)
+		}
+	})
+
+	// Output streaming for ten coalesce windows and more.
+	deadline := time.Now().Add(20 * dirtyCoalesceInterval)
+	for time.Now().Before(deadline) {
+		c.touch()
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(3 * dirtyCoalesceInterval) // the last trailing timer fires
+	require.Equal(t, int32(1), s.maxParked.Load(), "one sender parked, however long Update is stalled")
+	require.Equal(t, int32(1), s.outputs.Load())
+
+	// Update takes the parked event, then the one owed since: the pane's
+	// last output still renders.
+	close(s.release)
+	released = true
+	require.Eventually(t, func() bool { return s.outputs.Load() == 2 && s.parked.Load() == 0 }, time.Second, time.Millisecond,
+		"the event owed while the send was in flight is sent once it lands")
+	time.Sleep(3 * dirtyCoalesceInterval)
+	require.Equal(t, int32(2), s.outputs.Load(), "the owed events of a stall are one event, not one each")
+}
+
+func TestCoalescer_AStalledNotifierHoldsOneQuietSender(t *testing.T) {
+	s := newStalledNotifier(t)
+	c := newCoalescer("sess1")
+	t.Cleanup(c.stop)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(s.release)
+		}
+	})
+
+	// Two bursts, each followed by silence long enough for Quiet.
+	for range 2 {
+		c.touch()
+		time.Sleep(quietDelay + 150*time.Millisecond)
+	}
+	require.Equal(t, int32(1), s.maxParkedQ.Load(), "one quiet sender parked across bursts")
+	require.Equal(t, int32(1), s.quiets.Load())
+
+	close(s.release)
+	released = true
+	require.Eventually(t, func() bool { return s.quiets.Load() == 2 && s.parkedQ.Load() == 0 }, time.Second, time.Millisecond,
+		"the quiet owed while the first was in flight is sent once it lands")
+}
+
+func TestCoalescer_StopDropsWhatAStalledSenderOwes(t *testing.T) {
+	s := newStalledNotifier(t)
+	c := newCoalescer("sess1")
+	c.touch()
+	require.Eventually(t, func() bool { return s.parked.Load() == 1 }, time.Second, time.Millisecond)
+	time.Sleep(2 * dirtyCoalesceInterval)
+	c.touch() // owed while the first is in flight
+	time.Sleep(3 * dirtyCoalesceInterval)
+	c.stop()
+	close(s.release)
+	require.Eventually(t, func() bool { return s.parked.Load() == 0 }, time.Second, time.Millisecond)
+	time.Sleep(3 * dirtyCoalesceInterval)
+	require.Equal(t, int32(1), s.outputs.Load(), "a stopped pump's session sends nothing more")
+}
