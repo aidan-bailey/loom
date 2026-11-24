@@ -7,12 +7,15 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/memguard"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -113,7 +116,20 @@ func Run(ctx context.Context, client *rpc.Client, rejoin Rejoin, startupName str
 		Dead:   func(s string) { p.Send(ptyDeadMsg{session: s}) },
 	})
 	defer tmux.SetNotifier(tmux.Notifier{})
+	// The memory guard quits this TUI before a runaway can exhaust the
+	// host: on 2026-11-24 one reached 30 GB and earlyoom killed the agents
+	// first. Quit exits the process itself if Kill never returns, since a
+	// stalled terminal holds both Update and the terminal's restore.
+	var breach atomic.Pointer[memguard.Breach]
+	guard := memguard.FromEnv(func(b memguard.Breach) {
+		breach.Store(&b)
+		memguard.Quit(b, p.Kill, memguard.ExitGrace, os.Stderr, os.Exit)
+	})
+	defer guard.Stop()
 	if _, err := p.Run(); err != nil {
+		if b := breach.Load(); b != nil {
+			return *b
+		}
 		return err
 	}
 	return h.exitErr
