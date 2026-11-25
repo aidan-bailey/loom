@@ -129,6 +129,7 @@ describe("the panel registry", () => {
       flowStory: true,
       flowDoc: true,
       flows: true,
+      flowBoard: true,
       new: true,
       settings: true,
       pair: true,

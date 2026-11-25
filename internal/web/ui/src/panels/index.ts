@@ -10,6 +10,7 @@ import "./job";
 import "./mockup";
 import "./flow";
 import "./flows";
+import "./flowBoard";
 import "./new";
 import "./settings";
 import "./pair";

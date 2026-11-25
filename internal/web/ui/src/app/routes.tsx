@@ -53,6 +53,8 @@ export function routeOf(hash: string): RouteState {
     case "pair":
     case "flows":
       return plain(h);
+    case "flow-board":
+      return plain("flowBoard");
   }
 
   const flow = h.match(/^s\/(\d+)\/flow(?:\/(doc\/([^/?]+)|[^/?]+))?(?:\?(.*))?$/);
@@ -121,6 +123,7 @@ export function hrefFor(
     flowStory: `${session}/flow/${seg("story")}`,
     flowDoc: `${session}/flow/doc/${seg("doc")}`,
     flows: "/flows",
+    flowBoard: "/flow-board",
     new: "/new",
     settings: "/settings",
     pair: "/pair",
@@ -187,6 +190,7 @@ const PATHS: Record<PanelId, string> = {
   flowStory: "/s/$id/flow/$story",
   flowDoc: "/s/$id/flow/doc/$doc",
   flows: "/flows",
+  flowBoard: "/flow-board",
   new: "/new",
   settings: "/settings",
   pair: "/pair",

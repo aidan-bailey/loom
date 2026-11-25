@@ -297,6 +297,10 @@ describe("the flows panel", () => {
     render(<FlowsHead />);
     expect(screen.getByRole("link", { name: "‹ fleet" })).toHaveAttribute("href", hrefFor("fleet"));
     expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Flow board" })).toHaveAttribute(
+      "href",
+      hrefFor("flowBoard"),
+    );
     const button = screen.getByRole("button", { name: "Read the flows again" });
     expect(button).toHaveClass("min-h-[44px]");
     expect(button).toHaveClass("min-w-[44px]");

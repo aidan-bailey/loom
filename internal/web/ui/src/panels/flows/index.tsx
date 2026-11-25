@@ -1,5 +1,5 @@
-// The host's flows panel: the head (a way back to the fleet, the title and a button that reads the
-// flows again) is in the entry; the body is a lazy chunk, so a first launch never loads it. This
+// The host's flows panel: the head (a way back to the fleet, the title, a link to the flow board
+// and a button that reads the flows again) is in the entry; the body is a lazy chunk, so a first launch never loads it. This
 // module imports nothing from ../flow/parts and no FlowsBody statically: a static import would
 // pull them out of their chunk into the entry script.
 import { lazy, type ReactElement } from "react";
@@ -18,14 +18,23 @@ export function FlowsHead(): ReactElement {
       back={hrefFor("fleet")}
       title="Flows"
       actions={
-        <button
-          type="button"
-          aria-label="Read the flows again"
-          className="min-h-[44px] min-w-[44px]"
-          onClick={reload}
-        >
-          ↻
-        </button>
+        <>
+          <a
+            href={hrefFor("flowBoard")}
+            aria-label="Flow board"
+            className="flex min-h-[44px] min-w-[44px] flex-none items-center justify-center text-sm text-muted-foreground"
+          >
+            board
+          </a>
+          <button
+            type="button"
+            aria-label="Read the flows again"
+            className="min-h-[44px] min-w-[44px]"
+            onClick={reload}
+          >
+            ↻
+          </button>
+        </>
       }
     />
   );

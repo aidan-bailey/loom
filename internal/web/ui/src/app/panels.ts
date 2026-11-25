@@ -18,6 +18,7 @@ export type PanelId =
   | "flowStory"
   | "flowDoc"
   | "flows"
+  | "flowBoard"
   | "new"
   | "settings"
   | "pair";

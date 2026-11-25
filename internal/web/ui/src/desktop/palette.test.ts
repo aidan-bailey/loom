@@ -352,6 +352,7 @@ describe("paletteGroups: commands and places", () => {
       "place:fleet",
       "place:new",
       "place:flows",
+      "place:flowBoard",
       "place:settings",
     ]);
   });
@@ -374,6 +375,11 @@ describe("paletteGroups: commands and places", () => {
     expect(byKey("place:fleet")).toMatchObject({ title: "Fleet", hint: "", href: "#/" });
     expect(byKey("place:new")).toMatchObject({ title: "New session", hint: "", href: "#/new" });
     expect(byKey("place:flows")).toMatchObject({ title: "Flows", hint: "", href: "#/flows" });
+    expect(byKey("place:flowBoard")).toMatchObject({
+      title: "Flow board",
+      hint: "",
+      href: "#/flow-board",
+    });
     expect(byKey("place:settings")).toMatchObject({
       title: "Settings",
       hint: "",
@@ -384,6 +390,7 @@ describe("paletteGroups: commands and places", () => {
   it("leaves the Flows place out when no shown workspace's session has a flow", () => {
     const none = items(paletteGroups(input({ snapshot: noFlows() })), "Places");
     expect(keys(none)).not.toContain("place:flows");
+    expect(keys(none)).not.toContain("place:flowBoard");
     const snapshot = fixtureSnapshot(NOW);
     const hidden: Snapshot = {
       ...snapshot,
@@ -404,12 +411,14 @@ describe("paletteGroups: commands and places", () => {
       "place:fleet",
       "place:new",
       "place:flows",
+      "place:flowBoard",
       "place:settings",
     ]);
     expect(keys(items(paletteGroups(input({ tabs })), "Places"))).toEqual([
       "place:fleet",
       "place:new",
       "place:flows",
+      "place:flowBoard",
       "place:settings",
     ]);
   });

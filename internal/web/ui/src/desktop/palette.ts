@@ -223,7 +223,7 @@ function placeItems(input: PaletteInput, query: string): PalettePlace[] {
   });
   places.push(plain("fleet", "Fleet"), plain("new", "New session"));
   if (input.snapshot !== null && hasShownFlows(input.snapshot))
-    places.push(plain("flows", "Flows"));
+    places.push(plain("flows", "Flows"), plain("flowBoard", "Flow board"));
   places.push(plain("settings", "Settings"));
   if (query === "") return places;
   const entries: Ranked<PalettePlace>[] = [];
