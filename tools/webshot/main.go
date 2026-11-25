@@ -63,7 +63,8 @@ type screen struct{ name, hash string }
 // and actions; "agent" is the screen of session 1's running subagent (recon,
 // the one its conversation links to); "job" is session 1's running job.
 // The flow screens are session 6's flow (a run parked on story 3): its
-// board, story 1's row, its spec, and the host's Flows screen. "pair" is shot
+// board, story 1's row, its spec, the host's Flows screen and the flow
+// board (every flow by its stage). "pair" is shot
 // with every /api/ request answered 401 (an unpaired device), "add-to-home"
 // as an iPhone browser tab (not standalone). "palette" is session 1's route
 // with the command palette opened by its chord, shot on a desktop under -app
@@ -82,6 +83,7 @@ var screens = []screen{
 	{"flow-story", "#s/6/flow/1"},
 	{"flow-doc", "#s/6/flow/doc/spec?at=%C2%A72"},
 	{"flows", "#flows"},
+	{"flow-board", "#flow-board"},
 	{"new", "#new"},
 	{"settings", "#settings"},
 	{"palette", "#s/1"},

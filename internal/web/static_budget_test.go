@@ -187,7 +187,8 @@ func TestCheckFirstLoad_RefusesAMissingFile(t *testing.T) {
 }
 
 // checkLazyViews is whether the job and mockup screens, the flow board, the flow story and
-// document views, the host's flows, the new session screen, settings and the desktop shell are chunks of their
+// document views, the host's flows, the new session screen, settings, the desktop shell and the
+// fleet's flow board (every flow by its stage) are chunks of their
 // own that index.html does not load: one file per name, whose file name index.html's text
 // (a script, a modulepreload link or anything else) does not hold.
 func checkLazyViews(assets map[string]staticAsset) error {
@@ -196,7 +197,7 @@ func checkLazyViews(assets map[string]staticAsset) error {
 		return fmt.Errorf("the bundle has no /index.html")
 	}
 	page := string(index.body)
-	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody", "SettingsBody", "DesktopShell"} {
+	for _, name := range []string{"JobBody", "MockupBody", "FlowBody", "FlowStoryBody", "FlowDocBody", "FlowsBody", "NewSessionBody", "SettingsBody", "DesktopShell", "FlowBoardBody"} {
 		re := regexp.MustCompile(`^/assets/` + regexp.QuoteMeta(name) + `-[^/]+\.js$`)
 		var chunks []string
 		for url := range assets {
@@ -235,7 +236,7 @@ func TestCheckLazyViews_RefusesAMissingChunkAndAPreloadedOne(t *testing.T) {
 		}
 		return assets
 	}
-	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js", "/assets/SettingsBody-s.js", "/assets/DesktopShell-i.js"}
+	all := []string{"/assets/index-a.js", "/assets/JobBody-b.js", "/assets/MockupBody-c.js", "/assets/FlowBody-d.js", "/assets/FlowStoryBody-e.js", "/assets/FlowDocBody-f.js", "/assets/FlowsBody-g.js", "/assets/NewSessionBody-h.js", "/assets/SettingsBody-s.js", "/assets/DesktopShell-i.js", "/assets/FlowBoardBody-j.js"}
 
 	for _, tc := range []struct {
 		name   string
