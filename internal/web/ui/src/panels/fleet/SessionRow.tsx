@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 
 import type { FlowSummary, Pr, Session, Usage } from "@/api/gen";
 import { Badge } from "@/components/ui/badge";
+import { flowState } from "@/fleet/board";
 import { GROUPS } from "@/fleet/groups";
 import { sessionHref } from "@/fleet/links";
 import { rowShare } from "@/fleet/usage";
@@ -38,14 +39,7 @@ export function flowChip(flow: FlowSummary): string {
   if (flow.status === "drafting") return `flow · draft ${flow.drafted}/${flow.total}`;
   if (flow.status === "drafted" || flow.status === "designed") return `flow · ${flow.status}`;
   const parts = [`flow ${flow.done}/${flow.total}`];
-  const state =
-    flow.asks !== ""
-      ? "asks"
-      : flow.status === "lost"
-        ? "lost"
-        : flow.status === "running" && flow.phase !== ""
-          ? flow.phase
-          : flow.status;
+  const state = flowState(flow);
   if (state !== "") parts.push(state);
   if (typeof flow.spent === "number") parts.push(usd(flow.spent));
   return parts.join(" · ");
