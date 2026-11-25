@@ -10,6 +10,7 @@
 - **The same subtraction survives** in `ui/workspace_tab_bar.go` (the bordered tab style) and `ui/overlay/file_explorer.go`. They show no symptom today; measure before changing them. (`SplitPane.SetSize` subtracting the frame to size its children's content is correct: that is a content width, not a `.Width`.)
 - **`.Height(H)` is a minimum, not a cap.** Taller content overflows rather than truncating, so over-wide content that wraps grows the box past `H`. Widen the content area so it stops wrapping, or pre-truncate rows.
 - **`lipgloss.Place` grows on over-tall content too**; it never clips. Clamp assembled output (`clampHeight`, `ui/split_pane.go`).
+- **`JoinVertical` pads every line to the widest, so never feed it unbounded content.** Use it for screen-sized blocks only; join a whole document (a diff, a log, a transcript) with `"\n"`. The diff pane once joined its stats line over the whole colorized diff with it, and one long line (a minified bundle, a lockfile) times thousands of lines became gigabytes of spaces: a TUI reached 3 GiB on entering the workbench (`DiffPane.content`, `ui/diff.go`; `TestDiffPane_LongLineDoesNotPadEveryLine` is red without the fix).
 - **Over-wide lines inside a `.Width(W)` bordered box wrap**, making that box taller than its row siblings and breaking `JoinHorizontal` grid alignment. Truncate the right-hand column first, then the left against the remainder; never compose and hope (`renderOverviewCard`, `ui/overview.go`).
 
 ## Styling and truncation
