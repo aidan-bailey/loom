@@ -56,7 +56,7 @@ func (d *DiffPane) SetSize(width, height int) {
 	d.viewport.SetWidth(width)
 	d.viewport.SetHeight(height)
 	if d.diff != "" || d.stats != "" {
-		d.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, d.stats, d.diff))
+		d.viewport.SetContent(d.content())
 	}
 }
 
@@ -117,8 +117,16 @@ func (d *DiffPane) SetDiff(instance *core.InstanceView) {
 		deletions := DeletionStyle.Render(fmt.Sprintf("%d deletions(-)", stats.Removed))
 		d.stats = lipgloss.JoinHorizontal(lipgloss.Center, additions, " ", deletions)
 		d.diff = colorizeDiff(stats.Content)
-		d.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, d.stats, d.diff))
+		d.viewport.SetContent(d.content())
 	}
+}
+
+// content stacks the stats line over the colorized diff. It joins them with
+// a newline rather than lipgloss.JoinVertical, which pads every line to the
+// widest one: a single long line (a minified bundle, a lockfile) times
+// thousands of lines turned a few MB of diff into gigabytes of spaces.
+func (d *DiffPane) content() string {
+	return d.stats + "\n" + d.diff
 }
 
 func (d *DiffPane) String() string {

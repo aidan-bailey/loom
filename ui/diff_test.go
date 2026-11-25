@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/git"
 	"strings"
 	"testing"
@@ -56,4 +57,30 @@ func TestSetDiffCachesContent(t *testing.T) {
 
 	// Second call with same content should be cacheable
 	assert.Equal(t, stats.Content, d.lastDiffContent)
+}
+
+// TestDiffPane_LongLineDoesNotPadEveryLine pins the 2026-11-25 TUI blow-up:
+// one very long line (a minified bundle, a lockfile) made the pane pad every
+// other line of the diff with spaces to that line's width, so a diff of a
+// few MB became a multi-GB string on entering the workbench.
+func TestDiffPane_LongLineDoesNotPadEveryLine(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("+" + strings.Repeat("x", 10_000) + "\n")
+	for i := 0; i < 2_000; i++ {
+		fmt.Fprintf(&b, "+line %d\n", i)
+	}
+	inst := &core.InstanceView{
+		Started: true,
+		HasDiff: true,
+		Diff:    git.DiffStats{Content: b.String(), Added: 2_001},
+	}
+
+	d := NewDiffPane()
+	d.SetSize(80, 24)
+	d.SetDiff(inst)
+	limit := 4 * b.Len()
+	assert.Less(t, len(d.viewport.GetContent()), limit, "SetDiff padded the diff")
+
+	d.SetSize(100, 30)
+	assert.Less(t, len(d.viewport.GetContent()), limit, "SetSize padded the diff")
 }
