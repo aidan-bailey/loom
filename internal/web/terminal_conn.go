@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -126,6 +127,10 @@ type termConn struct {
 	mu          sync.Mutex
 	shell       termShell
 	shellClosed bool
+
+	// busy counts the reader goroutine's trips into and out of attach: odd
+	// while it opens the attach and sends its history, and so reads no pong.
+	busy atomic.Int64
 
 	wg sync.WaitGroup
 }
@@ -251,6 +256,7 @@ func (c *termConn) run(ctx context.Context) termEnd {
 	cctx := c.ioCtx
 	c.ws.SetReadLimit(-1)
 	c.spawn("terminal reader", func() { c.readLoop(cctx) })
+	c.spawn("terminal ping", func() { c.pingLoop(cctx) })
 	select {
 	case <-c.done:
 	case <-ctx.Done():
@@ -425,6 +431,8 @@ func (c *termConn) attach(ctx context.Context, cols int, rows int) termShell {
 	if c.stopped() {
 		return nil
 	}
+	c.busy.Add(1)
+	defer c.busy.Add(1)
 	sh, hist, err := c.open(cols, rows)
 	if err != nil {
 		c.end(termEndNoAttach)
@@ -532,12 +540,56 @@ func (c *termConn) sendLoop(ctx context.Context, q *outQueue) {
 	for {
 		chunk, err := q.pop(ctx)
 		if err != nil {
-			// io.EOF: the attach's output is over and all of it is sent. A
-			// cancelled context is run tearing down. Task 6.4 asks why the
-			// attach ended.
+			// io.EOF: the attach's output is over and all of it is sent. When
+			// the connection is not already over, the attach ended by itself,
+			// and the route says why (the shell exited, or the session went);
+			// a cancelled context is run tearing down.
+			if errors.Is(err, io.EOF) && !c.stopped() {
+				c.end(c.ended())
+			}
 			return
 		}
 		if !c.sendBinary(ctx, chunk) {
+			return
+		}
+	}
+}
+
+// pingLoop pings the browser every pingEvery and drops it, with no close
+// frame, when a ping goes unanswered for pongWait. ctx is the connection's own
+// context.
+//
+// The library reads a pong only while the reader goroutine is inside Reader,
+// and that goroutine is busy for as long as the attach is opening and its
+// history is going out (attach counts that, in c.busy, odd while it lasts):
+// on a slow link that outlasts any pongWait, and a ping that failed for it
+// would drop a connection that is only being set up, again on each retry. So
+// a tick that finds the reader busy sends no ping, and a ping that fails is
+// excused when the reader was busy at any point while it was outstanding (the
+// count then differs from the one before the ping, or is odd).
+func (c *termConn) pingLoop(ctx context.Context) {
+	tick := time.NewTicker(c.pingEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.done:
+			return
+		case <-tick.C:
+		}
+		before := c.busy.Load()
+		if before%2 == 1 {
+			continue
+		}
+		pctx, cancel := context.WithTimeout(ctx, c.pongWait)
+		err := c.ws.Ping(pctx)
+		cancel()
+		if err != nil {
+			if c.busy.Load() != before {
+				continue
+			}
+			c.leave()
 			return
 		}
 	}

@@ -898,7 +898,7 @@ func TestTermConn_ABrowserThatFallsBehindIsEndedAndNeverBlocksTheAttach(t *testi
 				}
 				return
 			}
-			time.Sleep(time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 	}()
 
@@ -958,4 +958,197 @@ func TestOutQueue_PushCopiesAndPopStopsOnItsContext(t *testing.T) {
 	cancel()
 	_, err = q.pop(ctx)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestTermConn_ABrowserThatAnswersItsPingsStaysConnected(t *testing.T) {
+	var pings atomic.Int32
+	rig := startTermConn(t, termRigOpts{
+		tune: func(c *termConn) {
+			c.pingEvery = 20 * time.Millisecond
+			c.pongWait = 500 * time.Millisecond
+		},
+		dial: &websocket.DialOptions{OnPingReceived: func(context.Context, []byte) bool {
+			pings.Add(1)
+			return true // the library answers it, while the browser reads
+		}},
+	})
+	type closed struct {
+		ce  *websocket.CloseError
+		err error
+	}
+	done := make(chan closed, 1)
+	go func() {
+		_, ce, err := readUntilClose(rig.client)
+		done <- closed{ce, err}
+	}()
+
+	select {
+	case e := <-rig.result:
+		t.Fatalf("a browser that answers its pings was dropped: %+v", e)
+	case <-time.After(400 * time.Millisecond):
+	}
+	assert.GreaterOrEqual(t, pings.Load(), int32(3), "the connection pings every termPingEvery")
+
+	rig.conn.end(termEndOff)
+	assert.Equal(t, termEndOff, waitTermEnd(t, rig.result))
+	d := <-done
+	require.NoError(t, d.err)
+	assert.Equal(t, websocket.StatusCode(4001), d.ce.Code)
+}
+
+func TestTermConn_APingTheBrowserNeverAnswersDropsItWithNoCloseFrame(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{
+		open: fake.open,
+		tune: func(c *termConn) {
+			c.pingEvery = 20 * time.Millisecond
+			c.pongWait = 50 * time.Millisecond
+		},
+	})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+	// From here the browser reads nothing, so the library never answers a ping.
+	start := time.Now()
+	assert.Equal(t, termEnd{}, waitTermEnd(t, rig.result))
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+}
+
+func TestTermConn_NoPingFailsWhileTheAttachIsStillOpening(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.gate = make(chan struct{})
+	rig := startTermConn(t, termRigOpts{
+		open: fake.open,
+		tune: func(c *termConn) {
+			c.pingEvery = 50 * time.Millisecond
+			c.pongWait = 300 * time.Millisecond
+		},
+	})
+	// A ping is outstanding when the attach starts to open: the first one goes
+	// out at 50 ms and would fail at 350 ms, and the browser reads nothing.
+	time.Sleep(100 * time.Millisecond)
+	sendResize(t, rig.client, 80, 24)
+	waitUntil(t, "open to be called", func() bool { return len(fake.calls()) == 1 })
+
+	// The reader is inside open, so it reads no pong, and the browser is not
+	// reading either, which answers none: far past pingEvery and pongWait.
+	select {
+	case e := <-rig.result:
+		t.Fatalf("a ping failed while the attach was still opening: %+v", e)
+	case <-time.After(900 * time.Millisecond):
+	}
+
+	close(fake.gate)
+	expectLive(t, rig.client)
+	rig.conn.end(termEndOff)
+	end, _, _ := rig.finish(t)
+	assert.Equal(t, termEndOff, end)
+}
+
+func TestTermConn_AnAttachThatEndsByItselfAsksEndedOnceAndSendsItsAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		then termEnd
+		code websocket.StatusCode
+	}{
+		{"the session is still there", termEndExited, 4004},
+		{"the session is gone", termEndSession, 4003},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newTermOpenFake()
+			var asked atomic.Int32
+			rig := startTermConn(t, termRigOpts{
+				open: fake.open,
+				ended: func() termEnd {
+					asked.Add(1)
+					return tc.then
+				},
+			})
+			sendResize(t, rig.client, 80, 24)
+			expectLive(t, rig.client)
+			fake.shell.feed <- []byte("bye\r\n")
+			close(fake.shell.feed) // the shell exits
+
+			end, frames, ce := rig.finish(t)
+			assert.Equal(t, tc.then, end)
+			assert.Equal(t, tc.code, ce.Code)
+			assert.Equal(t, tc.then.reason, ce.Reason)
+			require.Len(t, frames, 1, "what the shell said last is sent before the ending")
+			assert.Equal(t, "bye\r\n", string(frames[0].data))
+			assert.Equal(t, int32(1), asked.Load())
+			assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+		})
+	}
+}
+
+func TestTermConn_AnEndingLoomCausesNeverAsksEnded(t *testing.T) {
+	fake := newTermOpenFake()
+	var asked atomic.Int32
+	rig := startTermConn(t, termRigOpts{
+		open:  fake.open,
+		ended: func() termEnd { asked.Add(1); return termEndExited },
+	})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+	rig.conn.end(termEndRevoked)
+	end, _, ce := rig.finish(t)
+	assert.Equal(t, termEndRevoked, end)
+	assert.Equal(t, websocket.StatusCode(4002), ce.Code)
+	assert.Equal(t, int32(0), asked.Load(), "closing the attach ends its output, which is not the shell exiting")
+}
+
+func TestTermConn_EveryWayItEndsClosesTheAttach(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trigger func(t *testing.T, rig *termRig)
+		want    termEnd
+		frame   bool // the ending is a close frame
+	}{
+		{"end", func(t *testing.T, r *termRig) { r.conn.end(termEndRevoked) }, termEndRevoked, true},
+		{"a cancelled context", func(t *testing.T, r *termRig) { r.cancel() }, termEndStopping, true},
+		{"the browser leaving", func(t *testing.T, r *termRig) { _ = r.client.CloseNow() }, termEnd{}, false},
+		{"a bad frame", func(t *testing.T, r *termRig) {
+			sendTerm(t, r.client, websocket.MessageText, []byte("nonsense"))
+		}, termEndBadFrame, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newTermOpenFake()
+			rig := startTermConn(t, termRigOpts{open: fake.open})
+			sendResize(t, rig.client, 80, 24)
+			expectLive(t, rig.client)
+			tc.trigger(t, rig)
+			if tc.frame {
+				end, _, _ := rig.finish(t)
+				assert.Equal(t, tc.want, end)
+			} else {
+				assert.Equal(t, tc.want, waitTermEnd(t, rig.result))
+			}
+			assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+		})
+	}
+}
+
+func TestTermConn_APanicInAGoroutineGoesToRecoverPanicAndEndsTheConnection(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.shell.panicOnRead = true
+	got := make(chan string, 4)
+	rig := startTermConn(t, termRigOpts{
+		open: fake.open,
+		recoverPanic: func(where string) {
+			if r := recover(); r != nil {
+				got <- where
+			}
+		},
+	})
+	sendResize(t, rig.client, 80, 24)
+
+	select {
+	case where := <-got:
+		assert.Equal(t, "terminal attach", where)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the panic never reached recoverPanic")
+	}
+	// The connection ends with no close frame, and run returns.
+	assert.Equal(t, termEnd{}, waitTermEnd(t, rig.result))
+	assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
 }
