@@ -633,6 +633,24 @@ func TestStatic_EachWorkerFetchesItsOwnShell(t *testing.T) {
 	}
 }
 
+// The new app's worker answers a navigation with the cached shell, so the terminal's document
+// must be let through to the network before it answers anything: the server answers it under
+// terminalCSP, and the shell would replace it.
+func TestStatic_NextWorkerPassesTheTerminalPageThrough(t *testing.T) {
+	code := swCode(string(nextStaticAssets(t)["/sw.js"].body))
+
+	require.Contains(t, code, `const TERMINAL_PAGE = "`+terminalPage+`";`, "the worker's path is the server's")
+	pass := strings.Index(code, "if (url.pathname === TERMINAL_PAGE) return;")
+	answer := strings.Index(code, "event.respondWith(")
+	require.NotEqual(t, -1, pass, "the worker has no pass-through for the terminal page")
+	require.NotEqual(t, -1, answer)
+	require.Less(t, pass, answer, "the pass-through comes before the worker answers from the cache")
+
+	// The ordinary case still holds: a navigation is the cached shell, any other file its own entry.
+	require.Contains(t, code, `const key = req.mode === "navigate" ? "/" : url.pathname;`)
+	require.Contains(t, code, "cache.match(key)")
+}
+
 func TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe(t *testing.T) {
 	bad := fstest.MapFS{
 		"index.html":   {Data: []byte("<html>")},

@@ -8,6 +8,9 @@ const SHELL = ["__LOOM_SHELL__"];
 // under the plain path: it never caches the other app's shell, whatever cookie its requests carry.
 const TREE = "next";
 const SHELL_FILES = ["/", "/index.html", "/sw.js", "/manifest.webmanifest"];
+// The terminal's document is served by the network under a policy of its own (terminalCSP in
+// internal/web/static.go), never from the cached shell.
+const TERMINAL_PAGE = "/terminal.html";
 // Both apps' caches are swept on activate, so a switch leaves nothing of the other behind.
 const PREFIXES = ["loom-shell-", "loom-next-"];
 const CACHE = "loom-next-" + BUILD;
@@ -48,6 +51,9 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  // Without respondWith the browser asks the network; the page's script and styles are other
+  // paths and still come from the cache below.
+  if (url.pathname === TERMINAL_PAGE) return;
   const key = req.mode === "navigate" ? "/" : url.pathname;
   event.respondWith(
     caches.open(CACHE).then((cache) => cache.match(key).then((hit) => hit || fetch(req))),
