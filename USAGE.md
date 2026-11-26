@@ -948,8 +948,8 @@ left alone: the web stays off, `enable` and `revoke <name>` refuse
 notice says why; fix or move the file by hand.
 
 `loom web terminal on` lets a paired device open a shell in a session's
-worktree (the tmux session `term_<title>` that the TUI's terminal pane also
-uses); `loom web terminal off` closes every open terminal connection and
+worktree (the one the TUI's terminal pane shows for that session, shared
+with it and kept by tmux); `loom web terminal off` closes every open terminal connection and
 refuses new ones. It is off by default and works while the web is off. It is
 set only on the host, with these commands or the `Web Terminal` row in
 Settings (`S`), never from the app, so a stolen device cookie cannot turn it
