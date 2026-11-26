@@ -50,6 +50,7 @@ type webState struct {
 	servingErr     string           // set by WebServing; WebView.Error is loadErr when set, else this
 	now            func() time.Time // nil means time.Now; tests set it
 	quickReplies   []string         // the user's quick replies; nil while unset (the app offers DefaultQuickReplies)
+	terminal       bool             // the web terminal's switch; in web.json as "terminal", left out while off
 }
 
 // webDevice is a paired device. Its token is never kept, only the SHA-256
@@ -102,7 +103,7 @@ func (w *webState) leftAlone() error {
 
 // view is the state as a client sees it: no token hash, no subscription.
 func (w *webState) view() WebView {
-	v := WebView{Listen: w.listen, Origin: w.origin, Serving: w.serving, Addr: w.addr, Error: w.servingErr, Rev: w.rev, QuickReplies: slices.Clone(w.quickReplies)}
+	v := WebView{Listen: w.listen, Origin: w.origin, Serving: w.serving, Addr: w.addr, Error: w.servingErr, Rev: w.rev, QuickReplies: slices.Clone(w.quickReplies), Terminal: w.terminal}
 	if w.loadErr != "" {
 		v.Error = w.loadErr
 	}
@@ -124,6 +125,10 @@ type webFile struct {
 	Devices []webFileDevice `json:"devices"`
 	// QuickReplies is left out while unset; an empty list is kept as [].
 	QuickReplies *[]string `json:"quick_replies,omitempty"`
+	// Terminal is the web terminal's switch, left out while off: a build
+	// that does not know the key drops it when it rewrites the file, which
+	// turns the terminal off.
+	Terminal bool `json:"terminal,omitempty"`
 }
 
 // webFileVAPID is the key pair, each half as unpadded base64url.
@@ -224,6 +229,7 @@ func (w *webState) adopt(f webFile) error {
 		}
 	}
 	w.listen, w.origin = f.Listen, f.Origin
+	w.terminal = f.Terminal
 	if f.VAPID != nil {
 		key, err := f.VAPID.key()
 		if err != nil {
@@ -383,7 +389,7 @@ func (m *Model) saveWeb() error {
 		}
 		path = filepath.Join(dir, WebFile)
 	}
-	f := webFile{Version: webFileVersion, Listen: w.listen, Origin: w.origin, Devices: []webFileDevice{}}
+	f := webFile{Version: webFileVersion, Listen: w.listen, Origin: w.origin, Devices: []webFileDevice{}, Terminal: w.terminal}
 	if len(w.vapid.Private) > 0 {
 		f.VAPID = &webFileVAPID{
 			Private: base64.RawURLEncoding.EncodeToString(w.vapid.Private),

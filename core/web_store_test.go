@@ -547,3 +547,30 @@ func TestBoot_ReturnsTheNoticeOfAWebFileItLeavesAlone(t *testing.T) {
 		assert.NotEqual(t, notices[0], ev, "nothing left for the first Sync")
 	}
 }
+
+func TestInitWeb_LoadsTheTerminalSwitch(t *testing.T) {
+	m := webModel(t, `{"version":1,"devices":[],"terminal":true}`)
+	assert.True(t, m.Web().Terminal)
+
+	m = webModel(t, `{"version":1,"devices":[]}`)
+	assert.False(t, m.Web().Terminal, "a file without the key leaves it off")
+
+	m = webModel(t, `{"version":1,"devices":[],"terminal":"yes"}`)
+	assert.Contains(t, m.web.loadErr, "parse", "a value that is no boolean leaves the file alone")
+	assert.False(t, m.Web().Terminal, "and the terminal stays off")
+}
+
+func TestSaveWeb_RoundTripsTheTerminalSwitchAndLeavesItOutWhileOff(t *testing.T) {
+	m := webModel(t, webJSON)
+
+	require.NoError(t, m.saveWeb())
+	assert.NotContains(t, string(webFileBytes(t, m)), `"terminal"`, "off is left out of the file")
+
+	m.web.terminal = true
+	require.NoError(t, m.saveWeb())
+	assert.Contains(t, string(webFileBytes(t, m)), `"terminal": true`)
+	m2 := NewForTest(Options{})
+	m2.initWeb()
+	require.Empty(t, m2.web.loadErr)
+	assert.True(t, m2.Web().Terminal, "the next boot reads it back")
+}

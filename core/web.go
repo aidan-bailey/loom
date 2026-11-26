@@ -31,6 +31,10 @@ type WebView struct {
 	// QuickReplies are the user's quick replies, nil while unset: the app
 	// then offers DefaultQuickReplies. An empty list is a list.
 	QuickReplies []string
+	// Terminal is true while the web terminal is on: a paired device may
+	// open a session's worktree shell (Core.SetWebTerminal). It is not part
+	// of Rev: changing it never rebinds the listener.
+	Terminal bool
 }
 
 // WebDevice is a paired device as a client sees it: its token hash and its
