@@ -117,9 +117,11 @@ func ensureTerminalJob(ts *tmux.Session, title, worktree string, home session.Se
 // active the result becomes a refusal, whoever made the shell, so nothing
 // attaches to a shell a pause or kill is closing (a refusal the job already
 // made stands). When the job also made the shell (or may have), it is
-// closed by a job of its own (closeShellJob). A shell that existed before
-// the request, or was made by another client meanwhile, is never closed
-// here: pause and kill own it.
+// closed by a job of its own (closeShellJob), after HeldElsewhere confirms
+// the session under the name runs in the worktree. A shell Start refused
+// with ErrSessionExists (one that existed before the request) is never
+// closed here: pause and kill own it. One another client made in the window
+// Start cannot see counts as started, and is closed like the job's own.
 func (m *Model) recheckTerminal(req ReqID, id InstanceID, res terminalResult) terminalResult {
 	if inst, _ := m.lookup(id); inst != nil && activeInstance(inst) {
 		return res
