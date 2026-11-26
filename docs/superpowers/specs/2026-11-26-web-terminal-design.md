@@ -38,7 +38,7 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 
 1. **In scope:** the worktree shell of a session, on the desktop and the phone, in the new app only (the classic app is frozen).
 2. **Out of scope:** the agent's pane; workspace terminals; a shell for a paused session (pause closes it, as in the TUI); the TUI's keys; more than one shell per session; file transfer; the TUI's own creation path, which stays as it is.
-3. **Done when** the spike has passed (The spike), a paired desktop browser and the iPhone each run a command in a session's shell and see the same shell the TUI shows, every refusal below is tested, webshot renders the terminal screens with no console error or CSP violation, and the owner's checklist passes.
+3. **Done when** the spike's checks have passed (The spike), a paired desktop browser and the iPhone each run a command in a session's shell and see the same shell the TUI shows, every refusal below is tested, webshot renders the terminal screens with no console error or CSP violation, and the owner's checklist passes.
 
 ### The switch
 
@@ -108,18 +108,17 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 
 ## The spike
 
-Before the plan is written, in a throwaway page outside the worktree:
-
 1. **A renderer under the CSP** with no violation in the console. **Done, 2026-11-26** (Findings): no renderer runs clean under the app's CSP; the framed document does. §23 is written from it.
-2. **Safari on the iPhone opening a same-origin `wss:` connection** under `default-src 'self'`. If it refuses, the CSP gains `connect-src 'self' wss://<origin's host>`.
-3. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28).
-4. **A WebSocket through the tunnel**, held open for 10 minutes with only pings.
 
-Items 2 to 4 need the owner's iPhone; item 3 also shows whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23). A failed item changes the spec before any plan.
+The other three need the owner's iPhone and the tunnel, and are checked on the real route instead of a throwaway page (owner, 2026-11-26):
+
+2. **Safari on the iPhone opening a same-origin `wss:` connection** under `default-src 'self'`: checked when part 1 lands. If it refuses, the CSP gains `connect-src 'self' wss://<origin's host>`.
+3. **A WebSocket through the tunnel**, held open for 10 minutes with only pings: checked when part 1 lands. Part 1 is built before this is proven; the tunnel is Cloudflare's, which carries WebSockets.
+4. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28), and whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23): checked before part 2 is designed. A failure changes §28 in part 2's design.
 
 ## Delivery
 
 An epic of 2 parts, each a plan merged to main before the next part is designed.
 
-1. **Part 1: the daemon side.** The switch (§4–§8) with its CLI and settings row; `EnsureTerminal` (§9–§11); the attach unit (§12–§14); the dependency and the route (§15–§21); the snapshot field and the stream event; the Go tests; the rules and docs for these (§29–§30). It ends with a WebSocket client reaching a session's shell through a paired device's cookie.
+1. **Part 1: the daemon side.** The switch (§4–§8) with its CLI and settings row; `EnsureTerminal` (§9–§11); the attach unit (§12–§14); the dependency and the route (§15–§21); the snapshot field and the stream event; the Go tests; the rules and docs for these (§29–§30). It ends with a WebSocket client reaching a session's shell through a paired device's cookie. The owner then checks the spike's items 2 and 3 on the iPhone, with a page part 1 need not ship: any WebSocket client on the phone at the loom origin.
 2. **Part 2: the app.** The panel, the socket and both input modes (§22–§28); the fixture's canned route and the webshot screens; Vitest; the frame's document and its CSP (§23); the app's rules and docs; the owner's checklist.
