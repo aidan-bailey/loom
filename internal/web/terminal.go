@@ -30,8 +30,10 @@ const (
 	maxTerminals          = 16
 
 	// termCloseGrace bounds how long close waits for the connections to
-	// write their closing frames.
-	termCloseGrace = 2 * time.Second
+	// write their closing frames. It outlasts termCloseWait, the bound on a
+	// stalled connection's own close handshake, so the listener never closes
+	// before a connection has given up its handshake.
+	termCloseGrace = termCloseWait + 2*time.Second
 )
 
 // The refusals reserve gives, as the route answers them.
