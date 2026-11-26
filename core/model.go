@@ -557,7 +557,7 @@ func (m *Model) Deliver(msg any) {
 		m.deliverFlowLook(msg)
 	case flowReadResult:
 		m.deliverFlowRead(msg)
-	case issueResult, turnsResult, diffResult, jobLogResult, flowsResult, flowDocResult:
+	case issueResult, turnsResult, diffResult, jobLogResult, flowsResult, flowDocResult, terminalResult:
 		// Only its Reply carries it (deliverTracked).
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))

@@ -294,6 +294,12 @@ Params: `{"id":0,"job":0,"after":0,"req":0}`
 
 Result: `{}`
 
+### EnsureTerminal (request)
+
+Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
 ### ReadFlow (request)
 
 Params: `{"id":0,"plan":"","req":0}`

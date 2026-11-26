@@ -96,6 +96,12 @@ type Core interface {
 	// A job of session id's output.log, the Reply's JobLog (sched.ReadLog):
 	// its tail when after < 0, else the bytes from after.
 	ReadJobLog(id InstanceID, job sched.JobID, after int64, req ReqID)
+	// EnsureTerminal makes sure session id's worktree shell runs (the tmux
+	// session tmux.TerminalSessionName(title), shared with the TUI's terminal
+	// pane) and answers with its tmux name in the Reply's Terminal. Refused
+	// for a session that is not started and active with a worktree, for a
+	// shell another session holds, and when tmux cannot say.
+	EnsureTerminal(id InstanceID, req ReqID)
 	// A session's flows, read for the client that asks (spec
 	// 2026-11-09-flow-visualisation): one flow's board with its cost box,
 	// the Reply's Flow; every served session's flows and the host's past

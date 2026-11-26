@@ -430,6 +430,15 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"read the diff of a paused session", func(f fixture) { f.m.ReadDiff(f.id["paused"], 1) }, "read the diff of paused: the session is not running (Paused)"},
 		{"read the diff of a recoverable session", func(f fixture) { f.m.ReadDiff(f.id["orphan"], 1) }, "read the diff of orphan: the session is not running (Recoverable)"},
 		{"read the diff of an unstarted session", func(f fixture) { f.m.ReadDiff(f.id["new"], 1) }, "read the diff of new: the session has not started"},
+		// A terminal has no key of its own in the TUI: its gate is
+		// ensureSessionLocked's, a started, active row with a worktree.
+		{"open a terminal of a workspace terminal", func(f fixture) { f.m.EnsureTerminal(f.id["term"], 1) }, "open a terminal of term: not allowed on a workspace terminal"},
+		{"open a terminal of a loading session", func(f fixture) { f.m.EnsureTerminal(f.id["loading"], 1) }, "open a terminal of loading: the session is busy (Loading)"},
+		{"open a terminal of a deleting session", func(f fixture) { f.m.EnsureTerminal(f.id["deleting"], 1) }, "open a terminal of deleting: the session is busy (Deleting)"},
+		{"open a terminal of a paused session", func(f fixture) { f.m.EnsureTerminal(f.id["paused"], 1) }, "open a terminal of paused: the session is paused"},
+		{"open a terminal of a recoverable session", func(f fixture) { f.m.EnsureTerminal(f.id["orphan"], 1) }, "open a terminal of orphan: the session is not running (Recoverable)"},
+		{"open a terminal of an unstarted session", func(f fixture) { f.m.EnsureTerminal(f.id["new"], 1) }, "open a terminal of new: the session has not started"},
+		{"open a terminal of a session with no worktree", func(f fixture) { f.m.EnsureTerminal(f.id["running"], 1) }, "open a terminal of running: the session has no worktree"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})

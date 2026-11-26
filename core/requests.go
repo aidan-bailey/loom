@@ -96,6 +96,8 @@ func (m *Model) deliverTracked(t tracked) {
 		r.FlowDoc = FlowDocView{Path: res.doc.Path, Text: res.doc.Text, Cut: res.doc.Cut}
 	case buildSweepResult:
 		r.Sweep = res.report
+	case terminalResult:
+		r.Terminal = res.name
 	}
 	m.emit(r)
 }
@@ -136,6 +138,8 @@ func outcome(result any) (err, notice error) {
 	case flowDocResult:
 		return r.err, nil
 	case buildSweepResult:
+		return r.err, nil
+	case terminalResult:
 		return r.err, nil
 	case resumeSkipped:
 		return r.err, nil
@@ -181,6 +185,7 @@ const (
 	opReadFlows   requestOp = "read the flows"
 	opReadFlowDoc requestOp = "read a flow document of"
 	opAnswer      requestOp = "answer"
+	opTerminal    requestOp = "open a terminal of"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and
@@ -208,6 +213,9 @@ const (
 //     not Paused. Liveness is a tmux subprocess, which the model's
 //     goroutine must not run: a send to a dead session fails in its job
 //     and replies with that error.
+//   - open a terminal: no key asks for one; the TUI's terminal pane makes its
+//     shell for a started, active row with a worktree (ensureSessionLocked),
+//     and a workspace terminal is not a session's shell.
 //   - read the conversation and read the diff: no key reads them, so their
 //     gates are the model's own. A conversation is read for a Claude session
 //     that is not a workspace terminal; a diff for a started worktree session
@@ -273,6 +281,21 @@ func precondition(op requestOp, inst *session.Instance) error {
 			why = fmt.Sprintf("the session is not running (%s)", st)
 		case !inst.Started():
 			why = "the session has not started"
+		}
+	case opTerminal:
+		switch {
+		case inst.IsWorkspaceTerminal:
+			why = "not allowed on a workspace terminal"
+		case st == session.Loading || st == session.Deleting:
+			why = fmt.Sprintf("the session is busy (%s)", st)
+		case st == session.Paused:
+			why = "the session is paused"
+		case st == session.Recoverable:
+			why = fmt.Sprintf("the session is not running (%s)", st)
+		case !inst.Started():
+			why = "the session has not started"
+		case inst.GetWorktreePath() == "":
+			why = "the session has no worktree"
 		}
 	default:
 		why = "unknown request"

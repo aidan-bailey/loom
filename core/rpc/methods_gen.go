@@ -363,6 +363,16 @@ type ReadJobLogParams struct {
 type ReadJobLogResult struct {
 }
 
+// EnsureTerminalParams are EnsureTerminal's parameters on the wire.
+type EnsureTerminalParams struct {
+	ID  core.InstanceID `json:"id"`
+	Req core.ReqID      `json:"req"`
+}
+
+// EnsureTerminalResult is EnsureTerminal's result on the wire; an error travels in the reply.
+type EnsureTerminalResult struct {
+}
+
 // ReadFlowParams are ReadFlow's parameters on the wire.
 type ReadFlowParams struct {
 	ID   core.InstanceID `json:"id"`
@@ -972,6 +982,7 @@ var methods = []methodInfo{
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
 	{Name: "ReadMockup", Kind: kindRequest, Params: ReadMockupParams{}, Result: ReadMockupResult{}},
 	{Name: "ReadJobLog", Kind: kindRequest, Params: ReadJobLogParams{}, Result: ReadJobLogResult{}},
+	{Name: "EnsureTerminal", Kind: kindRequest, Params: EnsureTerminalParams{}, Result: EnsureTerminalResult{}},
 	{Name: "ReadFlow", Kind: kindRequest, Params: ReadFlowParams{}, Result: ReadFlowResult{}},
 	{Name: "ReadFlows", Kind: kindRequest, Params: ReadFlowsParams{}, Result: ReadFlowsResult{}},
 	{Name: "ReadFlowDoc", Kind: kindRequest, Params: ReadFlowDocParams{}, Result: ReadFlowDocResult{}},
@@ -1324,6 +1335,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadJobLog(p.ID, p.Job, p.After, p.Req)
 		return ReadJobLogResult{}, nil, true
+	case "EnsureTerminal":
+		var p EnsureTerminalParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.EnsureTerminal(p.ID, p.Req)
+		return EnsureTerminalResult{}, nil, true
 	case "ReadFlow":
 		var p ReadFlowParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1997,6 +2018,12 @@ func (c *Client) ReadMockup(id core.InstanceID, req core.ReqID) {
 func (c *Client) ReadJobLog(id core.InstanceID, job sched.JobID, after int64, req core.ReqID) {
 	var r ReadJobLogResult
 	c.noteRefused(c.requestNoErr("ReadJobLog", ReadJobLogParams{ID: id, Job: job, After: after, Req: req}, &r), req)
+}
+
+// EnsureTerminal is core.Core's EnsureTerminal (request).
+func (c *Client) EnsureTerminal(id core.InstanceID, req core.ReqID) {
+	var r EnsureTerminalResult
+	c.noteRefused(c.requestNoErr("EnsureTerminal", EnsureTerminalParams{ID: id, Req: req}, &r), req)
 }
 
 // ReadFlow is core.Core's ReadFlow (request).
