@@ -30,11 +30,12 @@ var webWait = 5 * time.Second
 func newWebCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "web",
-		Short: "Serve loom's fleet to a paired phone: enable, disable, pair, open, devices, revoke, status",
+		Short: "Serve loom's fleet to a paired phone: enable, disable, terminal, pair, open, devices, revoke, status",
 	}
 	cmd.AddCommand(
 		newWebEnableCmd(),
 		newWebDisableCmd(),
+		newWebTerminalCmd(),
 		newWebPairCmd(),
 		newWebOpenCmd(),
 		newWebDevicesCmd(),
@@ -182,6 +183,46 @@ func newWebDisableCmd() *cobra.Command {
 	}
 }
 
+// newWebTerminalCmd builds `loom web terminal on|off`: the web terminal's
+// switch, set only here and in the TUI's settings, never from the app.
+func newWebTerminalCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "terminal",
+		Short: "Turn the web terminal on or off: a paired device may open a shell in a session's worktree",
+	}
+	sub := func(name string, on bool, short string) *cobra.Command {
+		return &cobra.Command{
+			Use:   name,
+			Short: short,
+			Args:  cobra.NoArgs,
+			RunE: func(c *cobra.Command, _ []string) error {
+				loomErrors(c)
+				out := c.OutOrStdout()
+				return withDaemon(c, func(d *client) error {
+					state := "off"
+					if on {
+						state = "on"
+					}
+					if d.Web().Terminal == on {
+						fmt.Fprintf(out, "The web terminal is already %s.\n", state)
+						return nil
+					}
+					if err := d.SetWebTerminal(on); err != nil {
+						return err
+					}
+					fmt.Fprintf(out, "The web terminal is %s.\n", state)
+					return nil
+				})
+			},
+		}
+	}
+	cmd.AddCommand(
+		sub("on", true, "Let a paired device open a shell in a session's worktree"),
+		sub("off", false, "Close every open terminal connection and refuse new ones"),
+	)
+	return cmd
+}
+
 func newWebStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -199,7 +240,7 @@ func newWebStatusCmd() *cobra.Command {
 
 // writeWebStatus prints w: whether the web is on, where it listens and for
 // which origin, whether it serves or why not (and, while it serves, its
-// local origin), and the device count.
+// local origin), the device count and the web terminal's switch.
 func writeWebStatus(out io.Writer, w core.WebView) {
 	row := func(label, value string) { fmt.Fprintf(out, "%-9s %s\n", label+":", value) }
 	if w.Listen == "" {
@@ -229,6 +270,11 @@ func writeWebStatus(out io.Writer, w core.WebView) {
 		row("Serving", "no")
 	}
 	row("Devices", strconv.Itoa(len(w.Devices)))
+	terminal := "off"
+	if w.Terminal {
+		terminal = "on"
+	}
+	row("Terminal", terminal)
 }
 
 // defaultDeviceName is what `pair` calls a phone when --name is not given.

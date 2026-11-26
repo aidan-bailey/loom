@@ -378,6 +378,100 @@ func TestWebDisable_WhenOffChangesNothing(t *testing.T) {
 	assert.Empty(t, w.Origin)
 }
 
+func TestWebTerminal_OnTurnsItOnAndSaysSo(t *testing.T) {
+	d := webDaemon(t)
+
+	out, _, err := runWeb(t, "terminal", "on")
+
+	require.NoError(t, err)
+	assert.Equal(t, "The web terminal is on.\n", out)
+	assert.True(t, webView(t, d).Terminal)
+}
+
+func TestWebTerminal_OffTurnsItOffAndSaysSo(t *testing.T) {
+	d := webDaemon(t)
+	require.NoError(t, d.loop.SetWebTerminal(true))
+
+	out, _, err := runWeb(t, "terminal", "off")
+
+	require.NoError(t, err)
+	assert.Equal(t, "The web terminal is off.\n", out)
+	assert.False(t, webView(t, d).Terminal)
+}
+
+func TestWebTerminal_OnWhenOnChangesNothing(t *testing.T) {
+	d := webDaemon(t)
+
+	first, _, err := runWeb(t, "terminal", "on")
+	require.NoError(t, err)
+	assert.Equal(t, "The web terminal is on.\n", first)
+	second, _, err := runWeb(t, "terminal", "on")
+
+	require.NoError(t, err)
+	assert.Equal(t, "The web terminal is already on.\n", second)
+	assert.True(t, webView(t, d).Terminal)
+}
+
+// leftAloneDaemon serves a daemon over an unreadable web.json, which the
+// model refuses every SetWebTerminal on.
+func leftAloneDaemon(t *testing.T) *testDaemon {
+	t.Helper()
+	isolateWorkspaces(t)
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte("not json"), 0o600))
+	return serveDaemon(t, "true")
+}
+
+func TestWebTerminal_OffWhenOffSendsNothing(t *testing.T) {
+	leftAloneDaemon(t)
+
+	out, _, err := runWeb(t, "terminal", "off")
+
+	require.NoError(t, err)
+	assert.Equal(t, "The web terminal is already off.\n", out)
+}
+
+func TestWebTerminal_PassesTheDaemonsRefusalOn(t *testing.T) {
+	d := leftAloneDaemon(t)
+
+	out, _, err := runWeb(t, "terminal", "on")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "web.json is left alone")
+	assert.Empty(t, out)
+	assert.False(t, webView(t, d).Terminal)
+}
+
+func TestWebTerminal_WorksWhileTheWebIsOff(t *testing.T) {
+	d := webDaemon(t)
+
+	_, _, err := runWeb(t, "terminal", "on")
+
+	require.NoError(t, err)
+	w := webView(t, d)
+	assert.True(t, w.Terminal)
+	assert.Empty(t, w.Listen)
+}
+
+func TestWebStatus_ShowsTheTerminalSwitch(t *testing.T) {
+	d := webDaemon(t)
+
+	out, _, err := runWeb(t, "status")
+	require.NoError(t, err)
+	assert.Regexp(t, `Terminal:\s+off`, out)
+
+	require.NoError(t, d.loop.SetWebTerminal(true))
+	out, _, err = runWeb(t, "status")
+	require.NoError(t, err)
+	assert.Regexp(t, `Terminal:\s+on`, out)
+
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	out, _, err = runWeb(t, "status")
+	require.NoError(t, err)
+	assert.Regexp(t, `Terminal:\s+on`, out)
+}
+
 func TestWebStatus_WhenOff(t *testing.T) {
 	webDaemon(t)
 

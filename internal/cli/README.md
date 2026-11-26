@@ -47,11 +47,12 @@ The flow commands that wait (the run engine, `flow run wait`, `flow agent wait`,
 | `session kill`, `pause`, `resume` | `ReloadRegistry`, then `Kill`, `Pause` or `Resume` and a wait for its `Reply` (`request`) |
 | `web enable` | `ConfigureWeb` once (a repeat of the stored settings retries a failed bind, since every call bumps `Web().Rev`; nothing is sent when they are already served: `servesAlready`), then a wait up to `webWait` for a `Web()` past the `Rev` read before the call to report the address served, or an error (`awaitServing`) |
 | `web disable` | `ConfigureWeb` with an empty `listen` and the stored origin |
+| `web terminal on`, `web terminal off` | `Web()` first, nothing sent when the value is in force, else `SetWebTerminal`, whose refusal is printed as it stands |
 | `web pair` | `PairDevice`; the code is printed as `XXXX-XXXX` with its expiry and the origin |
 | `web open` | refused unless `Web()` is serving and `core.LocalOrigin` gives its address a local origin (`webLocalOrigin`), then `PairDevice`: a refusal `core.IsDeviceExists` reads as a paired name opens the plain URL with no code, any other refusal is the model's; the URL is printed, then handed to `openBrowser` (5 s wait, never killed, a failure reported and exit 0) |
 | `web devices` | `Web().Devices` (read only; `--json` for a script) |
 | `web revoke` | `RevokeDevice`, once per name for `--all` |
-| `web status` | `Web()` (read only); the `Local:` row is `core.LocalOrigin` of the served address, shown only while serving (`none (<why>)` when it has no local origin) |
+| `web status` | `Web()` (read only); the `Local:` row is `core.LocalOrigin` of the served address, shown only while serving (`none (<why>)` when it has no local origin); the `Terminal:` row is `WebView.Terminal`, shown always |
 | `job submit` | `SubmitJob` and a wait for its `Reply` (`submitJob`), then for the replica to hold the job (`awaitJob`); prints where it stands |
 | `job run` | `SubmitJob` without a message, then follows the job (`follow`) and exits with its code |
 | `job wait` | follows an existing job (`follow`); an interrupt asks for a message (`NotifyJob`) when the job has an owner and has not ended |
