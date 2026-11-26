@@ -402,6 +402,33 @@ func (m *Model) ConfigureWeb(listen, origin string) error {
 	return nil
 }
 
+// SetWebTerminal turns the web terminal on or off and writes web.json
+// (Core.SetWebTerminal): while it is on, a paired device may open a
+// session's worktree shell through the web layer. It never touches the
+// revision (WebView.Rev) or what the layer reported: the layer rebinds its
+// listener and ends every stream when the revision changes, and only
+// ConfigureWeb bumps it; the layer follows this switch through the published
+// view instead. A value already in force writes nothing. It works while the
+// web is off, like RevokeDevice, and is refused while web.json is left alone,
+// the value in force included. When the write fails the switch is as it was.
+// Loop goroutine only.
+func (m *Model) SetWebTerminal(on bool) error {
+	w := &m.web
+	if w.loadErr != "" {
+		return w.leftAlone()
+	}
+	if on == w.terminal {
+		return nil
+	}
+	prev := w.terminal
+	w.terminal = on
+	if err := m.saveWeb(); err != nil {
+		w.terminal = prev
+		return fmt.Errorf("save web terminal: %w", err)
+	}
+	return nil
+}
+
 // PairDevice makes the one-time code that pairs a device under name
 // (Core.PairDevice): PairingCodeLen characters of PairingAlphabet, good for
 // PairingTTL. The code lives in memory only, so a daemon restart voids it,

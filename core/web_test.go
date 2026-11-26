@@ -394,6 +394,100 @@ func TestConfigureWeb_AModelThatNeverBootedWritesUnderTheGlobalDir(t *testing.T)
 	assert.Equal(t, m.web.vapid, m2.web.vapid, "the key too")
 }
 
+func TestSetWebTerminal_SwitchesAndKeepsTheSwitchInWebJSON(t *testing.T) {
+	m := webModel(t, webJSON)
+	require.False(t, m.Web().Terminal, "fixture: off to begin with")
+
+	require.NoError(t, m.SetWebTerminal(true))
+	assert.True(t, m.Web().Terminal)
+	assert.Contains(t, string(webFileBytes(t, m)), `"terminal": true`, "kept in web.json")
+	m2 := NewForTest(Options{})
+	m2.initWeb()
+	assert.True(t, m2.Web().Terminal, "and read back by the next boot")
+
+	require.NoError(t, m.SetWebTerminal(false))
+	assert.False(t, m.Web().Terminal)
+	assert.NotContains(t, string(webFileBytes(t, m)), `"terminal"`, "off is left out of the file")
+	assert.Len(t, m.Web().Devices, 2, "the devices stay as they were")
+}
+
+// TestSetWebTerminal_NeverBumpsTheRevisionOrClearsWhatTheLayerReported: the
+// layer rebinds and ends every stream when WebView.Rev changes, so the
+// switch must leave it, and what the layer reported, alone.
+func TestSetWebTerminal_NeverBumpsTheRevisionOrClearsWhatTheLayerReported(t *testing.T) {
+	m := webModel(t, webJSON)
+	m.web.rev = 7
+	m.web.serving, m.web.addr = true, "127.0.0.1:7420"
+	before := m.Web()
+
+	require.NoError(t, m.SetWebTerminal(true))
+
+	after := m.Web()
+	assert.EqualValues(t, 7, after.Rev)
+	assert.True(t, after.Serving)
+	assert.Equal(t, "127.0.0.1:7420", after.Addr)
+	before.Terminal = true
+	assert.Equal(t, before, after, "nothing but the switch changed")
+
+	require.NoError(t, m.SetWebTerminal(false))
+	assert.EqualValues(t, 7, m.Web().Rev, "turning it off bumps nothing either")
+}
+
+func TestSetWebTerminal_TheValueInForceWritesNothing(t *testing.T) {
+	m := webModel(t, webJSON)
+	require.NoError(t, os.Remove(m.web.path), "fixture: the file is gone, so a write would bring it back")
+
+	require.NoError(t, m.SetWebTerminal(false))
+	assert.NoFileExists(t, m.web.path, "off to off writes nothing")
+
+	require.NoError(t, m.SetWebTerminal(true))
+	assert.FileExists(t, m.web.path, "a change writes")
+	require.NoError(t, os.Remove(m.web.path))
+
+	require.NoError(t, m.SetWebTerminal(true))
+	assert.NoFileExists(t, m.web.path, "on to on writes nothing")
+}
+
+func TestSetWebTerminal_PutsTheSwitchBackWhenTheWriteFails(t *testing.T) {
+	m := webModel(t, webJSON)
+	before := m.Web()
+	blockWebPath(t, m)
+
+	require.Error(t, m.SetWebTerminal(true))
+	assert.Equal(t, before, m.Web(), "a failed switch-on leaves it off")
+
+	m.web.terminal = true
+	require.Error(t, m.SetWebTerminal(false))
+	assert.True(t, m.Web().Terminal, "and a failed switch-off leaves it on")
+}
+
+func TestSetWebTerminal_IsRefusedWhileWebJSONIsLeftAlone(t *testing.T) {
+	m := webModel(t, `{not json`)
+
+	err := m.SetWebTerminal(true)
+
+	assert.ErrorContains(t, err, "left alone")
+	assert.ErrorContains(t, err, "parse", "and says why")
+	assert.False(t, m.Web().Terminal)
+	assert.Equal(t, `{not json`, string(webFileBytes(t, m)), "the file is as it was")
+	assert.ErrorContains(t, m.SetWebTerminal(false), "left alone", "the value in force is refused too, as ConfigureWeb refuses")
+}
+
+// TestSetWebTerminal_WorksWhileTheWebIsOff: a host sets the switch before it
+// enables the web, and an enable afterwards keeps it.
+func TestSetWebTerminal_WorksWhileTheWebIsOff(t *testing.T) {
+	m := webModel(t, "")
+
+	require.NoError(t, m.SetWebTerminal(true))
+	assert.True(t, m.Web().Terminal)
+	assert.Empty(t, m.Web().Listen, "the web is still off")
+	assert.Contains(t, string(webFileBytes(t, m)), `"terminal": true`)
+
+	require.NoError(t, m.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	assert.True(t, m.Web().Terminal, "an enable keeps the switch")
+	assert.Contains(t, string(webFileBytes(t, m)), `"terminal": true`, "in the file too")
+}
+
 func TestPairDevice_MakesACodeForTheName(t *testing.T) {
 	m := enabledWeb(t)
 	m.web.misses = 3

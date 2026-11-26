@@ -140,6 +140,40 @@ func TestPublishState_WebChangesReachClients(t *testing.T) {
 	}
 }
 
+// TestPublishState_TheWebTerminalSwitchIsPublishedAndLeavesTheRevisionAlone:
+// a change of the switch reaches every client in the model view, with the
+// revision as it was, and the value in force publishes nothing.
+func TestPublishState_TheWebTerminalSwitchIsPublishedAndLeavesTheRevisionAlone(t *testing.T) {
+	m := webModel(t, webJSON)
+	m.Sync()
+	rev := m.Web().Rev
+	published := func() (events int, v WebView) {
+		evs := m.Sync().Events
+		events, _, _ = stateEvents(evs)
+		for _, ev := range evs {
+			if mc, ok := ev.(ModelChanged); ok {
+				v = mc.View.Web
+			}
+		}
+		return events, v
+	}
+
+	require.NoError(t, m.SetWebTerminal(true))
+	n, v := published()
+	assert.Equal(t, 1, n, "turning it on is published")
+	assert.True(t, v.Terminal)
+	assert.Equal(t, rev, v.Rev, "the layer rebinds on a new revision, and this is not one")
+
+	require.NoError(t, m.SetWebTerminal(true))
+	n, _ = published()
+	assert.Zero(t, n, "the value in force publishes nothing")
+
+	require.NoError(t, m.SetWebTerminal(false))
+	n, v = published()
+	assert.Equal(t, 1, n, "turning it off is published")
+	assert.False(t, v.Terminal)
+}
+
 // TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone: Snapshot carries
 // every published view, what changed since the last Sync included, and the
 // next Sync still publishes what changed since the last Sync.
