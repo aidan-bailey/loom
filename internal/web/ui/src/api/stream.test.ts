@@ -170,6 +170,20 @@ describe("connectStream", () => {
     ]);
   });
 
+  it("delivers the terminal event", async () => {
+    const conn = nextConnection();
+    const { h, events } = handlers();
+    start(h);
+    await settle();
+    conn.push('event: terminal\r\ndata: {"enabled":true}\r\n\r\n');
+    conn.push('event: terminal\r\ndata: {"enabled":false}\r\n\r\n');
+    await settle();
+    expect(events).toEqual([
+      ["terminal", { enabled: true }],
+      ["terminal", { enabled: false }],
+    ]);
+  });
+
   it("keeps reading after a handler throws", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const conn = nextConnection();

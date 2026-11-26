@@ -147,6 +147,20 @@ describe("startFleet", () => {
     expect(saveSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("saves the snapshot after a terminal event", async () => {
+    start();
+    handlers.onEvent("snapshot", fixtureSnapshot(NOW));
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.mocked(saveSnapshot).mockClear();
+    handlers.onEvent("terminal", { enabled: true });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(saveSnapshot).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(saveSnapshot).toHaveBeenCalledOnce();
+    expect(store().snapshot?.terminal).toBe(true);
+    expect(saveSnapshot).toHaveBeenLastCalledWith(store().snapshot, NOW + 1000);
+  });
+
   it("saves nothing for a ping, a bye or a change of link", async () => {
     start();
     handlers.onEvent("ping", {});

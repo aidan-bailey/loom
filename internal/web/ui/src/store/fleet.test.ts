@@ -78,6 +78,23 @@ describe("the store", () => {
     expect(store().snapshot?.device).toEqual(device);
   });
 
+  it("sets the snapshot's terminal flag from the terminal event", () => {
+    const fixture = fixtureSnapshot(NOW);
+    store().apply("snapshot", fixture);
+    expect(store().snapshot?.terminal).toBe(false);
+    store().apply("terminal", { enabled: true });
+    expect(store().snapshot?.terminal).toBe(true);
+    store().apply("terminal", { enabled: false });
+    expect(store().snapshot?.terminal).toBe(false);
+    expect(store().snapshot?.quick_replies).toEqual(fixture.quick_replies);
+    expect(store().snapshot?.usage).toEqual(fixture.usage);
+  });
+
+  it("ignores a terminal event before the first snapshot", () => {
+    store().apply("terminal", { enabled: true });
+    expect(store().snapshot).toBeNull();
+  });
+
   it("keeps the last MAX_NOTICES notices it is given, the oldest dropped", () => {
     store().apply("snapshot", fixtureSnapshot(NOW));
     for (let i = 0; i < MAX_NOTICES + 5; i++) store().addNotices([notice(`n${i}`)]);

@@ -28,6 +28,7 @@ const KNOWN: Record<keyof StreamEvents, true> = {
   workspaces: true,
   usage: true,
   quick_replies: true,
+  terminal: true,
   device: true,
   notice: true,
   ping: true,

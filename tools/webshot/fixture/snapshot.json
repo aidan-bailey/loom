@@ -547,5 +547,6 @@
     "continue",
     "/compact",
     "/clear"
-  ]
+  ],
+  "terminal": false
 }

@@ -89,6 +89,10 @@ function applied(state: FleetState, event: AnyEvent, now: number): Partial<Fleet
       const { quick_replies } = event.data;
       return change((s) => ({ ...s, quick_replies }));
     }
+    case "terminal": {
+      const { enabled } = event.data;
+      return change((s) => ({ ...s, terminal: enabled }));
+    }
     case "device": {
       const device = event.data;
       return change((s) => ({ ...s, device }));
@@ -197,6 +201,7 @@ function afterEvent(event: AnyEvent): void {
       break;
     case "usage":
     case "quick_replies":
+    case "terminal":
     case "device":
       scheduleSave();
       break;
