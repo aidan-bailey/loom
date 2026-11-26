@@ -268,6 +268,76 @@ func TestEnsureTerminal_ASessionAnotherClientMadeElsewhereMeanwhileIsARefusal(t 
 	assert.NotContains(t, ran, "kill-session")
 }
 
+// lateRacingExec is a tmux whose has-session says no session runs twice (the
+// job's probe, then Start's own check) and a session runs from then on: Start
+// polls has-session, never reads new-session's exit status, so a session
+// another client made in that window satisfies its poll and Start succeeds.
+// list is what `tmux ls` prints.
+func lateRacingExec(probes *int, ran *[]string, list string) cmd_test.MockCmdExec {
+	noSession := exec.Command("sh", "-c", "exit 1").Run()
+	return cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			sub := cmd_test.TmuxSubcommand(c.Args)
+			*ran = append(*ran, sub)
+			if sub == "has-session" {
+				*probes++
+				if *probes <= 2 {
+					return noSession
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(list), nil },
+	}
+}
+
+// A Start that succeeds is judged too: when another client's session took the
+// name between Start's check and its new-session, the poll finds that one, so
+// a session started in another directory is a refusal that names nothing (and
+// one that started in the worktree is a success). The job still counts as
+// having started, so a row that goes has the shell closed, after
+// HeldElsewhere's own check.
+func TestEnsureTerminal_ASuccessfulStartIsJudgedByWhoseTheSessionIs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		elsewhere bool
+	}{
+		{"another directory", true},
+		{"the worktree", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			t.Setenv("SHELL", "/bin/sh")
+			killSessionAtEnd(t, tmux.TerminalSessionName("web"))
+			dir := t.TempDir()
+			inst := shellInst(t, "web", dir)
+			m := shellModel(t, inst)
+			startedIn := dir
+			if tc.elsewhere {
+				startedIn = t.TempDir()
+			}
+			var probes int
+			var ran []string
+			m.SetExecForTest(lateRacingExec(&probes, &ran, shellName("web")+"\t"+startedIn+"\n"))
+
+			m.EnsureTerminal(m.idOf(inst), 3)
+			r := replyTo(runJobs(t, m), 3)
+
+			require.NotNil(t, r)
+			assert.GreaterOrEqual(t, probes, 3, "the probe, Start's check, then its poll")
+			assert.NotContains(t, ran, "kill-session")
+			if tc.elsewhere {
+				assert.ErrorIs(t, r.Err, ErrRefused)
+				assert.Contains(t, r.Err.Error(), "another session's")
+				assert.Empty(t, r.Terminal, "the browser must not type into another worktree's shell")
+				return
+			}
+			require.NoError(t, r.Err)
+			assert.Equal(t, shellName("web"), r.Terminal)
+		})
+	}
+}
+
 // A shell that is gone when its start directory is read is never named:
 // whether the probe found it alive (it ended before the listing) or Start
 // found it (another client's shell ended before the listing), the Reply is a

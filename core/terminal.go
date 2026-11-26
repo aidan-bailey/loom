@@ -72,6 +72,9 @@ func shellSessionName(title string) string {
 //   - none: start the shell in worktree. tmux.ErrSessionExists means
 //     another client made it first: the session now under the name gets
 //     ownShell's judgement as one that existed, and nothing was started.
+//     A start that succeeds gets ownShell's judgement too (another client
+//     may have won the race to new-session, which Start cannot see) and stays
+//     started: the delivery's close re-checks whose the session is.
 //     Any other error may come after the launch (the probe says), so the
 //     result is possible, for the delivery to close if its row went.
 func ensureTerminalJob(ts *tmux.Session, title, worktree string, home session.SessionHome, exec cmd2.Executor) Job {
@@ -87,7 +90,13 @@ func ensureTerminalJob(ts *tmux.Session, title, worktree string, home session.Se
 			err := ts.Start(worktree)
 			switch {
 			case err == nil:
-				res.name, res.started = name, true
+				// Start never reads new-session's exit status, it polls has-session,
+				// so a session another client put under the name between its check
+				// and its new-session satisfies the poll: judge what runs there.
+				// started stays true so a row that went has the shell closed
+				// (closeShellJob re-checks HeldElsewhere before it kills).
+				res.started = true
+				res.name, res.err = ownShell(title, name, home, exec)
 			case errors.Is(err, tmux.ErrSessionExists):
 				res.name, res.err = ownShell(title, name, home, exec)
 			default:
