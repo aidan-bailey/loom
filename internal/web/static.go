@@ -254,15 +254,31 @@ func (l *Layer) routeStaticFrom(m *http.ServeMux, classic, next fs.FS) {
 	}
 }
 
+// terminalPage is the one URL answered under terminalCSP: the terminal's document
+// (internal/web/ui/terminal.html), whose script runs xterm.js.
+const terminalPage = "/terminal.html"
+
+// terminalCSP is the policy of terminalPage, and of no other path: the app's own, which is
+// default-src 'self' with strict framing, except that style-src allows inline styles, because
+// xterm.js appends <style> elements and sets style attributes at run time and the app's policy
+// drops them. Scripts and connections stay under default-src 'self'. frame-ancestors is 'self' so
+// the app's panel can frame the page (part 2), and no other origin can.
+const terminalCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+
 // serveTrees answers url from the tree treeOf picks for the request, else from
 // the other tree, so a page loaded just before a switch still gets its assets.
 // A shell answer depends on the request's cookie, so it says so, the 500 of a
 // broken tree included. A shell request whose tree is broken answers 500 and
 // is never handed to the other tree: the device chose that app and is told it
 // is down. A tree that failed to build holds no assets, so no other request
-// reaches it.
+// reaches it. The answer for terminalPage replaces guard's policy with
+// terminalCSP; every other URL keeps guard's.
 func serveTrees(trees [2]staticTreeBuild, url string) http.HandlerFunc {
 	shell := isShellFile(url)
+	policy := ""
+	if url == terminalPage {
+		policy = terminalCSP
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if shell {
 			w.Header().Add("Vary", "Cookie")
@@ -279,6 +295,9 @@ func serveTrees(trees [2]staticTreeBuild, url string) http.HandlerFunc {
 		if !ok {
 			http.NotFound(w, r)
 			return
+		}
+		if policy != "" {
+			w.Header().Set("Content-Security-Policy", policy)
 		}
 		a.serve(w, r)
 	}

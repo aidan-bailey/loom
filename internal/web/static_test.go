@@ -177,6 +177,63 @@ func TestStatic_TheTerminalPageIsABareShellOfItsOwn(t *testing.T) {
 	require.NotContains(t, pageFiles, appFiles[0], "the terminal page does not run the app's entry")
 }
 
+// The terminal page alone is answered under terminalCSP; guard's policy stays on every other
+// answer, the page's own script included.
+func TestStatic_TheTerminalPageAloneGetsItsOwnPolicy(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	assets := nextStaticAssets(t)
+	appFiles, err := firstLoadFiles(string(assets["/index.html"].body))
+	require.NoError(t, err)
+	pageFiles, err := firstLoadFiles(string(assets["/terminal.html"].body))
+	require.NoError(t, err)
+
+	newApp := func(r *http.Request) { r.AddCookie(&http.Cookie{Name: appCookie, Value: "next"}) }
+	for _, tc := range []struct {
+		name   string
+		mutate []func(*http.Request)
+	}{
+		{"a device on the classic app", nil},
+		{"a device on the new app", []func(*http.Request){newApp}},
+	} {
+		resp := httpDo(t, addr, http.MethodGet, terminalPage, "", tc.mutate...)
+		require.Equal(t, http.StatusOK, resp.StatusCode, tc.name)
+		require.Contains(t, resp.Header.Get("Content-Type"), "text/html", tc.name)
+		require.Equal(t, terminalCSP, resp.Header.Get("Content-Security-Policy"), tc.name)
+		require.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"), tc.name+": guard's other headers stay")
+		require.Contains(t, bodyText(t, resp), `<div id="terminal"></div>`, tc.name)
+	}
+
+	for _, url := range []string{"/", "/index.html", "/sw.js", "/manifest.webmanifest", "/icons/icon-192.png", appFiles[0], pageFiles[0]} {
+		resp := httpDo(t, addr, http.MethodGet, url, "", newApp)
+		require.Equal(t, http.StatusOK, resp.StatusCode, url)
+		require.Equal(t, contentSecurityPolicy, resp.Header.Get("Content-Security-Policy"), url+" keeps the app's policy")
+	}
+}
+
+// terminalCSP relaxes style-src and nothing else: xterm.js writes <style> elements at run time,
+// while scripts, connections and frames stay under default-src 'self'.
+func TestStatic_TheTerminalPolicyLoosensOnlyStyles(t *testing.T) {
+	require.Equal(t, "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'", terminalCSP)
+
+	directives := map[string]string{}
+	for _, d := range strings.Split(terminalCSP, "; ") {
+		name, value, _ := strings.Cut(d, " ")
+		directives[name] = value
+	}
+	require.Equal(t, "'self'", directives["default-src"], "scripts and connections fall to default-src")
+	require.Equal(t, "'self' 'unsafe-inline'", directives["style-src"])
+	for name, value := range directives {
+		if name != "style-src" {
+			require.NotContains(t, value, "unsafe", name+" stays strict")
+		}
+	}
+	require.NotContains(t, directives, "script-src", "no directive of its own for scripts")
+	require.Equal(t, "'self'", directives["frame-ancestors"], "part 2's panel frames the page from the app's own origin")
+}
+
 func TestStatic_ServesEachFileWithItsType(t *testing.T) {
 	m := staticMux(t, "b-1")
 	for _, tc := range []struct{ url, ctype string }{
