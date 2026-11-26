@@ -1,14 +1,19 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // shellAttachTerm is the TERM a shell attach client runs under. A daemon
@@ -121,4 +126,53 @@ func (a *ShellAttach) Close() error {
 		a.closeErr = endShellClient(a.ptmx, a.cmd)
 	})
 	return a.closeErr
+}
+
+// ShellHistory returns the rows of the session called name above its visible
+// screen, for the terminal's scrollback: at most paneScrollbackLines of them,
+// with escapes (capture-pane -e), each row ended by "\r\n" so a terminal
+// starts the next one in column 0, and the whole ended by an SGR reset
+// (capture-pane -e leaves the last row's colours on). It is empty when the
+// pane has no history.
+// A gone session, a tmux that cannot answer and a size tmux does not report
+// as a number are errors, never empty.
+//
+// It reads #{history_size} first rather than capturing `-S -<cap> -E -1`
+// outright: on a pane with no history that range prints the first visible
+// row instead of nothing, which the terminal would draw twice. A line that
+// scrolls in between the two commands only moves the window by a row.
+func ShellHistory(name string, cmdExec internalexec.Executor) ([]byte, error) {
+	if !ExactlyTargetable(name) {
+		return nil, fmt.Errorf("shell history: %q cannot be targeted exactly", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	sizeOut, err := cmdExec.Output(Command(ctx, "display-message", "-p", "-t", PaneTarget(name), "#{history_size}"))
+	if err != nil {
+		return nil, fmt.Errorf("shell history: read the history size: %w", err)
+	}
+	text := strings.TrimSpace(string(sizeOut))
+	if text == "" {
+		// A missing session prints empty formats and exits 0.
+		return nil, fmt.Errorf("shell history: tmux reported no history size for %s: the session is gone", name)
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil || n < 0 {
+		return nil, fmt.Errorf("shell history: tmux reported the history size %q", text)
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	n = min(n, paneScrollbackLines)
+	out, err := cmdExec.Output(Command(ctx, "capture-pane", "-p", "-e", "-S", "-"+strconv.Itoa(n), "-E", "-1", "-t", PaneTarget(name)))
+	if err != nil {
+		return nil, fmt.Errorf("shell history: capture the history: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	// capture-pane -e ends each row with the escapes it needs but leaves the
+	// last row's SGR state on; a reset keeps the live screen that follows the
+	// history from inheriting it.
+	return append(bytes.ReplaceAll(out, []byte("\n"), []byte("\r\n")), "\x1b[0m"...), nil
 }

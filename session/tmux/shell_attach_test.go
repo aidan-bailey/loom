@@ -4,12 +4,15 @@ package tmux
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/creack/pty"
 	"github.com/stretchr/testify/assert"
@@ -334,4 +337,110 @@ func TestShellAttach_ReadReturnsAnErrorOnceTheClientEnds(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("a client that ended left a Read blocked")
 	}
+}
+
+// historyTmux answers ShellHistory's two tmux commands, display-message with
+// size and capture-pane with rows, and records every argv.
+type historyTmux struct {
+	size       string // what display-message prints
+	sizeErr    error
+	rows       string // what capture-pane prints
+	captureErr error
+	argvs      [][]string
+}
+
+func (h *historyTmux) runner() cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+		h.argvs = append(h.argvs, slices.Clone(c.Args))
+		switch cmd_test.TmuxSubcommand(c.Args) {
+		case "display-message":
+			return []byte(h.size), h.sizeErr
+		case "capture-pane":
+			return []byte(h.rows), h.captureErr
+		}
+		return nil, fmt.Errorf("unexpected tmux command %v", c.Args)
+	}}
+}
+
+// captures are the capture-pane argvs run so far.
+func (h *historyTmux) captures() [][]string {
+	var out [][]string
+	for _, argv := range h.argvs {
+		if cmd_test.TmuxSubcommand(argv) == "capture-pane" {
+			out = append(out, argv)
+		}
+	}
+	return out
+}
+
+func TestShellHistory_EndsEachRowWithCRLFAndKeepsEscapes(t *testing.T) {
+	h := &historyTmux{size: "4\n", rows: "\x1b[31mone\x1b[0m\n\x1b[1mtwo\n"}
+
+	got, err := ShellHistory("loom_term_demo", h.runner())
+
+	require.NoError(t, err)
+	assert.Equal(t, "\x1b[31mone\x1b[0m\r\n\x1b[1mtwo\r\n\x1b[0m", string(got),
+		"each row ends in CRLF, and an SGR reset closes the history: capture-pane -e leaves the last row's colours on")
+	require.Len(t, h.captures(), 1)
+	assert.Equal(t, []string{"tmux", "-u", "capture-pane", "-p", "-e", "-S", "-4", "-E", "-1", "-t", "=loom_term_demo:"}, h.captures()[0],
+		"the history rows only, with escapes, on the exact pane target")
+}
+
+func TestShellHistory_IsBoundedByTheScrollbackCap(t *testing.T) {
+	for _, tc := range []struct{ size, from string }{
+		{"2999\n", "-2999"},
+		{"3000\n", "-3000"},
+		{"5000\n", "-3000"},
+	} {
+		h := &historyTmux{size: tc.size, rows: "row\n"}
+
+		_, err := ShellHistory("loom_term_demo", h.runner())
+
+		require.NoError(t, err, tc.size)
+		require.Len(t, h.captures(), 1, tc.size)
+		argv := h.captures()[0]
+		assert.Equal(t, tc.from, argv[slices.Index(argv, "-S")+1], "history_size %q", tc.size)
+	}
+}
+
+// With no history `capture-pane -S -N -E -1` prints the first visible row, so
+// the empty case must not ask tmux to capture at all.
+func TestShellHistory_NoHistoryIsEmptyAndCapturesNothing(t *testing.T) {
+	h := &historyTmux{size: "0\n", rows: "the visible row\n"}
+
+	got, err := ShellHistory("loom_term_demo", h.runner())
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.Empty(t, h.captures(), "no capture-pane ran")
+}
+
+func TestShellHistory_RefusesWhatItCannotRead(t *testing.T) {
+	boom := errors.New("tmux fell over")
+	for _, tc := range []struct {
+		name string
+		h    *historyTmux
+	}{
+		{"a gone session, which prints an empty size", &historyTmux{size: "\n", rows: "x\n"}},
+		{"the size command failing", &historyTmux{sizeErr: boom}},
+		{"a size that is no number", &historyTmux{size: "many\n"}},
+		{"a negative size", &historyTmux{size: "-1\n"}},
+		{"the capture failing", &historyTmux{size: "3\n", captureErr: boom}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ShellHistory("loom_term_demo", tc.h.runner())
+
+			require.Error(t, err)
+			assert.Empty(t, got)
+		})
+	}
+}
+
+func TestShellHistory_RefusesAnUntargetableNameWithoutRunningTmux(t *testing.T) {
+	h := &historyTmux{size: "3\n", rows: "x\n"}
+
+	_, err := ShellHistory("loom_term_a:b", h.runner())
+
+	require.Error(t, err)
+	assert.Empty(t, h.argvs, "no tmux command ran")
 }
