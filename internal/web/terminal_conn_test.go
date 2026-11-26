@@ -758,3 +758,204 @@ func TestTermConn_AnAttachThatOpensAfterTheEndingIsClosedUnused(t *testing.T) {
 	assert.Empty(t, frames, "an ended connection says nothing of a late attach")
 	assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
 }
+
+// readBinaryN reads binary frames until n bytes have arrived.
+func readBinaryN(t *testing.T, c *websocket.Conn, n int) []byte {
+	t.Helper()
+	var got []byte
+	for len(got) < n {
+		typ, b := readTerm(t, c)
+		require.Equal(t, websocket.MessageBinary, typ)
+		got = append(got, b...)
+	}
+	return got
+}
+
+func TestTermConn_TheHistoryGoesFirstThenRowsLineFeedsThenTheAttachsOutput(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.hist = []byte("one\r\ntwo\r\n")
+	fake.shell.feed <- []byte("early")
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+
+	var before []byte
+	for {
+		typ, b := readTerm(t, rig.client)
+		if typ == websocket.MessageText {
+			assert.Equal(t, `{"state":"live"}`, string(b))
+			break
+		}
+		before = append(before, b...)
+	}
+	assert.Equal(t, "one\r\ntwo\r\n"+strings.Repeat("\n", 24), string(before),
+		"the history, then one line feed per row of the pane")
+	assert.Equal(t, "early", string(readBinaryN(t, rig.client, 5)),
+		"the output the attach made before the history went out comes after it")
+
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_NoHistoryIsNoLineFeeds(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.shell.feed <- []byte("x")
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client) // the very first message: nothing is sent before it
+	assert.Equal(t, "x", string(readBinaryN(t, rig.client, 1)))
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_ALongHistoryIsSentInFramesOfAtMostTheCap(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.hist = bytes.Repeat([]byte("history line\r\n"), 12000) // about 164 KiB
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	var got []byte
+	frames := 0
+	for {
+		typ, b := readTerm(t, rig.client)
+		if typ == websocket.MessageText {
+			break
+		}
+		frames++
+		assert.LessOrEqual(t, len(b), termFrameMax)
+		got = append(got, b...)
+	}
+	assert.Equal(t, string(fake.hist)+strings.Repeat("\n", 24), string(got))
+	assert.GreaterOrEqual(t, frames, 3)
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_TheOutputIsFilteredOfAlternateScreenSwitches(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+	// A switch split across two reads, as the pty can deliver it.
+	fake.shell.feed <- []byte("\x1b[?1049hhello \x1b[?10")
+	fake.shell.feed <- []byte("49lworld")
+	got := readBinaryN(t, rig.client, len("hello world"))
+	assert.Equal(t, "hello world", string(got))
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_OutputArrivesInOrder(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+	var want strings.Builder
+	for i := 0; i < 200; i++ {
+		s := fmt.Sprintf("line %03d\r\n", i)
+		want.WriteString(s)
+		fake.shell.feed <- []byte(s)
+	}
+	assert.Equal(t, want.String(), string(readBinaryN(t, rig.client, want.Len())))
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_ABrowserThatFallsBehindIsEndedAndNeverBlocksTheAttach(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{
+		open: fake.open,
+		tune: func(c *termConn) { c.outBuffer = 64 << 10 },
+	})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+
+	// An attach that never waits for the browser...
+	chunk := bytes.Repeat([]byte("x"), 32<<10)
+	go func() {
+		for {
+			select {
+			case fake.shell.feed <- chunk:
+			case <-fake.shell.closed:
+				return
+			}
+		}
+	}()
+	// ...and a browser that reads, but slower than the attach writes.
+	type outcome struct {
+		ce  *websocket.CloseError
+		err error
+	}
+	outcomes := make(chan outcome, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := rig.client.Read(ctx); err != nil {
+				var ce websocket.CloseError
+				if errors.As(err, &ce) {
+					outcomes <- outcome{ce: &ce}
+				} else {
+					outcomes <- outcome{err: err}
+				}
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	assert.Equal(t, termEndSlow, waitTermEnd(t, rig.result))
+	select {
+	case o := <-outcomes:
+		require.NoError(t, o.err)
+		assert.Equal(t, websocket.StatusCode(4005), o.ce.Code)
+		assert.Equal(t, "the browser fell behind", o.ce.Reason)
+	case <-time.After(20 * time.Second):
+		t.Fatal("the browser never saw the ending")
+	}
+	assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+}
+
+func TestOutQueue_HoldsAtMostItsLimitAndKeepsWhatItHolds(t *testing.T) {
+	ctx := context.Background()
+	q := newOutQueue(10)
+	assert.True(t, q.push([]byte("12345")))
+	assert.True(t, q.push([]byte("67890")), "exactly the limit fits")
+	assert.False(t, q.push([]byte("x")), "one byte past the limit does not")
+
+	got, err := q.pop(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "12345", string(got), "what the queue holds stays, in order")
+	assert.True(t, q.push([]byte("abcde")), "a pop makes room")
+
+	q.finish()
+	var rest []string
+	for {
+		b, err := q.pop(ctx)
+		if err != nil {
+			assert.ErrorIs(t, err, io.EOF, "a finished queue ends only once it is empty")
+			break
+		}
+		rest = append(rest, string(b))
+	}
+	assert.Equal(t, []string{"67890", "abcde"}, rest)
+}
+
+func TestOutQueue_AnEmptyQueueTakesAChunkLargerThanItsLimit(t *testing.T) {
+	q := newOutQueue(4)
+	assert.True(t, q.push([]byte("12345678")), "one read larger than the limit is no overflow")
+	assert.False(t, q.push([]byte("x")))
+}
+
+func TestOutQueue_PushCopiesAndPopStopsOnItsContext(t *testing.T) {
+	q := newOutQueue(100)
+	src := []byte("abc")
+	require.True(t, q.push(src))
+	src[0] = 'X'
+	got, err := q.pop(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "abc", string(got), "the caller may reuse its buffer")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = q.pop(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+}

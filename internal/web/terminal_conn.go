@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/aidan-bailey/loom/session/vt"
 )
 
 // The bounds of one terminal connection.
@@ -441,14 +444,175 @@ func (c *termConn) attach(ctx context.Context, cols int, rows int) termShell {
 	return sh
 }
 
-// attached runs once the attach is open and held: it tells the app the
-// terminal is live. Task 6.3 replaces this body with the history and the pumps.
+// attached runs once the attach is open and held. The history goes first,
+// then one line feed per row (they push the history up into the browser's
+// scrollback, where tmux's first draw would otherwise paint over it; with no
+// history there is nothing to push), outside the output buffer and before the
+// pump starts, then the live frame, then the attach's output.
 func (c *termConn) attached(ctx context.Context, sh termShell, hist []byte, rows int) bool {
+	if len(hist) > 0 {
+		if !c.sendBinary(ctx, hist) || !c.sendBinary(ctx, bytes.Repeat([]byte("\n"), rows)) {
+			return false
+		}
+	}
 	if err := c.write(ctx, websocket.MessageText, termLiveFrame); err != nil {
 		c.leave()
 		return false
 	}
+	q := newOutQueue(c.outBuffer)
+	c.spawn("terminal output", func() { c.sendLoop(ctx, q) })
+	c.spawn("terminal attach", func() { c.pumpLoop(sh, q) })
 	return true
+}
+
+// sendBinary writes p as binary frames of at most termFrameMax. It reports
+// false once the connection is over, or a write failed.
+func (c *termConn) sendBinary(ctx context.Context, p []byte) bool {
+	for len(p) > 0 {
+		if c.stopped() {
+			return false
+		}
+		n := min(len(p), termFrameMax)
+		if err := c.write(ctx, websocket.MessageBinary, p[:n]); err != nil {
+			c.leave()
+			return false
+		}
+		p = p[n:]
+	}
+	return true
+}
+
+// termReadChunk is how much of the attach's output one read takes.
+const termReadChunk = 32 << 10
+
+// errTermSlow is what the output sink tells the filter when the queue is full.
+var errTermSlow = errors.New("the browser fell behind")
+
+// termSink is where the filtered output goes: the connection's queue. It
+// never waits on the network, so the pump never does.
+type termSink struct {
+	c *termConn
+	q *outQueue
+}
+
+func (s termSink) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if !s.q.push(p) {
+		s.c.end(termEndSlow)
+		return 0, errTermSlow
+	}
+	return len(p), nil
+}
+
+// pumpLoop reads the attach's output through the alternate-screen filter into
+// the queue until the attach ends (by itself or by Close), then finishes the
+// queue so the sender ends once it has sent what is queued.
+func (c *termConn) pumpLoop(sh termShell, q *outQueue) {
+	filter := vt.NewAltScreenFilter(termSink{c: c, q: q})
+	buf := make([]byte, termReadChunk)
+	for {
+		n, err := sh.Read(buf)
+		if n > 0 {
+			if _, werr := filter.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if err != nil {
+			q.finish()
+			return
+		}
+	}
+}
+
+// sendLoop writes the queued output to the browser, one binary frame at a
+// time, until the queue is finished and empty or the connection ends.
+func (c *termConn) sendLoop(ctx context.Context, q *outQueue) {
+	for {
+		chunk, err := q.pop(ctx)
+		if err != nil {
+			// io.EOF: the attach's output is over and all of it is sent. A
+			// cancelled context is run tearing down. Task 6.4 asks why the
+			// attach ended.
+			return
+		}
+		if !c.sendBinary(ctx, chunk) {
+			return
+		}
+	}
+}
+
+// outQueue is the output a browser has not yet been sent, bounded in bytes:
+// push refuses a chunk that would pass the limit, and never waits.
+type outQueue struct {
+	limit int
+	wake  chan struct{}
+
+	mu     sync.Mutex
+	chunks [][]byte
+	size   int
+	fin    bool
+}
+
+func newOutQueue(limit int) *outQueue {
+	return &outQueue{limit: limit, wake: make(chan struct{}, 1)}
+}
+
+// push queues a copy of p, or reports false when it would pass the limit. An
+// empty queue takes any chunk, so one read larger than the limit is no
+// overflow.
+func (q *outQueue) push(p []byte) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.size > 0 && q.size+len(p) > q.limit {
+		return false
+	}
+	q.chunks = append(q.chunks, append([]byte(nil), p...))
+	q.size += len(p)
+	q.signal()
+	return true
+}
+
+// finish ends the queue: pop returns io.EOF once it is empty.
+func (q *outQueue) finish() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.fin = true
+	q.signal()
+}
+
+// signal wakes a waiting pop; the caller holds q.mu.
+func (q *outQueue) signal() {
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
+
+// pop returns the oldest chunk, waiting for one. It returns io.EOF when the
+// queue is finished and empty, and ctx's error when ctx ends first.
+func (q *outQueue) pop(ctx context.Context) ([]byte, error) {
+	for {
+		q.mu.Lock()
+		if len(q.chunks) > 0 {
+			chunk := q.chunks[0]
+			q.chunks = q.chunks[1:]
+			q.size -= len(chunk)
+			q.mu.Unlock()
+			return chunk, nil
+		}
+		fin := q.fin
+		q.mu.Unlock()
+		if fin {
+			return nil, io.EOF
+		}
+		select {
+		case <-q.wake:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 // write sends one message to the browser under termWriteTimeout.
