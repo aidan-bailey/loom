@@ -131,6 +131,24 @@ The owner runs this on the daemon's machine after each part of the desktop merge
 7. The tunnel URL from another machine, paired with `loom web pair`; a Safari desktop pairs this way too, since it may not resolve `*.localhost`.
 8. From part 2: the palette's three kinds, and ⌘K and Ctrl+K from a text field.
 
+## Details moved out of CLAUDE.md
+
+What `internal/web/CLAUDE.md` once spelled out inside a rule, kept here so the rule stays short. Each bullet names the rule it belongs to.
+
+- **The guard:** a bare `localhost` or an IP is never an accepted Host because its cookie reaches every local port; the cross-site post `guard` refuses is a method but GET and HEAD without an accepted `Origin`.
+- **The mockup route:** it is only an iframe's `src`, so a JSON error would show as raw text in the app's frame; its failures are pages (`writePage`).
+- **The rebind:** every `ConfigureWeb` bumps `Rev` and nothing else does, so a disable and an enable that one `Sync` coalesces into a single `ModelChanged` (the settings already bound) still rebind, a retry with the very values that failed still binds, and the layer's own report does not end every open stream by rebinding.
+- **The panic stop:** `fail` returns at once and runs the one stop `Close` also runs, on a goroutine of its own, so a part may call it from the goroutine the stop waits for.
+- **The route table:** the adapter owns decoding, statuses and the log line of a typed handler.
+- **A refused action:** the app's buttons only follow the session's `status` and `group`.
+- **A read route:** up to `maxReqs` tracked requests are kept for `reqKeep` each.
+- **Notices:** the daemon also hands a notice tied to the web client's request to its other clients, or keeps it for the next TUI, since the phone may never see it.
+- **The stream:** the ping is every `pingEvery` (20 s) and each event's write is bounded at `streamWriteTimeout` (30 s).
+- **Push triggers:** within one Prompting stretch the layer pushes again only for a non-empty reason or tool summary that differs from the last non-empty one pushed, since a cleared or returning label is the same prompt and each push alerts the phone again. A turn's stop verdict (`VerdictStop`) is pushed at most once and never for a turn that ended before the workspace's baseline: `needs_you` as waiting, `done` as done (under the device's finished toggle), and a finished push the Running→Ready edge owed only for `stopped` or no verdict.
+- **Escalations:** an escalation is a `Watch.Escalations` entry the workspace's last projection lacked, identified by its issue and recorded time (`escalationKey`).
+- **The push sender:** the timeout is 10 s, at most 30 pushes a minute per device, and the queue holds at most 100.
+- **The message route:** `GET /api/v1/sessions/{id}/message` stays but no screen draws the last message, so a screen that does must draw its tree too.
+
 ## Traps
 
 - **The mockup route is an iframe's page, not JSON.** `GET /api/v1/sessions/{id}/mockup` is the one route with its own CSP (`mockupCSP`, a sandbox) and HTML failures (`writePage`); the app learns that a companion stopped from the session's `mockup` going null, not from the frame, whose page it cannot read. A companion is found only when the brainstorming skill started it with `--project-dir` on the session's worktree, and only at a hand-back event or a read (`core/mockup.go`). Its policy's `sandbox` gives the page an opaque origin, yet Chromium still lets `frame-ancestors 'self'` match the app (webshot frames its canned page under the same policy); Safari's behaviour is the iPhone checklist's to confirm. The skill's stop script kills the companion without its shutdown marker and deletes `state/server.pid`, which is why `mockup.Find` requires that file; `TestRealCompanion_FindAndFetch` (opt-in) runs the skill's real scripts.
