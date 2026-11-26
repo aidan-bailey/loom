@@ -2,7 +2,10 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -306,13 +309,151 @@ func (c *termConn) closeSocket(e termEnd) {
 	}
 }
 
-// readLoop is a stub that Task 6.2 replaces: it reads and drops every frame.
-// ctx is the connection's own context.
+// termLiveFrame is the text frame that tells the app the attach is open.
+var termLiveFrame = []byte(`{"state":"live"}`)
+
+// readLoop reads the app's frames until the connection ends. The first text
+// frame must be a size and opens the attach; later sizes resize it; binary
+// frames are typed into it. ctx is the connection's own context.
 func (c *termConn) readLoop(ctx context.Context) {
+	var sh termShell
 	for {
-		if _, _, err := c.ws.Read(ctx); err != nil {
+		typ, b, over, err := c.readMessage(ctx)
+		if err != nil {
 			c.leave()
 			return
 		}
+		if over {
+			c.end(termEndBadFrame)
+			return
+		}
+		switch typ {
+		case websocket.MessageBinary:
+			if sh == nil {
+				c.end(termEndBadFrame)
+				return
+			}
+			// A failed write or resize means the attach is gone: its output
+			// ends too, and that ending says why.
+			_, _ = sh.Write(b)
+		case websocket.MessageText:
+			cols, rows, ok := parseResize(b)
+			if !ok {
+				c.end(termEndBadFrame)
+				return
+			}
+			if sh == nil {
+				if sh = c.attach(ctx, cols, rows); sh == nil {
+					return
+				}
+				continue
+			}
+			_ = sh.Resize(cols, rows)
+		}
 	}
+}
+
+// readMessage reads the app's next message under the frame cap. The library's
+// own read limit is off (run lifts it), so the cap is this one: no more than
+// termFrameMax+1 bytes are ever held, and a message that fills them is over
+// the cap (over is true, with no bytes).
+//
+// An over-cap message is not abandoned half-read: its remainder is read and
+// thrown away first, under termDrainWait, because the library's Close reads
+// what is left of the frame in progress with no timeout, so a sender that
+// stalled inside the frame would hold Close for good. Each message gets a
+// context of its own for that: when the timer cancels it, the library closes
+// the socket and the read fails, and so does the message (a zero ending: the
+// sender stalled, so no close frame could reach it). ctx is the connection's
+// own context.
+func (c *termConn) readMessage(ctx context.Context) (typ websocket.MessageType, b []byte, over bool, err error) {
+	mctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	typ, r, err := c.ws.Reader(mctx)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	b, err = io.ReadAll(io.LimitReader(r, termFrameMax+1))
+	if err != nil {
+		return 0, nil, false, err
+	}
+	if len(b) <= termFrameMax {
+		return typ, b, false, nil
+	}
+	stop := time.AfterFunc(c.drainWait, cancel)
+	defer stop.Stop()
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return 0, nil, false, err
+	}
+	return typ, nil, true, nil
+}
+
+// parseResize reads the app's one control frame, {"resize":{"cols":n,"rows":n}},
+// and refuses anything else (an unknown field, a second value, a size out of
+// bounds).
+func parseResize(b []byte) (cols int, rows int, ok bool) {
+	var m struct {
+		Resize *struct {
+			Cols int `json:"cols"`
+			Rows int `json:"rows"`
+		} `json:"resize"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&m) != nil || m.Resize == nil {
+		return 0, 0, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return 0, 0, false
+	}
+	cols, rows = m.Resize.Cols, m.Resize.Rows
+	if cols < termMinCols || cols > termMaxCols || rows < termMinRows || rows > termMaxRows {
+		return 0, 0, false
+	}
+	return cols, rows, true
+}
+
+// attach opens the attach at the app's first size and tells the app it is
+// live. It returns the attach, or nil when the connection is over: a failed
+// open ends it with termEndNoAttach (the route's termOpen logs the cause; the
+// app is told only that loom could not attach), and an attach that opens after
+// the ending is closed unused.
+func (c *termConn) attach(ctx context.Context, cols int, rows int) termShell {
+	if c.stopped() {
+		return nil
+	}
+	sh, hist, err := c.open(cols, rows)
+	if err != nil {
+		c.end(termEndNoAttach)
+		return nil
+	}
+	c.mu.Lock()
+	if c.shellClosed {
+		c.mu.Unlock()
+		_ = sh.Close()
+		return nil
+	}
+	c.shell = sh
+	c.mu.Unlock()
+	if c.stopped() || !c.attached(ctx, sh, hist, rows) {
+		return nil
+	}
+	return sh
+}
+
+// attached runs once the attach is open and held: it tells the app the
+// terminal is live. Task 6.3 replaces this body with the history and the pumps.
+func (c *termConn) attached(ctx context.Context, sh termShell, hist []byte, rows int) bool {
+	if err := c.write(ctx, websocket.MessageText, termLiveFrame); err != nil {
+		c.leave()
+		return false
+	}
+	return true
+}
+
+// write sends one message to the browser under termWriteTimeout.
+func (c *termConn) write(ctx context.Context, typ websocket.MessageType, p []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, termWriteTimeout)
+	defer cancel()
+	return c.ws.Write(ctx, typ, p)
 }

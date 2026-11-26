@@ -1,11 +1,14 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -476,4 +479,282 @@ func TestRecordHijack_AWriterThatCannotHijackFailsTheUpgradeAndGivesNoConnection
 	assert.Nil(t, hijacked())
 	// The library has written 101 before it hijacks, and a recorder keeps the first
 	// status, so the 500 it then tries to send is not observable here.
+}
+
+// dialRawTerm opens a TCP connection to srv and upgrades it by hand, so a test
+// can put on the wire what the library's own client never sends, such as a
+// frame header that announces more than follows. It returns the connection
+// past the handshake.
+func dialRawTerm(t *testing.T, srv *httptest.Server) net.Conn {
+	t.Helper()
+	nc, err := net.Dial("tcp", srv.Listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = nc.Close() })
+	require.NoError(t, nc.SetDeadline(time.Now().Add(30*time.Second)))
+	_, err = fmt.Fprintf(nc, "GET / HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\n"+
+		"Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"+
+		"Sec-WebSocket-Version: 13\r\n\r\n", srv.Listener.Addr())
+	require.NoError(t, err)
+	resp, err := http.ReadResponse(bufio.NewReader(nc), nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	return nc
+}
+
+// rawFrameHeader is the header of a masked client frame with FIN set and the
+// opcode op (2 is binary), announcing n payload bytes in the 64-bit length
+// form, with a mask key of zeros so the payload goes as it is.
+func rawFrameHeader(op byte, n uint64) []byte {
+	hdr := []byte{0x80 | op, 0x80 | 127}
+	hdr = binary.BigEndian.AppendUint64(hdr, n)
+	return append(hdr, 0, 0, 0, 0)
+}
+
+func TestTermConn_TheFirstResizeOpensTheAttachAtThatSizeAndLaterOnesResizeIt(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 120, 40)
+	expectLive(t, rig.client)
+	assert.Equal(t, [][2]int{{120, 40}}, fake.calls())
+
+	sendResize(t, rig.client, 100, 30)
+	sendTerm(t, rig.client, websocket.MessageBinary, []byte("ls"))
+	sendTerm(t, rig.client, websocket.MessageBinary, []byte("\r"))
+	waitUntil(t, "the attach to hear the resize and the keys", func() bool {
+		return fake.shell.input() == "ls\r" && len(fake.shell.sizes()) == 1
+	})
+	assert.Equal(t, [][2]int{{100, 30}}, fake.shell.sizes())
+	assert.Len(t, fake.calls(), 1, "a later resize resizes the attach; it never opens another")
+
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
+func TestTermConn_ABadFirstFrameEndsItAndOpensNoAttach(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		typ   websocket.MessageType
+		frame string
+	}{
+		{"bytes before the first resize", websocket.MessageBinary, "ls\r"},
+		{"columns below the minimum", websocket.MessageText, resizeJSON(1, 24)},
+		{"columns above the maximum", websocket.MessageText, resizeJSON(501, 24)},
+		{"rows below the minimum", websocket.MessageText, resizeJSON(80, 0)},
+		{"rows above the maximum", websocket.MessageText, resizeJSON(80, 201)},
+		{"a negative size", websocket.MessageText, resizeJSON(-5, 24)},
+		{"text that is not JSON", websocket.MessageText, "not json"},
+		{"JSON that is not a resize", websocket.MessageText, `{}`},
+		{"a null resize", websocket.MessageText, `{"resize":null}`},
+		{"a field the frame does not take", websocket.MessageText, `{"resize":{"cols":80,"rows":24},"extra":1}`},
+		{"a field the size does not take", websocket.MessageText, `{"resize":{"cols":80,"rows":24,"x":1}}`},
+		{"a size that is a string", websocket.MessageText, `{"resize":{"cols":"80","rows":24}}`},
+		{"a size that is not whole", websocket.MessageText, `{"resize":{"cols":80.5,"rows":24}}`},
+		{"a second value after the resize", websocket.MessageText, resizeJSON(80, 24) + ` {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newTermOpenFake()
+			rig := startTermConn(t, termRigOpts{open: fake.open})
+			sendTerm(t, rig.client, tc.typ, []byte(tc.frame))
+			end, _, ce := rig.finish(t)
+			assert.Equal(t, termEndBadFrame, end)
+			assert.Equal(t, websocket.StatusCode(4006), ce.Code)
+			assert.Equal(t, "a frame loom does not understand", ce.Reason)
+			assert.Empty(t, fake.calls(), "a bad first frame opens no attach")
+		})
+	}
+}
+
+func TestTermConn_EachBoundOfTheSizeIsInclusive(t *testing.T) {
+	for _, size := range [][2]int{{2, 24}, {500, 24}, {80, 1}, {80, 200}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			fake := newTermOpenFake()
+			rig := startTermConn(t, termRigOpts{open: fake.open})
+			sendResize(t, rig.client, size[0], size[1])
+			expectLive(t, rig.client)
+			assert.Equal(t, [][2]int{size}, fake.calls())
+			rig.conn.end(termEndOff)
+			rig.finish(t)
+		})
+	}
+}
+
+func TestTermConn_ABadLaterFrameEndsItAndClosesTheAttach(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame string
+	}{
+		{"a size out of bounds", resizeJSON(501, 24)},
+		{"text that is not a resize", `{"state":"live"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newTermOpenFake()
+			rig := startTermConn(t, termRigOpts{open: fake.open})
+			sendResize(t, rig.client, 80, 24)
+			expectLive(t, rig.client)
+			sendTerm(t, rig.client, websocket.MessageText, []byte(tc.frame))
+			end, _, ce := rig.finish(t)
+			assert.Equal(t, termEndBadFrame, end)
+			assert.Equal(t, websocket.StatusCode(4006), ce.Code)
+			assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+			assert.Empty(t, fake.shell.sizes(), "a refused size is never applied")
+		})
+	}
+}
+
+func TestTermConn_TheFrameCapIsTheConnectionsOwn(t *testing.T) {
+	live := func(t *testing.T) (*termRig, *termOpenFake) {
+		fake := newTermOpenFake()
+		rig := startTermConn(t, termRigOpts{open: fake.open})
+		sendResize(t, rig.client, 80, 24)
+		expectLive(t, rig.client)
+		return rig, fake
+	}
+	t.Run("a frame of exactly the cap is typed into the attach", func(t *testing.T) {
+		rig, fake := live(t)
+		sendTerm(t, rig.client, websocket.MessageBinary, bytes.Repeat([]byte("a"), termFrameMax))
+		waitUntil(t, "the whole frame to reach the attach", func() bool {
+			return len(fake.shell.input()) == termFrameMax
+		})
+		rig.conn.end(termEndOff)
+		rig.finish(t)
+	})
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{"one byte over the cap", termFrameMax + 1},
+		{"a frame far over it", 1 << 20},
+	} {
+		t.Run(tc.name+" is a bad frame, never the library's 1009", func(t *testing.T) {
+			rig, fake := live(t)
+			sendTerm(t, rig.client, websocket.MessageBinary, bytes.Repeat([]byte("a"), tc.size))
+			end, _, ce := rig.finish(t)
+			assert.Equal(t, termEndBadFrame, end)
+			assert.Equal(t, websocket.StatusCode(4006), ce.Code)
+			assert.Less(t, len(fake.shell.input()), tc.size, "an oversized frame is never typed in")
+			assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
+		})
+	}
+}
+
+func TestTermConn_AnOversizedFrameThatStallsNeverLeavesRunBlocked(t *testing.T) {
+	srv, _, result := newTermServer(t, termRigOpts{
+		tune: func(c *termConn) { c.drainWait = 200 * time.Millisecond },
+	})
+	nc := dialRawTerm(t, srv)
+
+	// A masked binary frame whose header announces 1 GiB, then a little more
+	// than the cap of it, and then nothing: the sender stalls inside the frame
+	// and keeps the TCP connection open.
+	hdr := []byte{0x82, 0x80 | 127}
+	hdr = binary.BigEndian.AppendUint64(hdr, 1<<30)
+	hdr = append(hdr, 0, 0, 0, 0) // a mask key of zeros: the payload goes as it is
+	_, err := nc.Write(hdr)
+	require.NoError(t, err)
+	_, err = nc.Write(bytes.Repeat([]byte("a"), termFrameMax+4096))
+	require.NoError(t, err)
+
+	start := time.Now()
+	assert.Equal(t, termEnd{}, waitTermEnd(t, result),
+		"the sender stalled, so no close frame could reach it")
+	assert.Less(t, time.Since(start), 3*time.Second, "run returns within the drain bound, not when TCP gives up")
+}
+
+func TestTermConn_AFrameThatStallsAfterTheCloseFrameNeverLeavesRunBlocked(t *testing.T) {
+	srv, _, result := newTermServer(t, termRigOpts{
+		tune: func(c *termConn) { c.closeWait = 200 * time.Millisecond },
+	})
+	nc := dialRawTerm(t, srv)
+
+	// A complete binary frame one byte over the cap: the reader discards it
+	// whole and ends the connection with termEndBadFrame, and loom's close
+	// frame goes out. The browser never answers it. It starts another frame
+	// instead, announcing 1 GiB, sends a few bytes of it and stalls: the
+	// library's Close reads it byte by byte with no deadline.
+	over := bytes.Repeat([]byte("a"), termFrameMax+1)
+	_, err := nc.Write(append(rawFrameHeader(2, uint64(len(over))), over...))
+	require.NoError(t, err)
+	_, err = nc.Write(append(rawFrameHeader(2, 1<<30), "abcd"...))
+	require.NoError(t, err)
+
+	assert.Equal(t, termEndBadFrame, waitTermEndWithin(t, result, 2*time.Second),
+		"run returns within the close bound, with the ending it sent")
+}
+
+func TestTermConn_AnEndingFromOutsideDuringAFrameThatStallsNeverLeavesRunBlocked(t *testing.T) {
+	srv, started, result := newTermServer(t, termRigOpts{
+		tune: func(c *termConn) { c.closeWait = 200 * time.Millisecond },
+	})
+	nc := dialRawTerm(t, srv)
+	var st termStarted
+	select {
+	case st = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler never built its connection")
+	}
+
+	// Part of a frame that announces 1000 bytes: the reader is inside it. The
+	// route then ends the connection from outside (a revoked device, a rebind),
+	// the browser sends one more byte and stalls. The pauses put the events in
+	// that order; the assertion holds in any order.
+	_, err := nc.Write(append(rawFrameHeader(2, 1000), bytes.Repeat([]byte("a"), 10)...))
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	st.conn.end(termEndRevoked)
+	time.Sleep(100 * time.Millisecond)
+	_, err = nc.Write([]byte("a"))
+	require.NoError(t, err)
+
+	assert.Equal(t, termEndRevoked, waitTermEndWithin(t, result, 2*time.Second),
+		"run returns within the close bound, with the ending it sent")
+}
+
+func TestTermConn_AFailedAttachEndsWithNoAttachAndTellsTheAppNoCause(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.err = errors.New("tmux: no server running on /tmp/tmux-1000/default")
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	end, _, ce := rig.finish(t)
+	assert.Equal(t, termEndNoAttach, end)
+	assert.Equal(t, websocket.StatusCode(4007), ce.Code)
+	assert.Equal(t, "loom could not attach to the shell", ce.Reason)
+}
+
+func TestTermConn_AnEndingBeforeRunOpensNoAttach(t *testing.T) {
+	fake := newTermOpenFake()
+	sent := make(chan struct{})
+	rig := startTermConn(t, termRigOpts{
+		open: fake.open,
+		before: func(c *termConn) {
+			<-sent // the browser's resize is already on the wire
+			c.end(termEndOff)
+		},
+	})
+	sendResize(t, rig.client, 80, 24)
+	close(sent)
+	end, frames, ce := rig.finish(t)
+	assert.Equal(t, termEndOff, end)
+	assert.Equal(t, websocket.StatusCode(4001), ce.Code)
+	assert.Empty(t, fake.calls(), "an ending decided before run opens nothing")
+	assert.Empty(t, frames)
+}
+
+func TestTermConn_AnAttachThatOpensAfterTheEndingIsClosedUnused(t *testing.T) {
+	fake := newTermOpenFake()
+	fake.gate = make(chan struct{})
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	waitUntil(t, "open to be called", func() bool { return len(fake.calls()) == 1 })
+	rig.conn.end(termEndOff)
+
+	// The close frame goes out after run has closed the attach it holds (none
+	// yet), so the open that returns now must close its own.
+	frames, ce, err := readUntilClose(rig.client)
+	require.NoError(t, err)
+	require.NotNil(t, ce)
+	close(fake.gate)
+	assert.Equal(t, termEndOff, waitTermEnd(t, rig.result))
+	assert.Equal(t, websocket.StatusCode(4001), ce.Code)
+	assert.Empty(t, frames, "an ended connection says nothing of a late attach")
+	assert.GreaterOrEqual(t, fake.shell.closes.Load(), int32(1))
 }
