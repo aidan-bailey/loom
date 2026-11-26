@@ -949,14 +949,14 @@ notice says why; fix or move the file by hand.
 
 `loom web terminal on` lets a paired device open a shell in a session's
 worktree (the one the TUI's terminal pane shows for that session, shared
-with it and kept by tmux); `loom web terminal off` closes every open terminal connection and
-refuses new ones. It is off by default and works while the web is off. It is
-set only on the host, with these commands or the `Web Terminal` row in
-Settings (`S`), never from the app, so a stolen device cookie cannot turn it
-on. It is stored as `terminal` in `web.json`, which a build older than this
-one drops when it rewrites the file, which turns the terminal off; `loom web
-status` shows it as `Terminal:`. The app's terminal panel is not in this
-release.
+with it and kept by tmux as `loom_term_<title>`); `loom web terminal off`
+closes every open terminal connection and refuses new ones. It is off by
+default and works while the web is off. It is set only on the host, with
+these commands or the `Web Terminal` row in Settings (`S`), never from the
+app, so a stolen device cookie cannot turn it on. It is stored as `terminal`
+in `web.json`, which a build older than this one drops when it rewrites the
+file, which turns the terminal off; `loom web status` shows it as
+`Terminal:`. The app's terminal panel is not in this release.
 
 **What the tunnel means.** Cloudflare ends TLS at its edge and reaches loom
 over plain HTTP on loopback, so Cloudflare can read the traffic, the device
