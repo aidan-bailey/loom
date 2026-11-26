@@ -161,3 +161,38 @@ func TestHeldElsewhere_OnlyTheRecordsOwnSessionIsFree(t *testing.T) {
 	_, err = HeldElsewhere("api", terminal, listed("", errors.New("signal: killed")))
 	assert.Error(t, err, "an unreadable listing is no answer")
 }
+
+// HeldElsewhereListed gives HeldElsewhere's verdict and whether a session of
+// the name was listed at all, so a caller that names the session it finds
+// can tell the record's own live session from no session.
+func TestHeldElsewhereListed_SaysWhetherASessionOfTheNameWasListed(t *testing.T) {
+	base := t.TempDir()
+	wt := filepath.Join(base, "repo", ".loom", "worktrees", "api_1")
+	home := SessionHome{Dir: wt}
+	listed := func(list string, err error) cmd_test.MockCmdExec {
+		return cmd_test.MockCmdExec{OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(list), err }}
+	}
+	for _, tc := range []struct {
+		name       string
+		exec       cmd_test.MockCmdExec
+		wantHeld   bool
+		wantListed bool
+	}{
+		{"no such session", listed(listing("loom_other", wt), nil), false, false},
+		{"no server", listed("", errors.New("no server running on /tmp/tmux-1/x")), false, false},
+		{"its own, in the worktree", listed(listing("loom_api", wt), nil), false, true},
+		{"its own, below the worktree", listed(listing("loom_api", filepath.Join(wt, "sub")), nil), false, true},
+		{"started elsewhere", listed(listing("loom_api", filepath.Join(base, "other")), nil), true, true},
+		{"no start directory", listed("loom_api\t\n", nil), true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			held, found, err := HeldElsewhereListed("api", home, tc.exec)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantHeld, held)
+			assert.Equal(t, tc.wantListed, found)
+		})
+	}
+
+	_, _, err := HeldElsewhereListed("api", home, listed("", errors.New("signal: killed")))
+	assert.Error(t, err, "an unreadable listing is no answer")
+}

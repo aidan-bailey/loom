@@ -218,8 +218,20 @@ func startedElsewhere(title string, home SessionHome, cmdExec internalexec.Execu
 // loaded server) is an error: no answer at all, so the caller should change
 // nothing and ask again later.
 func HeldElsewhere(title string, home SessionHome, cmdExec internalexec.Executor) (bool, error) {
+	held, _, err := HeldElsewhereListed(title, home, cmdExec)
+	return held, err
+}
+
+// HeldElsewhereListed is HeldElsewhere's verdict from one listing, and
+// whether a session of the name was listed at all: free with listed false
+// is no session (or no server), free with listed true is the record's own.
+// A caller that goes on to name the session it found (Core.EnsureTerminal)
+// needs the difference: a session that ended since the caller's probe is not
+// one to name.
+func HeldElsewhereListed(title string, home SessionHome, cmdExec internalexec.Executor) (held, listed bool, err error) {
 	dir, found, err := sessionStartDir(title, cmdExec)
-	return heldElsewhere(tmux.ToLoomTmuxName(title), home, dir, found, err)
+	held, err = heldElsewhere(tmux.ToLoomTmuxName(title), home, dir, found, err)
+	return held, found, err
 }
 
 // heldElsewhere is HeldElsewhere's verdict on a listing's answer (dir,
