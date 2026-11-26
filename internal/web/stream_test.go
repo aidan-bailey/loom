@@ -1144,6 +1144,7 @@ func TestStream_SendsTheTerminalSwitchWhenItChanges(t *testing.T) {
 	_, err := e.loop.SetQuickReplies([]string{"ship it"})
 	require.NoError(t, err)
 	s.expect("quick_replies") // the switch ended no stream
+	s.none(100 * time.Millisecond)
 }
 
 func TestStream_SendsTheUsageWhenItChanges(t *testing.T) {
