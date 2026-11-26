@@ -471,6 +471,7 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	so.SetAccountNotice(m.accountsScreenNotice())
 	so.SetBuildSweep(m.core.BuildSweep().AfterHours)
 	so.SetBorrow(queueBorrows(m.core.Queue()))
+	so.SetWebTerminal(m.core.Web().Terminal)
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 	m.core.RequestUsageProbe()

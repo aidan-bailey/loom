@@ -191,16 +191,22 @@ func TestSettingsOverlay_BuildSweepRefusesABadValue(t *testing.T) {
 	}
 }
 
-// borrowLine is the Job Borrowing row of so's render.
-func borrowLine(t *testing.T, so *SettingsOverlay) string {
+// rowLine is the line of so's render that contains label.
+func rowLine(t *testing.T, so *SettingsOverlay, label string) string {
 	t.Helper()
 	for line := range strings.SplitSeq(so.Render(), "\n") {
-		if strings.Contains(line, "Job Borrowing") {
+		if strings.Contains(line, label) {
 			return line
 		}
 	}
-	t.Fatal("no Job Borrowing row")
+	t.Fatalf("no %s row", label)
 	return ""
+}
+
+// borrowLine is the Job Borrowing row of so's render.
+func borrowLine(t *testing.T, so *SettingsOverlay) string {
+	t.Helper()
+	return rowLine(t, so, "Job Borrowing")
 }
 
 func TestSettingsOverlay_BorrowRowShowsTheGlobalSetting(t *testing.T) {
@@ -229,4 +235,52 @@ func TestSettingsOverlay_BorrowToggleIsARequestNotAWorkspaceSetting(t *testing.T
 		_, ok = so.TakeBorrowRequest()
 		assert.False(t, ok, "taken once")
 	}
+}
+
+func TestSettingsOverlay_WebTerminalRowShowsTheGlobalSetting(t *testing.T) {
+	so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	assert.Contains(t, rowLine(t, so, "Web Terminal"), "off (all workspaces)")
+	so.SetWebTerminal(true)
+	assert.Contains(t, rowLine(t, so, "Web Terminal"), "on (all workspaces)")
+	assert.Contains(t, borrowLine(t, so), "off (all workspaces)", "a separate setting")
+}
+
+// TestSettingsOverlay_WebTerminalToggleIsARequestNotAWorkspaceSetting: the
+// switch is global, so Enter asks the caller for the opposite value, and
+// the workspace's settings neither change nor save.
+func TestSettingsOverlay_WebTerminalToggleIsARequestNotAWorkspaceSetting(t *testing.T) {
+	for _, from := range []bool{false, true} {
+		cfg := newTestSettingsCfg()
+		so := NewSettingsOverlay(cfg, false, "")
+		so.SetWebTerminal(from)
+		so.cursor = int(settingsFieldWebTerminal)
+		closed, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+		assert.False(t, closed)
+		assert.False(t, changed, "the workspace's settings are not saved")
+		assert.Equal(t, newTestSettingsCfg(), cfg)
+		on, ok := so.TakeWebTerminalRequest()
+		require.True(t, ok)
+		assert.Equal(t, !from, on)
+		_, ok = so.TakeWebTerminalRequest()
+		assert.False(t, ok, "taken once")
+		_, ok = so.TakeBorrowRequest()
+		assert.False(t, ok, "the borrow request is untouched")
+	}
+}
+
+func TestSettingsOverlay_WebTerminalRowSitsBetweenBorrowingAndAccounts(t *testing.T) {
+	assert.Equal(t, settingsFieldBorrow+1, settingsFieldWebTerminal)
+	assert.Equal(t, settingsFieldWebTerminal+1, settingsFieldAccounts)
+	so := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	index := func(label string) int {
+		for i, line := range strings.Split(so.Render(), "\n") {
+			if strings.Contains(line, label) {
+				return i
+			}
+		}
+		t.Fatalf("no %s row", label)
+		return -1
+	}
+	assert.Less(t, index("Job Borrowing"), index("Web Terminal"))
+	assert.Less(t, index("Web Terminal"), index("Accounts"))
 }

@@ -24,6 +24,7 @@ const (
 	settingsFieldTheme
 	settingsFieldBuildSweep
 	settingsFieldBorrow
+	settingsFieldWebTerminal
 	settingsFieldAccounts
 	settingsFieldCount
 )
@@ -46,6 +47,8 @@ func (f settingsField) label() string {
 		return "Build Sweep"
 	case settingsFieldBorrow:
 		return "Job Borrowing"
+	case settingsFieldWebTerminal:
+		return "Web Terminal"
 	case settingsFieldAccounts:
 		return "Accounts"
 	}
@@ -109,6 +112,13 @@ type SettingsOverlay struct {
 	// cfg.
 	borrow    bool
 	borrowReq *bool
+
+	// webTerminal is the global web terminal switch the Web Terminal row
+	// shows (SetWebTerminal), and webTerminalReq a toggle waiting for the
+	// caller (TakeWebTerminalRequest). The switch is global, so the row
+	// never touches cfg.
+	webTerminal    bool
+	webTerminalReq *bool
 
 	lastErr error
 }
@@ -213,6 +223,9 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 	case settingsFieldBorrow:
 		on := !s.borrow
 		s.borrowReq = &on
+	case settingsFieldWebTerminal:
+		on := !s.webTerminal
+		s.webTerminalReq = &on
 	case settingsFieldAccounts:
 		s.accounts = NewAccountsManager(s.accountRows)
 		s.accounts.SetNotice(s.accountNotice)
@@ -341,6 +354,23 @@ func (s *SettingsOverlay) TakeBorrowRequest() (bool, bool) {
 	return on, true
 }
 
+// SetWebTerminal supplies the switch the Web Terminal row shows: the
+// global web terminal setting, which the caller reads from the model's web
+// view.
+func (s *SettingsOverlay) SetWebTerminal(on bool) { s.webTerminal = on }
+
+// TakeWebTerminalRequest returns and clears the value a Web Terminal toggle
+// asked for. Callers poll it after HandleKeyPress and send it to the model
+// (Core.SetWebTerminal).
+func (s *SettingsOverlay) TakeWebTerminalRequest() (bool, bool) {
+	if s.webTerminalReq == nil {
+		return false, false
+	}
+	on := *s.webTerminalReq
+	s.webTerminalReq = nil
+	return on, true
+}
+
 // TakeAccountRequest returns and clears the Accounts screen's pending
 // request. Callers poll it after HandleKeyPress, like TakeError.
 func (s *SettingsOverlay) TakeAccountRequest() (AccountRequest, bool) {
@@ -461,6 +491,11 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 		return fmt.Sprintf("%dh (all workspaces)", s.buildSweepHours)
 	case settingsFieldBorrow:
 		if s.borrow {
+			return "on (all workspaces)"
+		}
+		return "off (all workspaces)"
+	case settingsFieldWebTerminal:
+		if s.webTerminal {
 			return "on (all workspaces)"
 		}
 		return "off (all workspaces)"

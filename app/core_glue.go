@@ -163,10 +163,12 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 			m.core.WatchGitHub(m.repoPath())
 		}
 	case core.ModelChanged:
-		// The build sweep's threshold is global: another client's change
-		// reaches an open settings overlay here.
+		// The build sweep's threshold and the web terminal's switch are
+		// global: another client's change reaches an open settings overlay
+		// here.
 		if so := m.settingsOverlay(); so != nil {
 			so.SetBuildSweep(m.core.BuildSweep().AfterHours)
+			so.SetWebTerminal(m.core.Web().Terminal)
 		}
 	case core.AccountsChanged:
 		ui.SetShowAccounts(m.core.HasExtraAccounts())

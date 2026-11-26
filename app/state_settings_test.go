@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -175,6 +176,7 @@ func editBuildSweep(m *home, value string) {
 	for i := 0; i < 20; i++ {
 		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
 	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Web Terminal
 	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Job Borrowing
 	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Build Sweep
 	press(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -246,6 +248,7 @@ func toggleBorrow(m *home) {
 	for i := 0; i < 20; i++ {
 		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
 	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Web Terminal
 	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Job Borrowing
 	press(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
@@ -267,4 +270,110 @@ func TestSettingsBorrow_AQueueChangeRefreshesTheRow(t *testing.T) {
 	on := true
 	_ = m.applyCoreEvent(core.QueueChanged{View: core.QueueView{Settings: config.SchedulerSettings{Borrow: &on}}})
 	assert.Contains(t, so.Render(), "on (all workspaces)")
+}
+
+// toggleWebTerminal presses Enter on the Web Terminal row.
+func toggleWebTerminal(m *home) {
+	press := func(msg tea.KeyPressMsg) { handleStateSettingsKey(m, msg) }
+	for i := 0; i < 20; i++ {
+		press(tea.KeyPressMsg{Code: tea.KeyDown}) // the list clamps at its last row, Accounts
+	}
+	press(tea.KeyPressMsg{Code: tea.KeyUp}) // Web Terminal
+	press(tea.KeyPressMsg{Code: tea.KeyEnter})
+}
+
+// webTerminalLine is the Web Terminal row of so's render.
+func webTerminalLine(t *testing.T, so *overlay.SettingsOverlay) string {
+	t.Helper()
+	for line := range strings.SplitSeq(so.Render(), "\n") {
+		if strings.Contains(line, "Web Terminal") {
+			return line
+		}
+	}
+	t.Fatal("no Web Terminal row")
+	return ""
+}
+
+// webTerminalOffAfter puts the global switch back off when the test ends.
+func webTerminalOffAfter(t *testing.T, m *home) {
+	t.Helper()
+	t.Cleanup(func() { _ = loopOf(m).SetWebTerminal(false) })
+}
+
+// TestSettingsWebTerminal_ReachesTheModel: the toggle is SetWebTerminal,
+// and the row shows what the model then holds.
+func TestSettingsWebTerminal_ReachesTheModel(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+	webTerminalOffAfter(t, m)
+	quiet := m.errBox.String() // an empty error box still renders its frame
+
+	toggleWebTerminal(m)
+	assert.True(t, m.core.Web().Terminal)
+	assert.Equal(t, quiet, m.errBox.String())
+	assert.Contains(t, webTerminalLine(t, so), "on (all workspaces)")
+
+	toggleWebTerminal(m)
+	assert.False(t, m.core.Web().Terminal)
+	assert.Contains(t, webTerminalLine(t, so), "off (all workspaces)")
+}
+
+// TestSettingsWebTerminal_ShowsARefusalAndKeepsTheRow: a failed write
+// leaves the switch off, shows the model's error, and the row still says
+// off.
+func TestSettingsWebTerminal_ShowsARefusalAndKeepsTheRow(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+	webTerminalOffAfter(t, m)
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	web := filepath.Join(dir, core.WebFile)
+	if err := os.Remove(web); err != nil {
+		require.True(t, os.IsNotExist(err), err)
+	}
+	require.NoError(t, os.Mkdir(web, 0o700))
+	t.Cleanup(func() { _ = os.Remove(web) })
+
+	toggleWebTerminal(m)
+
+	assert.False(t, m.core.Web().Terminal)
+	assert.Contains(t, m.errBox.String(), "save web terminal")
+	assert.Contains(t, webTerminalLine(t, so), "off (all workspaces)")
+}
+
+// TestSettingsWebTerminal_OpeningTheOverlaySeedsTheRow: the row shows the
+// model's switch the moment the overlay opens.
+func TestSettingsWebTerminal_OpeningTheOverlaySeedsTheRow(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		m := newTestHomeWithWsCtx(t)
+		if on {
+			webTerminalOffAfter(t, m)
+			require.NoError(t, loopOf(m).SetWebTerminal(true))
+			_ = m.drainCore()
+		}
+
+		runOpenSettings(m)
+
+		want := "off (all workspaces)"
+		if on {
+			want = "on (all workspaces)"
+		}
+		assert.Contains(t, webTerminalLine(t, m.settingsOverlay()), want)
+	}
+}
+
+// TestSettingsWebTerminal_AChangeElsewhereRefreshesTheRow: another client's
+// change reaches an open overlay with its ModelChanged.
+func TestSettingsWebTerminal_AChangeElsewhereRefreshesTheRow(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	so := openSettingsForTest(t, m)
+	webTerminalOffAfter(t, m)
+
+	require.NoError(t, loopOf(m).SetWebTerminal(true))
+	_ = m.drainCore()
+	assert.Contains(t, webTerminalLine(t, so), "on (all workspaces)")
+
+	require.NoError(t, loopOf(m).SetWebTerminal(false))
+	_ = m.drainCore()
+	assert.Contains(t, webTerminalLine(t, so), "off (all workspaces)")
 }

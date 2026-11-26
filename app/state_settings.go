@@ -45,6 +45,15 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		so.SetBorrow(queueBorrows(m.core.Queue()))
 	}
+	if on, ok := so.TakeWebTerminalRequest(); ok {
+		// The web terminal's switch is global: the model writes it to
+		// web.json, whichever workspace this overlay edits. The row shows
+		// what the model holds, never what was asked.
+		if err := m.core.SetWebTerminal(on); err != nil {
+			cmds = append(cmds, m.handleError(err))
+		}
+		so.SetWebTerminal(m.core.Web().Terminal)
+	}
 
 	if changed {
 		// The model saves config.json beside the workspace's state (the
