@@ -100,6 +100,53 @@ func ensureTerminalJob(ts *tmux.Session, title, worktree string, home session.Se
 	}
 }
 
+// recheckTerminal is EnsureTerminal's delivery check, run on the model's
+// goroutine before the result is delivered: it looks the instance up again
+// by the id the result carries (identity, not title or position), because a
+// kill or pause that began while the job ran has taken its shell by name
+// already, or will. When the instance is gone or no longer started and
+// active the result becomes a refusal, whoever made the shell, so nothing
+// attaches to a shell a pause or kill is closing (a refusal the job already
+// made stands). When the job also made the shell (or may have), it is
+// closed by a job of its own (closeShellJob). A shell that existed before
+// the request, or was made by another client meanwhile, is never closed
+// here: pause and kill own it.
+func (m *Model) recheckTerminal(req ReqID, id InstanceID, res terminalResult) terminalResult {
+	if inst, _ := m.lookup(id); inst != nil && activeInstance(inst) {
+		return res
+	}
+	if res.started || res.possible {
+		ts := tmux.NewSessionNamedWithDeps(shellSessionName(res.title), "", tmux.MakePtyFactory(), m.executor())
+		m.causedBy(req, func() { m.spawn(closeShellJob(ts, res.title, res.home, m.executor())) })
+	}
+	if res.err == nil {
+		res.err = refusedError{fmt.Errorf("open a terminal of %s: the session was paused or killed while its shell was being opened", res.title)}
+	}
+	res.name = ""
+	return res
+}
+
+// closeShellJob is the job that closes the shell a request made for a row
+// that went: a kill-session on its exact name (Session.Close), after
+// confirming the session under the name still starts in the instance's
+// worktree (session.HeldElsewhere). Another client may have replaced the
+// shell meanwhile, and a session another workspace holds must not be
+// killed; a listing that cannot be read closes nothing. It reads no model
+// state.
+func closeShellJob(ts *tmux.Session, title string, home session.SessionHome, exec cmd2.Executor) Job {
+	return func() any {
+		held, err := session.HeldElsewhere(tmux.TerminalSessionName(title), home, exec)
+		if err != nil || held {
+			log.For("core").Warn("terminal.close_skipped", "title", title, "held_elsewhere", held, "err", err)
+			return nil
+		}
+		if err := ts.Close(); err != nil {
+			log.For("core").Debug("terminal.close_failed", "title", title, "err", err)
+		}
+		return nil
+	}
+}
+
 // ownShell judges the session that holds the shell's name (name, the tmux
 // name of title's shell) from one listing, and answers its name when it is
 // the instance's own: started in home. It answers a refusal when another

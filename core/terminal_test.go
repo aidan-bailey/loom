@@ -312,3 +312,189 @@ func TestEnsureTerminal_AShellThatEndedBeforeTheListingIsNotNamed(t *testing.T) 
 		})
 	}
 }
+
+// shellRow is a started, active session titled "web" in dir, served by a
+// model whose EnsureTerminal(…, 4) job has not run yet.
+func shellRow(t *testing.T, dir string) (*Model, *session.Instance) {
+	t.Helper()
+	t.Setenv("SHELL", "/bin/sh")
+	killSessionAtEnd(t, tmux.TerminalSessionName("web"))
+	inst := shellInst(t, "web", dir)
+	return shellModel(t, inst), inst
+}
+
+// ensureJob queues EnsureTerminal(…, 4) and returns its one job.
+func ensureJob(t *testing.T, m *Model, inst *session.Instance) Job {
+	t.Helper()
+	m.EnsureTerminal(m.idOf(inst), 4)
+	out := m.Drain()
+	require.Len(t, out.Jobs, 1)
+	return out.Jobs[0]
+}
+
+// The race the TUI's own comment records, closed for this path: a kill or a
+// pause that begins (or finishes) while the job makes the shell must leave
+// none behind. On delivery the model finds the row no longer started and
+// active, closes the shell it made in a job of its own, and refuses.
+func TestEnsureTerminal_AShellMadeForARowThatWentIsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, m *Model, inst *session.Instance)
+	}{
+		{"a kill begins", func(t *testing.T, m *Model, inst *session.Instance) {
+			require.NoError(t, inst.TransitionTo(session.Deleting))
+		}},
+		{"a pause begins", func(t *testing.T, m *Model, inst *session.Instance) {
+			require.NoError(t, inst.TransitionTo(session.Loading))
+		}},
+		{"the row is gone", func(t *testing.T, m *Model, inst *session.Instance) {
+			m.removeEverywhere(inst)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			m, inst := shellRow(t, t.TempDir())
+			result := ensureJob(t, m, inst)()
+			require.True(t, shellAlive(t, "web"), "fixture: the job made the shell")
+			tc.change(t, m, inst)
+
+			m.Deliver(result)
+			after := m.Drain()
+
+			r := replyTo(after.Events, 4)
+			require.NotNil(t, r)
+			assert.ErrorIs(t, r.Err, ErrRefused)
+			assert.Empty(t, r.Terminal, "no name is handed out for a shell that is being closed")
+			require.Len(t, after.Jobs, 1, "the shell is closed by a job of its own")
+			m.Deliver(after.Jobs[0]())
+			assert.False(t, shellAlive(t, "web"), "no shell is left behind")
+		})
+	}
+}
+
+// The other side: a row still started and active keeps its shell, and the
+// Reply names it.
+func TestEnsureTerminal_AShellMadeForAnActiveRowIsKept(t *testing.T) {
+	isolateTmux(t)
+	m, inst := shellRow(t, t.TempDir())
+	result := ensureJob(t, m, inst)()
+
+	m.Deliver(result)
+	after := m.Drain()
+
+	r := replyTo(after.Events, 4)
+	require.NotNil(t, r)
+	require.NoError(t, r.Err)
+	assert.Equal(t, shellName("web"), r.Terminal)
+	assert.Empty(t, after.Jobs, "nothing is closed")
+	assert.True(t, shellAlive(t, "web"))
+}
+
+// A shell that existed before the request is never closed here, whatever
+// became of the row: pause and kill own it. The Reply is still a refusal,
+// since a kill or pause is closing that shell and nothing may attach to it.
+func TestEnsureTerminal_AShellThatExistedIsNotClosedWhenTheRowGoes(t *testing.T) {
+	isolateTmux(t)
+	dir := t.TempDir()
+	m, inst := shellRow(t, dir)
+	startForeignSession(t, tmux.TerminalSessionName("web"), dir)
+	result := ensureJob(t, m, inst)()
+	require.NoError(t, inst.TransitionTo(session.Deleting))
+
+	m.Deliver(result)
+	after := m.Drain()
+
+	r := replyTo(after.Events, 4)
+	require.NotNil(t, r)
+	assert.ErrorIs(t, r.Err, ErrRefused, "nothing attaches to a shell a kill is closing")
+	assert.Empty(t, r.Terminal, "no name is handed out")
+	assert.Empty(t, after.Jobs, "no close job: the job started nothing")
+	assert.True(t, shellAlive(t, "web"), "the shell that was there runs on")
+}
+
+// A shell another client made between the job's probe and its start is no
+// more the job's than one that existed: it is not closed, and the Reply is
+// a refusal all the same.
+func TestEnsureTerminal_AShellAnotherClientMadeIsNotClosedWhenTheRowGoes(t *testing.T) {
+	isolateTmux(t)
+	dir := t.TempDir()
+	m, inst := shellRow(t, dir)
+	var probes int
+	var ran []string
+	m.SetExecForTest(racingExec(&probes, &ran, shellName("web")+"\t"+dir+"\n"))
+	result := ensureJob(t, m, inst)()
+	require.NoError(t, inst.TransitionTo(session.Deleting))
+
+	m.Deliver(result)
+	after := m.Drain()
+
+	r := replyTo(after.Events, 4)
+	require.NotNil(t, r)
+	assert.ErrorIs(t, r.Err, ErrRefused)
+	assert.Empty(t, r.Terminal)
+	assert.Empty(t, after.Jobs)
+	assert.NotContains(t, ran, "kill-session")
+}
+
+// The close job confirms the session still starts in the instance's
+// worktree: a session another client put under the name meanwhile is left
+// running, and nothing is killed.
+func TestEnsureTerminal_TheCloseLeavesASessionStartedElsewhere(t *testing.T) {
+	isolateTmux(t)
+	m, inst := shellRow(t, t.TempDir())
+	result := ensureJob(t, m, inst)()
+	require.True(t, shellAlive(t, "web"), "fixture: the job made the shell")
+	require.NoError(t, tmux.Command(context.Background(), "kill-session", "-t", tmux.SessionTarget(shellName("web"))).Run())
+	elsewhere := t.TempDir()
+	startForeignSession(t, tmux.TerminalSessionName("web"), elsewhere)
+	require.NoError(t, inst.TransitionTo(session.Deleting))
+
+	m.Deliver(result)
+	after := m.Drain()
+	require.Len(t, after.Jobs, 1)
+	m.Deliver(after.Jobs[0]())
+
+	assert.Equal(t, canonical(t, elsewhere), canonical(t, sessionPath(t, tmux.TerminalSessionName("web"))), "the other session runs on")
+}
+
+// A launch that failed after tmux may have made the shell leaves it
+// possibly started: when its row went it is closed if it runs in the
+// worktree, and the Reply keeps the job's own error; when the row is
+// active it is left, and the error stands.
+func TestEnsureTerminal_APossiblyStartedShellIsClosedWhenTheRowGoes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		rowGone    bool
+		wantClosed bool
+	}{
+		{"the row went", true, true},
+		{"the row is active", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			dir := t.TempDir()
+			m, inst := shellRow(t, dir)
+			startForeignSession(t, tmux.TerminalSessionName("web"), dir) // what tmux made before the launch failed
+			if tc.rowGone {
+				require.NoError(t, inst.TransitionTo(session.Deleting))
+			}
+
+			m.Deliver(tracked{req: 6, id: m.idOf(inst), result: terminalResult{
+				title: "web", home: inst.SessionHome(), possible: true, err: errors.New("open a terminal of web: boom"),
+			}})
+			after := m.Drain()
+
+			r := replyTo(after.Events, 6)
+			require.NotNil(t, r)
+			assert.EqualError(t, r.Err, "open a terminal of web: boom", "the job's own error stands")
+			assert.Empty(t, r.Terminal)
+			if tc.wantClosed {
+				require.Len(t, after.Jobs, 1)
+				m.Deliver(after.Jobs[0]())
+			} else {
+				assert.Empty(t, after.Jobs)
+			}
+			assert.Equal(t, !tc.wantClosed, shellAlive(t, "web"))
+		})
+	}
+}

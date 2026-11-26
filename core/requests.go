@@ -67,6 +67,9 @@ func (m *Model) track(req ReqID, id InstanceID, job Job) Job {
 // deliverTracked handles a request's result as if it had arrived on its
 // own, then answers the request (when it asked for a Reply).
 func (m *Model) deliverTracked(t tracked) {
+	if res, ok := t.result.(terminalResult); ok {
+		t.result = m.recheckTerminal(t.req, t.id, res)
+	}
 	m.causedBy(t.req, func() { m.Deliver(t.result) })
 	if t.req == 0 {
 		return
