@@ -27,7 +27,7 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 - **Size.** Loom sets no `window-size` option, so tmux's default applies: `latest` since tmux 3.1 (the host runs 3.7c), the window taking the size of the client used last.
 - **The web layer** (`internal/web`) runs in the daemon's process, which has pinned the daemon's tmux server. `guard` (`internal/web/server.go`) checks the `Origin` header only on requests that are neither GET nor HEAD; a WebSocket upgrade is a GET. `authed` (`internal/web/auth.go`) resolves the device from its cookie. The event stream (`internal/web/stream.go`) is hand-registered, limits streams per device and in total (`maxStreamsPerDevice`, `maxStreams`), and ends a revoked device's streams (`hub.closeDevice`).
 - **The CSP** is `default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, with no `connect-src`, so `default-src` governs a WebSocket. The mockup route answers under a CSP of its own (`mockupCSP`, `internal/web/mockup.go`).
-- **xterm.js's default renderer breaks that CSP.** Its DOM renderer appends `<style>` elements at runtime (`_themeStyleElement`, `_dimensionsStyleElement` in `DomRenderer.ts`) and sets `style` attributes with `setAttribute` (`DomRendererRowFactory.ts`), with no nonce support. The WebGL addon draws to a canvas, but a terminal is created on the DOM renderer before an addon replaces it. Not yet tried under the CSP (the spike).
+- **xterm.js's default renderer breaks that CSP.** Its DOM renderer appends `<style>` elements at runtime (`_themeStyleElement`, `_dimensionsStyleElement` in `DomRenderer.ts`) and sets `style` attributes with `setAttribute` (`DomRendererRowFactory.ts`), with no nonce support. Measured on 2026-11-26 (the spike, item 1) with `@xterm/xterm` 6.0.0 and `@xterm/addon-webgl` 0.19.0 in headless Chromium under the layer's exact CSP: the DOM renderer raised 8 `style-src-elem` violations, the WebGL addon loaded after `open()` 8, and the WebGL addon loaded before `open()` still 2 (one `<style>` element of the core's remains). No renderer runs clean. The same page in a same-origin frame served with `style-src 'self' 'unsafe-inline'` raised none, in the frame or its parent.
 - **Dependencies.** `go.mod` has `github.com/creack/pty` and no WebSocket library. Modules are vendored for the Nix build.
 - **Web config.** `web.json` (`core/web_store.go`, `webFile`) holds `listen`, `origin`, the VAPID key, the devices and the quick replies; `Core.ConfigureWeb`, `PairDevice` and `RevokeDevice` change it, and `WebView` publishes it. `loom web` has `enable`, `disable`, `status`, `pair`, `devices`, `revoke` and `open`.
 - **The app.** A view is a panel (`definePanel`); a session's tabs and the desktop inspector's tabs both come from the panels that declare `tab`. Lazy chunks stay out of the entry budget, and a guard lists them. Workspace terminals are left out of the web's fleet.
@@ -73,16 +73,16 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 ### The panel
 
 22. **A `terminal` panel** (`src/panels/terminal/`), a session tab after Changes, labelled "terminal". It applies to a session when the snapshot's `terminal` is true and the session is started, active and not paused, so no tab shows otherwise. The desktop inspector lists it from the same registry.
-23. **xterm.js is a lazy chunk of the panel's**, with an entry in the lazy-chunk guard, so the entry budget does not count it. Its stylesheet is imported statically. The renderer is the one the spike proves under the CSP.
+23. **xterm.js runs in a document of its own, in a frame** (the spike, item 1: no renderer runs under the app's CSP). The app's build gains a second HTML entry, `terminal.html`, whose script holds xterm.js, the WebGL addon and the socket (§25); the main bundle never imports them, so the entry budget does not count them, and a test pins that. The web layer answers `terminal.html` and nothing else with `terminalCSP`: `default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`, set as `mockupCSP` is. Scripts stay `'self'` there: only styles are relaxed. The panel draws the frame (`<iframe src="/terminal.html#<session id>">`) and, being same-origin, drives it through one typed interface the frame's window exposes (`send(bytes)`, `reconnect()`, `focus()`, and a state callback), never through its DOM. The WebGL addon is loaded before `open()`; when WebGL is unavailable or its context is lost, the DOM renderer serves, which the frame's CSP allows. The app's own CSP does not change.
 24. **Theme and type** come from the design tokens: JetBrains Mono, the dark palette, the `--attention` cursor.
-25. **One connection per shown panel** (`src/panels/terminal/socket.ts`): it opens when the panel mounts, sends the size, writes binary frames into xterm.js, and closes when the panel unmounts. It does not connect while the snapshot is stale or the link is offline.
+25. **One connection per shown panel**, held by the frame's script (`src/terminal/socket.ts`): it opens when the panel mounts its frame, sends the size, writes binary frames into xterm.js, and closes when the panel unmounts. It does not connect while the snapshot is stale or the link is offline.
 26. **Reconnecting:** a connection that drops without a refusal reconnects on the stream's backoff (1 s to 30 s) and whenever the page becomes visible. A refusal (§16) shows its reason and does not reconnect. "The shell exited" shows a "Start a new shell" button, which connects again.
 27. **Desktop input:** keys go to the terminal while it has focus; ⌘K still opens the palette. Copy takes xterm.js's selection, paste goes in as bracketed paste when the shell asked for it. A resize of the panel sends the new size, debounced by 100 ms.
 28. **Phone input:** below 1024px the terminal view takes no keyboard focus: touch scrolls and selects. Below it sits a command line, a 16px text field with autocorrect, capitalisation and spellcheck off, whose Enter sends its text and a carriage return (a bare one when empty) and clears it. Above the field, a row of keys, each sending its bytes at once: Ctrl-C, Ctrl-D, Tab, Esc and the four arrows. The footer hides while the field has focus, as for the reply box.
 
 ### Docs and rules
 
-29. **`internal/web/CLAUDE.md`** gains: the terminal route checks `Origin` itself and refuses while the switch is off; terminal bytes are never logged. **`internal/web/ui/CLAUDE.md`** gains: xterm.js loads only in the terminal panel's chunk. **`session/tmux/CLAUDE.md`** gains: `ShellAttach.Close` never closes the session. Each within its budget (`go run ./tools/claudemd -v` first).
+29. **`internal/web/CLAUDE.md`** gains: the terminal route checks `Origin` itself and refuses while the switch is off; terminal bytes are never logged. **`internal/web/ui/CLAUDE.md`** gains: xterm.js loads only in `terminal.html`'s script, and the panel reaches the frame only through its interface. **`internal/web/CLAUDE.md`** also gains: only `terminal.html` gets `terminalCSP`. **`session/tmux/CLAUDE.md`** gains: `ShellAttach.Close` never closes the session. Each within its budget (`go run ./tools/claudemd -v` first).
 30. **`USAGE.md`** documents `loom web terminal`, the settings row and the panel; **`internal/web/README.md`** the route, its frames and limits; **`docs/claude/web-layer.md`** how to add a WebSocket route; **`docs/ARCHITECTURE.md`** the daemon's attach clients.
 
 ## Errors and edge cases
@@ -100,6 +100,7 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 
 - **Go, the model:** `SetWebTerminal` writing and publishing, and refused while the file is left alone; `EnsureTerminal` for each status, both sides of each guard (a started active instance gets a shell; unstarted, paused, no worktree, workspace terminal and mid-kill do not), and the shell closed when a kill begins while the job runs.
 - **Go, the attach unit:** against a fake pty (start, read, write, resize, close ending the client only); one real-tmux test on a private server with a short socket path: attach, type, read the echo, resize, and the session still alive after `Close`.
+- **Go, the frame's document:** `terminal.html` answered with `terminalCSP` and every other path with the app's; the entry bundle importing nothing of xterm.js.
 - **Go, the route:** each refusal of §16 before the upgrade; the limits; the frame cap and the size bounds; switch-off, revocation and the layer's close ending live connections with their reasons; the full buffer closing the connection; nothing of the bytes in the log.
 - **Vitest:** the socket's state machine with a fake WebSocket (connecting, live, each refusal, reconnect and its backoff, visible again); the command line and each key's bytes; `appliesTo` across statuses and the switch; the resize debounce.
 - **webshot:** a `terminal` screen on the phone and both desktop sizes, the fixture server answering the route with canned bytes, under the real CSP.
@@ -109,16 +110,16 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 
 Before the plan is written, in a throwaway page outside the worktree:
 
-1. **A renderer under the CSP** with no violation in the console: xterm.js with the WebGL addon first; if the DOM renderer's first moments violate it, the terminal in a frame served under a CSP of its own, as the mockup is. The result fixes §23.
+1. **A renderer under the CSP** with no violation in the console. **Done, 2026-11-26** (Findings): no renderer runs clean under the app's CSP; the framed document does. §23 is written from it.
 2. **Safari on the iPhone opening a same-origin `wss:` connection** under `default-src 'self'`. If it refuses, the CSP gains `connect-src 'self' wss://<origin's host>`.
 3. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28).
 4. **A WebSocket through the tunnel**, held open for 10 minutes with only pings.
 
-Items 2 to 4 need the owner's iPhone. A failed item changes the spec before any plan.
+Items 2 to 4 need the owner's iPhone; item 3 also shows whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23). A failed item changes the spec before any plan.
 
 ## Delivery
 
 An epic of 2 parts, each a plan merged to main before the next part is designed.
 
 1. **Part 1: the daemon side.** The switch (§4–§8) with its CLI and settings row; `EnsureTerminal` (§9–§11); the attach unit (§12–§14); the dependency and the route (§15–§21); the snapshot field and the stream event; the Go tests; the rules and docs for these (§29–§30). It ends with a WebSocket client reaching a session's shell through a paired device's cookie.
-2. **Part 2: the app.** The panel, the socket and both input modes (§22–§28); the fixture's canned route and the webshot screens; Vitest; the app's rules and docs; the owner's checklist.
+2. **Part 2: the app.** The panel, the socket and both input modes (§22–§28); the fixture's canned route and the webshot screens; Vitest; the frame's document and its CSP (§23); the app's rules and docs; the owner's checklist.
