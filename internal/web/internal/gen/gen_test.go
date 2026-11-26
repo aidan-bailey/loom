@@ -35,7 +35,7 @@ func TestContract_ReadsTheTablesAndUnions(t *testing.T) {
 		events = append(events, e.Name)
 		assert.NotNil(t, e.Data, e.Name)
 	}
-	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "device", "notice", "ping", "bye"}, events)
+	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "terminal", "device", "notice", "ping", "bye"}, events)
 
 	names := map[string]bool{}
 	for _, u := range c.Unions {

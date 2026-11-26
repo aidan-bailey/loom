@@ -287,7 +287,16 @@ func TestSnapshotJSON_HasTheContractsKeys(t *testing.T) {
 	for k := range keys {
 		got = append(got, k)
 	}
-	assert.ElementsMatch(t, []string{"build", "host", "workspaces", "sessions", "device", "badge", "notices", "usage", "usage_stale_after_s", "quick_replies"}, got)
+	assert.ElementsMatch(t, []string{"build", "host", "workspaces", "sessions", "device", "badge", "notices", "usage", "usage_stale_after_s", "quick_replies", "terminal"}, got)
+}
+
+func TestTerminalStateJSON_NamesTheFlagEvenWhenOff(t *testing.T) {
+	on, err := json.Marshal(terminalStateJSON{Enabled: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"enabled":true}`, string(on))
+	off, err := json.Marshal(terminalStateJSON{})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"enabled":false}`, string(off))
 }
 
 func TestProjection_KeepsTheModelsOrderAndLeavesWorkspaceTerminalsOut(t *testing.T) {
@@ -489,6 +498,16 @@ func TestPrOf_KeepsTheURLOnlyWhenItIsHTTPS(t *testing.T) {
 	b, err := json.Marshal(prOf(base))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"number": 318, "state": "open", "checks": "passing"}`, string(b), "no URL, no key")
+}
+
+func TestProjection_SetTerminalReportsOnlyAChange(t *testing.T) {
+	p := newProjection()
+	assert.False(t, p.setTerminal(false), "nothing changed from the start")
+	assert.True(t, p.setTerminal(true))
+	assert.True(t, p.terminal)
+	assert.False(t, p.setTerminal(true))
+	assert.True(t, p.setTerminal(false))
+	assert.False(t, p.terminal)
 }
 
 func TestResolvedQuickReplies(t *testing.T) {

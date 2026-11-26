@@ -496,6 +496,7 @@ export interface Snapshot {
   usage: Usage[] | null;
   usage_stale_after_s: number;
   quick_replies: string[] | null;
+  terminal: boolean;
 }
 
 export interface Step {
@@ -521,6 +522,10 @@ export interface SubscriptionKeys {
 export interface Suggestion {
   label: string;
   persists?: boolean;
+}
+
+export interface TerminalState {
+  enabled: boolean;
 }
 
 export interface Turn {
@@ -611,6 +616,7 @@ export interface StreamEvents {
   workspaces: Workspaces;
   usage: UsageEvent;
   quick_replies: QuickReplies;
+  terminal: TerminalState;
   device: Device;
   notice: Notice;
   ping: Record<string, never>;

@@ -1122,6 +1122,30 @@ func TestStream_SendsTheQuickRepliesWhenTheyChange(t *testing.T) {
 	s.none(100 * time.Millisecond)
 }
 
+func TestStream_SendsTheTerminalSwitchWhenItChanges(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	s := e.open(t, e.cookie)
+	assert.False(t, unframe[snapshotJSON](t, s.expect("snapshot")).Terminal)
+
+	require.NoError(t, e.tui.SetWebTerminal(true))
+	assert.Equal(t, terminalStateJSON{Enabled: true}, unframe[terminalStateJSON](t, s.expect("terminal")))
+
+	s2 := e.open(t, e.cookie)
+	assert.True(t, unframe[snapshotJSON](t, s2.expect("snapshot")).Terminal)
+
+	require.NoError(t, e.tui.SetWebTerminal(true))
+	s.none(100 * time.Millisecond)
+
+	require.NoError(t, e.tui.SetWebTerminal(false))
+	f := s.expect("terminal")
+	assert.False(t, unframe[terminalStateJSON](t, f).Enabled)
+	assert.JSONEq(t, `{"enabled": false}`, string(f.Data))
+
+	_, err := e.loop.SetQuickReplies([]string{"ship it"})
+	require.NoError(t, err)
+	s.expect("quick_replies") // the switch ended no stream
+}
+
 func TestStream_SendsTheUsageWhenItChanges(t *testing.T) {
 	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
 	s := e.open(t, e.cookie)
@@ -1169,12 +1193,13 @@ func TestStreamEvents_NameThePayloadOfEveryEventTheStreamSends(t *testing.T) {
 		types[e.name] = e.data
 	}
 
-	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "device", "notice", "ping", "bye"}, names)
+	assert.Equal(t, []string{"snapshot", "sessions", "workspaces", "usage", "quick_replies", "terminal", "device", "notice", "ping", "bye"}, names)
 	assert.Equal(t, reflect.TypeFor[snapshotJSON](), types["snapshot"])
 	assert.Equal(t, reflect.TypeFor[sessionsJSON](), types["sessions"])
 	assert.Equal(t, reflect.TypeFor[workspacesJSON](), types["workspaces"])
 	assert.Equal(t, reflect.TypeFor[usageEventJSON](), types["usage"])
 	assert.Equal(t, reflect.TypeFor[quickRepliesJSON](), types["quick_replies"])
+	assert.Equal(t, reflect.TypeFor[terminalStateJSON](), types["terminal"])
 	assert.Equal(t, reflect.TypeFor[deviceJSON](), types["device"])
 	assert.Equal(t, reflect.TypeFor[noticeJSON](), types["notice"])
 	assert.Equal(t, reflect.TypeFor[struct{}](), types["ping"], "a ping carries {}")
@@ -1209,6 +1234,7 @@ func TestStreamEvents_EveryFrameTheHubSendsIsInTheTableWithItsPayloadType(t *tes
 	require.NoError(t, e.tui.RenameWorkspace("toy", "renamed"))
 	_, err := e.loop.SetQuickReplies([]string{"ship it"})
 	require.NoError(t, err)
+	require.NoError(t, e.tui.SetWebTerminal(true))
 	e.layer.hub.apply([]core.Event{core.AccountsChanged{View: core.AccountsView{
 		Names: core.AccountNames{Present: true, Default: "default", Names: []string{"default"}},
 		Usage: map[string]account.Usage{"default": {Available: true, Plan: "max", FiveHour: &account.Window{Pct: 62}, At: time.Now()}},

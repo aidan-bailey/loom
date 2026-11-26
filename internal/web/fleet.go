@@ -176,7 +176,7 @@ type noticeJSON struct {
 // number of sessions in needs_you across the workspaces. Usage is each
 // account's plan usage, UsageStaleAfterS the age in seconds past which the
 // app dims a sample (core.UsageStaleAfter), and QuickReplies the list the app
-// offers above its reply box.
+// offers above its reply box, and Terminal whether the web terminal is on.
 type snapshotJSON struct {
 	Build            string                             `json:"build"`
 	Host             string                             `json:"host"`
@@ -188,6 +188,7 @@ type snapshotJSON struct {
 	Usage            []usageJSON                        `json:"usage"`
 	UsageStaleAfterS int                                `json:"usage_stale_after_s"`
 	QuickReplies     []string                           `json:"quick_replies"`
+	Terminal         bool                               `json:"terminal"`
 }
 
 // workspacesJSON is the `workspaces` event. Badge is the snapshot's count
@@ -217,6 +218,12 @@ type usageEventJSON struct {
 // PUT /api/v1/quick-replies: the list the app offers.
 type quickRepliesJSON struct {
 	QuickReplies []string `json:"quick_replies"`
+}
+
+// terminalStateJSON is the `terminal` event's payload: whether the web
+// terminal is on. The snapshot has the same value as its `terminal` field.
+type terminalStateJSON struct {
+	Enabled bool `json:"enabled"`
 }
 
 // groupOf says which of the app's four groups a session is listed under and
@@ -447,6 +454,7 @@ type projection struct {
 	sessions     map[core.WorkspaceID][]sessionJSON
 	usage        []usageJSON
 	quickReplies []string
+	terminal     bool
 	// jobs is each owning session's jobs, from the last QueueChanged
 	// (setQueue); every session in sessions carries its entry (withJobs).
 	jobs map[core.InstanceID]sessionJobs
@@ -533,6 +541,15 @@ func (p *projection) setQuickReplies(stored []string) bool {
 		return false
 	}
 	p.quickReplies = q
+	return true
+}
+
+// setTerminal takes the web terminal's switch and reports whether it changed.
+func (p *projection) setTerminal(on bool) bool {
+	if p.terminal == on {
+		return false
+	}
+	p.terminal = on
 	return true
 }
 

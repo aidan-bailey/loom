@@ -477,3 +477,6 @@ SubscriptionBody.expirationTime?: unknown
 SubscriptionBody.keys?: SubscriptionKeys
 SubscriptionKeys.auth?: string
 SubscriptionKeys.p256dh?: string
+Snapshot.terminal: boolean
+TerminalState.enabled: boolean
+event terminal data=TerminalState

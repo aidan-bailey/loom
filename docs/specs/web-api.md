@@ -247,6 +247,7 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 - `workspaces`: `Workspaces`
 - `usage`: `UsageEvent`
 - `quick_replies`: `QuickReplies`
+- `terminal`: `TerminalState`
 - `device`: `Device`
 - `notice`: `Notice`
 - `ping`: `Record<string, never>`
@@ -710,6 +711,7 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 - `usage`: `Usage[] | null`
 - `usage_stale_after_s`: `number`
 - `quick_replies`: `string[] | null`
+- `terminal`: `boolean`
 
 ### `Step`
 
@@ -735,6 +737,10 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 
 - `label`: `string`
 - `persists?`: `boolean`
+
+### `TerminalState`
+
+- `enabled`: `boolean`
 
 ### `Turn`
 

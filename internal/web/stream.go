@@ -125,10 +125,12 @@ type hub struct {
 	// a flush sends only a list that differs from it.
 	pubWorkspaces []workspaceJSON
 	pubSessions   map[core.WorkspaceID][]sessionJSON
-	// pubUsage and pubQuickReplies are the usage and the quick replies the
-	// streams were last told, likewise.
+	// pubUsage, pubQuickReplies and pubTerminal are the usage, the quick
+	// replies and the web terminal's switch the streams were last told,
+	// likewise.
 	pubUsage        []usageJSON
 	pubQuickReplies []string
+	pubTerminal     bool
 	// ping, every and flushFn are the knobs the tests turn, read under mu.
 	ping    time.Duration
 	every   time.Duration
@@ -191,6 +193,9 @@ func (h *hub) apply(evs []core.Event) {
 				moved = true
 			}
 			if h.fleet.setQuickReplies(ev.View.Web.QuickReplies) {
+				moved = true
+			}
+			if h.fleet.setTerminal(ev.View.Web.Terminal) {
 				moved = true
 			}
 		case core.AccountsChanged:
@@ -386,6 +391,10 @@ func (h *hub) flush() {
 		h.pubQuickReplies = h.fleet.quickReplies
 		h.broadcastLocked("quick_replies", quickRepliesJSON{QuickReplies: h.fleet.quickReplies})
 	}
+	if h.fleet.terminal != h.pubTerminal {
+		h.pubTerminal = h.fleet.terminal
+		h.broadcastLocked("terminal", terminalStateJSON{Enabled: h.fleet.terminal})
+	}
 }
 
 // run is the flusher: each wake waits one publishEvery, then flushes, so a
@@ -534,6 +543,7 @@ func (h *hub) snapshotLocked(dev hubDevice) snapshotJSON {
 		Usage:            h.fleet.usage,
 		UsageStaleAfterS: int(core.UsageStaleAfter / time.Second),
 		QuickReplies:     h.fleet.quickReplies,
+		Terminal:         h.fleet.terminal,
 	}
 }
 
@@ -560,6 +570,7 @@ func streamEvents() []streamEvent {
 		{"workspaces", reflect.TypeFor[workspacesJSON]()},
 		{"usage", reflect.TypeFor[usageEventJSON]()},
 		{"quick_replies", reflect.TypeFor[quickRepliesJSON]()},
+		{"terminal", reflect.TypeFor[terminalStateJSON]()},
 		{"device", reflect.TypeFor[deviceJSON]()},
 		{"notice", reflect.TypeFor[noticeJSON]()},
 		{"ping", reflect.TypeFor[struct{}]()},
