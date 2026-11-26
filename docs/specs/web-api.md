@@ -238,6 +238,13 @@ The page the session's brainstorm companion serves now, as HTML under `mockupCSP
 - Auth: the device cookie
 - Page: HTML for the app's iframe; the generated client builds its URL as `mockupURL`.
 
+### `GET /api/v1/sessions/{id}/terminal`
+
+A WebSocket upgrade, not a page, to the session's worktree shell, which the model starts when it is not there: binary frames carry terminal bytes, and the app's first text frame `{"resize":{"cols":n,"rows":n}}` opens the attach. Refused before the upgrade, as JSON: 426 not a WebSocket upgrade, 400 for a handshake without version 13 and one 16-byte key, 403 without one accepted `Origin` or while the terminal is off, 404 no such session, 429 past 4 a device or 16 in all, 503 stopping or device unread, 409 with the model's words, 504 no answer, 500 no shell. An ending is a close frame, 4001 to 4007 or 1001.
+
+- Auth: the device cookie
+- Page: HTML for the app's iframe; the generated client builds its URL as `terminalURL`.
+
 ## Stream events
 
 `GET /api/v1/stream` sends these server-sent events; the first is always `snapshot`.

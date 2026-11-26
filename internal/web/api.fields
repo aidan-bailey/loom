@@ -480,3 +480,4 @@ SubscriptionKeys.p256dh?: string
 Snapshot.terminal: boolean
 TerminalState.enabled: boolean
 event terminal data=TerminalState
+GET /api/v1/sessions/{id}/terminal ok=101 page

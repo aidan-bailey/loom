@@ -27,7 +27,7 @@ type spec struct {
 	open   bool   // served without authed: only POST /api/v1/pair
 	log    string // the action its log line names, "" when the handler logs for itself
 	client string // the generated TS function's name, lowerCamelCase, unique in the table
-	ok     int    // the success status: 200, 201 or 204
+	ok     int    // the success status: 200, 201 or 204, or 101 for a WebSocket upgrade (a page entry)
 	doc    string // what the route does and refuses, limits included, in one to three sentences
 }
 
@@ -369,6 +369,10 @@ func (l *Layer) routes() []route {
 			method: http.MethodGet, path: "/api/v1/sessions/{id}/mockup", log: "mockup", client: "mockup", ok: http.StatusOK,
 			doc: "The page the session's brainstorm companion serves now, as HTML under `mockupCSP` with `Cache-Control: no-store`, for the app's iframe. A refusal (409: no companion, or a page refused) or a timeout (504) is a small HTML page that says why, under the same policy.",
 		}, l.readMockup),
+		page(l, spec{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}/terminal", log: "terminal", client: "terminal", ok: http.StatusSwitchingProtocols,
+			doc: "A WebSocket upgrade, not a page, to the session's worktree shell, which the model starts when it is not there: binary frames carry terminal bytes, and the app's first text frame `{\"resize\":{\"cols\":n,\"rows\":n}}` opens the attach. Refused before the upgrade, as JSON: 426 not a WebSocket upgrade, 400 for a handshake without version 13 and one 16-byte key, 403 without one accepted `Origin` or while the terminal is off, 404 no such session, 429 past 4 a device or 16 in all, 503 stopping or device unread, 409 with the model's words, 504 no answer, 500 no shell. An ending is a close frame, 4001 to 4007 or 1001.",
+		}, l.terminal),
 	}
 }
 

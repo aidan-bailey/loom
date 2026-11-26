@@ -867,6 +867,7 @@ func TestRoutes_TheTableHoldsExactlyTheRoutesOfTheAPI(t *testing.T) {
 		"GET /api/v1/sessions/{id}/turns turns",
 		"GET /api/v1/sessions/{id}/diff diff",
 		"GET /api/v1/sessions/{id}/mockup mockup",
+		"GET /api/v1/sessions/{id}/terminal terminal",
 		"GET /api/v1/sessions/{id}/jobs/{job}/log jobLog",
 		"POST /api/v1/sessions/{id}/jobs/{job}/{action} jobControl",
 		"GET /api/v1/sessions/{id}/flow flow",
@@ -899,6 +900,23 @@ func TestRoutes_PairAndPushKeyAndTheMockup(t *testing.T) {
 	assert.Nil(t, mockup.resp)
 	assert.Nil(t, mockup.query)
 	assert.Nil(t, mockup.body)
+}
+
+func TestRoutes_TheTerminalIsAPageEntryForAWebSocket(t *testing.T) {
+	rt := routeOf(t, &Layer{}, http.MethodGet, "/api/v1/sessions/{id}/terminal")
+	assert.True(t, rt.page, "the generated client builds its URL and no more: the app opens the WebSocket itself")
+	assert.Equal(t, "terminal", rt.spec.client)
+	assert.Equal(t, "terminal", rt.spec.log)
+	assert.Equal(t, http.StatusSwitchingProtocols, rt.spec.ok)
+	assert.False(t, rt.spec.open, "a terminal is for a paired device")
+	assert.Contains(t, rt.spec.doc, "WebSocket upgrade", "the generated reference prints every page entry as an iframe's HTML: the doc must say what this one is")
+	for _, status := range []string{"426", "403", "404", "429", "503", "409", "504", "500"} {
+		assert.Contains(t, rt.spec.doc, status, "the doc lists every answer the handler gives before the upgrade")
+	}
+	assert.Contains(t, rt.spec.doc, "400 for a handshake", "the doc lists the 400 (the status alone is contained in the close codes 4001 to 4007)")
+	assert.Nil(t, rt.resp)
+	assert.Nil(t, rt.query)
+	assert.Nil(t, rt.body)
 }
 
 func TestRoutes_TheOpenEntryIsServedToARequestWithNoCookie(t *testing.T) {

@@ -1,8 +1,11 @@
 package web
 
 import (
+	"context"
+	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/coder/websocket"
 )
 
 // The terminals' part of the web layer: the slots a terminal connection
@@ -282,5 +286,144 @@ func (t *terminals) tmuxOpen(name string) termOpen {
 			return nil, nil, err
 		}
 		return a, history, nil
+	}
+}
+
+// terminal answers GET /api/v1/sessions/{id}/terminal: a WebSocket to the
+// session's worktree shell. It runs behind authed, and guard does not check
+// the Origin of a GET, so the route checks it itself: exactly one Origin
+// header that the layer's origin rule accepts, which is why the library's own
+// origin check is off. Everything that can be refused is refused before the
+// upgrade, as JSON, and first of all a request that is not a WebSocket upgrade
+// (426: not a GET, below HTTP/1.1, or without the Connection and Upgrade
+// headers) or whose handshake Accept would refuse (400: not version 13, or not
+// exactly one Sec-WebSocket-Key of 16 bytes), each before the origin, the slot
+// and the model: then the origin (403), the session (404), the slot (the
+// switch off 403, the caps 429, a stopping layer or an unread device 503) and
+// the model (409 with its words, 504 when it did not answer, 500 when its
+// reply named no shell). The slot is reserved before the model is asked for the
+// shell, and released when this handler returns. After Accept the connection
+// is the library's: its endings are close frames (termEnd), and the bytes are
+// never logged.
+func (l *Layer) terminal(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "terminal"}
+	if !isWebSocketUpgrade(r) {
+		w.Header().Set("Upgrade", "websocket")
+		l.refuse(w, a, http.StatusUpgradeRequired, "this route is a WebSocket upgrade")
+		return
+	}
+	if !validHandshake(r) {
+		w.Header().Set("Sec-WebSocket-Version", "13")
+		l.refuse(w, a, http.StatusBadRequest, "this route needs WebSocket version 13 and one Sec-WebSocket-Key of 16 bytes")
+		return
+	}
+	rule := l.rule.Load()
+	if origins := r.Header.Values("Origin"); rule == nil || len(origins) != 1 || !rule.allowsOrigin(origins[0]) {
+		l.refuse(w, a, http.StatusForbidden, "the request does not come from loom's origin")
+		return
+	}
+	id, ok := l.readSession(w, r, &a)
+	if !ok {
+		return
+	}
+	t := l.terms
+	slot, err := t.reserve(device)
+	if err != nil {
+		status, msg := errStatus(err)
+		l.refuse(w, a, status, msg)
+		return
+	}
+	defer t.release(slot)
+	reply, err := l.readReply(r.Context(), device, func(req core.ReqID) { t.ensure(id, req) })
+	if err != nil {
+		status, msg := errStatus(err)
+		l.refuse(w, a, status, msg)
+		return
+	}
+	if reply.Terminal == "" {
+		l.refuse(w, a, http.StatusInternalServerError, "loom's reply named no shell")
+		return
+	}
+	// Accept is handed the writer recordHijack gives, which keeps the
+	// connection Accept hijacks: the connection closes it outright when its
+	// close handshake outlasts termCloseWait, since the library's close waits
+	// with no deadline on a frame the browser may never finish and
+	// http.Server.Close does not track a hijacked connection.
+	rw, hijacked := recordHijack(w)
+	ws, err := websocket.Accept(rw, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		// The handshake was checked above and the origin check is off, so the
+		// one failure left to Accept is a connection it cannot hijack, which
+		// it has answered 500 itself.
+		l.record(a, http.StatusInternalServerError, "the connection could not be hijacked: "+err.Error())
+		return
+	}
+	conn := newTermConn(ws, hijacked(), t.newOpen(reply.Terminal), l.shellEnded(id), l.recoverPanic)
+	slot.attach(conn)
+	l.record(a, http.StatusSwitchingProtocols, "ok")
+	t.lg.Info("web.terminal_open", "device", device, "session", uint64(id))
+	// The request's context is not used after Accept: the part ends the
+	// connection, and run returns when it ends.
+	end := conn.run(context.Background())
+	t.lg.Info("web.terminal_close", "device", device, "session", uint64(id), "reason", closeReason(end))
+}
+
+// isWebSocketUpgrade reports whether r asks for a WebSocket upgrade: a GET
+// (the mux's GET pattern also serves HEAD) at HTTP/1.1 or above, whose
+// Connection header lists upgrade and whose Upgrade header lists websocket,
+// each as a token and in any case.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.ProtoAtLeast(1, 1) &&
+		headerHasToken(r.Header, "Connection", "upgrade") && headerHasToken(r.Header, "Upgrade", "websocket")
+}
+
+// validHandshake reports whether r's handshake is one websocket.Accept takes:
+// Sec-WebSocket-Version 13 and exactly one Sec-WebSocket-Key that decodes to
+// 16 bytes. The route asks before the origin, the slot and the model, so
+// Accept's own 400 never answers after the model has started a shell.
+func validHandshake(r *http.Request) bool {
+	if r.Header.Get("Sec-WebSocket-Version") != "13" {
+		return false
+	}
+	keys := r.Header.Values("Sec-WebSocket-Key")
+	if len(keys) != 1 {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(keys[0]))
+	return err == nil && len(raw) == 16
+}
+
+// headerHasToken reports whether any value of the header key lists token, in
+// a comma-separated list, ignoring case.
+func headerHasToken(h http.Header, key, token string) bool {
+	for _, v := range h.Values(key) {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// closeReason is the reason a close is logged with: the ending's own, or that
+// the browser left when loom sent no close frame (the zero termEnd).
+func closeReason(e termEnd) string {
+	if e == (termEnd{}) {
+		return "the browser left"
+	}
+	return e.reason
+}
+
+// shellEnded is the connection's `ended` for session id, asked once when the
+// attach's output ends by itself: a session that is still started and active
+// (the replica's Active) lost only its shell, which exited; any other was
+// paused or killed. It reads the replica and is cheap.
+func (l *Layer) shellEnded(id core.InstanceID) func() termEnd {
+	return func() termEnd {
+		if v, ok := l.client.View(id); ok && v.Active() {
+			return termEndExited
+		}
+		return termEndSession
 	}
 }

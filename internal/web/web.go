@@ -73,6 +73,10 @@ type Layer struct {
 
 	push *pusher
 
+	// terms is the terminals' part: the slots and connections of the web
+	// terminal (terminal.go).
+	terms *terminals
+
 	// onAction, when set, takes the place of the log for the result of each
 	// action (record): a test seam.
 	onAction func(a actionLog, result string)
@@ -104,6 +108,8 @@ func (l *Layer) startParts() {
 	l.addSink(l.reqs)
 	l.push = newPusher(l)
 	l.addSink(l.push)
+	l.terms = newTerminals(l)
+	l.addSink(l.terms)
 }
 
 // stopParts stops the layer's parts, first in Close.

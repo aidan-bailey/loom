@@ -649,6 +649,7 @@ export interface Client {
   pair(body: PairBody): Promise<Outcome<Pair>>;
   pushKey(): Promise<Outcome<PushKey>>;
   mockupURL(id: number): string;
+  terminalURL(id: number): string;
 }
 
 function queryOf(query: object | undefined): Record<string, string> | undefined {
@@ -691,5 +692,6 @@ export function createClient(t: Transport): Client {
     pair: (body) => t.send<Pair>("POST", "/api/v1/pair", undefined, body),
     pushKey: () => t.send<PushKey>("GET", "/api/v1/push-key", undefined, undefined),
     mockupURL: (id) => `/api/v1/sessions/${id}/mockup`,
+    terminalURL: (id) => `/api/v1/sessions/${id}/terminal`,
   };
 }
