@@ -34,6 +34,14 @@ const (
 	// stalled connection's own close handshake, so the listener never closes
 	// before a connection has given up its handshake.
 	termCloseGrace = termCloseWait + 2*time.Second
+
+	// termEndSettle bounds how long shellEnded waits for the replica to show
+	// a session no longer active, and termEndPoll is how often it looks. A
+	// pause or kill closes the shell in its job before the replica's view of
+	// the row changes, so a view still active at the attach's end may only be
+	// late.
+	termEndSettle = time.Second
+	termEndPoll   = 25 * time.Millisecond
 )
 
 // The refusals reserve gives, as the route answers them.
@@ -420,12 +428,22 @@ func closeReason(e termEnd) string {
 // shellEnded is the connection's `ended` for session id, asked once when the
 // attach's output ends by itself: a session that is still started and active
 // (the replica's Active) lost only its shell, which exited; any other was
-// paused or killed. It reads the replica and is cheap.
+// paused or killed. A pause or kill closes the shell before the replica
+// shows the row change, so a view still active is asked again every
+// termEndPoll for up to termEndSettle before the shell is called exited: a
+// shell that did exit costs that wait before its close frame, a late view
+// no longer reads as exited.
 func (l *Layer) shellEnded(id core.InstanceID) func() termEnd {
 	return func() termEnd {
-		if v, ok := l.client.View(id); ok && v.Active() {
-			return termEndExited
+		deadline := time.Now().Add(termEndSettle)
+		for {
+			if v, ok := l.client.View(id); !ok || !v.Active() {
+				return termEndSession
+			}
+			if !time.Now().Before(deadline) {
+				return termEndExited
+			}
+			time.Sleep(termEndPoll)
 		}
-		return termEndSession
 	}
 }
