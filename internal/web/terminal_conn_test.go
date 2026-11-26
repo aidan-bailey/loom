@@ -481,6 +481,35 @@ func TestRecordHijack_AWriterThatCannotHijackFailsTheUpgradeAndGivesNoConnection
 	// status, so the 500 it then tries to send is not observable here.
 }
 
+// failingHijackWriter is a writer whose Hijack fails, and which keeps every status
+// written to it, unlike a ResponseRecorder, which keeps only the first.
+type failingHijackWriter struct {
+	header   http.Header
+	statuses []int
+}
+
+func (w *failingHijackWriter) Header() http.Header         { return w.header }
+func (w *failingHijackWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (w *failingHijackWriter) WriteHeader(code int)        { w.statuses = append(w.statuses, code) }
+func (w *failingHijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, errors.New("no hijack here")
+}
+
+func TestRecordHijack_AFailedHijackAnswers500AndGivesNoConnection(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Connection", "Upgrade")
+	r.Header.Set("Upgrade", "websocket")
+	r.Header.Set("Sec-WebSocket-Version", "13")
+	r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	w := &failingHijackWriter{header: http.Header{}}
+	rw, hijacked := recordHijack(w)
+	ws, err := websocket.Accept(rw, r, nil)
+	require.Error(t, err)
+	assert.Nil(t, ws)
+	assert.Nil(t, hijacked())
+	assert.Contains(t, w.statuses, http.StatusInternalServerError, "the failed upgrade is answered 500")
+}
+
 // dialRawTerm opens a TCP connection to srv and upgrades it by hand, so a test
 // can put on the wire what the library's own client never sends, such as a
 // frame header that announces more than follows. It returns the connection
@@ -646,10 +675,7 @@ func TestTermConn_AnOversizedFrameThatStallsNeverLeavesRunBlocked(t *testing.T) 
 	// A masked binary frame whose header announces 1 GiB, then a little more
 	// than the cap of it, and then nothing: the sender stalls inside the frame
 	// and keeps the TCP connection open.
-	hdr := []byte{0x82, 0x80 | 127}
-	hdr = binary.BigEndian.AppendUint64(hdr, 1<<30)
-	hdr = append(hdr, 0, 0, 0, 0) // a mask key of zeros: the payload goes as it is
-	_, err := nc.Write(hdr)
+	_, err := nc.Write(rawFrameHeader(2, 1<<30))
 	require.NoError(t, err)
 	_, err = nc.Write(bytes.Repeat([]byte("a"), termFrameMax+4096))
 	require.NoError(t, err)

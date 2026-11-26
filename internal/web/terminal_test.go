@@ -293,6 +293,7 @@ func TestTerminals_CloseGivesUpOnAHandlerThatNeverReleases(t *testing.T) {
 	slot, err := tm.reserve("phone")
 	require.NoError(t, err)
 
+	start := time.Now()
 	done := make(chan struct{})
 	go func() {
 		tm.close()
@@ -306,6 +307,7 @@ func TestTerminals_CloseGivesUpOnAHandlerThatNeverReleases(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond, "close waited past its grace")
+	assert.GreaterOrEqual(t, time.Since(start), tm.grace/2, "close gave up before it had waited out its grace")
 	e, ended := slot.endedWith()
 	assert.True(t, ended)
 	assert.Equal(t, termEndStopping, e)
