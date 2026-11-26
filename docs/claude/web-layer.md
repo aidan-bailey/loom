@@ -162,6 +162,12 @@ What `internal/web/CLAUDE.md` once spelled out inside a rule, kept here so the r
 - **Escalations:** an escalation is a `Watch.Escalations` entry the workspace's last projection lacked, identified by its issue and recorded time (`escalationKey`).
 - **The push sender:** the timeout is 10 s, at most 30 pushes a minute per device, and the queue holds at most 100.
 - **The message route:** `GET /api/v1/sessions/{id}/message` stays but no screen draws the last message, so a screen that does must draw its tree too.
+- **The device cookie:** its lifetime is `cookieMaxAge`.
+- **Reporting to the host:** `TestApplyWeb_OnlyWhatTheLayerDidIsReportedOff` calls `applyWeb` with a recording host; `TestApplyWeb_AWebJSONTheModelLeftAloneKeepsItsReason` pins the same through a real model.
+- **The sinks:** a sink that blocks stalls the drain, so the client's queues grow.
+- **The cookie's token:** hashing the cookie's text on one side and the bytes on the other makes every route answer 401 with nothing logged.
+- **The daemon's stop:** closing the layer first also keeps every request of a phone from reaching a loop that is quiescing.
+- **The trees:** both apps share one origin.
 
 ## Traps
 
