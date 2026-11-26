@@ -453,13 +453,16 @@ func (c *termConn) attach(ctx context.Context, cols int, rows int) termShell {
 }
 
 // attached runs once the attach is open and held. The history goes first,
-// then one line feed per row (they push the history up into the browser's
-// scrollback, where tmux's first draw would otherwise paint over it; with no
-// history there is nothing to push), outside the output buffer and before the
-// pump starts, then the live frame, then the attach's output.
+// then rows-1 line feeds (the history ends in CR LF, so the cursor already
+// sits on a fresh row, and that row with the feeds makes the screen's rows
+// blank: they push the history up into the browser's scrollback, where tmux's
+// first draw would otherwise paint over it, and leave no blank row between
+// the history and the live screen; with no history there is nothing to push),
+// outside the output buffer and before the pump starts, then the live frame,
+// then the attach's output.
 func (c *termConn) attached(ctx context.Context, sh termShell, hist []byte, rows int) bool {
 	if len(hist) > 0 {
-		if !c.sendBinary(ctx, hist) || !c.sendBinary(ctx, bytes.Repeat([]byte("\n"), rows)) {
+		if !c.sendBinary(ctx, hist) || !c.sendBinary(ctx, bytes.Repeat([]byte("\n"), max(rows-1, 0))) {
 			return false
 		}
 	}

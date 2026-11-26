@@ -787,8 +787,8 @@ func TestTermConn_TheHistoryGoesFirstThenRowsLineFeedsThenTheAttachsOutput(t *te
 		}
 		before = append(before, b...)
 	}
-	assert.Equal(t, "one\r\ntwo\r\n"+strings.Repeat("\n", 24), string(before),
-		"the history, then one line feed per row of the pane")
+	assert.Equal(t, "one\r\ntwo\r\n"+strings.Repeat("\n", 23), string(before),
+		"the history, then one line feed per row of the pane but one: the cursor's fresh row is the first")
 	assert.Equal(t, "early", string(readBinaryN(t, rig.client, 5)),
 		"the output the attach made before the history went out comes after it")
 
@@ -823,7 +823,7 @@ func TestTermConn_ALongHistoryIsSentInFramesOfAtMostTheCap(t *testing.T) {
 		assert.LessOrEqual(t, len(b), termFrameMax)
 		got = append(got, b...)
 	}
-	assert.Equal(t, string(fake.hist)+strings.Repeat("\n", 24), string(got))
+	assert.Equal(t, string(fake.hist)+strings.Repeat("\n", 23), string(got))
 	assert.GreaterOrEqual(t, frames, 3)
 	rig.conn.end(termEndOff)
 	rig.finish(t)
