@@ -137,7 +137,7 @@ func TestStatic_NextTreeBuilds(t *testing.T) {
 
 	licenses := assets["/THIRD_PARTY.txt"]
 	require.Equal(t, "text/plain; charset=utf-8", licenses.ctype)
-	for _, pkg := range []string{"react", "react-dom", "@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono"} {
+	for _, pkg := range []string{"react", "react-dom", "@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-fit"} {
 		require.Contains(t, string(licenses.body), "Name: "+pkg+"\n", "THIRD_PARTY.txt lacks "+pkg)
 	}
 
@@ -150,6 +150,31 @@ func TestStatic_NextTreeBuilds(t *testing.T) {
 
 func TestStatic_NextIndexHasNoInlineScriptOrStyle(t *testing.T) {
 	require.Empty(t, staticInlineMarkup(string(nextStaticAssets(t)["/index.html"].body)))
+}
+
+// The terminal's document is its own entry of the build: a bare page whose script is the only
+// one that imports xterm.js.
+func TestStatic_TheTerminalPageIsABareShellOfItsOwn(t *testing.T) {
+	assets := nextStaticAssets(t)
+	page, ok := assets["/terminal.html"]
+	require.True(t, ok, "the bundle has no /terminal.html: is it an input of vite.config.ts?")
+	require.Equal(t, "text/html; charset=utf-8", page.ctype)
+	body := string(page.body)
+
+	require.Empty(t, staticInlineMarkup(body), "the page's policy keeps scripts to 'self' and the markup sets no style attribute")
+	require.NotContains(t, body, "loom-build", "buildStaticAssets fills the build only into index.html and sw.js")
+	require.NotContains(t, body, "__LOOM_", "a placeholder nothing fills")
+	require.Contains(t, body, `<div id="terminal"></div>`, "main.ts mounts the terminal there")
+	require.Contains(t, body, `id="status"`, "main.ts shows the connection's state there")
+	for _, ref := range staticAttrRef.FindAllStringSubmatch(body, -1) {
+		require.Contains(t, assets, ref[1], "terminal.html references a file the bundle lacks")
+	}
+
+	pageFiles, err := firstLoadFiles(body)
+	require.NoError(t, err, "terminal.html names no entry script")
+	appFiles, err := firstLoadFiles(string(assets["/index.html"].body))
+	require.NoError(t, err)
+	require.NotContains(t, pageFiles, appFiles[0], "the terminal page does not run the app's entry")
 }
 
 func TestStatic_ServesEachFileWithItsType(t *testing.T) {

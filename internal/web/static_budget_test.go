@@ -305,3 +305,86 @@ func TestCheckLazyViews_TheSettingsChunkIsRequiredAndKeptOutOfTheEntry(t *testin
 	}
 	require.ErrorContains(t, checkLazyViews(named), chunk)
 }
+
+// xtermMarker is a string only xterm.js's core holds (the class of the textarea it creates), which
+// a minified bundle keeps.
+const xtermMarker = "xterm-helper-textarea"
+
+// checkXtermScope fails when xterm.js is in a file the app's first load fetches (app), in any
+// script terminal.html does not load (page), or in none of the page's own files: a guard that
+// finds nothing would pass for ever.
+func checkXtermScope(assets map[string]staticAsset, page, app []string) error {
+	holds := func(url string) bool {
+		a, ok := assets[url]
+		return ok && bytes.Contains(a.body, []byte(xtermMarker))
+	}
+	for _, url := range app {
+		if holds(url) {
+			return fmt.Errorf("%s, which index.html loads on every launch, holds xterm.js: only the terminal page's script may import it", url)
+		}
+	}
+	var stray []string
+	for url := range assets {
+		if strings.HasSuffix(url, ".js") && holds(url) && !slices.Contains(page, url) {
+			stray = append(stray, url)
+		}
+	}
+	slices.Sort(stray)
+	if len(stray) > 0 {
+		return fmt.Errorf("xterm.js is in %s, which terminal.html does not load", strings.Join(stray, ", "))
+	}
+	for _, url := range page {
+		if holds(url) {
+			return nil
+		}
+	}
+	return fmt.Errorf("none of terminal.html's files (%s) holds xterm.js: is the marker %q still in its build?", strings.Join(page, ", "), xtermMarker)
+}
+
+func TestDist_XtermLoadsOnlyInTheTerminalPage(t *testing.T) {
+	assets := nextStaticAssets(t)
+	page, ok := assets["/terminal.html"]
+	require.True(t, ok, "the bundle has no /terminal.html: is it an input of vite.config.ts?")
+	pageFiles, err := firstLoadFiles(string(page.body))
+	require.NoError(t, err)
+	appFiles, err := firstLoadFiles(string(assets["/index.html"].body))
+	require.NoError(t, err)
+	require.NoError(t, checkXtermScope(assets, pageFiles, appFiles))
+}
+
+func TestCheckXtermScope_FailsOnACopyOutsideTheTerminalPageAndOnNone(t *testing.T) {
+	const xterm = "var a=\"" + xtermMarker + "\";"
+	build := func(overrides map[string]string) map[string]staticAsset {
+		files := map[string]string{
+			"/assets/terminal-a.js":  xterm,
+			"/assets/shared-b.js":    "export const x = 1;",
+			"/assets/index-c.js":     "import './shared-b.js';",
+			"/assets/Lazy-d.js":      "export const y = 2;",
+			"/assets/terminal-e.css": "." + xtermMarker + "{}",
+		}
+		for url, body := range overrides {
+			files[url] = body
+		}
+		assets := map[string]staticAsset{}
+		for url, body := range files {
+			assets[url] = staticAsset{body: []byte(body)}
+		}
+		return assets
+	}
+	page := []string{"/assets/terminal-a.js", "/assets/shared-b.js"}
+	app := []string{"/assets/index-c.js", "/assets/shared-b.js"}
+
+	require.NoError(t, checkXtermScope(build(nil), page, app), "xterm.js only in the terminal page's script, and a stylesheet naming its class, is the clean case")
+
+	err := checkXtermScope(build(map[string]string{"/assets/index-c.js": xterm}), page, app)
+	require.ErrorContains(t, err, "/assets/index-c.js", "the app's entry holds it")
+
+	err = checkXtermScope(build(map[string]string{"/assets/shared-b.js": xterm}), page, app)
+	require.ErrorContains(t, err, "/assets/shared-b.js", "a chunk both pages load holds it, and index.html preloads it")
+
+	err = checkXtermScope(build(map[string]string{"/assets/Lazy-d.js": xterm}), page, app)
+	require.ErrorContains(t, err, "/assets/Lazy-d.js", "a lazy chunk the terminal page does not load holds it")
+
+	err = checkXtermScope(build(map[string]string{"/assets/terminal-a.js": "var a=1;"}), page, app)
+	require.ErrorContains(t, err, "none of terminal.html's files", "the page's own files hold none: the marker is gone from the build")
+}

@@ -87,6 +87,10 @@ function thirdPartyLicenses(): Plugin {
   };
 }
 
+// The two documents of the build: the app's (index.html) and the terminal's (terminal.html), whose
+// script is the only one that imports xterm.js, so the app's first load never holds it.
+const page = (name: string): string => decodeURIComponent(new URL(name, import.meta.url).pathname);
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), thirdPartyLicenses()],
   resolve: {
@@ -97,6 +101,7 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: false,
     rolldownOptions: {
+      input: { index: page("index.html"), terminal: page("terminal.html") },
       output: {
         // Only the framework every screen needs (React, the router, the query cache) is named
         // "vendor". A catch-all over node_modules would also pull a package only a lazy screen

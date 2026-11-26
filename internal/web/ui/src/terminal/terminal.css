@@ -1,0 +1,30 @@
+/* The terminal page (spec §23): the terminal fills the window, and a status line sits over its
+   bottom edge while the socket connects or after it closed. Colours come from the app's tokens
+   (styles/app.css, which main.ts imports); the font is the stack of app.css's --font-mono. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+#terminal {
+  position: fixed;
+  inset: 0;
+  background: var(--background);
+}
+
+#status {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--card);
+  color: var(--attention);
+  font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#status[hidden] {
+  display: none;
+}
