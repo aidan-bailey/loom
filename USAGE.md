@@ -336,7 +336,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `W` | Open workspace picker |
 | `w` | Open the work view: the host's job queue (see [The Work Queue](#the-work-queue)) |
 | `F` | Open the feedback view: the notes sessions filed about loom (see [Feedback from Sessions](#feedback-from-sessions)) |
-| `S` | Open settings (edit the workspace's config.json: Default Program, Branch Prefix, Base Branch, Profiles, Claude Preferences, Theme; Build Sweep and Job Borrowing, which apply to all workspaces; Accounts) |
+| `S` | Open settings (edit the workspace's config.json: Default Program, Branch Prefix, Base Branch, Profiles, Claude Preferences, Theme; Build Sweep, Job Borrowing and Web Terminal, which apply to all workspaces; Accounts) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
@@ -947,6 +947,17 @@ left alone: the web stays off, `enable` and `revoke <name>` refuse
 (`disable` says the web is already off), `pair` says the web is off, and a
 notice says why; fix or move the file by hand.
 
+`loom web terminal on` lets a paired device open a shell in a session's
+worktree (the tmux session `term_<title>` that the TUI's terminal pane also
+uses); `loom web terminal off` closes every open terminal connection and
+refuses new ones. It is off by default and works while the web is off. It is
+set only on the host, with these commands or the `Web Terminal` row in
+Settings (`S`), never from the app, so a stolen device cookie cannot turn it
+on. It is stored as `terminal` in `web.json`, which a build older than this
+one drops when it rewrites the file, which turns the terminal off; `loom web
+status` shows it as `Terminal:`. The app's terminal panel is not in this
+release.
+
 **What the tunnel means.** Cloudflare ends TLS at its edge and reaches loom
 over plain HTTP on loopback, so Cloudflare can read the traffic, the device
 token included. A token is revocable per device, and Cloudflare Access can be
@@ -1411,11 +1422,13 @@ Inside a session loom launched, each tool runs from the session's own copy (`$LO
 |---------|-------------|
 | `web enable --listen <addr> --origin <url>` | Turn the web app on, or change it: `--listen` is a loopback `127.0.0.1:<port>` or `[::1]:<port>`, `--origin` the `https://<host>` the phone opens. Both are required and checked by the daemon, which applies them at once; the command waits up to 5 s and says whether it serves or why not. Running it again with the same values changes nothing while the web serves, and retries a bind that failed (the port was taken) |
 | `web disable` | Turn the web app off; paired devices and the origin are kept, pending pairing codes are voided, and no push is sent until it is on again |
+| `web terminal on` | Turn the web terminal on: a paired device may open a shell in a session's worktree; says so when it already is |
+| `web terminal off` | Turn the web terminal off: open terminal connections close; says so when it already is |
 | `web pair [--name <device>]` | Print a one-time code (`XXXX-XXXX`, default name `iPhone`), when it expires and the origin to enter it at. Refused while the web is off, for a name already paired, and at sixteen devices |
 | `web open [--name <device>]` | Open the web app in this machine's browser with no tunnel, at the listener's local origin (`http://loom.localhost:<port>`). A name not paired yet gets a one-time code in the opened link (default name `desktop`); a paired name opens the plain link. Prints the URL always; refused, minting nothing, while the web is off or not serving or when the listener has no local origin; with no browser to open it says so and exits 0 |
 | `web devices [--json]` | Each device: name, when paired, last seen, notifications, push state (`ok`, `expired`, `failing: <status>`, or none) |
 | `web revoke <name>` or `web revoke --all` | Unpair a device, or every device: its app returns to pairing and its push subscription is dropped |
-| `web status` | The settings, whether the web app serves or why not, its local origin (the `Local:` row) and the number of devices |
+| `web status` | The settings, whether the web app serves or why not, its local origin (the `Local:` row), the number of devices and the `Terminal:` switch |
 
 ### Examples
 
