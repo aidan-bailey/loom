@@ -225,6 +225,11 @@ func (l *Loop) RevokeDevice(name string) error {
 	return get(l, func(m *Model) error { return m.RevokeDevice(name) })
 }
 
+// SetWebTerminal runs Model.SetWebTerminal on the loop.
+func (l *Loop) SetWebTerminal(on bool) error {
+	return get(l, func(m *Model) error { return m.SetWebTerminal(on) })
+}
+
 // Queue runs Model.Queue on the loop.
 func (l *Loop) Queue() QueueView { return get(l, (*Model).Queue) }
 

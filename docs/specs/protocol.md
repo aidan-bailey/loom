@@ -514,7 +514,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null}}`
+Result: `{"value":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null,"Terminal":false}}`
 
 ### ConfigureWeb (request)
 
@@ -531,6 +531,12 @@ Result: `{"value":{"Code":"","Expires":"0001-01-01T00:00:00Z"}}`
 ### RevokeDevice (request)
 
 Params: `{"name":""}`
+
+Result: `{}`
+
+### SetWebTerminal (request)
+
+Params: `{"on":false}`
 
 Result: `{}`
 
@@ -674,7 +680,7 @@ Result: `{}`
 
 ### ModelChanged
 
-`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null},"BuildSweep":{"AfterHours":0}}}`
+`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null,"Terminal":false},"BuildSweep":{"AfterHours":0}}}`
 
 ### Notice
 

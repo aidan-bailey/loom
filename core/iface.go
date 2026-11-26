@@ -163,6 +163,10 @@ type Core interface {
 	ConfigureWeb(listen, origin string) error
 	PairDevice(name string) (Pairing, error)
 	RevokeDevice(name string) error
+	// SetWebTerminal turns the web terminal on or off and writes web.json.
+	// It never bumps WebView.Rev, so the layer neither rebinds nor ends its
+	// streams; the layer follows WebView.Terminal.
+	SetWebTerminal(on bool) error
 
 	// The work queue (package sched, owned by the model): its published
 	// state, which a replica answers, and the requests that change it. Each

@@ -273,6 +273,35 @@ func TestWebRequests_ReachTheModelOverTheWire(t *testing.T) {
 	assert.EqualValues(t, 1, c.Web().Rev, "the revision included; a pairing and a revoke never bumped it")
 }
 
+// TestSetWebTerminal_ReachesTheModelOverTheWire: the switch is a request, so
+// it is in the replica when it returns, and it leaves the revision alone.
+func TestSetWebTerminal_ReachesTheModelOverTheWire(t *testing.T) {
+	loop := core.StartForTest(webModel(t))
+	c := pair(t, loop)
+	require.False(t, c.Web().Terminal, "fixture: off to begin with")
+
+	require.NoError(t, c.SetWebTerminal(true))
+	assert.True(t, c.Web().Terminal, "the request's ModelChanged reached the replica before its reply")
+	assert.Zero(t, c.Web().Rev, "and the revision did not move: the layer would rebind")
+
+	require.NoError(t, c.SetWebTerminal(false))
+	assert.False(t, c.Web().Terminal)
+}
+
+// TestSetWebTerminal_ARefusalCrossesTheWire: a model that left web.json alone
+// refuses, and the client reads the reason.
+func TestSetWebTerminal_ARefusalCrossesTheWire(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte(`{not json`), 0o600))
+	model := core.NewForTest(core.Options{})
+	model.InitWebForTest()
+	c := pair(t, core.StartForTest(model))
+
+	assert.ErrorContains(t, c.SetWebTerminal(true), "left alone")
+	assert.False(t, c.Web().Terminal, "a refused request changes nothing")
+}
+
 // TestRequest_ItsEventsArriveBeforeItsReply: a read right after a request
 // sees the request's effect, with no barrier.
 func TestRequest_ItsEventsArriveBeforeItsReply(t *testing.T) {

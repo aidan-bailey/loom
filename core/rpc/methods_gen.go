@@ -740,6 +740,15 @@ type RevokeDeviceParams struct {
 type RevokeDeviceResult struct {
 }
 
+// SetWebTerminalParams are SetWebTerminal's parameters on the wire.
+type SetWebTerminalParams struct {
+	On bool `json:"on"`
+}
+
+// SetWebTerminalResult is SetWebTerminal's result on the wire; an error travels in the reply.
+type SetWebTerminalResult struct {
+}
+
 // QueueParams are Queue's parameters on the wire.
 type QueueParams struct {
 }
@@ -1003,6 +1012,7 @@ var methods = []methodInfo{
 	{Name: "ConfigureWeb", Kind: kindRequest, Params: ConfigureWebParams{}, Result: ConfigureWebResult{}},
 	{Name: "PairDevice", Kind: kindRequest, Params: PairDeviceParams{}, Result: PairDeviceResult{}},
 	{Name: "RevokeDevice", Kind: kindRequest, Params: RevokeDeviceParams{}, Result: RevokeDeviceResult{}},
+	{Name: "SetWebTerminal", Kind: kindRequest, Params: SetWebTerminalParams{}, Result: SetWebTerminalResult{}},
 	{Name: "Queue", Kind: kindLocal, Params: QueueParams{}, Result: QueueResult{}},
 	{Name: "SubmitJob", Kind: kindRequest, Params: SubmitJobParams{}, Result: SubmitJobResult{}},
 	{Name: "CancelJob", Kind: kindRequest, Params: CancelJobParams{}, Result: CancelJobResult{}},
@@ -1593,6 +1603,13 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		err := b.RevokeDevice(p.Name)
 		return RevokeDeviceResult{}, err, true
+	case "SetWebTerminal":
+		var p SetWebTerminalParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.SetWebTerminal(p.On)
+		return SetWebTerminalResult{}, err, true
 	case "Queue":
 		var p QueueParams
 		if err := decodeParams(params, &p); err != nil {
@@ -2237,6 +2254,12 @@ func (c *Client) PairDevice(name string) (core.Pairing, error) {
 func (c *Client) RevokeDevice(name string) error {
 	var r RevokeDeviceResult
 	return c.request("RevokeDevice", RevokeDeviceParams{Name: name}, &r)
+}
+
+// SetWebTerminal is core.Core's SetWebTerminal (request).
+func (c *Client) SetWebTerminal(on bool) error {
+	var r SetWebTerminalResult
+	return c.request("SetWebTerminal", SetWebTerminalParams{On: on}, &r)
 }
 
 // Queue is core.Core's Queue (local).
