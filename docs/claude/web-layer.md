@@ -14,7 +14,7 @@
 
 1. Publish it from a sink (`apply(evs []core.Event)`) through `l.hub.publish(event, data)` or `l.hub.sendTo(device, event, data)`. A sink never blocks and does no network I/O: the drain hands it every `Sync`'s events on one goroutine, and a stalled sink stalls every stream.
 2. If a reconnecting phone needs the state, put it in the `snapshot` too: every connect starts with one and nothing is replayed.
-3. Add the event's name and payload type to `streamEvents()` (`internal/web/stream.go`), then `go generate ./internal/web`; `gen.ts`'s `StreamEvents` gains the key, and the typecheck then fails in `KNOWN` (`internal/web/ui/src/api/stream.ts`) and in the store's `applied` (`internal/web/ui/src/store/fleet.ts`) until each handles it. The classic app ignores an event it has no handler for.
+3. Add the event's name and payload type to `streamEvents()` (`internal/web/stream.go`), then `go generate ./internal/web`; `gen.ts`'s `StreamEvents` gains the key, and the typecheck then fails in `KNOWN` (`internal/web/ui/src/api/stream.ts`) and in the store's `applied` (`internal/web/ui/src/store/fleet.ts`) until each handles it; the store's `afterEvent` switch (also `fleet.ts`) needs a label too, which the typecheck does not demand, so an event left out never schedules the snapshot's save. `TestContract_ReadsTheTablesAndUnions` (`internal/web/internal/gen/gen_test.go`) lists the event names by hand: add the new one in the table's order. The classic app ignores an event it has no handler for.
 4. Document the event in the stream section of `internal/web/README.md`.
 
 ## Adding a push kind
