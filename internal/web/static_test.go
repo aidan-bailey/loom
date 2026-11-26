@@ -320,7 +320,7 @@ func TestStatic_NextServiceWorkerCarriesTheBuildAndTheShell(t *testing.T) {
 
 	want := []string{"/"}
 	require.NoError(t, fs.WalkDir(nextFiles, "dist", func(name string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+		if err == nil && !d.IsDir() && !terminalOnly(strings.TrimPrefix(name, "dist")) {
 			want = append(want, strings.TrimPrefix(name, "dist"))
 		}
 		return err
@@ -649,6 +649,34 @@ func TestStatic_NextWorkerPassesTheTerminalPageThrough(t *testing.T) {
 	// The ordinary case still holds: a navigation is the cached shell, any other file its own entry.
 	require.Contains(t, code, `const key = req.mode === "navigate" ? "/" : url.pathname;`)
 	require.Contains(t, code, "cache.match(key)")
+}
+
+// The terminal's document and its own script and styles are served but left out of the worker's
+// precache list, so an install does not download xterm.js.
+func TestStatic_TheTerminalPagesFilesAreServedButNotPrecached(t *testing.T) {
+	assets := nextStaticAssets(t)
+	shellLine := regexp.MustCompile(`(?m)^const SHELL = (.*);$`).FindStringSubmatch(string(assets["/sw.js"].body))
+	require.NotNil(t, shellLine)
+	var shell []string
+	require.NoError(t, json.Unmarshal([]byte(shellLine[1]), &shell))
+
+	require.Contains(t, assets, terminalPage, "the document is served")
+	var terminalFiles []string
+	for url := range assets {
+		if strings.HasPrefix(url, "/assets/terminal-") {
+			terminalFiles = append(terminalFiles, url)
+		}
+	}
+	require.NotEmpty(t, terminalFiles, "the page's own script is in the bundle")
+	for _, url := range append(terminalFiles, terminalPage) {
+		require.NotContains(t, shell, url, url+" is precached")
+	}
+	// The ordinary case: the app's own entry and shell are still precached.
+	require.Contains(t, shell, "/index.html")
+	require.Contains(t, shell, "/sw.js")
+	for _, url := range shell {
+		require.Contains(t, assets, url, "a precached file is served")
+	}
 }
 
 func TestStatic_ABrokenTreeFailsOnlyForTheRequestsItWouldServe(t *testing.T) {

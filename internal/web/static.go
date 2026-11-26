@@ -12,6 +12,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/aidan-bailey/loom/log"
 )
@@ -70,7 +71,7 @@ func (a staticAsset) serve(w http.ResponseWriter, _ *http.Request) {
 // URL (and "/") into sw.js, and serves index.html at "/" too. It fails closed:
 // a missing placeholder, a missing index.html or sw.js, or a file of an
 // unknown type is an error, so the worker's precache list cannot drift from
-// the embedded files.
+// the embedded files. Every file is served, but the list leaves out terminalOnly's.
 func buildStaticAssets(fsys fs.FS, build string) (map[string]staticAsset, error) {
 	assets := make(map[string]staticAsset)
 	var urls []string
@@ -89,7 +90,9 @@ func buildStaticAssets(fsys fs.FS, build string) (map[string]staticAsset, error)
 		if err != nil {
 			return err
 		}
-		urls = append(urls, "/"+name)
+		if !terminalOnly("/" + name) {
+			urls = append(urls, "/"+name)
+		}
 		assets["/"+name] = staticAsset{body: body, ctype: ctype}
 		return nil
 	})
@@ -116,6 +119,14 @@ func buildStaticAssets(fsys fs.FS, build string) (map[string]staticAsset, error)
 	}
 	assets["/"] = assets["/index.html"]
 	return assets, nil
+}
+
+// terminalOnly reports whether url is a file only the terminal's document loads: the document
+// itself and its own entry script and styles (built as assets/terminal-<hash>.*, with xterm.js
+// in the script). The worker never precaches them, so an install does not download xterm.js for a
+// page most devices never open; the page's files come from the network when it is opened.
+func terminalOnly(url string) bool {
+	return url == terminalPage || strings.HasPrefix(url, "/assets/terminal-")
 }
 
 // fillStatic replaces every old in the asset at url with repl, and errors when
