@@ -221,7 +221,8 @@ func (ViewsChanged) coreEvent() {}
 // the failure. Notice is what a success must still show (a stash it could
 // not drop). Issue is FetchIssue's result, Turns ReadTurns' page, Diff
 // ReadDiff's patch, Mockup ReadMockup's page, JobLog ReadJobLog's read and
-// Sweep SweepBuilds' report. Job is SubmitJob's new job (0 for every other request), whose
+// Sweep SweepBuilds' report, Terminal EnsureTerminal's shell (its tmux
+// name). Job is SubmitJob's new job (0 for every other request), whose
 // Notice is the owner warning. The notices the TUI shows for an operation
 // are emitted as usual; the Reply is for the requester that waits on it.
 type Reply struct {
@@ -247,6 +248,10 @@ type Reply struct {
 	FlowDoc FlowDocView
 	// Watch is ReadWatch's answer.
 	Watch WatchView
+	// Terminal is EnsureTerminal's answer: the tmux name of the session's
+	// shell, tmux.ToLoomTmuxName(tmux.TerminalSessionName(title)); empty on
+	// every other reply and on a refusal.
+	Terminal string
 }
 
 // FlowDocView is one of a flow's documents (flowview.ReadDoc): its path,

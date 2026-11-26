@@ -57,6 +57,24 @@ func TestEvents_RoundTrip(t *testing.T) {
 	assert.True(t, errors.Is(got.(core.Notice).Err, core.ErrNoSession), "a sentinel survives the wire")
 }
 
+// TestReply_TerminalSurvivesTheWire: EnsureTerminal answers in the Reply's
+// Terminal, and a client that reads zero there has no shell to attach to.
+// A Reply that carries none still reads none.
+func TestReply_TerminalSurvivesTheWire(t *testing.T) {
+	for _, want := range []string{"loom_term_web", ""} {
+		f, err := encodeEvent(core.Reply{Req: 4, ID: 5, Terminal: want})
+		require.NoError(t, err)
+		line, err := json.Marshal(f)
+		require.NoError(t, err)
+		var back Frame
+		require.NoError(t, json.Unmarshal(line, &back))
+		got, err := decodeEvent(back)
+		require.NoError(t, err)
+		assert.Equal(t, want, got.(core.Reply).Terminal)
+		assert.Equal(t, core.ReqID(4), got.(core.Reply).Req)
+	}
+}
+
 func mustFrame(t *testing.T, ev core.Event) Frame {
 	f, err := encodeEvent(ev)
 	require.NoError(t, err)
