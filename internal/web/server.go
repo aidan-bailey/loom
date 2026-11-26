@@ -214,10 +214,14 @@ func (l *Layer) bind(key webKey) (string, error) {
 }
 
 // unbindLocked closes the running listener and every connection on it. The
-// rule goes first, so a request on a connection about to close is refused.
-// l.bindMu is held.
+// rule goes first, so a request on a connection about to close is refused
+// (and a terminal slot is no longer reserved: reserve reads the rule), then
+// the terminals' part ends every slot as the listener stopping, since
+// http.Server.Close does not track a hijacked connection. l.bindMu is held;
+// endAll never blocks.
 func (l *Layer) unbindLocked() {
 	l.rule.Store(nil)
+	l.terms.endAll(termEndStopping)
 	if l.srv != nil {
 		_ = l.srv.Close()
 		l.srv = nil

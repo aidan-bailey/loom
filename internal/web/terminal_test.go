@@ -933,3 +933,81 @@ func TestTerminal_ABrowserThatStallsMidFrameCannotHoldItsSlot(t *testing.T) {
 	require.Eventually(t, func() bool { return env.layer.terms.slotCount() == 0 }, termCloseWait+5*time.Second, 50*time.Millisecond,
 		"the slot was never given back: the hijacked connection was not closed outright termCloseWait after the close frame")
 }
+
+func TestTerminal_TheSwitchTurningOffEndsAnOpenConnection(t *testing.T) {
+	env := newTermEnv(t, apiInstance(t, "live", session.Running))
+	scriptTerminals(env, "loom_term_live", newTermOpenFake().open)
+	env.switchTerminal(true)
+	c := mustTerm(t, env, env.ids["live"])
+
+	env.switchTerminal(false)
+
+	requireClosed(t, c, 4001, "the terminal is off on this host")
+}
+
+func TestTerminal_ARevokedDeviceEndsItsConnection(t *testing.T) {
+	env := newTermEnv(t, apiInstance(t, "live", session.Running))
+	scriptTerminals(env, "loom_term_live", newTermOpenFake().open)
+	env.switchTerminal(true)
+	c := mustTerm(t, env, env.ids["live"])
+
+	require.NoError(t, env.connect(t).RevokeDevice("phone"))
+
+	requireClosed(t, c, 4002, "this device is no longer paired")
+}
+
+func TestTerminal_ARebindEndsTheConnectionsAndTheNextListenerTakesNew(t *testing.T) {
+	env := newTermEnv(t, apiInstance(t, "live", session.Running))
+	id := env.ids["live"]
+	scriptTerminals(env, "loom_term_live", newTermOpenFake().open)
+	env.switchTerminal(true)
+	c := mustTerm(t, env, id)
+
+	newAddr := freeLoopbackAddr(t)
+	require.NoError(t, env.connect(t).ConfigureWeb(newAddr, "http://"+newAddr))
+
+	requireClosed(t, c, 1001, "loom is stopping")
+	env.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == newAddr })
+	got := termDial(newAddr, env.cookie, id, nil)
+	require.Equal(t, http.StatusSwitchingProtocols, got.status, "the part stays open for the next listener: body %q, err %v", got.body, got.err)
+	t.Cleanup(func() { _ = got.conn.CloseNow() })
+}
+
+func TestTerminal_TheLayersStopEndsTheConnections(t *testing.T) {
+	env := newTermEnv(t, apiInstance(t, "live", session.Running))
+	scriptTerminals(env, "loom_term_live", newTermOpenFake().open)
+	env.layer.terms.grace = 30 * time.Second // longer than the test: only the handlers' return can end close's wait
+	env.switchTerminal(true)
+	c := mustTerm(t, env, env.ids["live"])
+
+	// The connection's close handshake finishes only while the browser reads,
+	// so the browser holds off and the layer stops on a goroutine.
+	stopped := make(chan struct{})
+	go func() {
+		env.layer.Close()
+		close(stopped)
+	}()
+
+	require.Eventually(t, func() bool {
+		slot, err := env.layer.terms.reserve("phone")
+		if err == nil {
+			env.layer.terms.release(slot)
+		}
+		return err == errTermsStopping
+	}, 5*time.Second, 5*time.Millisecond, "the part never refused a slot while the layer stopped")
+	assert.NotNil(t, env.layer.rule.Load(), "the listener's rule is still set: the refusal is the part's own")
+	select {
+	case <-stopped:
+		t.Fatal("the layer's stop returned before the connection wrote its closing frame: close did not wait for the handlers")
+	case <-time.After(300 * time.Millisecond):
+	}
+	assert.Equal(t, 1, env.layer.terms.slotCount(), "the handler still holds its slot")
+
+	requireClosed(t, c, 1001, "loom is stopping") // the browser reads, and the handshake finishes
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the layer's stop never returned")
+	}
+	assert.Zero(t, env.layer.terms.slotCount(), "close waited for the handler to give its slot back")
+}

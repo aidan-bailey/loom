@@ -115,8 +115,11 @@ func (l *Layer) startParts() {
 // stopParts stops the layer's parts, first in Close.
 func (l *Layer) stopParts() {
 	// Deferred, so a panic in an earlier part's close cannot leave the sender
-	// pushing after the layer stopped.
+	// pushing after the layer stopped. The terminals' part closes after the
+	// streams hear their bye and before the listener closes: it ends every
+	// connection as loom stopping and waits for their closing frames.
 	defer l.push.close()
+	defer l.terms.close()
 	l.hub.close()
 }
 
