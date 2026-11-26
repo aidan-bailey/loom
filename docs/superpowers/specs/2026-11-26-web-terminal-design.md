@@ -94,6 +94,7 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 - **The shell exits** (`exit`, Ctrl-D): "The shell exited", with "Start a new shell" (§26).
 - **Two browsers and the TUI on one shell:** all see the same screen at the size of the client used last (§14).
 - **The daemon restarts:** the connection closes, the app shows RESTARTING as for the stream, and reconnects to the same shell, which tmux kept.
+- **A device on the classic app** gets the classic shell for `/terminal.html`: the frozen classic worker answers every navigation from its cache and is not changed. The page is opened from the new app.
 - **A daemon older than the app** has no route: the upgrade fails with 404 and the panel says the host's loom has no terminal.
 - **A flood of output** (`yes`): the buffer fills and the connection closes and reconnects (§19); tmux is never blocked.
 - **`web.json` left alone** (unreadable): `SetWebTerminal` is refused and the terminal stays off.
