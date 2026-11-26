@@ -110,15 +110,15 @@ From the repo at `b6b67817` and the dev machine, 2026-11-26:
 
 1. **A renderer under the CSP** with no violation in the console. **Done, 2026-11-26** (Findings): no renderer runs clean under the app's CSP; the framed document does. §23 is written from it.
 
-The other three need the owner's iPhone and the tunnel, and are checked on the real route instead of a throwaway page (owner, 2026-11-26):
+The other three need the owner's iPhone and the tunnel, and are checked on the real route instead of a throwaway page (owner, 2026-11-26), through the bare `terminal.html` part 1 ships (Delivery):
 
 2. **Safari on the iPhone opening a same-origin `wss:` connection** under `default-src 'self'`: checked when part 1 lands. If it refuses, the CSP gains `connect-src 'self' wss://<origin's host>`.
 3. **A WebSocket through the tunnel**, held open for 10 minutes with only pings: checked when part 1 lands. Part 1 is built before this is proven; the tunnel is Cloudflare's, which carries WebSockets.
-4. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28), and whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23): checked before part 2 is designed. A failure changes §28 in part 2's design.
+4. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28), and whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23): checked when part 1 lands, before part 2 is designed. A failure changes §28 in part 2's design.
 
 ## Delivery
 
 An epic of 2 parts, each a plan merged to main before the next part is designed.
 
-1. **Part 1: the daemon side.** The switch (§4–§8) with its CLI and settings row; `EnsureTerminal` (§9–§11); the attach unit (§12–§14); the dependency and the route (§15–§21); the snapshot field and the stream event; the Go tests; the rules and docs for these (§29–§30). It ends with a WebSocket client reaching a session's shell through a paired device's cookie. The owner then checks the spike's items 2 and 3 on the iPhone, with a page part 1 need not ship: any WebSocket client on the phone at the loom origin.
-2. **Part 2: the app.** The panel, the socket and both input modes (§22–§28); the fixture's canned route and the webshot screens; Vitest; the frame's document and its CSP (§23); the app's rules and docs; the owner's checklist.
+1. **Part 1: the daemon side.** The switch (§4–§8) with its CLI and settings row; `EnsureTerminal` (§9–§11); the attach unit (§12–§14); the dependency and the route (§15–§21); the snapshot field and the stream event; the Go tests; the rules and docs for these (§29–§30). It ends with a WebSocket client reaching a session's shell through a paired device's cookie. It also ships the frame's document bare (§23: `terminal.html`, its script with xterm.js and the socket, and `terminalCSP`), with no panel and no phone input, so that opening `/terminal.html#<session id>` on a paired device shows a working shell. The owner checks the spike's items 2 to 4 with it on the iPhone.
+2. **Part 2: the app.** The panel around the frame, the frame's interface, reconnecting and both input modes (§22, §24–§28); the fixture's canned route and the webshot screens; Vitest; the app's rules and docs; the owner's checklist.
