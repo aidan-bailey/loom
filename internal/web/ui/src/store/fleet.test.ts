@@ -79,7 +79,7 @@ describe("the store", () => {
   });
 
   it("sets the snapshot's terminal flag from the terminal event", () => {
-    const fixture = fixtureSnapshot(NOW);
+    const fixture = { ...fixtureSnapshot(NOW), terminal: false };
     store().apply("snapshot", fixture);
     expect(store().snapshot?.terminal).toBe(false);
     store().apply("terminal", { enabled: true });

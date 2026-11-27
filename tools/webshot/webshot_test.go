@@ -519,6 +519,24 @@ func TestFixture_TheTerminalScreenIsTheBytesOfASessionOnesShell(t *testing.T) {
 	}
 }
 
+func TestFixture_TheSnapshotTurnsTheTerminalOnForARunningSessionOne(t *testing.T) {
+	c, _ := cannedForTest(t)
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Terminal bool `json:"terminal"`
+		Sessions map[string][]struct {
+			ID    int    `json:"id"`
+			Group string `json:"group"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	assert.True(t, snap.Terminal, "the terminal tab and its screens need the host's switch on")
+	require.NotEmpty(t, snap.Sessions["1"])
+	assert.Equal(t, 1, snap.Sessions["1"][0].ID)
+	assert.Equal(t, "working", snap.Sessions["1"][0].Group, "the terminal applies to a session that is started, active and not paused")
+}
+
 func TestFixture_TheTurnsHoldAnAgentStepAndAThinkingItem(t *testing.T) {
 	c := &cannedLoom{now: time.Now}
 	raw, err := c.fixture("turns.json")

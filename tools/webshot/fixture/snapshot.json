@@ -548,5 +548,5 @@
     "/compact",
     "/clear"
   ],
-  "terminal": false
+  "terminal": true
 }
