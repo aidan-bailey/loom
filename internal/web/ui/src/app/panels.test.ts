@@ -140,6 +140,7 @@ describe("the panel registry", () => {
       turns: true,
       info: true,
       changes: true,
+      terminal: true,
       mockup: true,
       mockupFull: true,
       agent: true,
@@ -156,5 +157,16 @@ describe("the panel registry", () => {
     for (const id of Object.keys(ids) as PanelId[]) {
       expect(registry.panelFor(id)?.id).toBe(id);
     }
+
+    // The terminal is the third tab, after changes; info, mockup and flow follow it.
+    expect(registry.tabOrder()).toEqual(["turns", "changes", "terminal", "info", "mockup", "flow"]);
+    // It applies by the host's switch and the session's state.
+    const tabsOf = (session: Session, host: HostFacts): string[] =>
+      registry.sessionTabs(session, host).map((p) => p.id);
+    const running = aSession({ claude: true, status: "Running", group: "working" });
+    expect(tabsOf(running, { terminal: true })).toContain("terminal");
+    expect(tabsOf(running, { terminal: false })).not.toContain("terminal");
+    const paused = aSession({ status: "Paused", group: "paused" });
+    expect(tabsOf(paused, { terminal: true })).not.toContain("terminal");
   }, 30_000);
 });

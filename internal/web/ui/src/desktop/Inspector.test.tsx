@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Session } from "@/api/gen";
@@ -9,6 +9,7 @@ import { definePanel, type Panel, type PanelProps } from "@/app/panels";
 import { useScrollPane, windowPane, type ScrollPane } from "@/app/scroll";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import { takeInspectorPress } from "@/panels/terminal/Terminal";
 import { useFleet } from "@/store/fleet";
 
 import { Inspector } from "./Inspector";
@@ -116,6 +117,96 @@ describe("Inspector", () => {
       useFleet.getState().apply("terminal", { enabled: false });
     });
     expect(names()).toEqual(["changes", "info"]);
+  });
+
+  // withTerminal defines the terminal tab as it applies by the host's switch, and turns the switch
+  // on; its body is as given.
+  function withTerminal(Body: () => ReactElement = () => <p>terminal body</p>): void {
+    tabs();
+    definePanel({
+      id: "terminal",
+      title: () => "Terminal",
+      tab: { order: 5, label: "terminal" },
+      appliesTo: (_session, host) => host.terminal,
+      Body,
+    });
+    useFleet.setState({ snapshot: { ...fixtureSnapshot(), terminal: true } });
+  }
+
+  it("draws the terminal when it is the stored choice", () => {
+    useDesktop.setState({ slots: [{ tab: "terminal" }] });
+    withTerminal();
+    render(<Inspector session={claude()} middle="turns" />);
+    expect(names()).toEqual(["changes", "info", "terminal"]);
+    expect(lit()).toBe("terminal");
+    expect(screen.getByText("terminal body")).toBeInTheDocument();
+  });
+
+  it("never draws the terminal as a fallback: no choice, or a choice past it", () => {
+    withTerminal();
+    const view = render(<Inspector session={claude()} middle="turns" />);
+    expect(lit()).toBe("changes");
+    expect(screen.queryByText("terminal body")).toBeNull();
+    view.unmount();
+
+    useDesktop.setState({ slots: [{ tab: "info" }] });
+    render(<Inspector session={claude()} middle="info" />);
+    expect(lit()).toBe("conversation");
+    expect(screen.queryByText("terminal body")).toBeNull();
+  });
+
+  // Mounted is a stand-in for the terminal: it takes the inspector's press mark in a layout effect
+  // when it mounts, as Terminal does, and records what it took.
+  function mountedInto(taken: boolean[]): () => ReactElement {
+    return function Mounted(): ReactElement {
+      useLayoutEffect(() => {
+        taken.push(takeInspectorPress());
+      }, []);
+      return <p>terminal body</p>;
+    };
+  }
+
+  it("marks the press of the terminal's tab for the terminal that press mounts, and no other press", async () => {
+    const taken: boolean[] = [];
+    withTerminal(mountedInto(taken));
+    render(<Inspector session={claude()} middle="turns" />);
+    expect(taken).toEqual([]);
+
+    await userEvent.click(within(strip()).getByRole("button", { name: "info" }));
+    expect(taken).toEqual([]);
+
+    await userEvent.click(within(strip()).getByRole("button", { name: "terminal" }));
+    expect(taken).toEqual([true]);
+
+    // Pressing the tab that is already drawn mounts nothing and marks nothing.
+    await userEvent.click(within(strip()).getByRole("button", { name: "terminal" }));
+    expect(taken).toEqual([true]);
+    expect(takeInspectorPress()).toBe(false);
+
+    // Away and back mounts a new terminal, which the press marks again.
+    await userEvent.click(within(strip()).getByRole("button", { name: "info" }));
+    await userEvent.click(within(strip()).getByRole("button", { name: "terminal" }));
+    expect(taken).toEqual([true, true]);
+  });
+
+  it("leaves no mark behind when the press's terminal does not mount", async () => {
+    const taken: boolean[] = [];
+    const Mounted = mountedInto(taken);
+    let mounts = false;
+    withTerminal(() => (mounts ? <Mounted /> : <p>no terminal</p>));
+    const view = render(<Inspector session={claude()} middle="turns" />);
+
+    // The press draws the panel's message in the terminal's place, and mounts no terminal.
+    await userEvent.click(within(strip()).getByRole("button", { name: "terminal" }));
+    expect(screen.getByText("no terminal")).toBeInTheDocument();
+    expect(taken).toEqual([]);
+    view.unmount();
+
+    // A terminal the inspector now mounts from the stored choice is not the press's.
+    mounts = true;
+    render(<Inspector session={claude()} middle="turns" />);
+    expect(screen.getByText("terminal body")).toBeInTheDocument();
+    expect(taken).toEqual([false]);
   });
 
   it("draws the chosen panel's Body with the session's props", () => {

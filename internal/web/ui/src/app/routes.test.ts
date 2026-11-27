@@ -63,6 +63,8 @@ describe("routeOf", () => {
     ["#s/5/info", route("info", { id: "5" })],
     ["#/s/5/info", route("info", { id: "5" })],
     ["#s/5/diff", route("changes", { id: "5" })],
+    ["#s/5/terminal", route("terminal", { id: "5" })],
+    ["#/s/5/terminal", route("terminal", { id: "5" })],
     // A push link while the session's mockup is fresh (`/#s/<id>/mockup`).
     ["#s/5/mockup", route("mockup", { id: "5" })],
     ["#/s/5/mockup", route("mockup", { id: "5" })],
@@ -107,6 +109,7 @@ describe("routeOf", () => {
     "#s/5/full",
     "#s/5/info/full",
     "#s/5/turns/full",
+    "#s/5/terminal/full",
     "#/s/5/unknown",
   ])("%j is the fleet", (hash) => {
     expect(routeOf(hash)).toEqual(route("fleet"));
@@ -119,6 +122,7 @@ describe("hrefFor", () => {
     ["turns", { id: "5" }, {}, "#/s/5"],
     ["info", { id: "5" }, {}, "#/s/5/info"],
     ["changes", { id: "5" }, {}, "#/s/5/diff"],
+    ["terminal", { id: "5" }, {}, "#/s/5/terminal"],
     ["mockup", { id: "5" }, {}, "#/s/5/mockup"],
     ["mockupFull", { id: "5" }, {}, "#/s/5/mockup/full"],
     ["agent", { id: "5", agent: "a1" }, {}, "#/s/5/agent/a1"],
@@ -153,6 +157,7 @@ describe("hrefFor", () => {
       ["turns", { id: "5" }, {}],
       ["info", { id: "5" }, {}],
       ["changes", { id: "5" }, {}],
+      ["terminal", { id: "5" }, {}],
       ["mockup", { id: "5" }, {}],
       ["mockupFull", { id: "5" }, {}],
       ["agent", { id: "5", agent: "a-1" }, {}],

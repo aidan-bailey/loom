@@ -313,6 +313,10 @@ describe("router", () => {
 
     expect(await screen.findByText("the fleet panel")).toBeInTheDocument();
   });
+
+  it("has a route for the terminal's path in the router's own table", () => {
+    expect(Object.keys(router.routesByPath)).toContain("/s/$id/terminal");
+  });
 });
 
 // withGroups is the fixture with only these sessions, ids 100, 101, … in the
@@ -899,6 +903,7 @@ describe("tabOf, TABBED and resetKey", () => {
   it.each<[PanelId, PanelId]>([
     ["turns", "turns"],
     ["changes", "changes"],
+    ["terminal", "terminal"],
     ["agent", "turns"],
     ["job", "info"],
     ["flowStory", "flow"],
@@ -914,6 +919,7 @@ describe("tabOf, TABBED and resetKey", () => {
 
   it("TABBED holds the session's routes and not the fleet's", () => {
     expect(TABBED.has("turns")).toBe(true);
+    expect(TABBED.has("terminal")).toBe(true);
     expect(TABBED.has("job")).toBe(true);
     expect(TABBED.has("fleet")).toBe(false);
     expect(TABBED.has("settings")).toBe(false);

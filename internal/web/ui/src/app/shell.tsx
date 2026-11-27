@@ -327,6 +327,7 @@ export const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
   "turns",
   "info",
   "changes",
+  "terminal",
   "mockup",
   "flow",
   "flowStory",

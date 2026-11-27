@@ -10,6 +10,7 @@ export type PanelId =
   | "turns"
   | "info"
   | "changes"
+  | "terminal"
   | "mockup"
   | "mockupFull"
   | "agent"

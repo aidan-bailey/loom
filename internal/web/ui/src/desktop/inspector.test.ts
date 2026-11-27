@@ -8,6 +8,10 @@ import { inspectorTab } from "./inspector";
 const ORDER: PanelId[] = ["turns", "changes", "mockup", "info", "flow"];
 const TABS: PanelId[] = ["turns", "changes", "info"];
 
+// The same with the terminal, which applies to the session under test (spec §58).
+const ORDER_T: PanelId[] = ["turns", "changes", "terminal", "info", "mockup", "flow"];
+const TABS_T: PanelId[] = ["turns", "changes", "terminal", "info"];
+
 describe("inspectorTab", () => {
   it("keeps the chosen tab when it applies and is not the middle's", () => {
     expect(inspectorTab(ORDER, TABS, "turns", "changes")).toBe("changes");
@@ -45,6 +49,38 @@ describe("inspectorTab", () => {
   it("is undefined when nothing but the middle's tab applies", () => {
     expect(inspectorTab(ORDER, ["info"], "info", "info")).toBeUndefined();
     expect(inspectorTab(ORDER, [], "turns", undefined)).toBeUndefined();
+  });
+
+  it("draws the terminal when it is the stored choice and applies", () => {
+    expect(inspectorTab(ORDER_T, TABS_T, "turns", "terminal")).toBe("terminal");
+    expect(inspectorTab(ORDER_T, TABS_T, "info", "terminal")).toBe("terminal");
+  });
+
+  it("never falls back to the terminal: no choice, a choice that does not apply, the middle's choice", () => {
+    // No stored choice.
+    expect(inspectorTab(ORDER_T, TABS_T, "turns", undefined)).toBe("changes");
+    expect(inspectorTab(ORDER_T, TABS_T, "changes", undefined)).toBe("turns");
+    // A stored tab no panel has.
+    expect(inspectorTab(ORDER_T, TABS_T, "turns", "bogus")).toBe("changes");
+    // The walk after the middle's own choice passes the terminal.
+    expect(inspectorTab(ORDER_T, TABS_T, "changes", "changes")).toBe("info");
+    // The walk after a choice that does not apply passes it too (changes is not among the tabs).
+    expect(inspectorTab(ORDER_T, ["turns", "terminal", "info"], "turns", "changes")).toBe("info");
+    // The terminal and the middle's tab alone: nothing else to fall to.
+    expect(inspectorTab(ORDER_T, ["changes", "terminal"], "changes", undefined)).toBeUndefined();
+  });
+
+  it("walks past the terminal when it is the middle's tab and the stored choice", () => {
+    expect(inspectorTab(ORDER_T, TABS_T, "terminal", "terminal")).toBe("info");
+  });
+
+  it("walks past a stored terminal that does not apply", () => {
+    expect(inspectorTab(ORDER_T, TABS, "turns", "terminal")).toBe("info");
+  });
+
+  it("draws nothing rather than the terminal when only it and the middle's tab apply", () => {
+    expect(inspectorTab(ORDER_T, ["turns", "terminal"], "turns", undefined)).toBeUndefined();
+    expect(inspectorTab(ORDER_T, ["turns", "terminal"], "turns", "terminal")).toBe("terminal");
   });
 
   it("leaves its arguments as they were", () => {

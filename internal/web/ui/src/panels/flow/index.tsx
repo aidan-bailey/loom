@@ -1,4 +1,4 @@
-// The flow panel: the last tab (order 5) of a session that has flows, with an amber dot while any
+// The flow panel: the last tab (order 6) of a session that has flows, with an amber dot while any
 // of them asks. Its body is a lazy chunk, so a first launch never loads the board. This module
 // imports nothing from ./parts: that file would be pulled out of the lazy chunk into the entry
 // script.
@@ -28,7 +28,7 @@ export const flowPanel = definePanel({
   id: "flow",
   title: () => "Flow",
   appliesTo: (session) => (session.flows ?? []).length > 0,
-  tab: { order: 5, label: "flow", Mark: FlowMark },
+  tab: { order: 6, label: "flow", Mark: FlowMark },
   Head: SessionHead,
   Body: FlowBody,
 });

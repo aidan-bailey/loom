@@ -5,6 +5,7 @@ import "./fleet";
 import "./turns";
 import "./info";
 import "./changes";
+import "./terminal";
 import "./agent";
 import "./job";
 import "./mockup";
