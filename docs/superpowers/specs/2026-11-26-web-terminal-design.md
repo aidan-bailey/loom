@@ -120,6 +120,18 @@ The other three need the owner's iPhone and the tunnel, and are checked on the r
 3. **A WebSocket through the tunnel**, held open for 10 minutes with only pings: checked when part 1 lands. Part 1 is built before this is proven; the tunnel is Cloudflare's, which carries WebSockets.
 4. **Touch scrolling and selection** in xterm.js on iOS with the keyboard unfocused (§28), and whether iOS Safari gives xterm.js a WebGL context or falls to the DOM renderer (§23): checked when part 1 lands, before part 2 is designed. A failure changes §28 in part 2's design.
 
+**Results, 2026-11-27** (part 1's build on the host, through the tunnel):
+
+- **The desktop** (Firefox): the shell works. The first attempt closed with 1006 and a reload connected; that attempt left no line in `serve.log` or the tunnel's log, so its cause is unknown (the route logs nothing for a 401 or a 421, which answer before it). The page's own console showed no violation of `terminalCSP`; the only blocked scripts were a browser extension's and Cloudflare's injected analytics beacon.
+- **Item 2: passed.** The iPhone opened the shell on the real route, so Safari takes a same-origin `wss:` under `default-src 'self'`; no `connect-src` is needed.
+- **Item 3: not reported yet.**
+- **Item 4: failed.** On the iPhone a finger neither scrolls the terminal nor selects text with a long press. Two causes, read from the code:
+  - `@xterm/xterm` 6.0.0 binds no touch handler to its scroller (its `Viewport` has none, and nothing in the package uses the gesture module it vendors), and it has never had a touch selection.
+  - `Session.Start` sets tmux's `mouse on` on the shell's session, so the attach asks the terminal for mouse reports. While they are on, xterm.js sends the wheel to tmux instead of scrolling its own scrollback and makes no selection without a modifier key, on the desktop too. So the history §13 seeds is scrolled only where mouse reports are off.
+  - Which renderer iOS gave is unknown: the bare page does not say.
+
+  Part 2's design therefore replaces §28's "touch scrolls and selects" with scrolling and selection the panel provides itself, and decides whether the web's attach keeps tmux's mouse reports.
+
 ## Delivery
 
 An epic of 2 parts, each a plan merged to main before the next part is designed.
