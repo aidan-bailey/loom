@@ -14,14 +14,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // fixtureFiles is the canned loom's data, in the JSON the web layer serves.
 // A string "now-2m" or "now+1h40m" (a signed Go duration) is a time relative
 // to the moment it is served, so ages and countdowns read the same on every
-// run; a bare "now" is left as it is.
+// run; a bare "now" is left as it is. terminal.ansi is the terminal route's bytes, sent as they are.
 //
-//go:embed fixture/*.json fixture/*.html
+//go:embed fixture/*.json fixture/*.html fixture/*.ansi
 var fixtureFiles embed.FS
 
 // cannedBuild is the build the canned loom reports and fills into
@@ -57,6 +59,10 @@ type cannedLoom struct {
 	// under /api/ as the web layer answers an unpaired device: 401, no miss.
 	unpaired bool
 
+	// sizeWait, when set, is how long the terminal route waits for the app's size in place of
+	// terminalSizeWait (a test shortens it).
+	sizeWait time.Duration
+
 	mu     sync.Mutex
 	misses []string // API routes the fixture has no answer for
 }
@@ -80,6 +86,8 @@ func (c *cannedLoom) apiHandler() http.Handler {
 			refuseUnpaired(w)
 		case p == "/api/v1/stream" && r.Method == http.MethodGet:
 			c.stream(w, r)
+		case terminalRoute.MatchString(p) && r.Method == http.MethodGet:
+			c.terminal(w, r)
 		case strings.HasPrefix(p, "/api/"):
 			c.api(w, r)
 		default:
@@ -95,6 +103,8 @@ func (c *cannedLoom) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		refuseUnpaired(w)
 	case p == "/api/v1/stream" && r.Method == http.MethodGet:
 		c.stream(w, r)
+	case terminalRoute.MatchString(p) && r.Method == http.MethodGet:
+		c.terminal(w, r)
 	case strings.HasPrefix(p, "/api/"):
 		c.api(w, r)
 	default:
@@ -241,6 +251,61 @@ func (c *cannedLoom) stream(w http.ResponseWriter, r *http.Request) {
 		case <-tick.C:
 			_, _ = io.WriteString(w, ": ping\n\n")
 			fl.Flush()
+		}
+	}
+}
+
+// terminalRoute is the web layer's terminal route for one session
+// (GET /api/v1/sessions/{id}/terminal, internal/web/terminal.go).
+var terminalRoute = regexp.MustCompile(`^/api/v1/sessions/\d+/terminal$`)
+
+// terminalSizeWait is how long the canned terminal route waits for the app's first frame, its
+// size, before it lets the connection go.
+const terminalSizeWait = 10 * time.Second
+
+// terminal answers the terminal route as the web layer does once its checks have passed: it
+// upgrades, waits for the app's first text frame (its size), sends fixture/terminal.ansi in one
+// binary frame and then {"state":"live"}, and holds the connection open until the app closes it.
+// The screen is the same whatever size the app asks for, and the request is not a miss.
+func (c *cannedLoom) terminal(w http.ResponseWriter, r *http.Request) {
+	screen, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return // Accept has answered the request
+	}
+	defer conn.CloseNow()
+	ctx := r.Context()
+
+	// A context on the read would drop the connection with no close frame, so the wait is a
+	// timer that closes it, with a code, under the read.
+	wait := c.sizeWait
+	if wait == 0 {
+		wait = terminalSizeWait
+	}
+	refuse := func() { _ = conn.Close(websocket.StatusPolicyViolation, "the app's first frame is its size") }
+	timer := time.AfterFunc(wait, refuse)
+	typ, _, err := conn.Read(ctx)
+	timer.Stop()
+	if err != nil {
+		return
+	}
+	if typ != websocket.MessageText {
+		refuse()
+		return
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, screen); err != nil {
+		return
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"state":"live"}`)); err != nil {
+		return
+	}
+	for {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
 		}
 	}
 }

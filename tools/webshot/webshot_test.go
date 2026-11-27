@@ -15,11 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -381,6 +384,139 @@ func TestCanned_TheStreamStartsWithTheSnapshot(t *testing.T) {
 	require.True(t, strings.HasPrefix(data, "data: {"))
 	var snap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(data, "data: ")), &snap), "one line of JSON")
+}
+
+// terminalFrame is one message the canned terminal route sent, or the error that ended the read.
+type terminalFrame struct {
+	typ  websocket.MessageType
+	data []byte
+	err  error
+}
+
+func terminalURL(srv *httptest.Server) string {
+	return "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/sessions/1/terminal"
+}
+
+// readFrames reads conn in the background, so a test can tell that nothing has arrived yet.
+func readFrames(ctx context.Context, conn *websocket.Conn) <-chan terminalFrame {
+	got := make(chan terminalFrame, 8)
+	go func() {
+		for {
+			typ, data, err := conn.Read(ctx)
+			got <- terminalFrame{typ, data, err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return got
+}
+
+func nextFrame(t *testing.T, got <-chan terminalFrame) terminalFrame {
+	t.Helper()
+	select {
+	case f := <-got:
+		require.NoError(t, f.err)
+		return f
+	case <-time.After(5 * time.Second):
+		t.Fatal("no frame from the canned terminal route in 5s")
+		return terminalFrame{}
+	}
+}
+
+func TestCanned_TheTerminalRouteWaitsForTheSizeThenSendsTheScreenAndLive(t *testing.T) {
+	c, srv := cannedForTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	got := readFrames(ctx, conn)
+
+	select {
+	case f := <-got:
+		t.Fatalf("the route sent a frame before the app's size: %v %q %v", f.typ, f.data, f.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"resize":{"cols":48,"rows":20}}`)))
+
+	screen := nextFrame(t, got)
+	want, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	require.NoError(t, err)
+	assert.Equal(t, websocket.MessageBinary, screen.typ)
+	assert.Equal(t, want, screen.data)
+	live := nextFrame(t, got)
+	assert.Equal(t, websocket.MessageText, live.typ)
+	assert.JSONEq(t, `{"state":"live"}`, string(live.data))
+
+	select {
+	case f := <-got:
+		t.Fatalf("the route ended or sent more after live: %v %q %v", f.typ, f.data, f.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	assert.Empty(t, c.takeMisses(), "the terminal route is not a miss")
+}
+
+func TestCanned_TheTerminalRouteLetsGoOfAConnectionThatSendsNoSize(t *testing.T) {
+	c, srv := cannedForTest(t)
+	c.sizeWait = 100 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	_, _, err = conn.Read(ctx)
+	require.Error(t, err)
+	assert.Equal(t, websocket.StatusPolicyViolation, websocket.CloseStatus(err), "a close frame with a code, not a dropped connection")
+}
+
+func TestCanned_TheTerminalRouteRefusesAFirstFrameThatIsNotText(t *testing.T) {
+	_, srv := cannedForTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte("ls\r")))
+	_, _, err = conn.Read(ctx)
+	require.Error(t, err)
+	assert.Equal(t, websocket.StatusPolicyViolation, websocket.CloseStatus(err))
+}
+
+func TestCanned_AnUnpairedLoomRefusesTheTerminalRouteAs401WithNoMiss(t *testing.T) {
+	c, srv := cannedForTest(t)
+	c.unpaired = true
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Empty(t, c.takeMisses())
+}
+
+func TestAPIHandler_AnswersTheTerminalRouteToo(t *testing.T) {
+	srv := httptest.NewServer(newCannedAPI().apiHandler())
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err, "-serve answers the terminal route for the dev server's frame")
+	conn.CloseNow()
+}
+
+func TestFixture_TheTerminalScreenIsTheBytesOfASessionOnesShell(t *testing.T) {
+	raw, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	require.NoError(t, err)
+	text := string(raw)
+	assert.Contains(t, text, "fix-pane-cursor", "session 1's title, the shell's directory")
+	assert.Contains(t, text, "\x1b[", "colours, so the screen shows the renderer's palette")
+	assert.Equal(t, strings.Count(text, "\n"), strings.Count(text, "\r\n"), "every line ends CR LF, or the next starts where the last ended")
+	assert.False(t, strings.HasSuffix(text, "\n"), "it ends at a prompt, as a shell waits")
+	escapes := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	for _, line := range strings.Split(text, "\r\n") {
+		assert.LessOrEqual(t, utf8.RuneCountInString(escapes.ReplaceAllString(line, "")), 48, "%q wraps on the phone's 48 columns", line)
+	}
 }
 
 func TestFixture_TheTurnsHoldAnAgentStepAndAThinkingItem(t *testing.T) {

@@ -120,7 +120,7 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: { "/api/v1": "http://127.0.0.1:5670" },
+    proxy: { "/api/v1": { target: "http://127.0.0.1:5670", ws: true } },
   },
   test: {
     environment: "happy-dom",
