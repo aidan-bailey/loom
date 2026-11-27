@@ -282,7 +282,9 @@ const NON_TEXT_INPUTS = new Set([
   "submit",
 ]);
 
-function isTextField(target: EventTarget | null): boolean {
+// isTextField is whether the target is a field that brings up the keyboard; the terminal panel's
+// focus rule (panels/terminal/Terminal.tsx) reads it too.
+export function isTextField(target: EventTarget | null): boolean {
   if (target instanceof HTMLTextAreaElement) return true;
   if (target instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(target.type);
   return target instanceof HTMLElement && target.isContentEditable;
