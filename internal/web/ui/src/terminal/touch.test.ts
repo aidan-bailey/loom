@@ -210,6 +210,15 @@ describe("bindTouchScroll", () => {
     expect(queue).toHaveLength(0);
   });
 
+  it("a remainder under a cell left by one drag does not carry into the next", () => {
+    bind();
+    drag(100, [4], 20);
+    touch("touchend", []);
+    drag(100, [6], 20);
+    touch("touchend", []);
+    expect(calls).toEqual([]);
+  });
+
   it("a new touch stops the momentum", () => {
     bind();
     drag(300, [-16, -16, -16], 16);
