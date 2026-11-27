@@ -1,5 +1,6 @@
-/* The terminal page (spec §23): the terminal fills the window, and a status line sits over its
-   bottom edge while the socket connects or after it closed. Colours come from the app's tokens
+/* The terminal page (spec §23): the terminal fills the window, and, on a page that is not in a
+   frame, a status line sits over its bottom edge while the socket connects or after it closed.
+   Colours come from the app's tokens
    (styles/app.css, which main.ts imports); the font is the stack of app.css's --font-mono. */
 html,
 body {
@@ -26,5 +27,10 @@ body {
 }
 
 #status[hidden] {
+  display: none;
+}
+
+/* In a frame the panel shows the state (spec §35): main.ts sets data-framed on <html>. */
+html[data-framed] #status {
   display: none;
 }
