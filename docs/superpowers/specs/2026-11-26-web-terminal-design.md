@@ -124,7 +124,7 @@ The other three need the owner's iPhone and the tunnel, and are checked on the r
 
 - **The desktop** (Firefox): the shell works. The first attempt closed with 1006 and a reload connected; that attempt left no line in `serve.log` or the tunnel's log, so its cause is unknown (the route logs nothing for a 401 or a 421, which answer before it). The page's own console showed no violation of `terminalCSP`; the only blocked scripts were a browser extension's and Cloudflare's injected analytics beacon.
 - **Item 2: passed.** The iPhone opened the shell on the real route, so Safari takes a same-origin `wss:` under `default-src 'self'`; no `connect-src` is needed.
-- **Item 3: not reported yet.**
+- **Item 3: passed** (owner, 2026-11-27): the connection held idle through the tunnel still answered.
 - **Item 4: failed.** On the iPhone a finger neither scrolls the terminal nor selects text with a long press. Two causes, read from the code:
   - `@xterm/xterm` 6.0.0 binds no touch handler to its scroller (its `Viewport` has none, and nothing in the package uses the gesture module it vendors), and it has never had a touch selection.
   - `Session.Start` sets tmux's `mouse on` on the shell's session, so the attach asks the terminal for mouse reports. While they are on, xterm.js sends the wheel to tmux instead of scrolling its own scrollback and makes no selection without a modifier key, on the desktop too. So the history §13 seeds is scrolled only where mouse reports are off.
