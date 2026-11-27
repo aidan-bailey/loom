@@ -116,7 +116,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const link of links) link.dispose();
+  for (const link of links) link.close();
   links.length = 0;
   Reflect.deleteProperty(document, "visibilityState");
   vi.useRealTimers();
@@ -527,6 +527,48 @@ describe("the link", () => {
     pageshow(true);
     expect(r.conns).toHaveLength(2);
     expect(r.link.state()).toEqual({ phase: "connecting" });
+  });
+
+  it("connects nothing on the link coming up or the page showing between pagehide and pageshow", () => {
+    const r = rig(true);
+    r.link.setLink(true);
+    r.link.start();
+    last(r).live();
+    r.link.setLink(false);
+    pagehide();
+    r.link.setLink(true);
+    expect(r.conns).toHaveLength(1);
+
+    const plain = rig();
+    plain.link.start();
+    last(plain).live();
+    pagehide();
+    visibility("hidden");
+    visibility("visible");
+    expect(plain.conns).toHaveLength(1);
+    pageshow(true);
+    expect(plain.conns).toHaveLength(2);
+  });
+
+  it("changes nothing on pagehide before it starts", () => {
+    const r = rig();
+    pagehide();
+    expect(r.states).toEqual([]);
+    expect(r.link.state()).toEqual({ phase: "connecting" });
+    pageshow(true);
+    expect(r.conns).toHaveLength(0);
+    r.link.start();
+    expect(r.conns).toHaveLength(1);
+  });
+
+  it("counts a page created hidden as hidden since it was created", () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    const r = rig();
+    r.link.start();
+    last(r).live();
+    vi.advanceTimersByTime(LONG_HIDDEN);
+    visibility("visible");
+    expect(r.conns).toHaveLength(2);
   });
 
   it("does not reconnect on a pageshow that is not a restore", () => {

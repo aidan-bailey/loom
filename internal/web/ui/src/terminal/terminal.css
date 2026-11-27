@@ -1,7 +1,7 @@
 /* The terminal page (spec §23): the terminal fills the window, and, on a page that is not in a
    frame, a status line sits over its bottom edge while the socket connects or after it closed.
-   Colours come from the app's tokens
-   (styles/app.css, which main.ts imports); the font is the stack of app.css's --font-mono. */
+   Colours come from the app's tokens (styles/app.css, which main.ts imports); the font is the
+   stack of app.css's --font-mono. */
 html,
 body {
   height: 100%;

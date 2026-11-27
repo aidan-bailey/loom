@@ -2,7 +2,7 @@
 // backoff, and the link that holds every new connection while the app's snapshot is stale. It owns
 // no WebSocket and no xterm.js: `open` makes each connection, so a test drives it with fake sockets
 // and fake timers.
-import type { Phase } from "./frame";
+import type { FrameState, Phase } from "./frame";
 import {
   CLOSE_SLOW,
   CLOSE_STOPPING,
@@ -21,9 +21,8 @@ export const LONG_HIDDEN = 30_000;
 /** How long the window's size must hold still before the new size is sent. */
 export const SIZE_SETTLE = 100;
 
-// What a browser reports for a close with no close frame, and for a connection that failed before
-// it opened.
-const NO_CLOSE_FRAME = 1006;
+/** What a browser reports for a close with no close frame, and for a connection that failed before it opened. */
+export const NO_CLOSE_FRAME = 1006;
 
 /**
  * Whether an ending reconnects: the daemon stopping (1001), the browser falling behind (4005) and
@@ -84,11 +83,7 @@ export function freshScreen(target: () => ScreenSink | null): () => void {
 }
 
 /** What the link tells the frame: FrameState without the renderer. */
-export interface LinkState {
-  phase: Phase;
-  closed?: Closed;
-  retryAt?: number;
-}
+export type LinkState = Omit<FrameState, "renderer">;
 
 export interface LinkOptions {
   /** Whether the page is in a frame; a page that is not behaves as if the link were up. */
@@ -109,14 +104,12 @@ export interface Link {
   setLink(up: boolean): void;
   /** A fresh connection from any state, at once when the link is up. */
   reconnect(): void;
-  /** Ends the connection for good. */
+  /** Ends the connection for good and unbinds the page's listeners. */
   close(): void;
   /** True when the bytes went to an open, live connection. */
   send(bytes: Uint8Array<ArrayBuffer>): boolean;
   resize(cols: number, rows: number): void;
   state(): LinkState;
-  /** Unbinds the page's listeners and ends the connection with no state change. */
-  dispose(): void;
 }
 
 /** The connection controller of the terminal page; see the file's comment. */
@@ -269,6 +262,9 @@ export function createLink(opts: LinkOptions): Link {
     if (final) return;
     final = true;
     drop();
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
     set("closed", { code: 1000, reason: "" });
   }
 
@@ -317,12 +313,5 @@ export function createLink(opts: LinkOptions): Link {
       sock?.resize(cols, rows);
     },
     state,
-    dispose: () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", onPageHide);
-      window.removeEventListener("pageshow", onPageShow);
-      final = true;
-      drop();
-    },
   };
 }

@@ -23,7 +23,14 @@ import {
   type Renderer,
 } from "./frame";
 import { handleKey, keyBytes } from "./keys";
-import { SIZE_SETTLE, createLink, freshScreen, lastCall, type LinkState } from "./reconnect";
+import {
+  NO_CLOSE_FRAME,
+  SIZE_SETTLE,
+  createLink,
+  freshScreen,
+  lastCall,
+  type LinkState,
+} from "./reconnect";
 import {
   binaryBytes,
   describeClose,
@@ -79,7 +86,7 @@ function statusText(state: LinkState): string {
     case "waiting":
       return "Reconnecting…";
     case "closed":
-      return describeClose(state.closed ?? { code: 1006, reason: "" });
+      return describeClose(state.closed ?? { code: NO_CLOSE_FRAME, reason: "" });
     case "live":
       return "";
   }
