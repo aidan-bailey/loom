@@ -196,6 +196,20 @@ describe("bindTouchScroll", () => {
     expect(queue).toHaveLength(1);
   });
 
+  it("a finger held still for exactly 100 ms before it lifts still flicks, and one more ms does not", () => {
+    bind();
+    drag(100, [16], 16);
+    now += 100;
+    touch("touchend", []);
+    expect(queue).toHaveLength(1);
+    touch("touchstart", [100]); // stops the momentum
+    touch("touchend", []);
+    drag(100, [16], 16);
+    now += 101;
+    touch("touchend", []);
+    expect(queue).toHaveLength(0);
+  });
+
   it("a new touch stops the momentum", () => {
     bind();
     drag(300, [-16, -16, -16], 16);
