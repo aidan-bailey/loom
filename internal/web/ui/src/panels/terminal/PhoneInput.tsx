@@ -3,9 +3,16 @@
 // line sends its text and a carriage return; both wait for the frame's `live` phase, and nothing
 // is queued, since the frame drops input it cannot send. Type imports only from the frame, so the
 // entry bundle gains nothing of xterm.js.
-import { useState, type ReactElement } from "react";
+import { useCallback, useState, type ReactElement } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import type { KeyName, LoomTerminal, Renderer } from "@/terminal/frame";
 
@@ -30,6 +37,15 @@ export function PhoneInput(props: {
 }): ReactElement {
   const { terminal, live } = props;
   const [line, setLine] = useState("");
+  // The copy sheet: `open` is separate from `text`, so the last text stays drawn while the exit
+  // transition runs; `reads` keys the <pre>, so a reopened sheet scrolls to its end again.
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [reads, setReads] = useState(0);
+  // A stable callback ref (no dependencies): a re-render must not scroll the reader back.
+  const toEnd = useCallback((el: HTMLPreElement | null) => {
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  }, []);
 
   return (
     <div
@@ -61,6 +77,20 @@ export function PhoneInput(props: {
             </Button>
           ))}
         </div>
+        <Button
+          type="button"
+          variant="secondary"
+          data-slot="terminal-select"
+          className={BUTTON}
+          onClick={() => {
+            // Read once as the sheet opens, never on a render.
+            setText(terminal.text());
+            setReads((n) => n + 1);
+            setOpen(true);
+          }}
+        >
+          Select
+        </Button>
       </div>
       <Input
         type="text"
@@ -80,6 +110,36 @@ export function PhoneInput(props: {
           if (terminal.send(new TextEncoder().encode(line + "\r"))) setLine("");
         }}
       />
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>Terminal text</DrawerTitle>
+          </DrawerHeader>
+          <pre
+            key={reads}
+            ref={toEnd}
+            data-slot="terminal-text"
+            data-base-ui-swipe-ignore
+            className="max-h-[50dvh] overflow-auto select-text whitespace-pre-wrap break-words rounded-lg border border-border bg-background p-3 font-mono text-[12px] text-foreground"
+          >
+            {text}
+          </pre>
+          <DrawerFooter>
+            <p className="text-[12.5px] text-muted-foreground">
+              {props.renderer === "webgl" ? "Renderer: WebGL" : "Renderer: DOM"}
+            </p>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => {
+                setOpen(false);
+              }}
+            >
+              Done
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }

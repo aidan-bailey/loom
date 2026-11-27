@@ -1,8 +1,8 @@
 // The fake terminal's members are vi.fn() mocks that the tests pass to expect() unbound; none reads `this`.
 /* eslint-disable @typescript-eslint/unbound-method */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LoomTerminal } from "@/terminal/frame";
 
@@ -138,5 +138,115 @@ describe("PhoneInput's command line", () => {
     expect(field).toHaveAttribute("spellcheck", "false");
     expect(field).toHaveAttribute("enterkeyhint", "send");
     expect(field).toHaveClass("text-[16px]");
+  });
+});
+
+describe("PhoneInput's copy sheet", () => {
+  function sheetText(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-slot="terminal-text"]');
+  }
+
+  function selectButton(): HTMLElement {
+    const el = document.querySelector<HTMLElement>('[data-slot="terminal-select"]');
+    if (el === null) throw new Error("no Select button");
+    expect(el).toHaveAccessibleName("Select");
+    return el;
+  }
+
+  async function open(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(selectButton());
+    await screen.findByRole("dialog");
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Select opens a sheet holding the buffer's text, read once, in a selectable pre", async () => {
+    const terminal = fake();
+    vi.mocked(terminal.text).mockReturnValue("line one\nline two");
+    const view = render(<PhoneInput terminal={terminal} live renderer="dom" />);
+    const user = userEvent.setup();
+    await open(user);
+    const pre = sheetText();
+    expect(pre?.tagName).toBe("PRE");
+    expect(pre?.textContent).toBe("line one\nline two");
+    expect(pre).toHaveClass("select-text");
+    expect(terminal.text).toHaveBeenCalledTimes(1);
+    vi.mocked(terminal.text).mockReturnValue("changed");
+    view.rerender(<PhoneInput terminal={terminal} live renderer="dom" />);
+    expect(sheetText()?.textContent).toBe("line one\nline two");
+    expect(terminal.text).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls the text to its end when the sheet opens", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(500);
+    render(<PhoneInput terminal={fake()} live renderer="dom" />);
+    await open(userEvent.setup());
+    expect(sheetText()?.scrollTop).toBe(500);
+  });
+
+  it.each([
+    ["webgl", "Renderer: WebGL"],
+    ["dom", "Renderer: DOM"],
+  ] as const)("names the renderer in the footer (%s)", async (renderer, label) => {
+    render(<PhoneInput terminal={fake()} live renderer={renderer} />);
+    await open(userEvent.setup());
+    const footer = document.querySelector('[data-slot="drawer-footer"]');
+    expect(footer).toHaveTextContent(label);
+  });
+
+  it("Done closes the sheet", async () => {
+    render(<PhoneInput terminal={fake()} live renderer="dom" />);
+    const user = userEvent.setup();
+    await open(user);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+  });
+
+  it("reads the buffer again each time it opens, and scrolls to its end again", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(500);
+    const terminal = fake();
+    vi.mocked(terminal.text).mockReturnValue("first");
+    render(<PhoneInput terminal={terminal} live renderer="dom" />);
+    const user = userEvent.setup();
+    await open(user);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    vi.mocked(terminal.text).mockReturnValue("second");
+    await open(user);
+    expect(sheetText()?.textContent).toBe("second");
+    expect(terminal.text).toHaveBeenCalledTimes(2);
+    expect(sheetText()?.scrollTop).toBe(500);
+  });
+
+  it("writes nothing to the clipboard", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    try {
+      render(<PhoneInput terminal={fake()} live renderer="dom" />);
+      const user = userEvent.setup();
+      await open(user);
+      await user.click(screen.getByRole("button", { name: "Done" }));
+      expect(writeText).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("Select works while the terminal is not live", async () => {
+    const terminal = fake();
+    vi.mocked(terminal.text).mockReturnValue("kept");
+    render(<PhoneInput terminal={terminal} live={false} renderer="dom" />);
+    expect(selectButton()).toBeEnabled();
+    await open(userEvent.setup());
+    expect(sheetText()?.textContent).toBe("kept");
   });
 });
