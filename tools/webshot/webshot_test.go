@@ -317,6 +317,36 @@ func TestCanned_FilesCarryTheLayersCSP(t *testing.T) {
 	assert.Equal(t, mockupCSP, res.Header.Get("Content-Security-Policy"), "the file headers do not touch the mockup")
 }
 
+func TestCanned_OnlyTheTerminalPageIsServedUnderTerminalCSP(t *testing.T) {
+	static := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(static, "assets"), 0o755))
+	for name, body := range map[string]string{
+		"index.html":             `<meta name="loom-build" content="__LOOM_BUILD__">`,
+		"terminal.html":          "<!doctype html><title>terminal</title>",
+		"assets/terminal-abc.js": "export {};",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(static, filepath.FromSlash(name)), []byte(body), 0o644))
+	}
+	c, err := newCannedLoom(static)
+	require.NoError(t, err)
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	for path, want := range map[string]string{
+		"/terminal.html":          terminalCSP,
+		"/":                       contentSecurityPolicy,
+		"/index.html":             contentSecurityPolicy,
+		"/assets/terminal-abc.js": contentSecurityPolicy,
+	} {
+		res, err := http.Get(srv.URL + path)
+		require.NoError(t, err, path)
+		res.Body.Close()
+		assert.Equal(t, http.StatusOK, res.StatusCode, path)
+		assert.Equal(t, want, res.Header.Get("Content-Security-Policy"), path)
+	}
+	assert.Contains(t, terminalCSP, "frame-ancestors 'self'", "the app's panel may frame the page")
+	assert.Contains(t, contentSecurityPolicy, "frame-ancestors 'none'", "and no other file may be framed")
+}
+
 func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
 	c, srv := cannedForTest(t)
 	for _, p := range []string{"/api/v1/sessions/1/turns", "/api/v1/sessions/2/diff", "/api/v1/launch-defaults?workspace=loom"} {

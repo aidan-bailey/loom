@@ -105,6 +105,7 @@ func TestWebshotFixture_IsTheJSONTheLayerServes(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(canned), `"`+mockupCSP+`"`, "webshot frames its mockup under the policy the layer serves it under")
 	require.Contains(t, string(canned), `"`+contentSecurityPolicy+`"`, "webshot serves the app's files under the policy the layer serves them under")
+	require.Contains(t, string(canned), `"`+terminalCSP+`"`, "webshot serves the terminal's page under the policy the layer serves it under")
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 11, "a new fixture is checked here too")

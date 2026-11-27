@@ -125,6 +125,17 @@ const mockupCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe
 // here, as it is a blank screen on a phone.
 const contentSecurityPolicy = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
+// terminalPage is the one file the canned loom serves under terminalCSP: the terminal's document
+// (internal/web/ui/terminal.html), which the app frames.
+const terminalPage = "/terminal.html"
+
+// terminalCSP is the policy the web layer serves terminalPage under (internal/web/static.go is the
+// source, and TestWebshotFixture_IsTheJSONTheLayerServes holds this copy to it): the app's own
+// with inline styles allowed, since xterm.js appends <style> elements at run time, and
+// frame-ancestors 'self', so the app's panel can frame it. The page's own script and styles stay
+// under contentSecurityPolicy, as the layer serves them.
+const terminalCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+
 // apiRoutes maps each GET route the screens read on load to its fixture: a
 // JSON one with its relative times filled, or the mockup's page as it is.
 var apiRoutes = []struct {
@@ -317,9 +328,13 @@ func (c *cannedLoom) file(w http.ResponseWriter, p string) {
 	if clean == "/index.html" {
 		body = bytes.ReplaceAll(body, []byte("__LOOM_BUILD__"), []byte(cannedBuild))
 	}
+	policy := contentSecurityPolicy
+	if clean == terminalPage {
+		policy = terminalCSP
+	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	w.Header().Set("Content-Security-Policy", policy)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	_, _ = w.Write(body)
