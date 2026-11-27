@@ -418,6 +418,14 @@ type browser struct {
 	problems []string // console errors and exceptions since the last take
 }
 
+// browserArgs is Chromium's command line for a run: headless, over the debugging pipe, with a
+// throwaway profile. WebGL is off (--disable-3d-apis), so the terminal's frame draws with xterm.js's
+// DOM renderer: a headless WebGL canvas can come out blank in a screenshot.
+func browserArgs(profile string) []string {
+	return []string{"--headless", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
+		"--disable-gpu", "--disable-3d-apis", "--hide-scrollbars", "--mute-audio", "--user-data-dir=" + profile, "about:blank"}
+}
+
 func launchBrowser(ctx context.Context, bin string) (*browser, error) {
 	profile, err := os.MkdirTemp("", "webshot-")
 	if err != nil {
@@ -432,8 +440,7 @@ func launchBrowser(ctx context.Context, bin string) (*browser, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(bin, "--headless", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
-		"--disable-gpu", "--hide-scrollbars", "--mute-audio", "--user-data-dir="+profile, "about:blank")
+	cmd := exec.Command(bin, browserArgs(profile)...)
 	cmd.ExtraFiles = []*os.File{toR, fromW}
 	if err := cmd.Start(); err != nil {
 		_ = os.RemoveAll(profile)

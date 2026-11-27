@@ -1912,3 +1912,11 @@ func TestCanned_ASubagentsTurnsAreTheAgentFixture(t *testing.T) {
 	assert.Greater(t, strings.Count(page.Turns[0].Text, "\n"), 12, "long enough to fold after 12 lines")
 	assert.Empty(t, c.takeMisses())
 }
+
+func TestBrowserArgs_TurnWebGLOffAndKeepThePipeAndTheProfile(t *testing.T) {
+	args := browserArgs("/tmp/p")
+	assert.Contains(t, args, "--disable-3d-apis", "the terminal frame then draws with the DOM renderer, whose text a screenshot shows")
+	assert.Contains(t, args, "--remote-debugging-pipe")
+	assert.Contains(t, args, "--user-data-dir=/tmp/p")
+	assert.Equal(t, "about:blank", args[len(args)-1])
+}
