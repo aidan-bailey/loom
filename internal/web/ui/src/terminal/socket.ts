@@ -1,11 +1,31 @@
 // The terminal page's socket (spec §17): one WebSocket to the daemon's terminal route, as a small
-// state machine with no reconnecting (part 2's panel adds that). The first frame the page sends is
+// state machine with no reconnecting of its own (reconnect.ts decides which endings reconnect and
+// opens the next socket). The first frame the page sends is
 // its size; text frames carry JSON control messages and binary frames carry terminal bytes both
 // ways. A binary frame the page sends is at most FRAME_MAX bytes, because the daemon ends a longer
 // one with 4006 and the app does not reconnect after that.
 
 /** The longest frame the daemon accepts from the page (`termFrameMax` in internal/web/terminal_conn.go). */
 export const FRAME_MAX = 64 * 1024;
+
+// The close codes the daemon sends (`termEndOff` and its neighbours in
+// internal/web/terminal_conn.go). reconnect.ts decides from them which endings reconnect.
+/** 1001: the daemon is stopping, or the listener is rebinding. */
+export const CLOSE_STOPPING = 1001;
+/** 4001: the terminal is off on this host. */
+export const CLOSE_OFF = 4001;
+/** 4002: this device is no longer paired. */
+export const CLOSE_REVOKED = 4002;
+/** 4003: the session was paused or killed. */
+export const CLOSE_SESSION = 4003;
+/** 4004: the shell exited. */
+export const CLOSE_EXITED = 4004;
+/** 4005: the browser fell behind. */
+export const CLOSE_SLOW = 4005;
+/** 4006: a frame the daemon does not understand. */
+export const CLOSE_BAD_FRAME = 4006;
+/** 4007: the daemon could not attach to the shell. */
+export const CLOSE_NO_ATTACH = 4007;
 
 // The sizes the daemon accepts (`termMinCols` and its neighbours in terminal_conn.go).
 const MIN_COLS = 2;
