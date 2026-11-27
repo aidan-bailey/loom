@@ -782,6 +782,18 @@ and answers only phones you have paired.
   restarts or the network drops it reconnects on its own and keeps the
   scrollback once), the reason when the terminal closes, and, after
   **The shell exited**, a **Start a new shell** button.
+  On the phone the terminal takes no keyboard of its own: a row of keys
+  sends **Ctrl-C**, **Ctrl-D**, **Tab**, **Esc** and the four arrows, and a
+  command line under it types into the shell. **Enter** sends the line and
+  a return (a bare Enter sends just the return) and keeps the keyboard up.
+  The keys and Enter wait while the terminal is not connected, the line
+  keeping its text and nothing being queued. A finger dragged on the screen
+  scrolls its history and a flick carries on. **Select** opens a sheet with
+  the whole screen and scrollback as plain text, where a long press selects
+  and iOS's own Copy copies (loom copies nothing itself); the sheet's footer
+  says whether the terminal is drawn by WebGL or the DOM. Using the shell
+  from the phone sizes the shared shell to the phone's width (about 48
+  columns) until it is used somewhere else.
 - **Replying.** The reply goes to Claude through the loom mod, as
   `loom session send` does, queued behind the running turn. It is refused,
   with the reason, for a session with no live mod or another agent than
