@@ -230,6 +230,17 @@ describe("bindTouchScroll", () => {
     expect(calls).toEqual([-3, -2]);
   });
 
+  it("a second finger that lands and lifts before any move still ends the drag", () => {
+    bind();
+    touch("touchstart", [100]);
+    touch("touchmove", [130]);
+    expect(calls).toEqual([-3]);
+    touch("touchstart", [130, 200]);
+    touch("touchend", [130]);
+    touch("touchmove", [160]);
+    expect(calls).toEqual([-3]);
+  });
+
   it("a moving drag ended by touchmove with two fingers scrolls nothing further", () => {
     bind();
     touch("touchstart", [100]);
