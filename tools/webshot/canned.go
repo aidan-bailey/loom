@@ -286,7 +286,7 @@ func (c *cannedLoom) terminal(w http.ResponseWriter, r *http.Request) {
 	if wait == 0 {
 		wait = terminalSizeWait
 	}
-	refuse := func() { _ = conn.Close(websocket.StatusPolicyViolation, "the app's first frame is its size") }
+	refuse := func() { _ = conn.Close(4006, "a frame loom does not understand") }
 	timer := time.AfterFunc(wait, refuse)
 	typ, _, err := conn.Read(ctx)
 	timer.Stop()

@@ -467,7 +467,7 @@ func TestCanned_TheTerminalRouteLetsGoOfAConnectionThatSendsNoSize(t *testing.T)
 	defer conn.CloseNow()
 	_, _, err = conn.Read(ctx)
 	require.Error(t, err)
-	assert.Equal(t, websocket.StatusPolicyViolation, websocket.CloseStatus(err), "a close frame with a code, not a dropped connection")
+	assert.Equal(t, websocket.StatusCode(4006), websocket.CloseStatus(err), "a close frame with a code, not a dropped connection")
 }
 
 func TestCanned_TheTerminalRouteRefusesAFirstFrameThatIsNotText(t *testing.T) {
@@ -480,7 +480,7 @@ func TestCanned_TheTerminalRouteRefusesAFirstFrameThatIsNotText(t *testing.T) {
 	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte("ls\r")))
 	_, _, err = conn.Read(ctx)
 	require.Error(t, err)
-	assert.Equal(t, websocket.StatusPolicyViolation, websocket.CloseStatus(err))
+	assert.Equal(t, websocket.StatusCode(4006), websocket.CloseStatus(err))
 }
 
 func TestCanned_AnUnpairedLoomRefusesTheTerminalRouteAs401WithNoMiss(t *testing.T) {
