@@ -199,11 +199,12 @@ describe("bindTouchScroll", () => {
   it("a new touch stops the momentum", () => {
     bind();
     drag(300, [-16, -16, -16], 16);
+    const dragCalls = calls.length;
     touch("touchend", []);
     step();
     step();
     const before = calls.length;
-    expect(before).toBeGreaterThan(0);
+    expect(before).toBeGreaterThan(dragCalls);
     touch("touchstart", [200]);
     expect(queue).toHaveLength(0);
     for (let i = 0; i < 5; i++) step();
