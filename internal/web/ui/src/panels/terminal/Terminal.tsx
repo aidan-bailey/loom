@@ -15,6 +15,8 @@ import { useHostFacts, useLink, useSession } from "@/store/fleet";
 import { frameTerminal, type FrameState, type LoomTerminal } from "@/terminal/frame";
 import { CLOSE_EXITED, describeClose } from "@/terminal/socket";
 
+import { PhoneInput } from "./PhoneInput";
+
 // terminalApplies is whether the session has a terminal tab on this host: the host's switch is on
 // and the session is started, active and not paused. `sessionActions(...).diff` is that set (not
 // busy, not in the paused group, which holds the Recoverable and unstarted sessions), as the
@@ -189,6 +191,9 @@ export function Terminal(props: PanelProps): ReactElement {
         />
         <Notice state={state} failed={failed} terminal={terminal} />
       </div>
+      {phone && terminal !== null && state !== null ? (
+        <PhoneInput terminal={terminal} live={phase === "live"} renderer={state.renderer} />
+      ) : null}
     </div>
   );
 }

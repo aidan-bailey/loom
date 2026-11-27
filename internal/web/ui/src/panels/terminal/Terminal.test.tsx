@@ -156,14 +156,14 @@ describe("Terminal's states", () => {
       renderer: "dom",
     });
     expect(screen.getByRole("status")).toHaveTextContent("the terminal is off on this host");
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start a new shell" })).toBeNull();
     fake.emit({
       phase: "closed",
       closed: { code: CLOSE_REVOKED, reason: "this device is no longer paired" },
       renderer: "dom",
     });
     expect(screen.getByRole("status")).toHaveTextContent("this device is no longer paired");
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start a new shell" })).toBeNull();
   });
 
   it("shows the failure of a terminal that could not start as a reason, with no button (spec §68)", () => {
@@ -517,5 +517,64 @@ describe("TerminalBody", () => {
     expect(second).not.toBe(first);
     expect(second).toHaveAttribute("src", "/terminal.html#8");
     expect(fake.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Terminal's phone input", () => {
+  function commandLine(): HTMLElement {
+    return screen.getByRole("textbox", { name: "Command line" });
+  }
+
+  it("draws the phone's input under the frame once the frame has given a state", () => {
+    mount();
+    const line = commandLine();
+    expect(rootEl()).toContainElement(line);
+    expect(frameEl().compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("draws none on the desktop", () => {
+    setViewportWidth(1280);
+    mount();
+    expect(screen.queryByRole("textbox", { name: "Command line" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ctrl-C" })).toBeNull();
+  });
+
+  it("draws none before the frame has an interface", () => {
+    fakeTerminal();
+    render(<Terminal {...PROPS} />);
+    expect(screen.queryByRole("textbox", { name: "Command line" })).toBeNull();
+  });
+
+  it("gives the input live from the phase", async () => {
+    const { fake } = mount();
+    const tab = screen.getByRole("button", { name: "Tab" });
+    expect(tab).toBeDisabled();
+    fake.emit(LIVE);
+    expect(tab).toBeEnabled();
+    await userEvent.setup().click(tab);
+    expect(fake.key).toHaveBeenCalledWith("tab");
+    fake.emit(WAITING);
+    expect(tab).toBeDisabled();
+  });
+
+  it("gives the sheet the renderer the frame reports, and follows a change of it", async () => {
+    const { fake } = mount();
+    fake.emit({ phase: "live", renderer: "webgl" });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Select" }));
+    await screen.findByRole("dialog");
+    const footer = document.querySelector('[data-slot="drawer-footer"]');
+    expect(footer).toHaveTextContent("Renderer: WebGL");
+    fake.emit({ phase: "live", renderer: "dom" });
+    expect(footer).toHaveTextContent("Renderer: DOM");
+  });
+
+  it("types into the shell through the interface", async () => {
+    const { fake } = mount();
+    fake.emit(LIVE);
+    await userEvent.setup().type(commandLine(), "ls{Enter}");
+    expect(fake.send).toHaveBeenCalledTimes(1);
+    expect(Array.from(vi.mocked(fake.send).mock.calls[0]?.[0] ?? [])).toEqual(
+      Array.from(new TextEncoder().encode("ls\r")),
+    );
   });
 });
