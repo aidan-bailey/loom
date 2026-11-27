@@ -219,7 +219,7 @@ From the skeleton review of part 2's plan. These hold where they disagree with �
 61. **`close()` on unmount runs before the frame leaves the document** (the manager): in a layout effect's cleanup, inside a `try`, since a call into a discarded document may throw.
 62. **webshot's canned loom imports `github.com/coder/websocket`** as §47 says (the manager, by §47): `tools/CLAUDE.md`'s rule that webshot stays stdlib-only gains that one exception, within its line budget.
 63. **webshot's `terminal-select` screen waits for `data-terminal-state="live"` before it clicks Select** (the manager), so `text()` reads the canned screen; and both terminal screens are left out of a run on the classic app, which has no panel.
-64. **Forms** (owner): Stories 4 and 6 are full, as Story 3 is. The estimate becomes draft $31; run $18.
+64. **Forms** (owner): Stories 4 and 6 are full, as Story 3 is. The estimate becomes draft $31; run $18. Story 2 stays brief, its Form reason naming Task 2.2's momentum loop, which the developer writes against the story's tests.
 
 #### Stories
 
