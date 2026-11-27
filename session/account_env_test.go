@@ -214,7 +214,7 @@ func TestRecoveryLaunch_ResumesAcrossAnAccountSwitch(t *testing.T) {
 	// The shared main dir every account's projects/ links into.
 	mainDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(mainDir, "projects"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(mainDir, "projects", id+".jsonl"), []byte("{}\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(mainDir, "projects", id+".jsonl"), []byte(`{"type":"user","message":{}}`+"\n"), 0o600))
 
 	// The account the conversation was originally recorded under.
 	oldAcctDir := filepath.Join(t.TempDir(), "old")

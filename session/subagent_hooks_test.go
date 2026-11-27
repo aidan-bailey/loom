@@ -408,7 +408,7 @@ func TestRecoveryLaunch_ResumesRecordedConversation(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
 	transcript := filepath.Join(t.TempDir(), id+".jsonl")
-	require.NoError(t, os.WriteFile(transcript, nil, 0o600))
+	require.NoError(t, os.WriteFile(transcript, []byte(`{"type":"user","message":{}}`+"\n"), 0o600))
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
 		{Name: hooks.EventSessionStart, Source: "startup", SessionID: id, TranscriptPath: transcript, At: time.Now()},
 	}}))

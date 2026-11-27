@@ -1,6 +1,10 @@
 package session
 
 import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"regexp"
 
@@ -26,17 +30,53 @@ var claudeSessionIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a
 
 // BuildResumeCommand rewrites program to resume the recorded conversation:
 // --resume <sessionID> when the ID is a well-formed Claude session ID and
-// its transcript still exists, else BuildRecoveryCommand's --continue.
-// The transcript check matters because Claude deletes transcripts after
-// cleanupPeriodDays (30 by default), and --resume on a missing one exits
-// at once, which the health tick would read as the agent dying again.
+// its transcript still exists and may hold a message, else
+// BuildRecoveryCommand's --continue. The transcript check matters because
+// --resume on a conversation Claude can't find exits at once ("No
+// conversation found"), which the health tick reads as the agent dying
+// again, so every resume fails the same way: Claude deletes transcripts
+// after cleanupPeriodDays (30 by default), and a launch that opened a
+// conversation and wrote no message to it (one on another account than the
+// recorded conversation's) leaves a transcript of bookkeeping lines whose
+// ID SessionStart has already recorded.
 func BuildResumeCommand(program, sessionID, transcriptPath string) string {
-	if claudeSessionIDRe.MatchString(sessionID) && transcriptPath != "" {
-		if _, err := os.Stat(transcriptPath); err == nil {
-			return defaultRegistry.Lookup(program).ApplyResumeFlag(program, sessionID)
-		}
+	if claudeSessionIDRe.MatchString(sessionID) && transcriptPath != "" && mayHoldMessage(transcriptPath) {
+		return defaultRegistry.Lookup(program).ApplyResumeFlag(program, sessionID)
 	}
 	return BuildRecoveryCommand(program)
+}
+
+// mayHoldMessage reports whether the transcript at path exists and is not
+// known to lack a message: false only when it is missing, or when every
+// line decodes and none is a user or assistant record. A file it can't
+// read through, or a line it can't decode, answers true, so a transcript
+// loom misreads is still resumed as before rather than swapped for the
+// newest conversation in the directory. It stops at the first message,
+// which a real conversation writes near its start.
+func mayHoldMessage(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var rec struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(line, &rec) != nil || rec.Type == "user" || rec.Type == "assistant" {
+				return true
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+	}
 }
 
 // BuildRemoteControlCommand modifies a program command string to launch

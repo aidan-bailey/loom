@@ -248,7 +248,7 @@ func TestInstanceEnv_ClaudeConfigDirComesLast(t *testing.T) {
 func TestBuildResumeCommand(t *testing.T) {
 	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
 	transcript := filepath.Join(t.TempDir(), id+".jsonl")
-	require.NoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
+	require.NoError(t, os.WriteFile(transcript, []byte(`{"type":"mode"}`+"\n"+`{"type":"user","message":{}}`+"\n"), 0o600))
 	missing := filepath.Join(t.TempDir(), "gone.jsonl")
 
 	assert.Equal(t, "claude --resume "+id, BuildResumeCommand("claude", id, transcript))
@@ -260,4 +260,28 @@ func TestBuildResumeCommand(t *testing.T) {
 		"the ID goes into a shell command: only a UUID is accepted")
 	assert.Equal(t, "claude --continue --model sonnet", BuildResumeCommand("claude --continue --model sonnet", id, transcript))
 	assert.Equal(t, "aider", BuildResumeCommand("aider", id, transcript))
+}
+
+// A conversation Claude opened but never wrote a message to (a launch on
+// another account that couldn't resume the recorded one leaves a mode and a
+// session-owner line) can't be resumed: --resume on it exits with "No
+// conversation found", and every resume after fails the same way.
+func TestBuildResumeCommand_ATranscriptWithNoMessageContinues(t *testing.T) {
+	const id = "95f25264-549d-4eaf-a854-e766a0b86243"
+	write := func(t *testing.T, body string) string {
+		p := filepath.Join(t.TempDir(), id+".jsonl")
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		return p
+	}
+	stub := `{"type":"mode","mode":"normal","sessionId":"` + id + `"}` + "\n" +
+		`{"type":"session-owner","accountUuid":"a","sessionId":"` + id + `"}` + "\n"
+
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", id, write(t, stub)))
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", id, write(t, "")),
+		"an empty file holds no conversation either")
+	assert.Equal(t, "claude --resume "+id, BuildResumeCommand("claude", id, write(t, stub+`{"type":"user","message":{}}`)),
+		"a user message, even on an unterminated last line, makes it resumable")
+	assert.Equal(t, "claude --resume "+id, BuildResumeCommand("claude", id, write(t, stub+`{"type":"assistant","message":{}}`+"\n")))
+	assert.Equal(t, "claude --resume "+id, BuildResumeCommand("claude", id, write(t, stub+"not json\n")),
+		"a line loom can't read may be a message: keep resuming rather than guess")
 }
