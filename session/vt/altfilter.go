@@ -16,17 +16,27 @@ var altScreenModes = map[string]bool{"47": true, "1047": true, "1049": true}
 // modes (1000, 1002, 1003, 1005, 1006, 1015). Only the web terminal's output
 // pump wants them removed: the TUI's emulator reads those modes to forward
 // the mouse.
-var altScreenAndMouseModes = map[string]bool{
-	"47": true, "1047": true, "1049": true,
-	"1000": true, "1002": true, "1003": true, "1005": true, "1006": true, "1015": true,
+var altScreenAndMouseModes = withModes(altScreenModes, "1000", "1002", "1003", "1005", "1006", "1015")
+
+// withModes returns a new set holding base and the extra modes.
+func withModes(base map[string]bool, extra ...string) map[string]bool {
+	out := make(map[string]bool, len(base)+len(extra))
+	for m := range base {
+		out[m] = true
+	}
+	for _, m := range extra {
+		out[m] = true
+	}
+	return out
 }
 
 // maxPendingSeq bounds the partial-sequence hold-back buffer; anything
 // longer flushes through unfiltered rather than stalling the stream.
 const maxPendingSeq = 64
 
-// altScreenFilter is an io.Writer decorator that removes alt-screen
-// enter/exit private-mode parameters from CSI ? ... h/l sequences and
+// altScreenFilter is an io.Writer decorator that removes the private-mode
+// parameters of its drop set (the alt-screen modes, and for the web's filter
+// the mouse-reporting ones too) from CSI ? ... h/l sequences and
 // forwards everything else verbatim. It is stateful across Writes so
 // sequences split between chunks are still recognized. Single-writer only
 // (the tmux output pump); not safe for concurrent Write.
