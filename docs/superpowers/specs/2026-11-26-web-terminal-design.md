@@ -206,6 +206,21 @@ Part 1 is in main. These hold where they disagree with the sections above. They 
 53. **Out of part 2:** logging the refusals that answer before the route (the spike's unexplained first 1006); the wheel on the alternate screen; a favicon for `terminal.html`; a clipboard button in the sheet.
 54. **The owner's checklist** (Testing) gains: scroll the terminal with a finger and flick it; select and copy a line from the sheet, and read its renderer; on the desktop, scroll with the wheel, select with a drag and copy; ⌘K or the top bar's box opening the palette; lose the network on the phone and see it reconnect with the scrollback held once.
 
+#### Settled while drafting (2026-11-27)
+
+From the skeleton review of part 2's plan. These hold where they disagree with §33–§48. Each names who decided.
+
+55. **Input while the terminal is not live** (owner). `send` and `key` answer a boolean: true when the bytes went to an open connection, false otherwise. Nothing is queued: input given while the phase is not `live` is dropped by the frame, never replayed. On the phone the key row and the command line's Enter are disabled unless the phase is `live`, and the command line keeps its text when a send answers false. This narrows §33's "a call made before the terminal has started takes effect when it starts" to the calls that set something (`setTouch`, `setLink`, `onState`, `onChord`, `reconnect`, `focus`, `close`), and §44's "clears it" to a send that answered true.
+56. **`text()` cuts trailing blanks at the end of a logical line,** not of each row (the manager, from §33's intent): a row that the next row continues keeps its trailing blanks, so a command that wraps at a space keeps the space.
+57. **Focus on the desktop** (owner; this replaces §43's first sentence). The panel calls `focus()` when the user brings it up (it mounts as the middle column's panel, or its inspector tab is pressed) and again when the phase next becomes `live`, unless a text field of the app has the focus by then. Otherwise, on `live`, it calls `focus()` only while the app's focused element is the frame, the body or nothing. So a reconnect never takes the focus from the reply box or from any other control, and a terminal the inspector mounts from a stored choice takes none on its own.
+58. **The inspector never falls back to the terminal** (owner). `inspectorTab` draws the terminal only when it is the stored choice and applies; when another choice does not apply, the fallback skips it. A test pins both sides: the terminal chosen is drawn, and a fallback past it lands on the next tab. Without this, browsing sessions on the three-column desktop would start a shell for each and size the shared shell to the inspector.
+59. **A page restored from the back-forward cache reconnects** (owner): part 1's `pagehide` close (code 1000) stays, and on `pageshow` with `persisted` the frame connects again as if `waiting`, link permitting.
+60. **A connection that may be half-open is replaced** (owner; in the frame only, with no change to the daemon or the wire). While `live`, the frame closes its connection and opens a fresh one at once when the link comes back up after being down, and when the page becomes visible after being hidden for 30 s or longer (the daemon's 20 s ping and its 10 s wait). §36's reset keeps the scrollback single, and tmux repaints the screen.
+61. **`close()` on unmount runs before the frame leaves the document** (the manager): in a layout effect's cleanup, inside a `try`, since a call into a discarded document may throw.
+62. **webshot's canned loom imports `github.com/coder/websocket`** as §47 says (the manager, by §47): `tools/CLAUDE.md`'s rule that webshot stays stdlib-only gains that one exception, within its line budget.
+63. **webshot's `terminal-select` screen waits for `data-terminal-state="live"` before it clicks Select** (the manager), so `text()` reads the canned screen; and both terminal screens are left out of a run on the classic app, which has no panel.
+64. **Forms** (owner): Stories 4 and 6 are full, as Story 3 is. The estimate becomes draft $31; run $18.
+
 #### Stories
 
 1. The filter's mouse option and the web pump (§31).
