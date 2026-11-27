@@ -1,6 +1,6 @@
 // The fake terminal's members are vi.fn() mocks that the tests pass to expect() unbound; none reads `this`.
 /* eslint-disable @typescript-eslint/unbound-method */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -115,6 +115,18 @@ describe("PhoneInput's command line", () => {
     expect(line().value).toBe("");
   });
 
+  it("Enter that commits an IME candidate sends nothing", async () => {
+    const terminal = fake();
+    render(<PhoneInput terminal={terminal} live renderer="dom" />);
+    const user = userEvent.setup();
+    await user.type(line(), "ni");
+    fireEvent.keyDown(line(), { key: "Enter", isComposing: true });
+    expect(terminal.send).not.toHaveBeenCalled();
+    expect(line().value).toBe("ni");
+    fireEvent.keyDown(line(), { key: "Enter" });
+    expect(terminal.send).toHaveBeenCalledTimes(1);
+  });
+
   it("Enter does nothing while the terminal is not live, and keeps the text", async () => {
     const terminal = fake();
     const view = render(<PhoneInput terminal={terminal} live={false} renderer="dom" />);
@@ -206,7 +218,7 @@ describe("PhoneInput's copy sheet", () => {
     });
   });
 
-  it("reads the buffer again each time it opens, and scrolls to its end again", async () => {
+  it("reads the buffer again each time it opens, and scrolls the remounted text to its end again", async () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(500);
     const terminal = fake();
     vi.mocked(terminal.text).mockReturnValue("first");

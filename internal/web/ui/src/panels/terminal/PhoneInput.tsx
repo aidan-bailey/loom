@@ -106,7 +106,7 @@ export function PhoneInput(props: {
           setLine(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (e.key !== "Enter" || !live) return;
+          if (e.key !== "Enter" || e.nativeEvent.isComposing || !live) return;
           if (terminal.send(new TextEncoder().encode(line + "\r"))) setLine("");
         }}
       />
