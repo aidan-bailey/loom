@@ -495,6 +495,35 @@ describe("SessionTabs", () => {
     }
   });
 
+  it("draws a tab that applies by the host's switch as the stream's terminal event turns it on and off", () => {
+    tabPanels();
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "host tab" },
+      appliesTo: (_session, host) => host.terminal,
+      Body: () => null,
+    });
+    window.history.replaceState(null, "", "#/s/7/info");
+    live({ ...fixtureSnapshot(), terminal: false });
+
+    render(<SessionTabs session={aSession(true)} />);
+
+    const names = (): (string | null)[] =>
+      within(screen.getByRole("navigation", { name: "Session views" }))
+        .getAllByRole("link")
+        .map((a) => a.textContent);
+    expect(names()).toEqual(["conversation", "changes", "info"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: true });
+    });
+    expect(names()).toEqual(["conversation", "changes", "info", "host tab"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: false });
+    });
+    expect(names()).toEqual(["conversation", "changes", "info"]);
+  });
+
   it.each([
     ["a subagent route of a Claude session", "#/s/7/agent/a1f00d", true, "conversation", true],
     ["a job route of a Claude session", "#/s/7/job/216", true, "info", true],

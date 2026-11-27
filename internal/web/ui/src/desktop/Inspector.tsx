@@ -8,6 +8,7 @@ import { useDesktop } from "@/app/desktopState";
 import { sessionTabs, tabOrder, type PanelId, type PanelProps } from "@/app/panels";
 import { elementPane, ScrollPaneProvider } from "@/app/scroll";
 import { Boundary, PanelHost, resetKey } from "@/app/shell";
+import { useHostFacts } from "@/store/fleet";
 
 import { inspectorTab } from "./inspector";
 
@@ -18,7 +19,8 @@ export function Inspector(props: { session: Session; middle: PanelId }): ReactEl
   const { session, middle } = props;
   const chosen = useDesktop((s) => s.slots[0]?.tab);
   const setTab = useDesktop((s) => s.setTab);
-  const panels = sessionTabs(session);
+  const host = useHostFacts();
+  const panels = sessionTabs(session, host);
   const tabs = panels.map((p) => p.id);
   const tab = inspectorTab(tabOrder(), tabs, middle, chosen);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);

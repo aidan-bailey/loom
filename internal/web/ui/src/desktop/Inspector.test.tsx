@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import { definePanel, type Panel, type PanelProps } from "@/app/panels";
 import { useScrollPane, windowPane, type ScrollPane } from "@/app/scroll";
 import { fixtureSnapshot } from "@/fixtures";
 import { allSessions } from "@/fleet/groups";
+import { useFleet } from "@/store/fleet";
 
 import { Inspector } from "./Inspector";
 
@@ -19,6 +20,7 @@ beforeEach(() => {
 
 afterEach(() => {
   localStorage.clear();
+  useFleet.setState({ snapshot: null, stale: true, link: "connecting", updated: 0 });
 });
 
 function claude(id = 7, isClaude = true): Session {
@@ -92,6 +94,28 @@ describe("Inspector", () => {
     expect(lit()).toBe("changes");
     expect(screen.getByText(/changes body/)).toBeInTheDocument();
     expect(screen.queryByText("info body")).toBeNull();
+  });
+
+  it("lists a tab that applies by the host's switch as the stream's terminal event turns it on", () => {
+    tabs();
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 3, label: "mockup" },
+      appliesTo: (_session, host) => host.terminal,
+      Body: () => <p>mockup body</p>,
+    });
+    useFleet.setState({ snapshot: { ...fixtureSnapshot(), terminal: false } });
+    render(<Inspector session={claude()} middle="turns" />);
+    expect(names()).toEqual(["changes", "info"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: true });
+    });
+    expect(names()).toEqual(["changes", "mockup", "info"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: false });
+    });
+    expect(names()).toEqual(["changes", "info"]);
   });
 
   it("draws the chosen panel's Body with the session's props", () => {

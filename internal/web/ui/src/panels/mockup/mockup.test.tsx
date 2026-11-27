@@ -202,8 +202,8 @@ describe("the mockup panels", () => {
     const panel = panelFor("mockup");
     expect(panel?.tab).toEqual({ order: 4, label: "mockup", Mark: MockupMark });
     expect(panel?.Head).toBe(SessionHead);
-    expect(panel?.appliesTo?.(show())).toBe(true);
-    expect(panel?.appliesTo?.(show({ mockup: null }))).toBe(false);
+    expect(panel?.appliesTo?.(show(), { terminal: false })).toBe(true);
+    expect(panel?.appliesTo?.(show({ mockup: null }), { terminal: false })).toBe(false);
 
     const full = panelFor("mockupFull");
     expect(full).toBeDefined();

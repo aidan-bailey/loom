@@ -7,6 +7,7 @@ import type { Notice, Session, Snapshot, StreamEvents } from "@/api/gen";
 import { queryClient } from "@/api/queries";
 import { emitNotices, onNotices, onStopping, onUnpaired } from "@/api/request";
 import { connectStream, RESTART_GRACE, type LinkState } from "@/api/stream";
+import type { HostFacts } from "@/app/panels";
 import { checkPushSubscription, shellBuild, upgradeShell } from "@/app/worker";
 import { allSessions, emptyGroups, fleetGroups, type FleetGroups } from "@/fleet/groups";
 import { setBadge } from "./badge";
@@ -168,6 +169,15 @@ export function useFleetGroups(): FleetGroups {
 /** The stream's link state and whether the view is stale (every state but live). */
 export function useLink(): { state: LinkState; stale: boolean } {
   return useFleet(useShallow((s) => ({ state: s.link, stale: s.stale })));
+}
+
+/**
+ * The host's facts a tab's `appliesTo` reads: the snapshot's `terminal` (false before the first
+ * snapshot). A component that calls it re-renders when the stream's `terminal` event changes it.
+ */
+export function useHostFacts(): HostFacts {
+  const terminal = useFleet((s) => s.snapshot?.terminal === true);
+  return useMemo(() => ({ terminal }), [terminal]);
 }
 
 // The snapshot is saved at most once a second: sessions events come up to four a second.

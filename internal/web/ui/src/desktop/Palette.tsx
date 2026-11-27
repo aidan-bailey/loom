@@ -8,7 +8,7 @@ import { allCommands, runCommand, useCommandContext } from "@/app/commands";
 import { sessionTabs } from "@/app/panels";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useFleet } from "@/store/fleet";
+import { useFleet, useHostFacts } from "@/store/fleet";
 
 import { paletteGroups, type PaletteGroup, type PaletteItem, type PaletteTab } from "./palette";
 import { usePalette } from "./paletteState";
@@ -21,6 +21,7 @@ function Body({ onCommand }: { onCommand: () => void }): ReactElement {
   const setOpen = usePalette((s) => s.setOpen);
   const ctx = useCommandContext();
   const snapshot = useFleet((s) => s.snapshot);
+  const host = useHostFacts();
   const [query, setQuery] = useState("");
   // Adjusted while rendering, as React documents for state that follows a prop: an effect would
   // draw the old query for one frame first.
@@ -34,11 +35,11 @@ function Body({ onCommand }: { onCommand: () => void }): ReactElement {
     () =>
       ctx.session === undefined
         ? []
-        : sessionTabs(ctx.session).map((panel) => ({
+        : sessionTabs(ctx.session, host).map((panel) => ({
             id: panel.id,
             label: panel.tab?.label ?? panel.id,
           })),
-    [ctx.session],
+    [ctx.session, host],
   );
   const groups = useMemo(
     () => paletteGroups({ query, snapshot, commands: allCommands(), ctx, tabs }),

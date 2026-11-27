@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Notice, Session } from "@/api/gen";
 import { fixtureSnapshot } from "@/fixtures";
-import { MAX_NOTICES, useFleet, useFleetGroups, useLink, useSession } from "./fleet";
+import { MAX_NOTICES, useFleet, useFleetGroups, useHostFacts, useLink, useSession } from "./fleet";
 import { clearSnapshot } from "./persist";
 
 vi.mock("./persist");
@@ -239,5 +239,26 @@ describe("the selectors", () => {
       store().setLink("live");
     });
     expect(result.current).toEqual({ state: "live", stale: false });
+  });
+
+  it("useHostFacts is false before a snapshot and follows the stream's terminal event", () => {
+    const { result } = renderHook(() => useHostFacts());
+    expect(result.current).toEqual({ terminal: false });
+    act(() => {
+      store().apply("snapshot", { ...fixtureSnapshot(NOW), terminal: false });
+    });
+    expect(result.current).toEqual({ terminal: false });
+    act(() => {
+      store().apply("terminal", { enabled: true });
+    });
+    expect(result.current).toEqual({ terminal: true });
+    act(() => {
+      store().apply("snapshot", { ...fixtureSnapshot(NOW), terminal: true });
+    });
+    expect(result.current).toEqual({ terminal: true });
+    act(() => {
+      store().apply("terminal", { enabled: false });
+    });
+    expect(result.current).toEqual({ terminal: false });
   });
 });

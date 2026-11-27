@@ -9,12 +9,14 @@ import {
   panelFor,
   sessionTabs,
   tabOrder,
+  type HostFacts,
   type PanelId,
   type PanelProps,
 } from "./panels";
 
 const Body = (): null => null;
 const props: PanelProps = { sessionId: undefined, params: {}, search: {} };
+const host: HostFacts = { terminal: false };
 
 // aSession is the fixture's first session with the given fields changed.
 function aSession(over: Partial<Session> = {}): Session {
@@ -63,12 +65,29 @@ describe("the panel registry", () => {
     // A panel with no tab is never a session tab.
     definePanel({ id: "flows", title: () => "Flows", Body });
 
-    expect(sessionTabs(aSession({ claude: true })).map((p) => p.id)).toEqual([
+    expect(sessionTabs(aSession({ claude: true }), host).map((p) => p.id)).toEqual([
       "turns",
       "changes",
       "info",
     ]);
-    expect(sessionTabs(aSession({ claude: false })).map((p) => p.id)).toEqual(["info"]);
+    expect(sessionTabs(aSession({ claude: false }), host).map((p) => p.id)).toEqual(["info"]);
+  });
+
+  it("hands appliesTo the host's facts as its second argument", () => {
+    definePanel({ id: "info", title: () => "Info", tab: { order: 3, label: "info" }, Body });
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "mockup" },
+      appliesTo: (session, facts) => facts.terminal && session.claude,
+      Body,
+    });
+    const at = (facts: HostFacts, claude: boolean): string[] =>
+      sessionTabs(aSession({ claude }), facts).map((p) => p.id);
+
+    expect(at({ terminal: true }, true)).toContain("mockup");
+    expect(at({ terminal: false }, true)).not.toContain("mockup");
+    expect(at({ terminal: true }, false)).not.toContain("mockup");
   });
 
   it("lists every tab panel in tab order, whether or not it applies", () => {

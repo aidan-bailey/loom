@@ -271,6 +271,27 @@ describe("Palette", () => {
     expect(usePalette.getState().open).toBe(false);
   });
 
+  it("lists a tab that applies by the host's switch as the stream's terminal event turns it on", async () => {
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "mockup" },
+      appliesTo: (_session, host) => host.terminal,
+      Body: () => null,
+    });
+    setup("#/s/3", { snapshot: { ...onlySession3(), terminal: false } });
+    await userEvent.type(input(), "mockup");
+    expect(titles()).not.toContain("mockup");
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: true });
+    });
+    expect(titles()).toContain("mockup");
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: false });
+    });
+    expect(titles()).not.toContain("mockup");
+  });
+
   it("Enter on a command closes the palette, then runs it through runCommand with the route's context", async () => {
     setup();
     await userEvent.type(input(), "Zebra run");
