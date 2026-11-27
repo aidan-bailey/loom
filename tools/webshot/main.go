@@ -68,12 +68,17 @@ type screen struct{ name, hash string }
 // with every /api/ request answered 401 (an unpaired device), "add-to-home"
 // as an iPhone browser tab (not standalone). "palette" is session 1's route
 // with the command palette opened by its chord, shot on a desktop under -app
-// next only.
+// next only. "terminal" is session 1's worktree shell, drawn from the canned
+// loom's terminal route, and "terminal-select" the same with the phone's copy
+// sheet open (Select clicked once the terminal is live); both are shot under
+// -app next only, the second on a phone only.
 var screens = []screen{
 	{"fleet", ""},
 	{"conversation", "#s/1"},
 	{"waiting", "#s/2"},
 	{"info", "#s/1/info"},
+	{"terminal", "#s/1/terminal"},
+	{"terminal-select", "#s/1/terminal"},
 	{"agent", "#s/1/agent/a1f00dcafe0001"},
 	{"job", "#s/1/job/214"},
 	{"diff", "#s/1/diff"},
@@ -93,18 +98,29 @@ var screens = []screen{
 
 // screenMode is how a screen's tab and canned loom differ from the Home
 // Screen app on a paired loom. desktopOnly is a screen only the desktop layout
-// draws; press is a chord pressed once the desktop frame has drawn (Control+k,
-// with Alt+, Control+, Meta+ and Shift+ prefixes allowed); drawn is the
-// selector that must match after the press.
+// draws, phoneOnly one only the phone's layout draws, and nextOnly one only
+// the new app draws (the classic app has no such screen); press is a chord
+// pressed once the desktop frame has drawn (Control+k, with Alt+, Control+,
+// Meta+ and Shift+ prefixes allowed); ready is a selector that must match
+// before the screen's click; shows is text the framed terminal's own text()
+// must hold before the click (a copy sheet reads it once, as it opens) or, for a
+// screen with no click, before its shot (the frame's "live" comes before xterm.js has
+// parsed and painted the bytes); click
+// is a selector clicked once, when it matches (and, when the screen has a
+// ready, only after that matches); drawn is the selector that must match after
+// the press or the click, or, for a screen with neither, before its shot. A screen
+// with a shows and no click waits for that text before its shot too.
 type screenMode struct {
-	unpaired, browserTab, desktopOnly bool
-	press, drawn                      string
+	unpaired, browserTab, desktopOnly, phoneOnly, nextOnly bool
+	press, ready, shows, click, drawn                      string
 }
 
 var screenModes = map[string]screenMode{
-	"palette":     {desktopOnly: true, press: "Control+k", drawn: `[data-slot="palette"]`},
-	"pair":        {unpaired: true},
-	"add-to-home": {browserTab: true},
+	"palette":         {desktopOnly: true, press: "Control+k", drawn: `[data-slot="palette"]`},
+	"pair":            {unpaired: true},
+	"add-to-home":     {browserTab: true},
+	"terminal":        {nextOnly: true, shows: "0.412s", drawn: `[data-terminal-state="live"]`},
+	"terminal-select": {phoneOnly: true, nextOnly: true, ready: `[data-terminal-state="live"]`, shows: "0.412s", click: `[data-slot="terminal-select"]`, drawn: `[data-slot="terminal-text"]:not(:empty)`},
 }
 
 // modeOf is the mode of a screen: the zero value for one that has none.
@@ -297,13 +313,14 @@ func serveAPI(ctx context.Context, addr string, announce func(net.Addr), onMiss 
 // forDevice is todo as it is for a phone without the desktopOnly screens; for
 // a desktop device, todo without the screens only a phone's browser tab draws
 // (today add-to-home, the iOS Add to Home gate, shown only for an iOS user
-// agent). It tests modeOf's modes, not the screens' names, so a later screen of
-// either kind is skipped too. todo is not changed.
+// agent) or only the phone's layout draws (a phoneOnly screen). It tests
+// modeOf's modes, not the screens' names, so a later screen of either kind is
+// skipped too. todo is not changed.
 func forDevice(d device, todo []screen) []screen {
 	var out []screen
 	for _, sc := range todo {
 		m := modeOf(sc)
-		if (d.desktop && m.browserTab) || (!d.desktop && m.desktopOnly) {
+		if (d.desktop && (m.browserTab || m.phoneOnly)) || (!d.desktop && m.desktopOnly) {
 			continue
 		}
 		out = append(out, sc)
@@ -311,16 +328,16 @@ func forDevice(d device, todo []screen) []screen {
 	return out
 }
 
-// forApp is todo, or without the desktopOnly screens unless app is next (the
-// classic app has no desktop layout and the -app flag defaults to it). todo is
-// not changed.
+// forApp is todo, or without the desktopOnly and nextOnly screens unless app is
+// next (the classic app has no desktop layout and no terminal, and the -app
+// flag defaults to it). todo is not changed.
 func forApp(app string, todo []screen) []screen {
 	if app == "next" {
 		return todo
 	}
 	var out []screen
 	for _, sc := range todo {
-		if !modeOf(sc).desktopOnly {
+		if m := modeOf(sc); !m.desktopOnly && !m.nextOnly {
 			out = append(out, sc)
 		}
 	}
@@ -333,11 +350,11 @@ func forApp(app string, todo []screen) []screen {
 func skipReason(d device, app string, sc screen) string {
 	m := modeOf(sc)
 	switch {
-	case d.desktop && m.browserTab:
+	case d.desktop && (m.browserTab || m.phoneOnly):
 		return "phone only"
 	case !d.desktop && m.desktopOnly:
 		return "desktop only"
-	case m.desktopOnly && app != "next":
+	case (m.desktopOnly || m.nextOnly) && app != "next":
 		return "next app only"
 	}
 	return ""
@@ -689,7 +706,12 @@ func (p *page) press(ctx context.Context, chord string) error {
 // match, as shoot's appDrawn loop treats it.
 func (p *page) waitFor(ctx context.Context, selector string, within time.Duration) bool {
 	q, _ := json.Marshal(selector)
-	expr := "!!document.querySelector(" + string(q) + ")"
+	return p.waitExpr(ctx, "!!document.querySelector("+string(q)+")", within)
+}
+
+// waitExpr polls every 100 ms until expr, a page expression that answers a boolean, answers true
+// or within has passed, and reports whether it did. A query that errors counts as no match.
+func (p *page) waitExpr(ctx context.Context, expr string, within time.Duration) bool {
 	deadline := time.Now().Add(within)
 	for {
 		var ok bool
@@ -732,6 +754,77 @@ func (p *page) pressScreen(ctx context.Context, mode screenMode, settle, wait ti
 	return nil
 }
 
+// drawnWait is how long a screen that waits for its own state (a live terminal, then a sheet)
+// gets for each selector to match: the frame has to load xterm.js and connect first.
+const drawnWait = 10 * time.Second
+
+// waits reports whether the screen waits for its own state once the app has drawn, with no chord:
+// for a drawn selector, after a click when it has one.
+func (m screenMode) waits() bool {
+	return m.press == "" && (m.click != "" || m.drawn != "")
+}
+
+// drawScreen waits for mode's own state: its ready selector first when it has one, then the
+// text the framed terminal must hold when it has one (a sheet reads the text once, so a click
+// before the terminal has parsed its first bytes would open an empty one), then, for a screen
+// with a click, the click's selector, which it clicks once, and then the drawn selector.
+// It does nothing for a screen with a chord (pressScreen's) or with none of these. The click
+// is never retried.
+func (p *page) drawScreen(ctx context.Context, mode screenMode, wait time.Duration) error {
+	if !mode.waits() {
+		return nil
+	}
+	if mode.ready != "" && !p.waitFor(ctx, mode.ready, wait) {
+		return fmt.Errorf("no %s to wait for", mode.ready)
+	}
+	if mode.shows != "" && !p.waitShows(ctx, mode.shows, wait) {
+		return fmt.Errorf("the terminal never showed %q", mode.shows)
+	}
+	if mode.click != "" {
+		if !p.waitFor(ctx, mode.click, wait) {
+			return fmt.Errorf("no %s to click", mode.click)
+		}
+		if err := p.click(ctx, mode.click); err != nil {
+			return err
+		}
+		if !p.waitFor(ctx, mode.drawn, wait) {
+			return fmt.Errorf("clicking %s drew no %s", mode.click, mode.drawn)
+		}
+		return nil
+	}
+	if !p.waitFor(ctx, mode.drawn, wait) {
+		return fmt.Errorf("no %s drew", mode.drawn)
+	}
+	return nil
+}
+
+// waitShows polls until the framed terminal's text() holds text. The framing page reads it through
+// the frame's same-origin window, as the app's panel does (Story 3's window.loomTerminal, which
+// answers "" until the terminal has started). A frame not yet there, or a script that throws,
+// counts as no match, as waitFor treats a query that errors.
+func (p *page) waitShows(ctx context.Context, text string, within time.Duration) bool {
+	q, _ := json.Marshal(text)
+	expr := `(() => { const f = document.querySelector('iframe[src^="/terminal.html"]'); ` +
+		`const t = f && f.contentWindow && f.contentWindow.loomTerminal; ` +
+		`return !!t && t.text().includes(` + string(q) + `); })()`
+	return p.waitExpr(ctx, expr, within)
+}
+
+// click clicks the first element selector matches.
+func (p *page) click(ctx context.Context, selector string) error {
+	q, _ := json.Marshal(selector)
+	expr := "(() => { const el = document.querySelector(" + string(q) + "); " +
+		"if (el === null) return false; el.click(); return true; })()"
+	var ok bool
+	if err := p.query(ctx, expr, &ok); err != nil {
+		return fmt.Errorf("click %s: %w", selector, err)
+	}
+	if !ok {
+		return fmt.Errorf("click %s: nothing matches", selector)
+	}
+	return nil
+}
+
 // appDrawn is true once the page is the app and it has drawn into #app.
 const appDrawn = `document.readyState === "complete" && location.protocol === "http:" && ` +
 	`!!document.querySelector("#app") && document.querySelector("#app").childElementCount > 0`
@@ -739,7 +832,8 @@ const appDrawn = `document.readyState === "complete" && location.protocol === "h
 // shoot loads one screen fresh, waits until the app has drawn and settled,
 // captures the viewport and writes it framed to file, bar laid over it. A screen
 // with a chord is pressed after the frame has drawn and settled, and settles
-// again before the capture. It returns what went
+// again before the capture; one with a drawn selector and no chord waits for it,
+// after its click when it has one, and settles again. It returns what went
 // wrong on the page: console errors, exceptions and routes the canned loom
 // could not answer.
 func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, bar image.Image, sc screen, origin string, settle time.Duration, file string, o frameOpts) ([]string, error) {
@@ -763,8 +857,15 @@ func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, bar image.I
 		time.Sleep(100 * time.Millisecond)
 	}
 	time.Sleep(settle)
-	if mode := modeOf(sc); mode.press != "" {
+	mode := modeOf(sc)
+	if mode.press != "" {
 		if err := p.pressScreen(ctx, mode, settle, pressWait); err != nil {
+			return nil, err
+		}
+		time.Sleep(settle)
+	}
+	if mode.waits() {
+		if err := p.drawScreen(ctx, mode, drawnWait); err != nil {
 			return nil, err
 		}
 		time.Sleep(settle)
