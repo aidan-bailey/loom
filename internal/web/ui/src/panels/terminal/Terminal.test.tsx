@@ -1,8 +1,6 @@
-// The fake terminal's members are vi.fn() mocks that the tests pass to expect() unbound; none reads `this`.
-/* eslint-disable @typescript-eslint/unbound-method */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { Session } from "@/api/gen";
 import type { PanelProps } from "@/app/panels";
@@ -20,7 +18,7 @@ vi.mock("@/terminal/frame", () => ({ frameTerminal: vi.fn() }));
 
 // A LoomTerminal of vi.fn() members that `frameTerminal` answers; `emit` gives the panel a state
 // as the frame would, and `chord` is ⌘K pressed inside the frame. Story 5's tests use it too.
-export type FakeTerminal = LoomTerminal & {
+export type FakeTerminal = { [K in keyof LoomTerminal]: Mock<LoomTerminal[K]> } & {
   emit(state: FrameState): void;
   chord(): void;
 };
