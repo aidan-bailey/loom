@@ -869,6 +869,21 @@ func TestTermConn_TheOutputIsFilteredOfAlternateScreenSwitches(t *testing.T) {
 	rig.finish(t)
 }
 
+func TestTermConn_TheOutputCarriesNoMouseReportRequests(t *testing.T) {
+	fake := newTermOpenFake()
+	rig := startTermConn(t, termRigOpts{open: fake.open})
+	sendResize(t, rig.client, 80, 24)
+	expectLive(t, rig.client)
+	// The last sequence is split across two reads, as the pty can deliver it.
+	fake.shell.feed <- []byte("\x1b[?1049h\x1b[?1000;25;1006hhi \x1b[?10")
+	fake.shell.feed <- []byte("06l\x1b[?1002;1003;1005;1015hthere")
+	want := "\x1b[?25hhi there"
+	got := readBinaryN(t, rig.client, len(want))
+	assert.Equal(t, want, string(got))
+	rig.conn.end(termEndOff)
+	rig.finish(t)
+}
+
 func TestTermConn_OutputArrivesInOrder(t *testing.T) {
 	fake := newTermOpenFake()
 	rig := startTermConn(t, termRigOpts{open: fake.open})
