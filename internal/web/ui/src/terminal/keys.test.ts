@@ -76,8 +76,12 @@ describe("handleKey", () => {
 
   it("does not repeat a held chord or a held copy", () => {
     const h = hooks();
-    expect(handleKey(ev({ key: "k", metaKey: true, repeat: true }), h)).toBe(false);
-    expect(handleKey(ev({ key: "C", ctrlKey: true, shiftKey: true, repeat: true }), h)).toBe(false);
+    const chord = ev({ key: "k", metaKey: true, repeat: true });
+    const copy = ev({ key: "C", ctrlKey: true, shiftKey: true, repeat: true });
+    expect(handleKey(chord, h)).toBe(false);
+    expect(handleKey(copy, h)).toBe(false);
+    expect(chord.defaultPrevented).toBe(true);
+    expect(copy.defaultPrevented).toBe(true);
     expect(h.chord).not.toHaveBeenCalled();
     expect(h.copy).not.toHaveBeenCalled();
   });
