@@ -337,6 +337,17 @@ class GeneratedClashTest(PlanPremisesTest):
         _, at_head = self.run_script("--rev", "HEAD")
         self.assertIn("adds `ChartFrame`", at_head)
 
+    def test_a_binary_file_under_a_generated_glob_is_read_at_a_commit_as_in_the_working_tree(self):
+        # A vendored image under a generated glob: not UTF-8, so a strict decode of `git show` dies.
+        self.profile('schema = 1\ngenerated = ["app/**"]\n')
+        (self.root / "app/logo.jpg").write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x90\x00")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "logo")
+        for args in ((), ("--rev", "HEAD")):
+            code, out = self.run_script(*args)
+            self.assertEqual(code, 1, (args, out))
+            self.assertIn("generated adds `ChartFrame` (app/bindings.ts:2)", out, args)
+
     # The inherited fixtures' tests don't apply to this plan.
     test_flags_each_kind_of_broken_premise = None
     test_premises_that_hold_are_not_flagged = None
