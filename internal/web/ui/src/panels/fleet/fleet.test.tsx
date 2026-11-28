@@ -430,7 +430,7 @@ describe("the fleet panel", () => {
   it("FleetHead shows the flows link only when a listed session has flows", () => {
     withSnapshot();
     const { unmount } = render(<FleetHead />);
-    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "#/flows");
+    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "#/flow-board");
     unmount();
     for (const none of [[], null]) {
       resetStore();

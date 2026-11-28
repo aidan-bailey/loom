@@ -75,7 +75,7 @@ describe("TopBar", () => {
     ]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
-    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "#/flows");
+    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "#/flow-board");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "#/settings");
     expect(screen.getByRole("link", { name: "+ New" })).toHaveAttribute("href", "#/new");
   });

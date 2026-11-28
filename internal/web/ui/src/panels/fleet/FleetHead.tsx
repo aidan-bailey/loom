@@ -1,5 +1,6 @@
-// The fleet's context row: its title, and links to the flows, the settings and a new session. They
-// are plain links, not commands: they act on nothing. FleetLinks is the links alone, for the
+// The fleet's context row: its title, and links to the flows (the flow board, whose head links on
+// to the Flows list), the settings and a new session. They are plain links, not commands: they act
+// on nothing. FleetLinks is the links alone, for the
 // desktop's top bar too.
 import { Settings } from "lucide-react";
 import type { MouseEvent, ReactElement } from "react";
@@ -21,7 +22,11 @@ export function FleetLinks({ dense = false }: { dense?: boolean }): ReactElement
   return (
     <>
       {hasFlows ? (
-        <a href={hrefFor("flows")} aria-label="Flows" className={cn(link, "text-muted-foreground")}>
+        <a
+          href={hrefFor("flowBoard")}
+          aria-label="Flows"
+          className={cn(link, "text-muted-foreground")}
+        >
           flows
         </a>
       ) : null}

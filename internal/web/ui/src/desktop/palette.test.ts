@@ -344,15 +344,15 @@ describe("paletteGroups: commands and places", () => {
     expect(groups.some((g) => g.label === "Commands")).toBe(false);
   });
 
-  it("with an empty query lists the session's tabs, then Fleet, New session, Flows and Settings", () => {
+  it("with an empty query lists the session's tabs, then Fleet, New session, Flow board, Flows and Settings", () => {
     const groups = paletteGroups(input({ ctx: context(current), tabs }));
     expect(keys(items(groups, "Places"))).toEqual([
       "place:turns",
       "place:info",
       "place:fleet",
       "place:new",
-      "place:flows",
       "place:flowBoard",
+      "place:flows",
       "place:settings",
     ]);
   });
@@ -410,15 +410,15 @@ describe("paletteGroups: commands and places", () => {
     expect(keys(items(paletteGroups(input()), "Places"))).toEqual([
       "place:fleet",
       "place:new",
-      "place:flows",
       "place:flowBoard",
+      "place:flows",
       "place:settings",
     ]);
     expect(keys(items(paletteGroups(input({ tabs })), "Places"))).toEqual([
       "place:fleet",
       "place:new",
-      "place:flows",
       "place:flowBoard",
+      "place:flows",
       "place:settings",
     ]);
   });
