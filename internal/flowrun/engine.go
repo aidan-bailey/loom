@@ -477,6 +477,7 @@ func (e *track) retake(name string) {
 func (e *track) agent(name, role, effort, brief string, sc Scope) (Report, error) {
 	var r Report
 	if e.recall("agent:"+name, &r) {
+		e.retake(name) // a replay takes the head the check took, as the first pass did
 		return e.outlast(name, r)
 	}
 	started, err := e.fx.AgentStarted(name)
@@ -706,12 +707,20 @@ func (e *track) build(s *Story, prefix, role, brief string, fix bool, sc Scope) 
 		if err != nil {
 			return r, err
 		}
+		if r.Status == "TURN_CAP" && role == "intermediate-dev" && !resumed {
+			s.Row.TurnCap, resumed = true, true
+			r, err = e.resume(name, "Continue from where you stopped.")
+			continue
+		}
+		// Whatever it reported, the agent's commits are the story's own:
+		// take them, so the next attempt goes on from them rather than
+		// parking as tree-moved (issue #2).
+		var head string
+		if head, err = e.headAt(name); err != nil {
+			return r, err
+		}
 		switch {
 		case r.done():
-			head, err := e.headAt(name)
-			if err != nil {
-				return r, err
-			}
 			if head == before && fix {
 				// A fixer can find its findings fixed already (a kept Minor a
 				// later fix took care of); the gates and the re-review after
@@ -732,10 +741,6 @@ func (e *track) build(s *Story, prefix, role, brief string, fix bool, sc Scope) 
 			if d != "" {
 				decision = d
 			}
-		case r.Status == "TURN_CAP" && role == "intermediate-dev" && !resumed:
-			s.Row.TurnCap, resumed = true, true
-			r, err = e.resume(name, "Continue from where you stopped.")
-			continue
 		case (r.Status == "TURN_CAP" || r.Status == "BLOCKED") && role == "junior-dev":
 			s.Row.TurnCap = s.Row.TurnCap || r.Status == "TURN_CAP"
 			s.Row.UpATier++
