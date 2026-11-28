@@ -254,7 +254,7 @@ Result: `{}`
 
 ### Send (request)
 
-Params: `{"id":0,"msg":{"Text":"","From":"","Wait":false,"Origin":""},"req":0}`
+Params: `{"id":0,"msg":{"Text":"","From":"","Launch":"","Wait":false,"Origin":""},"req":0}`
 
 Result: `{}`
 

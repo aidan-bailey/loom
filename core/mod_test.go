@@ -620,6 +620,59 @@ func TestSend_AFramedCLIMessage(t *testing.T) {
 	assert.False(t, msgs[0].AsUser, "framed: the model knows it isn't the person")
 }
 
+// A CLI message from a launch the model serves is signed by the model with
+// the sending session's title and workspace, whatever its From says; a
+// workspace's main session signs as main; outside a served launch the
+// sender's From stands.
+func TestSend_ACLIMessageFromASessionIsSignedByTheModel(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	sender := activeInst(t, m, "beta")
+	adoptLaunch(t, m, sender, "L2", time.Now())
+	m.Drain()
+	ws := m.holding(sender).Label()
+
+	for _, tc := range []struct {
+		name, launch, from, want string
+		main                     bool
+	}{
+		{"a session", "L2", "alpha", "From beta (workspace " + ws + "):\n\nhi", false},
+		{"a main session", "L2", "", "From main (workspace " + ws + "):\n\nhi", true},
+		{"no launch", "", "po", "From po:\n\nhi", false},
+		{"a launch no session holds", "gone", "po", "From po:\n\nhi", false},
+	} {
+		sender.IsWorkspaceTerminal = tc.main
+		m.Send(m.idOf(inst), Message{Text: "hi", From: tc.from, Launch: tc.launch, Origin: OriginCLI}, 5)
+		msgs, _, err := m.ModInbox("L1", "")
+		require.NoError(t, err, tc.name)
+		require.NotEmpty(t, msgs, tc.name)
+		assert.Equal(t, tc.want, msgs[len(msgs)-1].Text, tc.name)
+	}
+}
+
+// A slash command a session sends is not signed, so it isn't refused as
+// one with a --from.
+func TestSend_ASlashCommandFromASessionIsNotSigned(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Commands: []ModCommand{{Name: "compact", Source: "builtin"}}}))
+	sender := activeInst(t, m, "beta")
+	adoptLaunch(t, m, sender, "L2", time.Now())
+	m.Drain()
+
+	m.Send(m.idOf(inst), Message{Text: "/compact", Launch: "L2", Origin: OriginCLI}, 5)
+
+	for _, r := range replies(m.Drain()) {
+		assert.NoError(t, r.Err)
+	}
+	msgs, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "compact", msgs[0].Command)
+}
+
 func TestSend_AScriptMessageIsThePersonsOwn(t *testing.T) {
 	withMod(t)
 	m := NewForTest(Options{})
