@@ -12,6 +12,7 @@ import { markInspectorPress, takeInspectorPress } from "@/panels/terminal/Termin
 import { useHostFacts } from "@/store/fleet";
 
 import { inspectorTab } from "./inspector";
+import { TabStrip } from "./TabStrip";
 
 // Inspector draws the session's tab that inspectorTab picks, or nothing when only the middle's
 // tab applies. The strip sits above the scroller, outside the boundary, so a panel that throws
@@ -47,30 +48,18 @@ export function Inspector(props: { session: Session; middle: PanelId }): ReactEl
       aria-label="Inspector"
       className="flex w-[330px] max-w-[33vw] flex-none flex-col border-l border-border bg-background"
     >
-      <nav
-        data-slot="inspector-tabs"
-        aria-label="Inspector views"
-        className="flex flex-none overflow-x-auto border-b border-border"
-      >
-        {panels
-          .filter((p) => p.id !== middle)
-          .map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              aria-current={p.id === tab ? "true" : undefined}
-              onClick={() => {
-                // The terminal the press mounts takes the focus (spec §57); one mounted from a
-                // stored choice takes none, and pressing the drawn tab mounts nothing.
-                if (p.id === "terminal" && p.id !== tab) markInspectorPress();
-                setTab(p.id);
-              }}
-              className="h-8 flex-none px-3 text-xs text-muted-foreground aria-[current=true]:text-foreground"
-            >
-              {p.tab?.label}
-            </button>
-          ))}
-      </nav>
+      <TabStrip
+        slot="inspector-tabs"
+        label="Inspector views"
+        panels={panels.filter((p) => p.id !== middle)}
+        current={tab}
+        onPick={(id) => {
+          // The terminal the press mounts takes the focus (spec §57); one mounted from a stored
+          // choice takes none, and pressing the drawn tab mounts nothing.
+          if (id === "terminal" && id !== tab) markInspectorPress();
+          setTab(id);
+        }}
+      />
       <Boundary key={resetKey(tab, panelProps)} what="The inspector">
         <div
           data-slot="inspector-scroller"

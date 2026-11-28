@@ -93,7 +93,11 @@ export default function DesktopShell(): ReactElement {
         ) : null}
         <Middle />
         {Number.isInteger(previewed) && previewed > 0 ? (
-          <FlowPreview sessionId={previewed} plan={route.search.plan ?? ""} />
+          <FlowPreview
+            key={`${previewed}:${route.search.plan ?? ""}`}
+            sessionId={previewed}
+            plan={route.search.plan ?? ""}
+          />
         ) : null}
         {layout === "desk3" && inspector && session !== undefined ? (
           <Inspector session={session} middle={tabOf(route.panel, session)} />

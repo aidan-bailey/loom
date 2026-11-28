@@ -1,31 +1,49 @@
 // The flow board's preview (desktop chrome, not a panel): a pane at the right of the middle that
-// shows the flow of the card the board's search names, as a GitHub Projects board previews an
-// item. Its header names the session and links to the flow and the conversation; below it, in a
-// scroller of its own, is the flow panel's Body, so the pane sends no read of its own.
+// shows the session of the card the board's search names, as a GitHub Projects board previews an
+// item. Its header names the session; below it are the session's tabs, opening on the card's flow,
+// and the chosen tab's Body in a scroller of its own, so the pane sends no read of its own.
 import { useMemo, useState, type ReactElement } from "react";
 
-import type { PanelProps } from "@/app/panels";
+import { sessionTabs, type PanelId, type PanelProps } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
 import { elementPane, ScrollPaneProvider } from "@/app/scroll";
 import { Boundary, PanelHost, resetKey } from "@/app/shell";
-import { sessionHref } from "@/fleet/links";
 import { SubLine } from "@/session/SubLine";
-import { useSession } from "@/store/fleet";
+import { useHostFacts, useSession } from "@/store/fleet";
+
+import { TabStrip } from "./TabStrip";
 
 const ICON =
   "flex size-7 flex-none items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground";
-const LINK = "text-muted-foreground underline-offset-2 hover:text-foreground hover:underline";
 
+// shownTab is the tab the pane draws: the one chosen while the session has it, else the flow,
+// else the session's first tab. A session that is gone has no tabs and draws the flow, whose Body
+// says the session is gone.
+export function shownTab(tabs: PanelId[], chosen: PanelId): PanelId {
+  if (tabs.includes(chosen)) return chosen;
+  if (tabs.includes("flow") || tabs.length === 0) return "flow";
+  return tabs[0] ?? "flow";
+}
+
+// FlowPreview opens on the card's flow; DesktopShell keys it by the card, so another card starts
+// on its flow again.
 export function FlowPreview(props: { sessionId: number; plan: string }): ReactElement {
   const { sessionId, plan } = props;
   const session = useSession(sessionId);
+  const host = useHostFacts();
+  const panels = session === undefined ? [] : sessionTabs(session, host);
+  const [chosen, setChosen] = useState<PanelId>("flow");
+  const tab = shownTab(
+    panels.map((p) => p.id),
+    chosen,
+  );
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const pane = useMemo(() => (scroller === null ? null : elementPane(scroller, null)), [scroller]);
   const panelProps = useMemo<PanelProps>(
     () => ({ sessionId, params: { id: String(sessionId) }, search: { plan } }),
     [sessionId, plan],
   );
-  const flowHref = hrefFor("flow", { id: String(sessionId) }, { plan });
+  const fullHref = hrefFor(tab, { id: String(sessionId) }, tab === "flow" ? { plan } : {});
 
   return (
     <aside
@@ -38,7 +56,7 @@ export function FlowPreview(props: { sessionId: number; plan: string }): ReactEl
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {session?.title ?? `Session ${sessionId}`}
           </h2>
-          <a href={flowHref} aria-label="Open the flow" title="Open the flow" className={ICON}>
+          <a href={fullHref} aria-label="Open full page" title="Open full page" className={ICON}>
             ⤢
           </a>
           <a
@@ -50,21 +68,18 @@ export function FlowPreview(props: { sessionId: number; plan: string }): ReactEl
             ✕
           </a>
         </div>
-        {session === undefined ? null : (
-          <>
-            <SubLine session={session} />
-            <nav aria-label="Open" className="flex gap-3 px-4 pb-2 text-xs">
-              <a href={sessionHref(session)} className={LINK}>
-                conversation
-              </a>
-              <a href={flowHref} className={LINK}>
-                flow
-              </a>
-            </nav>
-          </>
-        )}
+        {session === undefined ? null : <SubLine session={session} />}
       </header>
-      <Boundary key={resetKey("flow", panelProps)} what="The preview">
+      {panels.length === 0 ? null : (
+        <TabStrip
+          slot="flow-preview-tabs"
+          label="Preview views"
+          panels={panels}
+          current={tab}
+          onPick={setChosen}
+        />
+      )}
+      <Boundary key={resetKey(tab, panelProps)} what="The preview">
         <div
           data-slot="flow-preview-scroller"
           ref={setScroller}
@@ -72,7 +87,7 @@ export function FlowPreview(props: { sessionId: number; plan: string }): ReactEl
         >
           {pane === null ? null : (
             <ScrollPaneProvider pane={pane}>
-              <PanelHost panel="flow" props={panelProps} />
+              <PanelHost panel={tab} props={panelProps} />
             </ScrollPaneProvider>
           )}
         </div>
