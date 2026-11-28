@@ -624,9 +624,10 @@ describe("the fleet panel", () => {
       plain.unmount();
 
       render(<WorkspaceFilter dense />);
-      expect(screen.getByRole("button", { name: "All" }).className).not.toContain(
-        "after:min-h-[44px]",
-      );
+      const all = screen.getByRole("button", { name: "All" });
+      expect(all.className).not.toContain("after:min-h-[44px]");
+      // A dense item is only as wide as its text, so it needs its own padding.
+      expect(all).toHaveClass("px-2", "whitespace-nowrap");
     });
   });
 

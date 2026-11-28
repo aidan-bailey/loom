@@ -12,7 +12,8 @@ const ALL = "all";
 
 // DENSE drops the toggle item's 44px touch minimum for the desktop's denser bars, and lets the
 // group take only the room its items need (the group's w-full would crowd out HostLabel's flex-1).
-const DENSE = "after:min-h-0 after:min-w-0 flex-none";
+// A `flex-none` item is only as wide as its text, so it carries its own padding and never wraps.
+const DENSE = "after:min-h-0 after:min-w-0 flex-none px-2 whitespace-nowrap";
 const DENSE_GROUP = "w-auto flex-none";
 
 // WorkspaceFilter draws nothing with no snapshot or fewer than two shown workspaces. Choosing the

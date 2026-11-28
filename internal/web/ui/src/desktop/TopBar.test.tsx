@@ -209,9 +209,11 @@ describe("PaletteBox", () => {
     expect(usePalette.getState().open).toBe(true);
   });
 
-  it("is dense and about 16rem wide", () => {
+  it("is dense and 300px wide, its chord's chip never wrapping", () => {
+    withPlatform("Linux x86_64");
     render(<PaletteBox />);
-    expect(box().className).toContain("w-64");
+    expect(screen.getByText("Ctrl K")).toHaveClass("flex-none", "whitespace-nowrap");
+    expect(box().className).toContain("w-[300px]");
     expect(box().className).toContain("flex-none");
     expect(box().className).not.toContain("min-h-[44px]");
   });
