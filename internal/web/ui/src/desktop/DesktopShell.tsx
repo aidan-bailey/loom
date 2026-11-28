@@ -22,7 +22,8 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
 // READABLE are the panels whose text keeps a readable measure in a wide pane: a conversation's
-// turns and its reply box are at most 48rem wide, centred.
+// turns and its reply box are at most 960px wide, centred. The cap is written in px because `html`
+// sets 13px, so a rem cap comes out a fifth narrower than it reads (48rem was 624px).
 const READABLE: ReadonlySet<PanelId> = new Set<PanelId>(["turns", "agent"]);
 
 // Middle is the route's pane: exactly the phone's frame for the route, with its head rows pinned
@@ -49,7 +50,7 @@ function Middle(): ReactElement {
             <main
               className={cn(
                 "mx-auto flex min-h-full w-full flex-col",
-                READABLE.has(route.panel) && "max-w-[48rem]",
+                READABLE.has(route.panel) && "max-w-[960px]",
               )}
             >
               <Outlet />

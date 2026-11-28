@@ -157,8 +157,8 @@ describe("DesktopShell's middle", () => {
     await screen.findByText("outlet");
     const main = document.querySelector('[data-slot="middle"] main');
     if (main === null) throw new Error("the middle drew no main");
-    if (readable) expect(main).toHaveClass("max-w-[48rem]");
-    else expect(main).not.toHaveClass("max-w-[48rem]");
+    if (readable) expect(main).toHaveClass("max-w-[960px]");
+    else expect(main).not.toHaveClass("max-w-[960px]");
   });
 
   it("draws the full mockup alone, with no chrome", async () => {
