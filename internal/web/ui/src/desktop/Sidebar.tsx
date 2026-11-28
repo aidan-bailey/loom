@@ -1,6 +1,7 @@
 // The desktop's fleet sidebar (spec §8): chrome, not a panel. A plain list of links to the sessions
-// of the shown workspaces, in compact two-line rows; sidebarLine decides each row's second line,
-// and Sidebar draws the groups, the rows and the highlight of the session on screen.
+// of the shown workspaces, in compact two-line rows (the first naming the session's repo, its
+// workspace); sidebarLine decides each row's second line, and Sidebar draws the groups, the rows and
+// the highlight of the session on screen.
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 
 import type { Session, SessionGroup } from "@/api/gen";
@@ -48,7 +49,15 @@ const HEADING: Record<SessionGroup, string> = {
   paused: "text-muted-foreground",
 };
 
-function Row({ session, current }: { session: Session; current: boolean }): ReactElement {
+function Row({
+  session,
+  repo,
+  current,
+}: {
+  session: Session;
+  repo: string;
+  current: boolean;
+}): ReactElement {
   const line = sidebarLine(session);
   return (
     <a
@@ -67,6 +76,14 @@ function Row({ session, current }: { session: Session; current: boolean }): Reac
           )}
         />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{session.title}</span>
+        {repo === "" ? null : (
+          <span
+            data-slot="sidebar-repo"
+            className="max-w-[40%] flex-none truncate text-[11px] text-muted-foreground"
+          >
+            {repo}
+          </span>
+        )}
         <span className="flex-none font-mono text-[11px] text-muted-foreground">
           {ago(session.since)}
         </span>
@@ -115,11 +132,19 @@ export function Sidebar({ current }: { current: number | undefined }): ReactElem
     return listFleet(snapshot, shownWorkspaces(snapshot), stored);
   }, [snapshot, stored]);
 
+  // The repo a row names: its session's workspace, by its label, else its name.
+  const repos = useMemo(
+    () => new Map((snapshot?.workspaces ?? []).map((w) => [w.id, w.label || w.name])),
+    [snapshot],
+  );
+
   const total =
     listing === null ? 0 : GROUPS.reduce((n, g) => n + listing.grouped[g.key].length, 0);
 
   const rows = (list: Session[]): ReactElement[] =>
-    list.map((s) => <Row key={s.id} session={s} current={s.id === current} />);
+    list.map((s) => (
+      <Row key={s.id} session={s} repo={repos.get(s.workspace) ?? ""} current={s.id === current} />
+    ));
 
   return (
     <nav

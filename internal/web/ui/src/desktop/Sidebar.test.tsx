@@ -158,6 +158,20 @@ describe("Sidebar", () => {
     expect(row("plain-shell").querySelector('[data-slot="sidebar-line"]')).toBeNull();
   });
 
+  it("a row names its session's repo, the workspace's label, else its name, clipped", () => {
+    load((s) => {
+      s.workspaces = (s.workspaces ?? []).map((w) =>
+        w.id === 2 ? { ...w, name: "flow-repo", label: "" } : w,
+      );
+    });
+    render(<Sidebar current={undefined} />);
+    const repo = (title: string): HTMLElement | null =>
+      row(title).querySelector('[data-slot="sidebar-repo"]');
+    expect(repo("sandbox-ask")?.textContent).toBe("loom");
+    expect(repo("flow-run")?.textContent).toBe("flow-repo");
+    expect(repo("flow-run")).toHaveClass("truncate", "flex-none");
+  });
+
   it("a row is dense: no 44px minimum, and its line is clipped on a block element", () => {
     render(<Sidebar current={undefined} />);
     const nav = document.querySelector('[data-slot="sidebar"]') as HTMLElement;
