@@ -15,6 +15,7 @@ import { useLayout } from "@/app/viewport";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/store/fleet";
 
+import { FlowPreview } from "./FlowPreview";
 import { Inspector } from "./Inspector";
 import { Palette } from "./Palette";
 import { usePaletteKey } from "./paletteState";
@@ -62,7 +63,8 @@ function Middle(): ReactElement {
   );
 }
 
-// DesktopShell is the frame at `desk2` and `desk3`: the whole window, one row holding the middle.
+// DesktopShell is the frame at `desk2` and `desk3`: the whole window, one row holding the middle,
+// and on the flow board, while its search names a card, the card's preview at the right.
 // The full mockup is the one screen that draws the whole window itself, with no chrome.
 export default function DesktopShell(): ReactElement {
   const route = useRoute();
@@ -70,6 +72,7 @@ export default function DesktopShell(): ReactElement {
   const inspector = useDesktop((s) => s.inspector);
   const layout = useLayout();
   const session = useSession(panelProps(route).sessionId);
+  const previewed = route.panel === "flowBoard" ? Number(route.search.session ?? "") : 0;
   // The chord's hook runs before the early return, so it works on every route; Palette is drawn on
   // both branches, so the store and the dialog never disagree.
   usePaletteKey();
@@ -89,6 +92,9 @@ export default function DesktopShell(): ReactElement {
           <Sidebar current={panelProps(route).sessionId} />
         ) : null}
         <Middle />
+        {Number.isInteger(previewed) && previewed > 0 ? (
+          <FlowPreview sessionId={previewed} plan={route.search.plan ?? ""} />
+        ) : null}
         {layout === "desk3" && inspector && session !== undefined ? (
           <Inspector session={session} middle={tabOf(route.panel, session)} />
         ) : null}

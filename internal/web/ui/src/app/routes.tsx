@@ -47,6 +47,19 @@ function decode(segment: string): string {
 // Anything it does not know is the fleet, as in the classic app.
 export function routeOf(hash: string): RouteState {
   const h = normalizeHash(hash).replace(/^#\/?/, "");
+  // The board's search names the card its desktop preview shows: `session` and `plan`, read only
+  // when `session` is set, so `#/flow-board` alone has an empty search.
+  const board = h.match(/^flow-board\?(.*)$/);
+  if (board !== null) {
+    const query = new URLSearchParams(board[1]);
+    const session = query.get("session") ?? "";
+    if (session === "") return plain("flowBoard");
+    return {
+      panel: "flowBoard",
+      params: {},
+      search: { session, plan: query.get("plan") ?? "" },
+    };
+  }
   switch (h) {
     case "new":
     case "settings":

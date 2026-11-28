@@ -35,13 +35,18 @@ afterEach(() => {
 
 // show draws the board over a snapshot (the canned fleet by default) in a layout.
 function show(
-  opts: { snapshot?: Snapshot | null; layout?: Layout; stale?: boolean } = {},
+  opts: {
+    snapshot?: Snapshot | null;
+    layout?: Layout;
+    stale?: boolean;
+    search?: Record<string, string>;
+  } = {},
 ): ReturnType<typeof render> {
   const snapshot = opts.snapshot === undefined ? fixtureSnapshot(NOW) : opts.snapshot;
   const stale = opts.stale ?? false;
   vi.mocked(useLayout).mockReturnValue(opts.layout ?? "desk3");
   useFleet.setState({ snapshot, stale, link: stale ? "offline" : "live", updated: NOW });
-  return render(<FlowBoardBody />);
+  return render(<FlowBoardBody sessionId={undefined} params={{}} search={opts.search ?? {}} />);
 }
 
 // withFlows is the canned fleet with only session 6 holding flows: its first one with each of
@@ -95,7 +100,7 @@ describe("FlowBoardBody", () => {
   it("a card: the session's title, its repo, its part, its state line, its cost and age, and a link to its flow", () => {
     show({ snapshot: withFlows([{ part: "part 2 of 3" }]) });
     const card = within(screen.getByRole("group", { name: "run" })).getByRole("link");
-    expect(card).toHaveAttribute("href", hrefFor("flow", { id: "6" }, { plan: PLAN }));
+    expect(card).toHaveAttribute("href", hrefFor("flowBoard", {}, { session: "6", plan: PLAN }));
     const lines = Array.from(card.children).map((c) => c.textContent);
     expect(lines).toEqual([
       "flow-run",
@@ -130,7 +135,7 @@ describe("FlowBoardBody", () => {
     const tone = (plan: string): string | null | undefined =>
       screen
         .getAllByRole("link")
-        .find((a) => a.getAttribute("href") === hrefFor("flow", { id: "6" }, { plan }))
+        .find((a) => a.getAttribute("href") === hrefFor("flowBoard", {}, { session: "6", plan }))
         ?.getAttribute("data-tone");
     expect(tone("asks.md")).toBe("attention");
     expect(tone("lost.md")).toBe("error");
@@ -151,6 +156,34 @@ describe("FlowBoardBody", () => {
     expect(finished).toHaveClass("opacity-60");
     expect(screen.getByRole("group", { name: "run" })).not.toHaveClass("opacity-60");
     expect(within(screen.getByRole("group", { name: "run" })).getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("a card opens the desktop's preview of it, and on the phone its flow", () => {
+    const view = show({ layout: "desk2" });
+    const card = (): HTMLElement =>
+      within(screen.getByRole("group", { name: "run" })).getByRole("link");
+    expect(card()).toHaveAttribute("href", hrefFor("flowBoard", {}, { session: "6", plan: PLAN }));
+    view.unmount();
+    show({ layout: "phone" });
+    expect(card()).toHaveAttribute("href", hrefFor("flow", { id: "6" }, { plan: PLAN }));
+  });
+
+  it("marks the card the board's search previews, and no other", () => {
+    const snapshot = withFlows([{ plan: "a.md" }, { plan: "b.md" }]);
+    show({ snapshot, search: { session: "6", plan: "b.md" } });
+    const marked = screen
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "true");
+    expect(marked.map((a) => a.getAttribute("href"))).toEqual([
+      hrefFor("flowBoard", {}, { session: "6", plan: "b.md" }),
+    ]);
+    expect(marked[0]).toHaveClass("ring-2");
+  });
+
+  it("marks no card on the phone, which draws no preview", () => {
+    show({ layout: "phone", search: { session: "6", plan: PLAN } });
+    for (const card of screen.getAllByRole("link"))
+      expect(card).not.toHaveAttribute("aria-current");
   });
 
   it("a stale link dims the board and keeps the cards links", () => {

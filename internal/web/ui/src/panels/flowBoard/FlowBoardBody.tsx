@@ -1,7 +1,10 @@
 // The flow board (a chunk of its own): every flow of the shown workspaces in its stage's column,
-// drawn from the fleet store, so it follows the stream and sends no read of its own.
+// drawn from the fleet store, so it follows the stream and sends no read of its own. On desktop a
+// card links to the board with its own `session` and `plan`, which the shell's preview pane
+// (desktop/FlowPreview.tsx) shows beside it; on the phone it opens the flow.
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 
+import type { PanelProps } from "@/app/panels";
 import { hrefFor } from "@/app/routes";
 import { useLayout } from "@/app/viewport";
 import { boardOf, cardLine, FINISHED, type BoardCard, type BoardColumn } from "@/fleet/board";
@@ -13,18 +16,34 @@ import { ago, flowTone, usd } from "../fleet/SessionRow";
 const LEGEND = "text-[11px] tracking-wide text-muted-foreground uppercase";
 const BORDER = { attention: "border-attention", error: "border-error", docs: "border-border" };
 
-function Card({ card }: { card: BoardCard }): ReactElement {
+// Where a card leads: the board's preview of it on desktop, its flow on the phone.
+export function cardHref(card: BoardCard, phone: boolean): string {
+  const plan = card.flow.plan;
+  return phone
+    ? hrefFor("flow", { id: String(card.session) }, { plan })
+    : hrefFor("flowBoard", {}, { session: String(card.session), plan });
+}
+
+interface CardProps {
+  card: BoardCard;
+  phone: boolean;
+  previewed: boolean;
+}
+
+function Card({ card, phone, previewed }: CardProps): ReactElement {
   const flow = card.flow;
   const tone = flowTone(flow);
   const line = cardLine(flow);
   const facts = [typeof flow.spent === "number" ? usd(flow.spent) : "", ago(flow.updated)];
   return (
     <a
-      href={hrefFor("flow", { id: String(card.session) }, { plan: flow.plan })}
+      href={cardHref(card, phone)}
       data-tone={tone}
+      aria-current={previewed ? "true" : undefined}
       className={cn(
         "flex min-h-[44px] flex-col gap-0.5 rounded-lg border bg-background p-2",
         BORDER[tone],
+        previewed && "ring-2 ring-ring",
       )}
     >
       <span className="block truncate font-semibold">{card.title}</span>
@@ -46,7 +65,14 @@ function Card({ card }: { card: BoardCard }): ReactElement {
   );
 }
 
-function Column({ column }: { column: BoardColumn }): ReactElement {
+interface ColumnProps {
+  column: BoardColumn;
+  phone: boolean;
+  // previewed says whether a card is the one the desktop's preview shows.
+  previewed: (card: BoardCard) => boolean;
+}
+
+function Column({ column, phone, previewed }: ColumnProps): ReactElement {
   return (
     <div
       role="group"
@@ -60,13 +86,18 @@ function Column({ column }: { column: BoardColumn }): ReactElement {
         {column.name} · {column.cards.length}
       </p>
       {column.cards.map((card) => (
-        <Card key={`${card.session}:${card.flow.plan}`} card={card} />
+        <Card
+          key={`${card.session}:${card.flow.plan}`}
+          card={card}
+          phone={phone}
+          previewed={previewed(card)}
+        />
       ))}
     </div>
   );
 }
 
-export default function FlowBoardBody(): ReactElement {
+export default function FlowBoardBody(props: PanelProps): ReactElement {
   const snapshot = useFleet((s) => s.snapshot);
   const { stale } = useLink();
   const phone = useLayout() === "phone";
@@ -95,6 +126,9 @@ export default function FlowBoardBody(): ReactElement {
   }
   // The phone stacks the columns and leaves the empty ones out; a desktop keeps the board's shape.
   const drawn = phone ? columns.filter((c) => c.cards.length > 0) : columns;
+  const { session = "", plan = "" } = props.search;
+  const previewed = (card: BoardCard): boolean =>
+    !phone && session !== "" && String(card.session) === session && card.flow.plan === plan;
   return (
     <section
       aria-label="Flow board"
@@ -107,7 +141,7 @@ export default function FlowBoardBody(): ReactElement {
       )}
     >
       {drawn.map((column) => (
-        <Column key={column.name} column={column} />
+        <Column key={column.name} column={column} phone={phone} previewed={previewed} />
       ))}
     </section>
   );

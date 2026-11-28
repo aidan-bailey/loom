@@ -622,3 +622,26 @@ describe("DesktopShell's palette", () => {
     });
   });
 });
+
+describe("DesktopShell's flow preview", () => {
+  it.each([
+    ["#/flow-board?session=100&plan=p.md", true],
+    ["#/flow-board?session=100", true],
+    ["#/flow-board", false],
+    ["#/flow-board?session=x&plan=p.md", false],
+    ["#/flow-board?session=0", false],
+    ["#/s/100/flow?plan=p.md", false],
+  ])("at %s draws the preview after the middle: %s", async (hash, drawn) => {
+    live();
+    desktopAt(hash);
+
+    await screen.findByText("outlet");
+    const preview = slot("flow-preview");
+    if (!drawn) {
+      expect(preview).toBeNull();
+      return;
+    }
+    expect(preview).not.toBeNull();
+    expect(slot("middle")?.nextElementSibling).toBe(preview);
+  });
+});
