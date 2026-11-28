@@ -18,6 +18,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/spf13/cobra"
 )
@@ -383,7 +384,9 @@ func newSessionSendCmd(workspace *string) *cobra.Command {
 		Long: "Send a message to a session's Claude through the loom mod, queued behind its running turn or open dialog.\n\n" +
 			"A message whose first word is /name runs that slash command instead: /compact [instructions], /clear, " +
 			"/model <name>, or any skill, plugin or user command the session's Claude lists. Every other built-in " +
-			"(it may open a menu or end the session) and a name the session doesn't list are refused, and so is --from with a command.",
+			"(it may open a menu or end the session) and a name the session doesn't list are refused, and so is --from with a command.\n\n" +
+			"Sent from a session loom launched, a message is signed with that session's title and workspace, " +
+			"and --from is ignored; elsewhere --from names the sender.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			body, err := readMessage(c.InOrStdin(), text, file, c.Flags().Changed("text"))
@@ -404,7 +407,7 @@ func newSessionSendCmd(workspace *string) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("%s: %w", v.Label, err)
 				}
-				return d.send(c.OutOrStdout(), v.Label, s, core.Message{Text: body, From: from, Wait: wait, Origin: core.OriginCLI})
+				return d.send(c.OutOrStdout(), v.Label, s, core.Message{Text: body, From: from, Launch: os.Getenv(claudemod.EnvLaunch), Wait: wait, Origin: core.OriginCLI})
 			})
 		},
 	}
@@ -412,7 +415,7 @@ func newSessionSendCmd(workspace *string) *cobra.Command {
 	fl.StringVar(&text, "text", "", "The message (default: read from stdin)")
 	fl.StringVar(&file, "file", "", "Send this file's text")
 	cmd.MarkFlagsMutuallyExclusive("text", "file")
-	fl.StringVar(&from, "from", "", "Name the sender on a line before the message")
+	fl.StringVar(&from, "from", "", "Name the sender on a line before the message, outside a session loom launched (inside one, loom signs it)")
 	fl.BoolVar(&wait, "wait", false, "Wait until the turn that carries the message ends, and print Claude's reply (a slash command: until it ran, printing its output)")
 	fl.Uint64Var(&id, "id", 0, "The session's ID (loom session list --json), when several share the title")
 	return cmd

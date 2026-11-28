@@ -94,8 +94,13 @@ const (
 // (Send).
 type Message struct {
 	Text string
-	// From names the sender on a line before a CLI message's text.
+	// From names the sender on a line before a CLI message's text. A CLI
+	// message whose Launch the model serves is signed by that session
+	// instead (signer), whatever From says.
 	From string
+	// Launch is the sending shell's $LOOM_LAUNCH, "" outside a session loom
+	// launched: the model resolves it to the session that sends (signer).
+	Launch string
 	// Wait asks for Answered when the turn that carries the message ends.
 	Wait   bool
 	Origin Origin
@@ -162,6 +167,11 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	case msg.Origin.needsMod() && !session.IsClaudeProgram(inst.Program()):
 		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, noModReasonFor(msg.Origin, inst)))
 		return
+	}
+	if _, isCommand := msg.command(); msg.Origin == OriginCLI && !isCommand {
+		// A slash command takes no --from (commandRefusal) and so is never
+		// signed.
+		msg.From = m.signer(msg)
 	}
 	out := &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript || msg.Origin == OriginWeb, origin: msg.Origin, req: req, wait: msg.Wait}
 	if cmd, ok := msg.command(); ok {
@@ -430,6 +440,24 @@ func (m *Model) linkFor(inst *session.Instance) *modLink {
 	}
 	m.mods[inst] = l
 	return l
+}
+
+// signer is the name a CLI message is signed with: the session whose launch
+// sent it and its workspace, as "<title> (workspace <label>)", with "main"
+// for a workspace's main session; else, outside a launch the model serves,
+// the sender's own --from. The daemon signs, so a session can't sign as
+// another, and a receiver (and auto mode's classifier, reading its prompt)
+// sees which session and workspace a request came from.
+func (m *Model) signer(msg Message) string {
+	inst := m.instByLaunch(msg.Launch)
+	if inst == nil {
+		return msg.From
+	}
+	title := inst.Title
+	if inst.IsWorkspaceTerminal {
+		title = "main"
+	}
+	return title + " (workspace " + m.holding(inst).Label() + ")"
 }
 
 // instByLaunch is the served instance whose current launch is launch.

@@ -15,6 +15,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -521,6 +522,22 @@ func TestSessionSend_WaitPrintsTheAnswer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "all green\n", out, "only the answer on stdout")
 	assert.Equal(t, "From po:\n\nstatus?", <-carried)
+}
+
+// Sent from a session loom launched ($LOOM_LAUNCH), a message is signed by
+// the daemon with that session's title and workspace, and --from can't sign
+// it as another.
+func TestSessionSend_FromASessionIsSignedWithItsTitleAndWorkspace(t *testing.T) {
+	d, launch := modSession(t)
+	_, _, err := runSession(t, "", "new", "beta", "-w", "ws-a")
+	require.NoError(t, err)
+	t.Setenv(claudemod.EnvLaunch, launchOf(t, d, "ws-a", "beta"))
+	carried := playMod(t, d.loop, launch, "", "")
+
+	_, _, err = runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "status?", "--from", "alpha")
+
+	require.NoError(t, err)
+	assert.Equal(t, "From beta (workspace ws-a):\n\nstatus?", <-carried)
 }
 
 func TestSessionSend_ReturnsOnceQueued(t *testing.T) {
