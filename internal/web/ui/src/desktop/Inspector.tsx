@@ -1,13 +1,15 @@
 // The desktop's inspector (spec §10): chrome, not a panel. A column at the right of the middle
 // holding another view of the session on screen: a strip of the session's tabs but the middle's,
 // above a panel host in a scroller of its own.
-import { useMemo, useState, type ReactElement } from "react";
+import { useLayoutEffect, useMemo, useState, type ReactElement } from "react";
 
 import type { Session } from "@/api/gen";
 import { useDesktop } from "@/app/desktopState";
 import { sessionTabs, tabOrder, type PanelId, type PanelProps } from "@/app/panels";
 import { elementPane, ScrollPaneProvider } from "@/app/scroll";
 import { Boundary, PanelHost, resetKey } from "@/app/shell";
+import { markInspectorPress, takeInspectorPress } from "@/panels/terminal/Terminal";
+import { useHostFacts } from "@/store/fleet";
 
 import { inspectorTab } from "./inspector";
 
@@ -18,7 +20,8 @@ export function Inspector(props: { session: Session; middle: PanelId }): ReactEl
   const { session, middle } = props;
   const chosen = useDesktop((s) => s.slots[0]?.tab);
   const setTab = useDesktop((s) => s.setTab);
-  const panels = sessionTabs(session);
+  const host = useHostFacts();
+  const panels = sessionTabs(session, host);
   const tabs = panels.map((p) => p.id);
   const tab = inspectorTab(tabOrder(), tabs, middle, chosen);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
@@ -27,6 +30,15 @@ export function Inspector(props: { session: Session; middle: PanelId }): ReactEl
     () => ({ sessionId: session.id, params: { id: String(session.id) }, search: {} }),
     [session.id],
   );
+  // A press of the terminal's tab marks the terminal that the same commit mounts (spec §57). Once
+  // the commit is done the mark is spent: layout effects run children first, so a terminal
+  // mounted by the press has taken it already, and a press whose terminal did not mount (the
+  // boundary's fallback, a session that does not run) leaves nothing for a terminal the
+  // inspector mounts later from a stored choice.
+  useLayoutEffect(() => {
+    takeInspectorPress();
+  });
+
   if (tab === undefined) return null;
 
   return (
@@ -48,6 +60,9 @@ export function Inspector(props: { session: Session; middle: PanelId }): ReactEl
               type="button"
               aria-current={p.id === tab ? "true" : undefined}
               onClick={() => {
+                // The terminal the press mounts takes the focus (spec §57); one mounted from a
+                // stored choice takes none, and pressing the drawn tab mounts nothing.
+                if (p.id === "terminal" && p.id !== tab) markInspectorPress();
                 setTab(p.id);
               }}
               className="h-8 flex-none px-3 text-xs text-muted-foreground aria-[current=true]:text-foreground"

@@ -525,12 +525,13 @@ describe("the changes panel", () => {
   it("applies to a session whose diff can be read, and to no other", () => {
     const applies = panel().appliesTo;
     if (applies === undefined) throw new Error("the changes panel has no appliesTo");
-    expect(applies(show(1))).toBe(true);
-    expect(applies(show(1, { status: "Ready", group: "your_turn" }))).toBe(true);
-    expect(applies(show(1, { status: "Loading" }))).toBe(false);
-    expect(applies(show(1, { status: "Deleting" }))).toBe(false);
-    expect(applies(show(1, { status: "Paused", group: "paused" }))).toBe(false);
-    expect(applies(show(1, { status: "Recoverable", group: "paused" }))).toBe(false);
+    const host = { terminal: false };
+    expect(applies(show(1), host)).toBe(true);
+    expect(applies(show(1, { status: "Ready", group: "your_turn" }), host)).toBe(true);
+    expect(applies(show(1, { status: "Loading" }), host)).toBe(false);
+    expect(applies(show(1, { status: "Deleting" }), host)).toBe(false);
+    expect(applies(show(1, { status: "Paused", group: "paused" }), host)).toBe(false);
+    expect(applies(show(1, { status: "Recoverable", group: "paused" }), host)).toBe(false);
   });
 
   it("the Body draws the changes of a session the snapshot lists", async () => {

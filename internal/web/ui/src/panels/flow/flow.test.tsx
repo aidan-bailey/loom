@@ -705,13 +705,13 @@ describe("the flow panel", () => {
     expect(screen.getByRole("img", { name: "asks" })).toBeInTheDocument();
   });
 
-  it("the flow panel: the fifth tab for a session with flows, under the session's head, its body a lazy chunk", () => {
+  it("the flow panel: the sixth tab for a session with flows, under the session's head, its body a lazy chunk", () => {
     expect(panelFor("flow")).toBe(flowPanel);
-    expect(flowPanel.tab).toEqual({ order: 5, label: "flow", Mark: FlowMark });
+    expect(flowPanel.tab).toEqual({ order: 6, label: "flow", Mark: FlowMark });
     expect(flowPanel.Head).toBe(SessionHead);
-    expect(flowPanel.appliesTo?.(session6())).toBe(true);
-    expect(flowPanel.appliesTo?.(session6({ flows: [] }))).toBe(false);
-    expect(flowPanel.appliesTo?.(session6({ flows: null }))).toBe(false);
+    expect(flowPanel.appliesTo?.(session6(), { terminal: false })).toBe(true);
+    expect(flowPanel.appliesTo?.(session6({ flows: [] }), { terminal: false })).toBe(false);
+    expect(flowPanel.appliesTo?.(session6({ flows: null }), { terminal: false })).toBe(false);
   });
 
   it("the session's tabs: the flow tab is last, links to the board with no plan and lights on the board", () => {

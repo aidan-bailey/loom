@@ -51,8 +51,10 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
-  // Without respondWith the browser asks the network; the page's script and styles are other
-  // paths and still come from the cache below.
+  // Without respondWith the browser asks the network. The page's own script and styles
+  // (assets/terminal-*, with xterm.js in the script) are other paths, and the worker never
+  // precaches them (terminalOnly in internal/web/static.go): the lookup below finds nothing in the
+  // cache for them, so they come from the network too.
   if (url.pathname === TERMINAL_PAGE) return;
   const key = req.mode === "navigate" ? "/" : url.pathname;
   event.respondWith(

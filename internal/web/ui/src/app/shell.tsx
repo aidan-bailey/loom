@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { useFleet, useLink, useSession } from "@/store/fleet";
+import { useFleet, useHostFacts, useLink, useSession } from "@/store/fleet";
 
 import { CommandButton } from "./CommandButton";
 import { ConfirmSheet } from "./ConfirmSheet";
@@ -282,7 +282,9 @@ const NON_TEXT_INPUTS = new Set([
   "submit",
 ]);
 
-function isTextField(target: EventTarget | null): boolean {
+// isTextField is whether the target is a field that brings up the keyboard; the terminal panel's
+// focus rule (panels/terminal/Terminal.tsx) reads it too.
+export function isTextField(target: EventTarget | null): boolean {
   if (target instanceof HTMLTextAreaElement) return true;
   if (target instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(target.type);
   return target instanceof HTMLElement && target.isContentEditable;
@@ -325,6 +327,7 @@ export const TABBED: ReadonlySet<PanelId> = new Set<PanelId>([
   "turns",
   "info",
   "changes",
+  "terminal",
   "mockup",
   "flow",
   "flowStory",
@@ -390,7 +393,8 @@ function byTabOrder(a: Panel, b: Panel): number {
 export function SessionTabs({ session }: { session: Session }): ReactElement {
   const route = useRoute();
   const current = tabOf(route.panel, session);
-  const tabs = sessionTabs(session);
+  const host = useHostFacts();
+  const tabs = sessionTabs(session, host);
   const here = panelFor(current);
   if (here?.tab !== undefined && !tabs.some((t) => t.id === current)) {
     tabs.push(here);

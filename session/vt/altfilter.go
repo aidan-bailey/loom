@@ -12,25 +12,54 @@ import (
 // Amendment 1.
 var altScreenModes = map[string]bool{"47": true, "1047": true, "1049": true}
 
+// altScreenAndMouseModes is altScreenModes plus the mouse-reporting private
+// modes (1000, 1002, 1003, 1005, 1006, 1015). Only the web terminal's output
+// pump wants them removed: the TUI's emulator reads those modes to forward
+// the mouse.
+var altScreenAndMouseModes = withModes(altScreenModes, "1000", "1002", "1003", "1005", "1006", "1015")
+
+// withModes returns a new set holding base and the extra modes.
+func withModes(base map[string]bool, extra ...string) map[string]bool {
+	out := make(map[string]bool, len(base)+len(extra))
+	for m := range base {
+		out[m] = true
+	}
+	for _, m := range extra {
+		out[m] = true
+	}
+	return out
+}
+
 // maxPendingSeq bounds the partial-sequence hold-back buffer; anything
 // longer flushes through unfiltered rather than stalling the stream.
 const maxPendingSeq = 64
 
-// altScreenFilter is an io.Writer decorator that removes alt-screen
-// enter/exit private-mode parameters from CSI ? ... h/l sequences and
+// altScreenFilter is an io.Writer decorator that removes the private-mode
+// parameters of its drop set (the alt-screen modes, and for the web's filter
+// the mouse-reporting ones too) from CSI ? ... h/l sequences and
 // forwards everything else verbatim. It is stateful across Writes so
 // sequences split between chunks are still recognized. Single-writer only
 // (the tmux output pump); not safe for concurrent Write.
 type altScreenFilter struct {
 	dst  io.Writer
-	pend []byte // partial escape sequence held back from the previous Write
+	drop map[string]bool // private-mode parameters this filter removes
+	pend []byte          // partial escape sequence held back from the previous Write
 }
 
 // NewAltScreenFilter wraps dst, stripping alternate-screen mode switches
 // from the byte stream. Install between the tmux output pump and the
 // emulator.
 func NewAltScreenFilter(dst io.Writer) io.Writer {
-	return &altScreenFilter{dst: dst}
+	return &altScreenFilter{dst: dst, drop: altScreenModes}
+}
+
+// NewAltScreenFilterWithoutMouse wraps dst as NewAltScreenFilter does and
+// also strips the mouse-reporting private modes (1000, 1002, 1003, 1005,
+// 1006, 1015), for a consumer that must never ask its terminal for mouse
+// reports (the web terminal's output pump). The TUI's pump must not use it:
+// its emulator reads those modes.
+func NewAltScreenFilterWithoutMouse(dst io.Writer) io.Writer {
+	return &altScreenFilter{dst: dst, drop: altScreenAndMouseModes}
 }
 
 func (f *altScreenFilter) Write(p []byte) (int, error) {
@@ -59,7 +88,7 @@ func (f *altScreenFilter) Write(p []byte) (int, error) {
 			i += len(seq)
 			continue
 		}
-		out.Write(rewritePrivateModeSeq(seq))
+		out.Write(rewritePrivateModeSeq(seq, f.drop))
 		i += len(seq)
 	}
 	if _, err := f.dst.Write(out.Bytes()); err != nil {
@@ -115,11 +144,11 @@ func scanEscape(data []byte) (seq []byte, complete bool) {
 	}
 }
 
-// rewritePrivateModeSeq removes alt-screen modes from a CSI ? ... h/l
+// rewritePrivateModeSeq removes the modes of drop from a CSI ? ... h/l
 // sequence, returning the sequence unchanged when it is not a private
-// mode set/reset or contains no alt-screen modes. Returns nil when every
-// parameter was an alt-screen mode.
-func rewritePrivateModeSeq(seq []byte) []byte {
+// mode set/reset or contains none of them. Returns nil when every
+// parameter was removed.
+func rewritePrivateModeSeq(seq []byte, drop map[string]bool) []byte {
 	// Shape: ESC [ ? params h|l
 	if len(seq) < 5 || seq[1] != '[' || seq[2] != '?' {
 		return seq
@@ -132,7 +161,7 @@ func rewritePrivateModeSeq(seq []byte) []byte {
 	kept := params[:0]
 	removed := false
 	for _, p := range params {
-		if altScreenModes[string(p)] {
+		if drop[string(p)] {
 			removed = true
 			continue
 		}

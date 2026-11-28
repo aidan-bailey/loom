@@ -10,6 +10,7 @@ export type PanelId =
   | "turns"
   | "info"
   | "changes"
+  | "terminal"
   | "mockup"
   | "mockupFull"
   | "agent"
@@ -32,6 +33,12 @@ export interface PanelProps {
   search: Record<string, string>;
 }
 
+// HostFacts is what the app knows of the host beyond a session, read from the snapshot: whether
+// the web terminal is on. A tab's appliesTo reads it with the session.
+export interface HostFacts {
+  terminal: boolean;
+}
+
 // PanelTab makes a panel one of a session's tabs: its place, its label and an
 // optional Mark drawn after the label.
 export interface PanelTab {
@@ -42,13 +49,13 @@ export interface PanelTab {
 
 // Panel is one view. title names it in its error boundaries. Head is its context row in the pinned header, Body its
 // screen; tab makes it one of a session's tabs (SessionTabs), shown for the
-// sessions appliesTo accepts (every session without it). Strip is the line
+// sessions and hosts appliesTo accepts (every session without it). Strip is the line
 // under the session's tabs; a tab's Mark is drawn after its label and is
 // handed the session.
 export interface Panel {
   id: PanelId;
   title: (props: PanelProps) => string;
-  appliesTo?: (session: Session) => boolean;
+  appliesTo?: (session: Session, host: HostFacts) => boolean;
   tab?: PanelTab;
   Head?: ComponentType<PanelProps>;
   Strip?: ComponentType<PanelProps>;
@@ -69,12 +76,13 @@ export function panelFor(id: PanelId): Panel | undefined {
   return registry.get(id);
 }
 
-// sessionTabs are the tab panels that apply to the session, in tab order.
-export function sessionTabs(session: Session): Panel[] {
+// sessionTabs are the tab panels that apply to the session on this host, in tab order.
+export function sessionTabs(session: Session, host: HostFacts): Panel[] {
   return tabOrder()
     .map((id) => registry.get(id))
     .filter(
-      (p): p is Panel => p !== undefined && (p.appliesTo === undefined || p.appliesTo(session)),
+      (p): p is Panel =>
+        p !== undefined && (p.appliesTo === undefined || p.appliesTo(session, host)),
     );
 }
 

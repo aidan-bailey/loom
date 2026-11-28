@@ -581,8 +581,8 @@ describe("the turns panel", () => {
     expect(panel?.Head).toBe(SessionHead);
     expect(panel?.Strip).toBe(FactStrip);
     expect(panel?.title(props)).toBe("Conversation");
-    expect(panel?.appliesTo?.(makeSession({ claude: true }))).toBe(true);
-    expect(panel?.appliesTo?.(makeSession({ claude: false }))).toBe(false);
+    expect(panel?.appliesTo?.(makeSession({ claude: true }), { terminal: false })).toBe(true);
+    expect(panel?.appliesTo?.(makeSession({ claude: false }), { terminal: false })).toBe(false);
   });
 
   it("draws This session is gone. for a session the snapshot does not list", () => {

@@ -722,7 +722,8 @@ and answers only phones you have paired.
   info tab.
 - **The conversation.** A session's screen has tabs under its title:
   **conversation** on a Claude session, **changes** while the session
-  runs (with its line counts), **info**, and **mockup** while the
+  runs (with its line counts), **terminal** while the host's terminal
+  is on and the session runs, **info**, and **mockup** while the
   brainstorming skill's visual companion runs in the session's worktree
   (marked when its screen changed in the latest turn): the page the
   companion shows, sandboxed, with a full-screen view. A **flow** tab
@@ -765,6 +766,34 @@ and answers only phones you have paired.
 - **The changes.** The worktree's diff against its base commit, file by
   file: tap a file for its hunks. It refreshes while the session works and
   shows no tool output.
+- **The terminal.** The **terminal** tab is the session's worktree shell
+  (the one the TUI's terminal pane shares, kept by tmux), in a frame of its
+  own. It shows while the host's terminal is on (`loom web terminal on`) and
+  the session runs, not paused, busy or recoverable, and it comes and goes
+  as the host turns the terminal on or off, with no reload; a link to it
+  while it does not apply says why. On the desktop (1024px and wider) it
+  takes the keyboard when you open it: type into it, scroll with the wheel
+  and select with the mouse, copy with ⌘C or Ctrl+Shift+C and paste with ⌘V
+  or Ctrl+Shift+V (Ctrl+C is the shell's interrupt). ⌘K opens the command
+  palette from inside it, while Ctrl+K goes to the shell (readline's
+  kill-line): open the palette from the top bar's box there. A full-screen
+  program (vim, less, htop) gets no mouse and no wheel: drive it with keys.
+  The panel says **Connecting…** and **Reconnecting…** (after loom
+  restarts or the network drops it reconnects on its own and keeps the
+  scrollback once), the reason when the terminal closes, and, after
+  **The shell exited**, a **Start a new shell** button.
+  On the phone the terminal takes no keyboard of its own: a row of keys
+  sends **Ctrl-C**, **Ctrl-D**, **Tab**, **Esc** and the four arrows, and a
+  command line under it types into the shell. **Enter** sends the line and
+  a return (a bare Enter sends just the return) and keeps the keyboard up.
+  The keys and Enter wait while the terminal is not connected, the line
+  keeping its text and nothing being queued. A finger dragged on the screen
+  scrolls its history and a flick carries on. **Select** opens a sheet with
+  the whole screen and scrollback as plain text, where a long press selects
+  and iOS's own Copy copies (loom copies nothing itself); the sheet's footer
+  says whether the terminal is drawn by WebGL or the DOM. Using the shell
+  from the phone sizes the shared shell to the phone's width (about 48
+  columns) until it is used somewhere else.
 - **Replying.** The reply goes to Claude through the loom mod, as
   `loom session send` does, queued behind the running turn. It is refused,
   with the reason, for a session with no live mod or another agent than
@@ -956,7 +985,7 @@ these commands or the `Web Terminal` row in Settings (`S`), never from the
 app, so a stolen device cookie cannot turn it on. It is stored as `terminal`
 in `web.json`, which a build older than this one drops when it rewrites the
 file, which turns the terminal off; `loom web status` shows it as
-`Terminal:`. The app's terminal panel is not in this release.
+`Terminal:`. The app's session screen shows a **terminal** tab while it is on.
 
 **What the tunnel means.** Cloudflare ends TLS at its edge and reaches loom
 over plain HTTP on loopback, so Cloudflare can read the traffic, the device

@@ -15,11 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -317,6 +320,36 @@ func TestCanned_FilesCarryTheLayersCSP(t *testing.T) {
 	assert.Equal(t, mockupCSP, res.Header.Get("Content-Security-Policy"), "the file headers do not touch the mockup")
 }
 
+func TestCanned_OnlyTheTerminalPageIsServedUnderTerminalCSP(t *testing.T) {
+	static := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(static, "assets"), 0o755))
+	for name, body := range map[string]string{
+		"index.html":             `<meta name="loom-build" content="__LOOM_BUILD__">`,
+		"terminal.html":          "<!doctype html><title>terminal</title>",
+		"assets/terminal-abc.js": "export {};",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(static, filepath.FromSlash(name)), []byte(body), 0o644))
+	}
+	c, err := newCannedLoom(static)
+	require.NoError(t, err)
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	for path, want := range map[string]string{
+		"/terminal.html":          terminalCSP,
+		"/":                       contentSecurityPolicy,
+		"/index.html":             contentSecurityPolicy,
+		"/assets/terminal-abc.js": contentSecurityPolicy,
+	} {
+		res, err := http.Get(srv.URL + path)
+		require.NoError(t, err, path)
+		res.Body.Close()
+		assert.Equal(t, http.StatusOK, res.StatusCode, path)
+		assert.Equal(t, want, res.Header.Get("Content-Security-Policy"), path)
+	}
+	assert.Contains(t, terminalCSP, "frame-ancestors 'self'", "the app's panel may frame the page")
+	assert.Contains(t, contentSecurityPolicy, "frame-ancestors 'none'", "and no other file may be framed")
+}
+
 func TestCanned_AnswersTheRoutesTheScreensReadAndNamesTheRest(t *testing.T) {
 	c, srv := cannedForTest(t)
 	for _, p := range []string{"/api/v1/sessions/1/turns", "/api/v1/sessions/2/diff", "/api/v1/launch-defaults?workspace=loom"} {
@@ -351,6 +384,157 @@ func TestCanned_TheStreamStartsWithTheSnapshot(t *testing.T) {
 	require.True(t, strings.HasPrefix(data, "data: {"))
 	var snap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(data, "data: ")), &snap), "one line of JSON")
+}
+
+// terminalFrame is one message the canned terminal route sent, or the error that ended the read.
+type terminalFrame struct {
+	typ  websocket.MessageType
+	data []byte
+	err  error
+}
+
+func terminalURL(srv *httptest.Server) string {
+	return "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/sessions/1/terminal"
+}
+
+// readFrames reads conn in the background, so a test can tell that nothing has arrived yet.
+func readFrames(ctx context.Context, conn *websocket.Conn) <-chan terminalFrame {
+	got := make(chan terminalFrame, 8)
+	go func() {
+		for {
+			typ, data, err := conn.Read(ctx)
+			got <- terminalFrame{typ, data, err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return got
+}
+
+func nextFrame(t *testing.T, got <-chan terminalFrame) terminalFrame {
+	t.Helper()
+	select {
+	case f := <-got:
+		require.NoError(t, f.err)
+		return f
+	case <-time.After(5 * time.Second):
+		t.Fatal("no frame from the canned terminal route in 5s")
+		return terminalFrame{}
+	}
+}
+
+func TestCanned_TheTerminalRouteWaitsForTheSizeThenSendsTheScreenAndLive(t *testing.T) {
+	c, srv := cannedForTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	got := readFrames(ctx, conn)
+
+	select {
+	case f := <-got:
+		t.Fatalf("the route sent a frame before the app's size: %v %q %v", f.typ, f.data, f.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"resize":{"cols":48,"rows":20}}`)))
+
+	screen := nextFrame(t, got)
+	want, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	require.NoError(t, err)
+	assert.Equal(t, websocket.MessageBinary, screen.typ)
+	assert.Equal(t, want, screen.data)
+	live := nextFrame(t, got)
+	assert.Equal(t, websocket.MessageText, live.typ)
+	assert.JSONEq(t, `{"state":"live"}`, string(live.data))
+
+	select {
+	case f := <-got:
+		t.Fatalf("the route ended or sent more after live: %v %q %v", f.typ, f.data, f.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	assert.Empty(t, c.takeMisses(), "the terminal route is not a miss")
+}
+
+func TestCanned_TheTerminalRouteLetsGoOfAConnectionThatSendsNoSize(t *testing.T) {
+	c, srv := cannedForTest(t)
+	c.sizeWait = 100 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	_, _, err = conn.Read(ctx)
+	require.Error(t, err)
+	assert.Equal(t, websocket.StatusCode(4006), websocket.CloseStatus(err), "a close frame with a code, not a dropped connection")
+}
+
+func TestCanned_TheTerminalRouteRefusesAFirstFrameThatIsNotText(t *testing.T) {
+	_, srv := cannedForTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte("ls\r")))
+	_, _, err = conn.Read(ctx)
+	require.Error(t, err)
+	assert.Equal(t, websocket.StatusCode(4006), websocket.CloseStatus(err))
+}
+
+func TestCanned_AnUnpairedLoomRefusesTheTerminalRouteAs401WithNoMiss(t *testing.T) {
+	c, srv := cannedForTest(t)
+	c.unpaired = true
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Empty(t, c.takeMisses())
+}
+
+func TestAPIHandler_AnswersTheTerminalRouteToo(t *testing.T) {
+	srv := httptest.NewServer(newCannedAPI().apiHandler())
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, terminalURL(srv), nil)
+	require.NoError(t, err, "-serve answers the terminal route for the dev server's frame")
+	conn.CloseNow()
+}
+
+func TestFixture_TheTerminalScreenIsTheBytesOfASessionOnesShell(t *testing.T) {
+	raw, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	require.NoError(t, err)
+	text := string(raw)
+	assert.Contains(t, text, "fix-pane-cursor", "session 1's title, the shell's directory")
+	assert.Contains(t, text, "\x1b[", "colours, so the screen shows the renderer's palette")
+	assert.Equal(t, strings.Count(text, "\n"), strings.Count(text, "\r\n"), "every line ends CR LF, or the next starts where the last ended")
+	assert.False(t, strings.HasSuffix(text, "\n"), "it ends at a prompt, as a shell waits")
+	escapes := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	for _, line := range strings.Split(text, "\r\n") {
+		assert.LessOrEqual(t, utf8.RuneCountInString(escapes.ReplaceAllString(line, "")), 48, "%q wraps on the phone's 48 columns", line)
+	}
+}
+
+func TestFixture_TheSnapshotTurnsTheTerminalOnForARunningSessionOne(t *testing.T) {
+	c, _ := cannedForTest(t)
+	raw, err := c.fixture("snapshot.json")
+	require.NoError(t, err)
+	var snap struct {
+		Terminal bool `json:"terminal"`
+		Sessions map[string][]struct {
+			ID    int    `json:"id"`
+			Group string `json:"group"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	assert.True(t, snap.Terminal, "the terminal tab and its screens need the host's switch on")
+	require.NotEmpty(t, snap.Sessions["1"])
+	assert.Equal(t, 1, snap.Sessions["1"][0].ID)
+	assert.Equal(t, "working", snap.Sessions["1"][0].Group, "the terminal applies to a session that is started, active and not paused")
 }
 
 func TestFixture_TheTurnsHoldAnAgentStepAndAThinkingItem(t *testing.T) {
@@ -774,7 +958,7 @@ func TestScreens_PairIsShotUnpairedAndAddToHomeAsABrowserTab(t *testing.T) {
 	for _, sc := range screens {
 		assert.False(t, seen[sc.name], "the screen name %s is repeated", sc.name)
 		seen[sc.name] = true
-		if sc.name != "pair" && sc.name != "add-to-home" && sc.name != "palette" {
+		if sc.name != "pair" && sc.name != "add-to-home" && sc.name != "palette" && sc.name != "terminal" && sc.name != "terminal-select" {
 			assert.Equal(t, screenMode{}, modeOf(sc), "%s has a mode", sc.name)
 		}
 	}
@@ -903,15 +1087,17 @@ func TestEmulation_ADesktopIsNotMobileAndHasNoTouchNoInsets(t *testing.T) {
 func TestForDevice_DropsAddToHomeOnADesktopAndThePaletteOnAPhone(t *testing.T) {
 	var want []screen
 	for _, sc := range screens {
-		if sc.name != "add-to-home" {
+		if sc.name != "add-to-home" && sc.name != "terminal-select" {
 			want = append(want, sc)
 		}
 	}
 	for _, name := range []string{"desktop", "desktop-narrow"} {
 		got := forDevice(devices[name], screens)
 		assert.Equal(t, want, got, name)
-		assert.Len(t, got, len(screens)-1, name)
+		assert.Len(t, got, len(screens)-2, name)
 		assert.Contains(t, got, screen{"pair", "#pair"}, name)
+		assert.Contains(t, got, screen{"terminal", "#s/1/terminal"}, name)
+		assert.NotContains(t, got, screen{"terminal-select", "#s/1/terminal"}, name)
 		assert.Contains(t, got, screen{"palette", "#s/1"}, name)
 	}
 	var phone []screen
@@ -936,7 +1122,7 @@ func TestForDevice_DropsAddToHomeOnADesktopAndThePaletteOnAPhone(t *testing.T) {
 func TestForApp_DropsDesktopOnlyScreensUnlessTheAppIsNext(t *testing.T) {
 	var without []screen
 	for _, sc := range screens {
-		if sc.name != "palette" {
+		if sc.name != "palette" && sc.name != "terminal" && sc.name != "terminal-select" {
 			without = append(without, sc)
 		}
 	}
@@ -954,6 +1140,296 @@ func TestScreens_PaletteIsDesktopOnlyAndPressesTheChord(t *testing.T) {
 	one, err := pickScreens("palette")
 	require.NoError(t, err)
 	assert.Equal(t, []screen{pal}, one)
+}
+
+func TestScreens_TheTerminalOnesAreNextOnlyAndTheCopySheetIsPhoneOnly(t *testing.T) {
+	term := screen{"terminal", "#s/1/terminal"}
+	sheet := screen{"terminal-select", "#s/1/terminal"}
+	assert.Contains(t, screens, term)
+	assert.Contains(t, screens, sheet)
+	assert.Equal(t, screenMode{nextOnly: true, shows: "0.412s", drawn: `[data-terminal-state="live"]`}, modeOf(term))
+	assert.Equal(t, screenMode{
+		phoneOnly: true, nextOnly: true,
+		ready: `[data-terminal-state="live"]`, shows: "0.412s",
+		click: `[data-slot="terminal-select"]`, drawn: `[data-slot="terminal-text"]:not(:empty)`,
+	}, modeOf(sheet))
+	two, err := pickScreens("terminal,terminal-select")
+	require.NoError(t, err)
+	assert.Equal(t, []screen{term, sheet}, two)
+}
+
+func TestScreens_TheTerminalOnesWaitForTextTheCannedScreenHolds(t *testing.T) {
+	raw, err := fixtureFiles.ReadFile("fixture/terminal.ansi")
+	require.NoError(t, err)
+	for _, name := range []string{"terminal", "terminal-select"} {
+		shows := modeOf(screen{name, "#s/1/terminal"}).shows
+		require.NotEmpty(t, shows, name)
+		assert.Contains(t, string(raw), shows, "%s: a wait for text the canned route never sends would fail every run", name)
+	}
+}
+
+func TestScreenMode_WaitsOnlyForAScreenWithAClickOrADrawnSelectorAndNoChord(t *testing.T) {
+	assert.True(t, modeOf(screen{"terminal", "#s/1/terminal"}).waits())
+	assert.True(t, modeOf(screen{"terminal-select", "#s/1/terminal"}).waits())
+	assert.False(t, modeOf(screen{"palette", "#s/1"}).waits(), "a chord's screen is pressScreen's")
+	assert.False(t, screenMode{}.waits())
+	assert.False(t, screenMode{unpaired: true}.waits())
+}
+
+func TestForDevice_DropsThePhoneOnlyCopySheetOnADesktop(t *testing.T) {
+	sheet := screen{"terminal-select", "#s/1/terminal"}
+	term := screen{"terminal", "#s/1/terminal"}
+	for _, name := range []string{"desktop", "desktop-narrow"} {
+		assert.Empty(t, forDevice(devices[name], []screen{sheet}), name)
+		assert.Equal(t, []screen{term}, forDevice(devices[name], []screen{term, sheet}), name)
+	}
+	for _, name := range []string{"iphone15", "iphone16"} {
+		assert.Equal(t, []screen{term, sheet}, forDevice(devices[name], []screen{term, sheet}), name)
+	}
+}
+
+func TestForApp_DropsTheNextOnlyScreensUnderTheClassicApp(t *testing.T) {
+	term := screen{"terminal", "#s/1/terminal"}
+	sheet := screen{"terminal-select", "#s/1/terminal"}
+	fleet := screen{"fleet", ""}
+	for _, app := range []string{"classic", ""} {
+		assert.Equal(t, []screen{fleet}, forApp(app, []screen{fleet, term, sheet}), app)
+	}
+	assert.Equal(t, []screen{fleet, term, sheet}, forApp("next", []screen{fleet, term, sheet}))
+}
+
+func TestRun_ATerminalScreenAloneWhereItIsNotDrawnRendersNothing(t *testing.T) {
+	for _, args := range [][]string{
+		{"-device", "desktop", "-app", "next", "-screens", "terminal-select"},
+		{"-device", "iphone15", "-screens", "terminal"},
+		{"-device", "iphone15", "-screens", "terminal-select"},
+	} {
+		err := run(append([]string{"-out", t.TempDir(), "-browser", "no-such-browser-binary"}, args...))
+		require.Error(t, err, args)
+		assert.Contains(t, err.Error(), "no screen to render on", args)
+		assert.NotContains(t, err.Error(), "no-such-browser-binary", "the check runs before a browser is looked for")
+	}
+}
+
+func TestDrawScreen_WaitsForReadyThenTheTerminalsTextClicksOnceAndWaitsForTheSheet(t *testing.T) {
+	mode := modeOf(screen{"terminal-select", "#s/1/terminal"})
+	var mu sync.Mutex
+	var readyAsks, showsAsks, clicks int
+	var readyTrue, shown, clickedBeforeReady, clickedBeforeShown bool
+	var drawnExpr string
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		if method != "Runtime.evaluate" {
+			return struct{}{}
+		}
+		expr, _ := params["expression"].(string)
+		switch {
+		case strings.Contains(expr, ".click()"):
+			if !readyTrue {
+				clickedBeforeReady = true
+			}
+			if !shown {
+				clickedBeforeShown = true
+			}
+			clicks++
+			return evalValue(true)
+		case strings.Contains(expr, "terminal-state"):
+			readyAsks++
+			readyTrue = readyAsks > 2
+			return evalValue(readyTrue)
+		case strings.Contains(expr, "loomTerminal"):
+			showsAsks++
+			shown = showsAsks > 2
+			return evalValue(shown)
+		case strings.Contains(expr, "terminal-select"):
+			return evalValue(true)
+		case strings.Contains(expr, "terminal-text"):
+			drawnExpr = expr
+			return evalValue(clicks > 0)
+		}
+		return evalValue(false)
+	})
+	require.NoError(t, p.drawScreen(context.Background(), mode, 2*time.Second))
+	mu.Lock()
+	defer mu.Unlock()
+	assert.False(t, clickedBeforeReady, "the click waits for the terminal to be live")
+	assert.False(t, clickedBeforeShown, "the click waits for the terminal to hold its text, which the sheet reads once")
+	assert.Equal(t, 1, clicks, "the click is made once")
+	assert.Greater(t, readyAsks, 2, "the ready selector is polled until it matches")
+	assert.Greater(t, showsAsks, 2, "the terminal's text is polled until it holds the canned result")
+	assert.Contains(t, drawnExpr, ":not(:empty)", "the sheet counts as drawn only once it holds text")
+}
+
+func TestDrawScreen_ATerminalThatNeverShowsItsTextFailsBeforeTheClick(t *testing.T) {
+	var mu sync.Mutex
+	var clicks, showsAsks int
+	var query string
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		expr, _ := params["expression"].(string)
+		switch {
+		case strings.Contains(expr, ".click()"):
+			clicks++
+		case strings.Contains(expr, "loomTerminal"):
+			showsAsks++
+			query = expr
+			return evalValue(false)
+		}
+		return evalValue(true)
+	})
+	err := p.drawScreen(context.Background(), modeOf(screen{"terminal-select", "#s/1/terminal"}), 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `the terminal never showed "0.412s"`, err.Error())
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(t, clicks, "a click on a terminal that holds no text would open an empty sheet")
+	assert.Positive(t, showsAsks)
+	assert.Contains(t, query, "0.412s", "the page is asked for the text the screen waits for")
+	assert.Contains(t, query, `iframe[src^="/terminal.html"]`, "through the terminal's own frame")
+}
+
+func TestDrawScreen_ASheetThatNeverDrawsFailsAfterOneClick(t *testing.T) {
+	var mu sync.Mutex
+	var clicks int
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		if method != "Runtime.evaluate" {
+			return struct{}{}
+		}
+		expr, _ := params["expression"].(string)
+		switch {
+		case strings.Contains(expr, ".click()"):
+			clicks++
+			return evalValue(true)
+		case strings.Contains(expr, "terminal-text"):
+			return evalValue(false)
+		}
+		return evalValue(true)
+	})
+	err := p.drawScreen(context.Background(), modeOf(screen{"terminal-select", "#s/1/terminal"}), 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `clicking [data-slot="terminal-select"] drew no [data-slot="terminal-text"]:not(:empty)`, err.Error())
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, clicks)
+}
+
+func TestDrawScreen_ATerminalThatNeverGoesLiveFailsBeforeAnyClick(t *testing.T) {
+	var mu sync.Mutex
+	var clicks int
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		expr, _ := params["expression"].(string)
+		if strings.Contains(expr, ".click()") {
+			clicks++
+		}
+		return evalValue(false)
+	})
+	err := p.drawScreen(context.Background(), modeOf(screen{"terminal-select", "#s/1/terminal"}), 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `no [data-terminal-state="live"] to wait for`, err.Error())
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(t, clicks)
+}
+
+func TestDrawScreen_ADrawnScreenWaitsForItsSelectorWithNoClick(t *testing.T) {
+	drawnOnly := screenMode{drawn: `[data-terminal-state="live"]`}
+	var mu sync.Mutex
+	var asks int
+	var clicked bool
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		expr, _ := params["expression"].(string)
+		if strings.Contains(expr, ".click()") {
+			clicked = true
+		}
+		asks++
+		return evalValue(asks > 3)
+	})
+	require.NoError(t, p.drawScreen(context.Background(), drawnOnly, 2*time.Second))
+	mu.Lock()
+	assert.Greater(t, asks, 3, "it polls until the selector matches")
+	assert.False(t, clicked)
+	mu.Unlock()
+
+	never, _ := recordingBrowser(t, func(string, map[string]any) any { return evalValue(false) })
+	err := never.drawScreen(context.Background(), drawnOnly, 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `no [data-terminal-state="live"] drew`, err.Error())
+}
+
+func TestDrawScreen_TheTerminalScreenWaitsForItsTextBeforeItsShot(t *testing.T) {
+	mode := modeOf(screen{"terminal", "#s/1/terminal"})
+	var mu sync.Mutex
+	var showsAsks, clicks int
+	var liveBeforeShown bool
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		expr, _ := params["expression"].(string)
+		switch {
+		case strings.Contains(expr, ".click()"):
+			clicks++
+		case strings.Contains(expr, "loomTerminal"):
+			showsAsks++
+			return evalValue(showsAsks > 2)
+		case strings.Contains(expr, "terminal-state"):
+			if showsAsks <= 2 {
+				liveBeforeShown = true
+			}
+		}
+		return evalValue(true)
+	})
+	require.NoError(t, p.drawScreen(context.Background(), mode, 2*time.Second))
+	mu.Lock()
+	assert.Greater(t, showsAsks, 2, "the shot waits for the terminal's own text, not only for live")
+	assert.Zero(t, clicks, "the terminal screen presses nothing")
+	assert.False(t, liveBeforeShown, "the live selector is drawn-after, so the text wait has passed before it is asked")
+	mu.Unlock()
+
+	never, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		expr, _ := params["expression"].(string)
+		return evalValue(!strings.Contains(expr, "loomTerminal"))
+	})
+	err := never.drawScreen(context.Background(), mode, 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Equal(t, `the terminal never showed "0.412s"`, err.Error(), "a terminal that is live and blank fails the run rather than shooting a blank")
+}
+
+func TestDrawScreen_ADesktopChordScreenOrAPlainOneDoesNothing(t *testing.T) {
+	p, calls := recordingBrowser(t, func(string, map[string]any) any { return evalValue(true) })
+	require.NoError(t, p.drawScreen(context.Background(), modeOf(screen{"palette", "#s/1"}), 300*time.Millisecond))
+	require.NoError(t, p.drawScreen(context.Background(), screenMode{}, 300*time.Millisecond))
+	assert.Empty(t, calls())
+}
+
+func TestClick_ClicksTheElementTheSelectorNamesAndFailsWhereNoneMatches(t *testing.T) {
+	var mu sync.Mutex
+	var expr string
+	found := true
+	p, _ := recordingBrowser(t, func(method string, params map[string]any) any {
+		mu.Lock()
+		defer mu.Unlock()
+		if e, _ := params["expression"].(string); e != "" {
+			expr = e
+		}
+		return evalValue(found)
+	})
+	require.NoError(t, p.click(context.Background(), `[data-slot="terminal-select"]`))
+	mu.Lock()
+	assert.Contains(t, expr, `[data-slot=\"terminal-select\"]`, "the selector is quoted into the page's script")
+	assert.Contains(t, expr, ".click()")
+	found = false
+	mu.Unlock()
+	err := p.click(context.Background(), `[data-slot="terminal-select"]`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing matches")
 }
 
 // captureStdout returns what fn printed to os.Stdout.
@@ -987,6 +1463,8 @@ func TestRun_SkipLinesNameTheirReason(t *testing.T) {
 		{"a browser-tab screen on a desktop", []string{"-device", "desktop", "-app", "next", "-screens", "add-to-home,fleet"}, "add-to-home\tskipped: phone only"},
 		{"a desktop-only screen on a phone", []string{"-device", "iphone15", "-app", "next", "-screens", "palette,fleet"}, "palette\tskipped: desktop only"},
 		{"a desktop-only screen under the classic app", []string{"-device", "desktop", "-screens", "palette,fleet"}, "palette\tskipped: next app only"},
+		{"a phone-only screen on a desktop", []string{"-device", "desktop", "-app", "next", "-screens", "terminal-select,fleet"}, "terminal-select\tskipped: phone only"},
+		{"a next-only screen under the classic app", []string{"-device", "iphone15", "-screens", "terminal,fleet"}, "terminal\tskipped: next app only"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1053,6 +1531,10 @@ func TestRun_RendersTheNewAppAtBothDesktopSizesInARealBrowser(t *testing.T) {
 			assert.Equal(t, [2]int{d.width, d.height}, [2]int{img.Bounds().Dx(), img.Bounds().Dy()}, "a bare viewport at scale 1")
 			_, err = os.Stat(filepath.Join(out, "add-to-home.png"))
 			assert.True(t, os.IsNotExist(err), "add-to-home is phone only")
+			_, err = os.Stat(filepath.Join(out, "terminal.png"))
+			assert.NoError(t, err, "the terminal is shot on a desktop")
+			_, err = os.Stat(filepath.Join(out, "terminal-select.png"))
+			assert.True(t, os.IsNotExist(err), "the copy sheet is phone only")
 			pf, err := os.Open(filepath.Join(out, "palette.png"))
 			require.NoError(t, err)
 			defer pf.Close()
@@ -1429,4 +1911,12 @@ func TestCanned_ASubagentsTurnsAreTheAgentFixture(t *testing.T) {
 	assert.Equal(t, "brief", page.Turns[0].From, "a subagent's page opens with its brief")
 	assert.Greater(t, strings.Count(page.Turns[0].Text, "\n"), 12, "long enough to fold after 12 lines")
 	assert.Empty(t, c.takeMisses())
+}
+
+func TestBrowserArgs_TurnWebGLOffAndKeepThePipeAndTheProfile(t *testing.T) {
+	args := browserArgs("/tmp/p")
+	assert.Contains(t, args, "--disable-3d-apis", "the terminal frame then draws with the DOM renderer, whose text a screenshot shows")
+	assert.Contains(t, args, "--remote-debugging-pipe")
+	assert.Contains(t, args, "--user-data-dir=/tmp/p")
+	assert.Equal(t, "about:blank", args[len(args)-1])
 }

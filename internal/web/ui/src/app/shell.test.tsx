@@ -313,6 +313,10 @@ describe("router", () => {
 
     expect(await screen.findByText("the fleet panel")).toBeInTheDocument();
   });
+
+  it("has a route for the terminal's path in the router's own table", () => {
+    expect(Object.keys(router.routesByPath)).toContain("/s/$id/terminal");
+  });
 });
 
 // withGroups is the fixture with only these sessions, ids 100, 101, … in the
@@ -493,6 +497,35 @@ describe("SessionTabs", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("draws a tab that applies by the host's switch as the stream's terminal event turns it on and off", () => {
+    tabPanels();
+    definePanel({
+      id: "mockup",
+      title: () => "Mockup",
+      tab: { order: 4, label: "host tab" },
+      appliesTo: (_session, host) => host.terminal,
+      Body: () => null,
+    });
+    window.history.replaceState(null, "", "#/s/7/info");
+    live({ ...fixtureSnapshot(), terminal: false });
+
+    render(<SessionTabs session={aSession(true)} />);
+
+    const names = (): (string | null)[] =>
+      within(screen.getByRole("navigation", { name: "Session views" }))
+        .getAllByRole("link")
+        .map((a) => a.textContent);
+    expect(names()).toEqual(["conversation", "changes", "info"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: true });
+    });
+    expect(names()).toEqual(["conversation", "changes", "info", "host tab"]);
+    act(() => {
+      useFleet.getState().apply("terminal", { enabled: false });
+    });
+    expect(names()).toEqual(["conversation", "changes", "info"]);
   });
 
   it.each([
@@ -870,6 +903,7 @@ describe("tabOf, TABBED and resetKey", () => {
   it.each<[PanelId, PanelId]>([
     ["turns", "turns"],
     ["changes", "changes"],
+    ["terminal", "terminal"],
     ["agent", "turns"],
     ["job", "info"],
     ["flowStory", "flow"],
@@ -885,6 +919,7 @@ describe("tabOf, TABBED and resetKey", () => {
 
   it("TABBED holds the session's routes and not the fleet's", () => {
     expect(TABBED.has("turns")).toBe(true);
+    expect(TABBED.has("terminal")).toBe(true);
     expect(TABBED.has("job")).toBe(true);
     expect(TABBED.has("fleet")).toBe(false);
     expect(TABBED.has("settings")).toBe(false);

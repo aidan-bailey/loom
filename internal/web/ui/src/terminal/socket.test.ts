@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  CLOSE_BAD_FRAME,
+  CLOSE_EXITED,
+  CLOSE_NO_ATTACH,
+  CLOSE_OFF,
+  CLOSE_REVOKED,
+  CLOSE_SESSION,
+  CLOSE_SLOW,
+  CLOSE_STOPPING,
   FRAME_MAX,
   binaryBytes,
   describeClose,
@@ -245,6 +253,21 @@ describe("openSocket", () => {
     ws.end(1006, "");
     expect(states.at(-1)).toEqual({ state: "closed", closed: { code: 1000, reason: "" } });
     expect(states.filter((s) => s.state === "closed")).toHaveLength(1);
+  });
+});
+
+describe("close codes", () => {
+  it("are the codes the daemon sends", () => {
+    expect([
+      CLOSE_STOPPING,
+      CLOSE_OFF,
+      CLOSE_REVOKED,
+      CLOSE_SESSION,
+      CLOSE_EXITED,
+      CLOSE_SLOW,
+      CLOSE_BAD_FRAME,
+      CLOSE_NO_ATTACH,
+    ]).toEqual([1001, 4001, 4002, 4003, 4004, 4005, 4006, 4007]);
   });
 });
 

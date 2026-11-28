@@ -400,7 +400,7 @@ describe("the info panel", () => {
   it("is registered as the info tab, with a session head and no strip", () => {
     const panel = panelFor("info");
     expect(panel).toBeDefined();
-    expect(panel?.tab).toEqual({ order: 3, label: "info" });
+    expect(panel?.tab).toEqual({ order: 4, label: "info" });
     expect(panel?.Head).toBe(SessionHead);
     expect(panel?.Strip).toBeUndefined();
     expect(panel?.appliesTo).toBeUndefined();

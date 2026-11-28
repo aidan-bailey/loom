@@ -1,4 +1,4 @@
-// The mockup panels: the companion's page on the phone, as the fourth tab for a session that has
+// The mockup panels: the companion's page on the phone, as the fifth tab for a session that has
 // one, and a full-screen view with only its frame. Both bodies live in one chunk, loaded when a
 // mockup is opened.
 import { lazy, type ReactElement } from "react";
@@ -29,7 +29,7 @@ export const mockupPanel = definePanel({
   id: "mockup",
   title: () => "Mockup",
   appliesTo: (session) => session.mockup !== null,
-  tab: { order: 4, label: "mockup", Mark: MockupMark },
+  tab: { order: 5, label: "mockup", Mark: MockupMark },
   Head: SessionHead,
   Body: MockupBody,
 });

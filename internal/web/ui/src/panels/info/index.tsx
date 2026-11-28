@@ -18,7 +18,7 @@ function InfoBody(props: PanelProps): ReactElement {
 export const infoPanel = definePanel({
   id: "info",
   title: () => "Info",
-  tab: { order: 3, label: "info" },
+  tab: { order: 4, label: "info" },
   Head: SessionHead,
   Body: InfoBody,
 });

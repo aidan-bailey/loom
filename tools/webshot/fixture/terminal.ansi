@@ -1,0 +1,7 @@
+[1;32mfresco[0m [34mfix-pane-cursor[0m $ git status -sb
+## aidanb/fix-pane-cursor [ahead 3]
+[31m M[0m ui/pane.go
+[31m M[0m ui/pane_test.go
+[1;32mfresco[0m [34mfix-pane-cursor[0m $ go test ./ui/
+[32mok[0m  github.com/aidan-bailey/loom/ui  0.412s
+[1;32mfresco[0m [34mfix-pane-cursor[0m $ 

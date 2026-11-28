@@ -198,12 +198,12 @@ describe("MockupMark", () => {
 });
 
 describe("the mockup panels", () => {
-  it("are registered: the fourth tab for a session with a mockup, and the full view with no head", () => {
+  it("are registered: the fifth tab for a session with a mockup, and the full view with no head", () => {
     const panel = panelFor("mockup");
-    expect(panel?.tab).toEqual({ order: 4, label: "mockup", Mark: MockupMark });
+    expect(panel?.tab).toEqual({ order: 5, label: "mockup", Mark: MockupMark });
     expect(panel?.Head).toBe(SessionHead);
-    expect(panel?.appliesTo?.(show())).toBe(true);
-    expect(panel?.appliesTo?.(show({ mockup: null }))).toBe(false);
+    expect(panel?.appliesTo?.(show(), { terminal: false })).toBe(true);
+    expect(panel?.appliesTo?.(show({ mockup: null }), { terminal: false })).toBe(false);
 
     const full = panelFor("mockupFull");
     expect(full).toBeDefined();

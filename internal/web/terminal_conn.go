@@ -517,11 +517,12 @@ func (s termSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// pumpLoop reads the attach's output through the alternate-screen filter into
-// the queue until the attach ends (by itself or by Close), then finishes the
-// queue so the sender ends once it has sent what is queued.
+// pumpLoop reads the attach's output through the alternate-screen filter, which
+// also drops the mouse modes so the browser's terminal never asks tmux for
+// mouse reports, into the queue until the attach ends (by itself or by Close),
+// then finishes the queue so the sender ends once it has sent what is queued.
 func (c *termConn) pumpLoop(sh termShell, q *outQueue) {
-	filter := vt.NewAltScreenFilter(termSink{c: c, q: q})
+	filter := vt.NewAltScreenFilterWithoutMouse(termSink{c: c, q: q})
 	buf := make([]byte, termReadChunk)
 	for {
 		n, err := sh.Read(buf)

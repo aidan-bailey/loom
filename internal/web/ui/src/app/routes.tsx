@@ -85,12 +85,13 @@ export function routeOf(hash: string): RouteState {
     return { panel: "job", params: { id: job[1] ?? "", job: job[2] ?? "" }, search: {} };
   }
 
-  const main = h.match(/^s\/(\d+)(?:\/(turns|diff|mockup|info))?(\/full)?$/);
+  const main = h.match(/^s\/(\d+)(?:\/(turns|diff|terminal|mockup|info))?(\/full)?$/);
   if (main && (main[3] === undefined || main[2] === "mockup")) {
     const params = { id: main[1] ?? "" };
     if (main[3] !== undefined) return { panel: "mockupFull", params, search: {} };
     const named: Partial<Record<string, PanelId>> = {
       diff: "changes",
+      terminal: "terminal",
       mockup: "mockup",
       info: "info",
     };
@@ -115,6 +116,7 @@ export function hrefFor(
     turns: session,
     info: `${session}/info`,
     changes: `${session}/diff`,
+    terminal: `${session}/terminal`,
     mockup: `${session}/mockup`,
     mockupFull: `${session}/mockup/full`,
     agent: `${session}/agent/${seg("agent")}`,
@@ -182,6 +184,7 @@ const PATHS: Record<PanelId, string> = {
   turns: "/s/$id",
   info: "/s/$id/info",
   changes: "/s/$id/diff",
+  terminal: "/s/$id/terminal",
   mockup: "/s/$id/mockup",
   mockupFull: "/s/$id/mockup/full",
   agent: "/s/$id/agent/$agent",
