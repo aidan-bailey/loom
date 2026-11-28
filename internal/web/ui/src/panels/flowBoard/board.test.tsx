@@ -92,13 +92,14 @@ describe("FlowBoardBody", () => {
     expect(columns()).toEqual(["spec", "run"]);
   });
 
-  it("a card: the session's title, its part, its state line, its cost and age, and a link to its flow", () => {
+  it("a card: the session's title, its repo, its part, its state line, its cost and age, and a link to its flow", () => {
     show({ snapshot: withFlows([{ part: "part 2 of 3" }]) });
     const card = within(screen.getByRole("group", { name: "run" })).getByRole("link");
     expect(card).toHaveAttribute("href", hrefFor("flow", { id: "6" }, { plan: PLAN }));
     const lines = Array.from(card.children).map((c) => c.textContent);
     expect(lines).toEqual([
       "flow-run",
+      "flow",
       "part 2 of 3",
       "2/5 · asks",
       "blocked-decision",
@@ -112,6 +113,7 @@ describe("FlowBoardBody", () => {
     const card = within(screen.getByRole("group", { name: "run" })).getByRole("link");
     expect(Array.from(card.children).map((c) => c.textContent)).toEqual([
       "flow-run",
+      "flow",
       "2/5 · review",
       "4m",
     ]);

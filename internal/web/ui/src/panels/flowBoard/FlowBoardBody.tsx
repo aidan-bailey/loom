@@ -28,6 +28,9 @@ function Card({ card }: { card: BoardCard }): ReactElement {
       )}
     >
       <span className="block truncate font-semibold">{card.title}</span>
+      {card.repo !== "" && (
+        <span className="block truncate text-xs text-muted-foreground">{card.repo}</span>
+      )}
       {flow.part !== "" && (
         <span className="block truncate text-xs text-muted-foreground">{flow.part}</span>
       )}

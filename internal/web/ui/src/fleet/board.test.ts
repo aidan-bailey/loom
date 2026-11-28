@@ -133,6 +133,19 @@ describe("boardOf", () => {
     for (const card of cards) expect(card).toMatchObject({ session: 6, title: "flow-run" });
   });
 
+  it("a card names its session's workspace, the repo: its label, else its name", () => {
+    const snapshot = withFlows([flow()]);
+    const named = (label: string): Snapshot => ({
+      ...snapshot,
+      workspaces: (snapshot.workspaces ?? []).map((w) =>
+        w.id === 2 ? { ...w, name: "flow-repo", label } : w,
+      ),
+    });
+    const repoOf = (s: Snapshot): string | undefined => boardOf(s).flatMap((c) => c.cards)[0]?.repo;
+    expect(repoOf(named("Flow"))).toBe("Flow");
+    expect(repoOf(named(""))).toBe("flow-repo");
+  });
+
   it("a hidden workspace's flows are left out", () => {
     const snapshot = withFlows([flow()]);
     const hidden: Snapshot = {

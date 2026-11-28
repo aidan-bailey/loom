@@ -15,6 +15,8 @@ const ENDED: ReadonlySet<string> = new Set(["done", "stopped", "cancelled"]);
 export interface BoardCard {
   session: number;
   title: string;
+  /** The session's workspace, the repo it works in: its label, else its name. */
+  repo: string;
   flow: FlowSummary;
 }
 
@@ -55,14 +57,15 @@ const updated = (c: BoardCard): number => Date.parse(c.flow.updated) || 0;
  * ties keep the snapshot's order.
  */
 export function boardOf(snapshot: Snapshot): BoardColumn[] {
-  const shown = new Set(shownWorkspaces(snapshot).map((w) => w.id));
+  const repos = new Map(shownWorkspaces(snapshot).map((w) => [w.id, w.label || w.name]));
   const cards = new Map<string, BoardCard[]>(STAGES.map((s) => [s, []]));
   const finished: BoardCard[] = [];
   for (const session of allSessions(snapshot)) {
-    if (!shown.has(session.workspace)) continue;
+    const repo = repos.get(session.workspace);
+    if (repo === undefined) continue;
     for (const flow of session.flows ?? []) {
       const name = columnOf(flow);
-      const card = { session: session.id, title: session.title, flow };
+      const card = { session: session.id, title: session.title, repo, flow };
       if (name === FINISHED) finished.push(card);
       else cards.set(name, [...(cards.get(name) ?? []), card]);
     }
