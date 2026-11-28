@@ -84,8 +84,35 @@ type hookMatcher struct {
 	Hooks   []hookCommand `json:"hooks"`
 }
 
+// loomAllow is the Bash permission rules every launch's settings carry: the
+// loom commands its context tells the agent to use freely, which reach only
+// the loom daemon. Claude Code settles an allowed call before auto mode's
+// classifier, which reads neither loom's appended context nor the daemon's
+// role, and blocked `loom session send` and `loom feedback add` as
+// unsanctioned communication. A rule here must name a command that runs
+// nothing it is handed: `loom job submit` and `loom job run` run the command
+// after their --, so allowing them would allow any command; `loom session
+// new` costs the owner a session, which the context says to start only when
+// asked. Each rule comes bare and with " *" for its arguments.
+var loomAllow = func() []string {
+	var rules []string
+	for _, c := range []string{
+		"loom session send", "loom session list",
+		"loom feedback add", "loom feedback list", "loom feedback show",
+		"loom job list",
+	} {
+		rules = append(rules, "Bash("+c+")", "Bash("+c+" *)")
+	}
+	return rules
+}()
+
+type permissionsDoc struct {
+	Allow []string `json:"allow"`
+}
+
 type settingsDoc struct {
 	Hooks               map[string][]hookMatcher `json:"hooks"`
+	Permissions         permissionsDoc           `json:"permissions"`
 	AutoMemoryDirectory string                   `json:"autoMemoryDirectory,omitempty"`
 }
 
@@ -97,10 +124,15 @@ type settingsDoc struct {
 // (briefMatcher), running briefCommand on it. A non-empty guardCommand adds
 // a PreToolUse entry on Bash, Write and Edit running it: loom's git guard for
 // flow's agents (`loom flow guard`), the one hook here that may exit
-// non-zero, to block a call.
+// non-zero, to block a call. Every file allows loomAllow's commands, which
+// Claude adds to the user's own rules.
 func SettingsJSON(eventsDir, autoMemoryDir, briefPath, guardCommand string) ([]byte, error) {
 	cmd := HookCommand(eventsDir)
-	doc := settingsDoc{Hooks: make(map[string][]hookMatcher, len(HookEvents)), AutoMemoryDirectory: autoMemoryDir}
+	doc := settingsDoc{
+		Hooks:               make(map[string][]hookMatcher, len(HookEvents)),
+		Permissions:         permissionsDoc{Allow: loomAllow},
+		AutoMemoryDirectory: autoMemoryDir,
+	}
 	for _, name := range HookEvents {
 		doc.Hooks[name] = []hookMatcher{{Hooks: []hookCommand{{Type: "command", Command: cmd}}}}
 	}

@@ -37,8 +37,46 @@ func TestSettingsJSON_Golden(t *testing.T) {
 			entry("SessionStart"), entry("Stop"), entry("SubagentStart"),
 			entry("SubagentStop"), entry("TeammateIdle"), entry("UserPromptSubmit"),
 		}, ",\n") +
-		"\n  }\n}\n"
+		"\n  },\n  \"permissions\": {\n    \"allow\": [\n" +
+		strings.Join(quoted(loomAllow), ",\n") +
+		"\n    ]\n  }\n}\n"
 	assert.Equal(t, want, string(got))
+}
+
+func quoted(rules []string) []string {
+	out := make([]string, len(rules))
+	for i, r := range rules {
+		out[i] = `      "` + r + `"`
+	}
+	return out
+}
+
+// Every launch allows the loom commands its context tells the agent to use
+// freely, so auto mode's classifier, which can't see that context, never
+// judges them; and none that runs a command it is handed or starts a session.
+func TestSettingsJSON_AllowsLoomsOwnCommandsOnly(t *testing.T) {
+	got, err := SettingsJSON("/e", "", "", "")
+	require.NoError(t, err)
+	var doc struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	require.NoError(t, json.Unmarshal(got, &doc))
+	allow := doc.Permissions.Allow
+	for _, r := range []string{
+		"Bash(loom session send *)", "Bash(loom session list)", "Bash(loom session list *)",
+		"Bash(loom feedback add *)", "Bash(loom feedback list)", "Bash(loom feedback show *)",
+		"Bash(loom job list)",
+	} {
+		assert.Contains(t, allow, r)
+	}
+	for _, r := range allow {
+		assert.True(t, strings.HasPrefix(r, "Bash(loom "), "%s: only loom's own commands", r)
+		for _, c := range []string{"job submit", "job run", "session new", "session kill", "Bash(loom *)"} {
+			assert.NotContains(t, r, c, "%s runs what it is handed, costs a session or matches too much", r)
+		}
+	}
 }
 
 // An account session's memory dir rides in the same file, so it needs no
